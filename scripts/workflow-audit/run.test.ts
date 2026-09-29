@@ -278,6 +278,67 @@ describe("parseAuditCliArgs", () => {
 });
 
 describe("loadAuditInput", () => {
+  it("streams scoped admission evidence without retaining other runtime payloads", () => {
+    const runtimeLogPath = path.join(logsBaseDir, "global.log");
+    const records = [
+      {
+        timestamp: "2026-07-04T10:01:00.000Z",
+        message: "graph-workflow.advisory_response.turn_started",
+        traceId: "trace",
+        action: `workflow:${ACTIVE_ID}`,
+        executionId: ACTIVE_ID,
+        contextId: "impl",
+        conversationId: "conv-1",
+        secret: "omitted\u2028payload\u2029" + "x".repeat(70000),
+      },
+      {
+        timestamp: "2026-07-04T10:02:00.000Z",
+        message: "conversation-manager.turn_admitted",
+        traceId: "trace",
+        action: `workflow:${ACTIVE_ID}`,
+        conversationId: "conv-1",
+      },
+      {
+        timestamp: "2026-07-04T10:03:00.000Z",
+        message: "conversation-manager.turn_admitted",
+        traceId: "trace",
+        action: "workflow:other",
+        conversationId: "conv-1",
+      },
+      {
+        timestamp: "2026-07-04T13:02:00.000Z",
+        message: "conversation-manager.turn_admitted",
+        traceId: "trace",
+        action: `workflow:${ACTIVE_ID}`,
+        conversationId: "conv-1",
+      },
+    ];
+    writeFileSync(
+      runtimeLogPath,
+      records.map((record) => JSON.stringify(record)).join("\n"),
+    );
+    const input = loadAuditInput(
+      { db, logsBaseDir, transcriptsDir: "/transcripts", runtimeLogPath },
+      { executionId: ACTIVE_ID },
+    );
+    expect(input?.runtimeAdmissionEvents).toEqual([
+      {
+        kind: "advisory_requested",
+        timestamp: "2026-07-04T10:01:00.000Z",
+        traceId: "trace",
+        contextId: "impl",
+        conversationId: "conv-1",
+      },
+      {
+        kind: "admitted",
+        timestamp: "2026-07-04T10:02:00.000Z",
+        traceId: "trace",
+        contextId: null,
+        conversationId: "conv-1",
+      },
+    ]);
+  });
+
   it("loads an interrupted conversation retained only in iteration logs before computing costs", () => {
     db.prepare(
       `INSERT INTO conversations
@@ -442,7 +503,7 @@ describe("loadAuditInput", () => {
     if (input === null) return;
     const report = buildAuditReport(input);
     expect(report.overview.executionId).toBe(ACTIVE_ID);
-    expect(report.cost.totalUsd).toBeCloseTo(4.75);
+    expect(report.cost.recordedTotalUsd).toBeCloseTo(4.75);
     const impl = report.contexts.find((c) => c.contextId === "impl");
     expect(impl?.iterations).toHaveLength(1);
     // Both fallbacks surface, and the cohort member's is attributed to it.

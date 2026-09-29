@@ -25,6 +25,7 @@ import {
   createCohortExecution,
   createHarness,
   failResult,
+  INFRA_RESULT,
   metadata,
   passResult,
   TREE_A,
@@ -68,6 +69,7 @@ interface Scenario {
 function scenario(params: {
   respond(input: GraphWorkflowAdvisoryResponseInput): Promise<void> | void;
   verifierVerdicts?: readonly ("pass" | "fail")[];
+  verifierAdvisories?: boolean;
   tree(): ValidationCandidateTreeResolution;
 }): Scenario {
   const records: RunRecords = { scriptRuns: 0, validatorDispatches: [] };
@@ -90,11 +92,14 @@ function scenario(params: {
       records.validatorDispatches.push(assignmentId);
       if (assignmentId === "verifier") {
         const verdict = verdicts.shift() ?? "pass";
+        const advisories = params.verifierAdvisories
+          ? [advisoryItem({ title: "Consider simplifying the helper" })]
+          : [];
         return {
           result:
             verdict === "pass"
-              ? passResult("verifier")
-              : failResult("verifier", ["task-plan-1"]),
+              ? passResult("verifier", advisories)
+              : failResult("verifier", ["task-plan-1"], advisories),
           metadata: metadata(),
           roundToken: input.roundToken ?? null,
         };
@@ -280,6 +285,134 @@ describe("a response turn that changed the candidate (R8.2)", () => {
 
     expect(subject.harness.contextState()?.status).toBe("completed");
     expect(subject.harness.contextState()?.advisoryResponse ?? null).toBeNull();
+  });
+});
+
+describe("a blocking reviewer that keeps returning optional advice", () => {
+  function repeatingAdvice(verifierVerdicts?: readonly ("pass" | "fail")[]) {
+    let tree: ValidationCandidateTreeResolution = TREE_A;
+    return scenario({
+      verifierAdvisories: true,
+      ...(verifierVerdicts ? { verifierVerdicts } : {}),
+      respond: () => {
+        tree = TREE_B;
+      },
+      tree: () => tree,
+    });
+  }
+
+  it("delivers and records the initial blocking reviewer's optional advice", async () => {
+    const { harness } = repeatingAdvice();
+
+    await harness.run();
+
+    expect(harness.runAdvisoryResponse).toHaveBeenCalledTimes(1);
+    expect(
+      harness.contextState()?.validationRound?.specialists["verifier"]
+        ?.advisories,
+    ).toEqual([
+      expect.objectContaining({
+        title: "Consider simplifying the helper",
+        deliveredAt: expect.any(String),
+        disposition: expect.objectContaining({ outcome: "declined" }),
+      }),
+    ]);
+    expect(harness.contextState()?.advisoryResponse?.phase).toBe(
+      "recertifying",
+    );
+  });
+
+  it("keeps recertification advice as evidence without dispatching another response", async () => {
+    const { harness, records } = repeatingAdvice();
+
+    await harness.run();
+    await harness.run();
+
+    expect(harness.runAdvisoryResponse).toHaveBeenCalledTimes(1);
+    expect(records.scriptRuns).toBe(2);
+    expect(records.validatorDispatches).toEqual([
+      "verifier",
+      "security",
+      "verifier",
+    ]);
+    expect(harness.contextState()?.status).toBe("completed");
+    expect(harness.contextState()?.advisoryResponse ?? null).toBeNull();
+    expect(
+      harness.contextState()?.validationRound?.specialists["verifier"]
+        ?.advisories,
+    ).toEqual([
+      expect.objectContaining({
+        identity: { roundSeq: 2, assignmentId: "verifier", ordinal: 1 },
+        title: "Consider simplifying the helper",
+        deliveredAt: null,
+        disposition: null,
+      }),
+    ]);
+  });
+
+  it("still reopens failed recertification tasks and carries advice with the remediation", async () => {
+    const { harness } = repeatingAdvice(["pass", "fail"]);
+
+    await harness.run();
+    const result = await harness.run();
+
+    const task = harness.repository.read().taskStates["task-plan-1"];
+    expect(task?.status).toBe("pending");
+    expect(task?.failureMessage).toContain("Consider simplifying the helper");
+    expect(harness.contextState()?.consecutiveFailureCount).toBe(1);
+    expect(harness.contextState()?.advisoryResponse ?? null).toBeNull();
+    expect(harness.runAdvisoryResponse).toHaveBeenCalledTimes(1);
+    expect(result.decision.kind).toBe("continue");
+  });
+
+  it("keeps the response bounded after a recertification infrastructure halt is resumed", async () => {
+    let tree = TREE_A;
+    let infrastructureUnavailable = false;
+    const harness = createHarness({
+      execution: createCohortExecution({ assignments: MIXED_COHORT }),
+      productionSignalHalt: true,
+      resolveCandidateTree: () => tree,
+      runContextValidator: async (input) => ({
+        result: infrastructureUnavailable
+          ? INFRA_RESULT
+          : passResult(input.validator.id, [advisoryItem()]),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+      advisoryResponse: async (input) => {
+        tree = TREE_B;
+        return {
+          dispositions: input.advisories.map((advisory) => ({
+            identity: advisory.identity,
+            disposition: "addressed" as const,
+            reason: null,
+          })),
+        };
+      },
+    });
+
+    await harness.run();
+    infrastructureUnavailable = true;
+    await harness.run();
+    await harness.drainAndHalt();
+    expect(harness.repository.read().haltReason?.type).toBe(
+      "validator_infra_error",
+    );
+
+    infrastructureUnavailable = false;
+    await harness.resumeHalt();
+    await harness.scheduleNextContext();
+    await harness.run();
+
+    expect(harness.runAdvisoryResponse).toHaveBeenCalledTimes(1);
+    expect(harness.contextState()?.validationRound?.seq).toBe(2);
+    expect(
+      harness
+        .contextState()
+        ?.validationRound?.roster.map((seat) => seat.assignmentId),
+    ).toEqual(["verifier"]);
+    expect(harness.contextState()?.status).toBe("completed");
+    expect(harness.contextState()?.advisoryResponse ?? null).toBeNull();
   });
 });
 

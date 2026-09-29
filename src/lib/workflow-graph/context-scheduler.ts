@@ -677,7 +677,7 @@ export function createContextScheduler(
           if (remainingCapacity !== undefined && remainingCapacity <= 0) break;
           // Fail closed rather than falling back to the context id: a context
           // the definition does not carry has no authored lane, and inventing
-          // one from its id is the lexical fallback lane-write-policy forbids.
+          // one from its id would bypass canonical path checks.
           const laneName = authoredLaneOf(contextId);
           if (laneName === undefined) {
             throw new Error(

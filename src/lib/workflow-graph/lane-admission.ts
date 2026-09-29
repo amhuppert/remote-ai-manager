@@ -202,7 +202,7 @@ function defaultReadLink(target: string): string | null {
  * including one whose own target does not exist yet.
  *
  * `realpath` cannot be the primitive here, and neither can the
- * `mkdir`-before-`realpath` shape `lane-write-policy` uses. A checked-out tree
+ * `mkdir`-before-`realpath` shape lane scratch preparation uses. A checked-out tree
  * routinely holds a DANGLING link, because Git does not track empty
  * directories: `src/mirror -> generated` survives a checkout with
  * `src/generated` absent. `realpath` fails on that link and so does `mkdir -p`

@@ -894,11 +894,9 @@ export function createContextValidationCoordinator(
     round: GraphWorkflowValidationRound | null,
     options: {
       /**
-       * Retires the advisory-response phase in the same write that opens the
-       * round it asked for. One mutation rather than two because the pair is one
-       * act: a clear that landed without the round would let the next pass open
-       * an ordinary round with the advisory lanes back in it, and a round opened
-       * without the clear would be re-opened as a re-certification forever.
+       * Retires re-certification only when its candidate receives a verdict.
+       * Infrastructure recovery must retain the phase so the resumed round
+       * keeps its blocking-only roster and cannot reopen optional responses.
        */
       clearAdvisoryResponse?: boolean;
       /**
@@ -1849,15 +1847,7 @@ export function createContextValidationCoordinator(
         )
       : undefined;
     if (!resumable) {
-      await writeValidationRound(input, round, {
-        clearAdvisoryResponse: recertification,
-      });
-    } else if (recertification) {
-      // A resumable round and a pending re-certification cannot both be true —
-      // the phase is only ever entered over a concluded round — but the phase is
-      // durable, so it is retired on every path that answers it rather than only
-      // on the one expected to.
-      await writeAdvisoryResponsePhase(input, null);
+      await writeValidationRound(input, round);
     }
     const journal: RoundJournal = { outcome: null };
 
@@ -1926,7 +1916,14 @@ export function createContextValidationCoordinator(
             // cleared from, and it is cleared even on the thrown-error exit: a
             // round that died mid-flight is not evidence that the candidate is
             // moving.
-            { settleCandidateMismatchBudget: true },
+            {
+              settleCandidateMismatchBudget: true,
+              clearAdvisoryResponse:
+                recertification &&
+                (journal.outcome === "passed" ||
+                  journal.outcome === "failed" ||
+                  journal.outcome === "script_failed"),
+            },
           );
         }
       } catch (releaseError) {
@@ -1949,9 +1946,8 @@ export function createContextValidationCoordinator(
     journal: RoundJournal;
     /**
      * Whether this round is the blocking-only re-certification of a candidate
-     * the advisory-response turn moved. Carried down rather than re-read from
-     * the context state, which the round's own opening write has already
-     * retired.
+     * the advisory-response turn moved. Captured with the round's review plan
+     * so roster reconciliation and conclusion use the same phase.
      */
     recertification?: boolean;
     /** Verdicts a resumed round carries forward; absent on a fresh round. */
@@ -2635,13 +2631,15 @@ export function createContextValidationCoordinator(
     // round concluded as what it was, not as an outcome nobody rendered.
     journal.outcome = "passed";
 
-    // The round passed and its specialists still had something to say. The
-    // context does NOT finish here: it enters the advisory-response phase, which
+    // A passing re-certification settles the changed candidate. Its blocking
+    // reviewers can still report advisories, but those remain review evidence;
+    // opening another optional response would make certification unbounded.
+    // An ordinary passing round enters the advisory-response phase, which
     // owes the implementer one turn (R6) and then owes R8 an answer to whether
     // that turn left the certified candidate where it found it. The phase is
     // written durably before the turn runs, so a process that dies inside the
     // turn comes back owing the same turn rather than owing a fresh round.
-    if (round !== null && freshAdvisories.length > 0) {
+    if (!recertification && round !== null && freshAdvisories.length > 0) {
       await writeAdvisoryResponsePhase(input, {
         roundSeq: round.seq,
         phase: "awaiting_response",

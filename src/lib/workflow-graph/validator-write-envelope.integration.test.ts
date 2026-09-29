@@ -1,9 +1,14 @@
-/** The real validator, conversation actor, facade and provider adapters carry one write envelope. */
+/** The real validator, actor, facade and provider adapters retain the candidate cwd. */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { z } from "zod";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
@@ -53,16 +58,8 @@ async function runValidator(
 ) {
   const root = mkdtempSync(path.join(tmpdir(), "cc-validator-envelope-"));
   roots.push(root);
-  const worktreePath = path.join(root, "worktree");
-  const scratch = path.join(root, "scratch");
-  const temporary = path.join(scratch, "tmp");
+  const worktreePath = path.join(realpathSync(root), "worktree");
   mkdirSync(worktreePath, { recursive: true });
-  mkdirSync(temporary, { recursive: true });
-  const policy = {
-    mode: "allowlist" as const,
-    allowWrite: [scratch, temporary],
-    denyWrite: [worktreePath],
-  };
   const provider = createScriptedConversationBackend({
     backend,
     responseText: VERDICT_TEXT,
@@ -70,6 +67,7 @@ async function runValidator(
   });
   recordServerBaseUrl({ CC_SERVER_URL: "http://127.0.0.1:3000" });
   const runtimeInputs: ConversationBackendCreateInput[] = [];
+  const providerTurnCwds: unknown[] = [];
   const neutralCalls: AgentCallRequest[] = [];
   const validator = makeSeededValidatorAssignment({
     id: "reviewer",
@@ -108,7 +106,18 @@ async function runValidator(
         ...provider.factory,
         async createRuntime(input) {
           runtimeInputs.push(input);
-          return provider.factory.createRuntime(input);
+          const runtime = await provider.factory.createRuntime(input);
+          const sendTurn = runtime.sendTurn.bind(runtime);
+          runtime.sendTurn = async (turn) => {
+            const result = await sendTurn(turn);
+            providerTurnCwds.push(
+              backend === "claude"
+                ? provider.claudeOptions?.cwd
+                : provider.codexThreadRequest?.cwd,
+            );
+            return result;
+          };
+          return runtime;
         },
       }),
       async executeAgentCall(request, deps) {
@@ -135,11 +144,6 @@ async function runValidator(
       }),
       readLaneConversation: async () => null,
       readValidatorConversationTelemetry: async () => null,
-      composeLaneWriteEnvelope: () => ({
-        policy,
-        laneScratchDir: scratch,
-        laneTmpDir: temporary,
-      }),
       continuityService: {
         ensureValidatorConversation: async () => ({
           execution,
@@ -177,10 +181,11 @@ async function runValidator(
       result,
       neutralCalls,
       runtimeInputs,
-      policy,
       worktreePath,
       claudeOptions: provider.claudeOptions,
       codexThreadRequest: provider.codexThreadRequest,
+      turns: provider.turns,
+      providerTurnCwds,
     };
   } finally {
     await lifecycle.close();
@@ -196,39 +201,8 @@ function conversationRequest(calls: AgentCallRequest[]) {
 }
 
 for (const backend of ["claude", "codex"] as const) {
-  describe(`validator write envelope — ${backend}`, () => {
-    it("carries the server-derived write policy through the neutral boundary into the provider runtime", async () => {
-      const run = await runValidator(backend);
-      expect(run.result, JSON.stringify(run.result)).toMatchObject({
-        result: { kind: "pass" },
-      });
-      expect(conversationRequest(run.neutralCalls).fsWritePolicy).toEqual(
-        run.policy,
-      );
-      expect(run.runtimeInputs).toHaveLength(1);
-      expect(run.runtimeInputs[0]?.fsWritePolicy).toEqual(run.policy);
-      expect(run.runtimeInputs[0]?.executionClass).toBe("governed-execution");
-      if (backend === "claude") {
-        expect(run.claudeOptions?.sandbox?.filesystem?.allowWrite).toEqual(
-          run.policy.allowWrite,
-        );
-        expect(run.claudeOptions?.sandbox?.filesystem?.denyWrite).toEqual(
-          run.policy.denyWrite,
-        );
-        expect(run.claudeOptions?.sandbox?.failIfUnavailable).toBe(true);
-      } else {
-        const thread = run.codexThreadRequest;
-        expect(thread?.sandbox).toBe("workspace-write");
-        const config = z.record(z.string(), z.unknown()).parse(thread?.config);
-        expect(config.sandbox_workspace_write).toMatchObject({
-          writable_roots: run.policy.allowWrite,
-          exclude_slash_tmp: true,
-          exclude_tmpdir_env_var: true,
-        });
-      }
-    });
-
-    it("never carries the unrestricted implementer configuration or makes the candidate worktree writable", async () => {
+  describe(`validator workspace — ${backend}`, () => {
+    it("starts work and formatting in the candidate worktree with instruction-only scratch writes", async () => {
       const run = await runValidator(backend);
       expect(run.result, JSON.stringify(run.result)).toMatchObject({
         result: { kind: "pass" },
@@ -236,26 +210,30 @@ for (const backend of ["claude", "codex"] as const) {
       expect(conversationRequest(run.neutralCalls).writeCapability).toBe(
         "read_only",
       );
-      expect(run.runtimeInputs[0]?.fsWritePolicy?.allowWrite).not.toContain(
+      expect(
+        conversationRequest(run.neutralCalls).fsWritePolicy,
+      ).toBeUndefined();
+      expect(run.runtimeInputs).toHaveLength(1);
+      expect(run.runtimeInputs[0]?.fsWritePolicy).toBeUndefined();
+      expect(run.runtimeInputs[0]?.executionClass).toBe("governed-execution");
+      expect(run.turns).toHaveLength(2);
+      expect(run.providerTurnCwds).toEqual([
         run.worktreePath,
-      );
-      expect(run.runtimeInputs[0]?.fsWritePolicy?.denyWrite).toContain(
         run.worktreePath,
+      ]);
+      expect(existsSync(path.join(run.worktreePath, ".cc", "temp"))).toBe(true);
+      expect(run.turns[0]?.prompt).toContain(run.worktreePath);
+      expect(run.turns[0]?.prompt).toContain(
+        path.join(run.worktreePath, ".cc", "temp"),
       );
       if (backend === "claude") {
-        expect(run.claudeOptions?.permissionMode).toBe("dontAsk");
-        expect(run.claudeOptions?.allowDangerouslySkipPermissions).not.toBe(
-          true,
-        );
-        expect(run.claudeOptions?.cwd).not.toBe(run.worktreePath);
+        expect(run.claudeOptions?.cwd).toBe(run.worktreePath);
       } else {
-        const thread = run.codexThreadRequest;
-        expect(thread?.sandbox).not.toBe("danger-full-access");
-        expect(thread?.cwd).not.toBe(run.worktreePath);
+        expect(run.codexThreadRequest?.cwd).toBe(run.worktreePath);
       }
     });
 
-    it("classifies a sandbox that could not start as an infrastructure outcome", async () => {
+    it("retains infrastructure classification for provider startup failures", async () => {
       const run = await runValidator(backend, true);
       expect(run.result, JSON.stringify(run.result)).toMatchObject({
         result: { kind: "infra_error" },

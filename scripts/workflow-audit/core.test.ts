@@ -473,6 +473,216 @@ describe("buildAuditReport", () => {
     );
   });
 
+  it("recovers historical question waits without inventing an answered decision", () => {
+    const input = baseInput();
+    input.events = input.events.filter(
+      (event) => !event.type.endsWith("user-input-resolved"),
+    );
+    input.contextLogs.impl?.iterations.push(
+      rec(T("10:35:31"), "user_input.waiting", {
+        conversationIds: ["conv-impl"],
+      }),
+      rec(T("10:39:00"), "user_input.wait_exit", { cause: "answers_observed" }),
+      rec(T("10:42:00"), "user_input.waiting", {
+        conversationIds: ["conv-impl"],
+      }),
+      rec(T("10:43:00"), "user_input.wait_exit", { cause: "execution_paused" }),
+      rec(T("10:44:00"), "user_input.waiting", {
+        conversationIds: ["conv-impl"],
+      }),
+    );
+    const report = buildAuditReport(input);
+    expect(
+      report.contexts.find((context) => context.contextId === "impl")
+        ?.userInputWaits,
+    ).toEqual([
+      {
+        requestedAt: T("10:35:31"),
+        resolvedAt: T("10:39:00"),
+        decision: "answers_observed",
+        waitMs: 209000,
+      },
+      {
+        requestedAt: T("10:42:00"),
+        resolvedAt: T("10:43:00"),
+        decision: "execution_paused",
+        waitMs: 60000,
+      },
+      {
+        requestedAt: T("10:44:00"),
+        resolvedAt: null,
+        decision: null,
+        waitMs: null,
+      },
+    ]);
+    expect(report.time.humanWaitMsTotal).toBe(1290000 + 269000);
+  });
+
+  it("does not describe a paused question wait as a human answer", () => {
+    const input = baseInput();
+    input.events = [];
+    input.contextLogs.impl?.iterations.push(
+      rec(T("10:35:31"), "user_input.waiting"),
+      rec(T("10:39:00"), "user_input.wait_exit", { cause: "paused" }),
+    );
+    const report = buildAuditReport(input);
+    expect(
+      report.positives.some(
+        (finding) => finding.kind === "fast_human_turnaround",
+      ),
+    ).toBe(false);
+  });
+
+  it("prefers modern resolved events over duplicate iteration wait logs", () => {
+    const input = baseInput();
+    input.contextLogs.impl?.iterations.push(
+      rec(T("10:35:31"), "user_input.waiting", {
+        conversationIds: ["conv-impl"],
+      }),
+      rec(T("10:39:01"), "user_input.wait_exit", { cause: "answers_observed" }),
+    );
+    const report = buildAuditReport(input);
+    expect(
+      report.contexts.find((context) => context.contextId === "impl")
+        ?.userInputWaits,
+    ).toEqual([
+      {
+        requestedAt: T("10:35:30"),
+        resolvedAt: T("10:39:00"),
+        decision: "answered",
+        waitMs: 210000,
+      },
+    ]);
+  });
+
+  it("reports phase durations independently and leaves unobserved admission unknown", () => {
+    const input = baseInput();
+    input.contextLogs.impl = {
+      iterations: [
+        rec(T("10:00:00"), "iteration.prompt_sent"),
+        rec(T("10:01:00"), "iteration.agent_turn_completed"),
+        rec(T("10:05:00"), "advisory_response.started", { roundSeq: 1 }),
+        rec(T("10:07:00"), "advisory_response.recorded", { roundSeq: 1 }),
+        rec(T("10:08:00"), "advisory_response.started", { roundSeq: 2 }),
+        rec(T("10:10:00"), "advisory_response.started", { roundSeq: 2 }),
+        rec(T("10:11:00"), "advisory_response.recorded", { roundSeq: 2 }),
+      ],
+      tasks: [],
+      validatorResponses: [],
+      validation: [
+        rec(T("10:01:00"), "validator.invoked", { assignmentId: "one" }),
+        rec(T("10:02:00"), "validator.invoked", { assignmentId: "two" }),
+        rec(T("10:03:00"), "validator.result_parsed", { assignmentId: "one" }),
+        rec(T("10:04:00"), "validator.result_parsed", { assignmentId: "two" }),
+        rec(T("10:05:00"), "validator.invoked", { assignmentId: "three" }),
+      ],
+    };
+    input.contextLogs.validate = {
+      iterations: [],
+      tasks: [],
+      validation: [],
+      validatorResponses: [],
+    };
+    const report = buildAuditReport(input);
+    expect(report.time).toMatchObject({
+      agentTurnMsTotal: 60000,
+      validatorMsTotal: 240000,
+      incompleteValidatorIntervalCount: 1,
+      advisoryResponseMsTotal: 180000,
+      incompleteAdvisoryResponseCount: 1,
+      advisoryAdmissionWaitMsTotal: null,
+    });
+    expect(renderMarkdown(report)).toContain("may overlap");
+    expect(
+      report.confidence.some((note) => note.kind === "cost_boundary"),
+    ).toBe(true);
+  });
+
+  it("leaves phase durations unknown when logs are absent", () => {
+    const input = baseInput();
+    input.contextLogs = {};
+    const report = buildAuditReport(input);
+    expect(report.time).toMatchObject({
+      validatorMsTotal: null,
+      advisoryResponseMsTotal: null,
+      incompleteValidatorIntervalCount: 0,
+      incompleteAdvisoryResponseCount: 0,
+    });
+  });
+
+  it("retains incomplete phase counts without presenting missing durations as zero", () => {
+    const input = baseInput();
+    input.contextLogs = {
+      impl: {
+        iterations: [
+          rec(T("10:05:00"), "advisory_response.started", { roundSeq: 1 }),
+        ],
+        validation: [
+          rec(T("10:01:00"), "validator.invoked", { assignmentId: "one" }),
+        ],
+        tasks: [],
+        validatorResponses: [],
+      },
+    };
+    const report = buildAuditReport(input);
+    expect(report.time).toMatchObject({
+      validatorMsTotal: null,
+      advisoryResponseMsTotal: null,
+      incompleteValidatorIntervalCount: 1,
+      incompleteAdvisoryResponseCount: 1,
+    });
+  });
+
+  it("measures advisory admission only with matching runtime trace and conversation evidence", () => {
+    const input = baseInput();
+    input.runtimeAdmissionEvents = [
+      {
+        kind: "advisory_requested",
+        timestamp: T("10:00:00"),
+        traceId: "trace-one",
+        conversationId: "conv-impl",
+        contextId: "impl",
+      },
+      {
+        kind: "admitted",
+        timestamp: T("10:01:00"),
+        traceId: "other-trace",
+        conversationId: "conv-impl",
+        contextId: null,
+      },
+      {
+        kind: "admitted",
+        timestamp: T("10:02:00"),
+        traceId: "trace-one",
+        conversationId: "other-conversation",
+        contextId: null,
+      },
+      {
+        kind: "admitted",
+        timestamp: T("11:00:00"),
+        traceId: "trace-one",
+        conversationId: "conv-impl",
+        contextId: null,
+      },
+    ];
+    const report = buildAuditReport(input);
+    expect(report.time).toMatchObject({
+      advisoryAdmissionWaitMsTotal: 3600000,
+      advisoryAdmissions: [
+        {
+          contextId: "impl",
+          conversationId: "conv-impl",
+          requestedAt: T("10:00:00"),
+          admittedAt: T("11:00:00"),
+          waitMs: 3600000,
+        },
+      ],
+    });
+    expect(
+      report.time.gaps.some((gap) => gap.classification === "admission_wait"),
+    ).toBe(true);
+  });
+
   it("classifies long gaps and flags only uncovered ones as stalls", () => {
     const report = buildAuditReport(baseInput());
     const agentGap = report.time.gaps.find(
@@ -523,7 +733,7 @@ describe("buildAuditReport", () => {
 
   it("rolls up cost by lane and by context, counting missing costs", () => {
     const report = buildAuditReport(baseInput());
-    expect(report.cost.totalUsd).toBeCloseTo(6.75);
+    expect(report.cost.recordedTotalUsd).toBeCloseTo(6.75);
     // conv-history is absent from the saved laneStates and must be attributed
     // through iteration.conversation_resolved log records.
     expect(report.cost.byLane.implementer).toBeCloseTo(5.5);
@@ -1114,6 +1324,14 @@ describe("transcript-derived findings", () => {
     const report = buildAuditReport(input);
     // conv-impl corrected 3.5 → 2.0; conv-val 1.25 + conv-history 2 unchanged.
     expect(report.cost.correctedTotalUsd).toBeCloseTo(5.25);
+    expect(report.cost.byLane.implementer).toBeCloseTo(4);
+    expect(report.cost.byContext.impl).toBeCloseTo(4);
+    expect(
+      Object.values(report.cost.byLane).reduce((sum, cost) => sum + cost, 0),
+    ).toBeCloseTo(5.25);
+    expect(
+      Object.values(report.cost.byContext).reduce((sum, cost) => sum + cost, 0),
+    ).toBeCloseTo(5.25);
     const mismatch = report.friction.filter((f) => f.kind === "cost_mismatch");
     expect(mismatch).toHaveLength(1);
     expect(mismatch[0]?.summary).toContain("conv-impl");
@@ -1753,7 +1971,9 @@ describe("output-capture cost accounting", () => {
     const report = buildAuditReport(withCaptureTurn(1.25, 0.8));
     // The recorded row includes the capture turn the transcript never saw, so
     // correcting down to the transcript would subtract real spend.
-    expect(report.cost.correctedTotalUsd).toBeCloseTo(report.cost.totalUsd);
+    expect(report.cost.correctedTotalUsd).toBeCloseTo(
+      report.cost.recordedTotalUsd,
+    );
     expect(report.friction.some((f) => f.kind === "cost_mismatch")).toBe(false);
     expect(renderMarkdown(report)).not.toMatch(/\$1\.25 recorded → /);
   });

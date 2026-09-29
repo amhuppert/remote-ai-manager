@@ -8,7 +8,7 @@ import {
   WHOLE_TREE_CANDIDATE_SCOPE,
   type CandidateScope,
 } from "@/lib/git/diff";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
@@ -119,10 +119,7 @@ function errorTaskRun(
   });
 }
 
-// A real directory, not a name: the runner composes its lane write envelope
-// before dispatching, and that composition canonicalizes the candidate worktree
-// and fails closed when it cannot. A validator only ever runs against a
-// worktree that exists, so the stub reflects that.
+// Workspace preparation needs a real candidate directory before dispatch.
 const stubWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-validator-wt-"));
 const stubWorktreePath = async () => stubWorktreeDir;
 /** The session worktree a resolver returns when a test asserts on that path. */
@@ -2834,7 +2831,7 @@ describe("validator-runner executionTarget override", () => {
     expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
-          worktreePath: laneWorktreeDir,
+          worktreePath: realpathSync(laneWorktreeDir),
         }),
       }),
     );
@@ -2879,7 +2876,7 @@ describe("validator-runner executionTarget override", () => {
     expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
-          worktreePath: sessionWorktreeDir,
+          worktreePath: realpathSync(sessionWorktreeDir),
         }),
       }),
     );

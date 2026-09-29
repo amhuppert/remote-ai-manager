@@ -19,7 +19,15 @@
  * schema-floor DDL on connect, which writes to the live DB.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+} from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -37,6 +45,7 @@ import {
   type AuditExecution,
   type AuditInput,
   type ContextLogs,
+  type RuntimeAdmissionEvent,
 } from "./core";
 
 /**
@@ -480,7 +489,83 @@ function loadContextLogs(
   return logs;
 }
 
+/** Stream literal LF records: Node readline also splits valid JSON strings at U+2028/U+2029. */
+function* readLogLines(filePath: string): Generator<string> {
+  const fd = openSync(filePath, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  const decoder = new StringDecoder("utf8");
+  let remainder = "";
+  try {
+    let bytes: number;
+    while ((bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      remainder += decoder.write(buffer.subarray(0, bytes));
+      let newline: number;
+      while ((newline = remainder.indexOf("\n")) >= 0) {
+        yield remainder.slice(0, newline);
+        remainder = remainder.slice(newline + 1);
+      }
+    }
+    remainder += decoder.end();
+    if (remainder.length > 0) yield remainder;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function loadRuntimeAdmissionEvents(
+  filePath: string | undefined,
+  execution: AuditExecution,
+  conversationIds: Set<string>,
+): RuntimeAdmissionEvent[] {
+  if (filePath === undefined || !existsSync(filePath)) return [];
+  const events: RuntimeAdmissionEvent[] = [];
+  const started = Date.parse(execution.startedAt);
+  const completed =
+    execution.completedAt === null
+      ? Infinity
+      : Date.parse(execution.completedAt);
+  for (const line of readLogLines(filePath)) {
+    if (!line.includes(execution.id)) continue;
+    if (
+      !line.includes("graph-workflow.advisory_response.turn_started") &&
+      !line.includes("conversation-manager.turn_admitted")
+    )
+      continue;
+    const record = parseJsonRecord(line);
+    if (record === null || record.action !== `workflow:${execution.id}`)
+      continue;
+    const kind =
+      record.message === "graph-workflow.advisory_response.turn_started"
+        ? "advisory_requested"
+        : record.message === "conversation-manager.turn_admitted"
+          ? "admitted"
+          : null;
+    const timestamp = textColumn(record, "timestamp");
+    const traceId = textColumn(record, "traceId");
+    const conversationId = textColumn(record, "conversationId");
+    if (
+      kind === null ||
+      timestamp === null ||
+      traceId === null ||
+      conversationId === null ||
+      !conversationIds.has(conversationId)
+    )
+      continue;
+    const at = Date.parse(timestamp);
+    if (!Number.isFinite(at) || at < started || at > completed) continue;
+    events.push({
+      kind,
+      timestamp,
+      traceId,
+      conversationId,
+      contextId: textColumn(record, "contextId"),
+    });
+  }
+  return events;
+}
+
 export interface LoadDeps {
+  runtimeLogPath?: string;
   db: AuditDb;
   logsBaseDir: string;
   transcriptsDir: string | null;
@@ -519,6 +604,11 @@ export function loadAuditInput(
     events,
     conversations,
     contextLogs,
+    runtimeAdmissionEvents: loadRuntimeAdmissionEvents(
+      deps.runtimeLogPath,
+      execution,
+      new Set(conversations.map((conversation) => conversation.id)),
+    ),
     lifecycle: logsDirExists
       ? readJsonlFile(path.join(executionLogsDir, "lifecycle.jsonl"))
       : [],
@@ -586,6 +676,7 @@ if (import.meta.main) {
       {
         db,
         logsBaseDir: path.join(configDir, "workflow-logs"),
+        runtimeLogPath: path.join(configDir, "logs", "global.log"),
         transcriptsDir: path.join(configDir, "transcripts"),
         runGit: (args, cwd) => {
           const result = spawnSync("git", ["-C", cwd, ...args], {

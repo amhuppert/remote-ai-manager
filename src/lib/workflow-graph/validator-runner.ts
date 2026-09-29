@@ -77,11 +77,10 @@ import {
 } from "@/lib/workflows/conversation/lifecycle";
 import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import {
-  composeValidatorLaneWriteEnvelope as defaultComposeValidatorLaneWriteEnvelope,
-  type ComposeValidatorLaneWriteEnvelopeInput,
-  type ValidatorLaneWriteEnvelope,
-} from "@/lib/workflow-graph/lane-write-policy";
-import type { FsWritePolicy } from "@/lib/agent-backends/task";
+  prepareValidatorWorkspace as defaultPrepareValidatorWorkspace,
+  type PrepareValidatorWorkspaceInput,
+  type ValidatorWorkspace,
+} from "./validator-workspace";
 import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
@@ -659,14 +658,10 @@ export interface ValidatorRunnerDeps {
     conversationId: string,
   ): Promise<GraphWorkflowValidationConversationUsage | null>;
   /**
-   * Establish the lane's filesystem-write envelope. Defaults to the real
-   * composer, which creates and canonicalizes the lane's scratch directories;
-   * injected in tests so a validator turn does not touch the filesystem. A
-   * throw here is fail-closed — the turn never dispatches.
+   * Prepare a private report directory under the candidate's .cc/temp.
+   * A failure to prepare it prevents dispatch.
    */
-  composeLaneWriteEnvelope?(
-    input: ComposeValidatorLaneWriteEnvelopeInput,
-  ): ValidatorLaneWriteEnvelope;
+  prepareWorkspace?(input: PrepareValidatorWorkspaceInput): ValidatorWorkspace;
   executionContract: GraphExecutionContract;
 }
 
@@ -707,12 +702,6 @@ interface ValidatorTurnInvocation {
   projectPath: string;
   sessionName: string;
   conversationId: string;
-  /**
-   * The lane's filesystem-write envelope. Always present on a validator turn —
-   * a validator reviews a frozen candidate, so "no policy" is never a legal
-   * shape here even though the transport allows it for implementer lanes.
-   */
-  fsWritePolicy: FsWritePolicy;
   /**
    * The authority-selected, task-bound output schema for this dispatch (D2).
    * Built once per turn by the caller so the schema the provider enforces is
@@ -792,10 +781,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         undefined,
         baselineSha,
       ));
-  const composeLaneWriteEnvelope =
-    deps.composeLaneWriteEnvelope ??
-    ((input: ComposeValidatorLaneWriteEnvelopeInput) =>
-      defaultComposeValidatorLaneWriteEnvelope(input));
+  const prepareWorkspace =
+    deps.prepareWorkspace ?? defaultPrepareValidatorWorkspace;
   const readLaneConversation =
     deps.readLaneConversation ??
     (async (projectPath, sessionName, conversationId) => {
@@ -848,7 +835,6 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           backend: invocation.backend,
           autonomous: true,
           askUserQuestionsEnabled: invocation.askUserQuestionsEnabled,
-          fsWritePolicy: invocation.fsWritePolicy,
           outputFormat,
           structuredOutputTurns: "work_then_format",
           modelSelection: invocation.modelSelection,
@@ -992,10 +978,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const worktreePath =
       overrideWorktreePath ??
       (await deps.resolveWorktreePath(projectPath, sessionName));
-    // Established BEFORE any dispatch decision: a lane whose envelope cannot be
-    // composed throws here, and the caller's catch turns that into an
-    // infrastructure outcome rather than a turn that ran unrestricted.
-    const { policy: fsWritePolicy } = composeLaneWriteEnvelope({
+    const workspace = prepareWorkspace({
       executionId: execution.id,
       contextId,
       assignmentId,
@@ -1072,16 +1055,22 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       }));
     }
     const taskResult = await dispatchValidatorTurn({
-      prompt,
+      prompt: [
+        "## Validator workspace",
+        `Your working directory is the candidate worktree: ${workspace.worktreePath}`,
+        `Write temporary files and review artifacts only inside: ${workspace.scratchDirectory}`,
+        "This assignment-specific directory is under .cc/temp. Treat every other candidate path as read-only; do not edit source, stage files, or create commits. These write limits are instructions, not an operating-system sandbox.",
+        "",
+        prompt,
+      ].join("\n"),
       askUserQuestionsEnabled,
       backend,
-      workingDirectory: worktreePath,
+      workingDirectory: workspace.worktreePath,
       modelSelection,
       laneRef: { workflowId: execution.id, contextId },
       projectPath,
       sessionName,
       conversationId,
-      fsWritePolicy,
       outputSchema,
     });
 

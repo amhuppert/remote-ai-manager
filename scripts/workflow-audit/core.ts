@@ -249,7 +249,16 @@ export interface ContextLogs {
   validatorResponses: Array<{ file: string; parsePath: string | null }>;
 }
 
+export interface RuntimeAdmissionEvent {
+  kind: "advisory_requested" | "admitted";
+  timestamp: string;
+  traceId: string;
+  conversationId: string;
+  contextId: string | null;
+}
+
 export interface AuditInput {
+  runtimeAdmissionEvents?: RuntimeAdmissionEvent[];
   source: "active" | "archived";
   execution: AuditExecution;
   events: AuditEvent[];
@@ -277,6 +286,7 @@ export type HaltClass = "infrastructure" | "agent" | "user" | "unknown";
 export type GapClassification =
   | "agent_work"
   | "human_wait"
+  | "admission_wait"
   | "halt_wait"
   | "hung_turn"
   | "validation_compute"
@@ -424,11 +434,12 @@ export interface AuditReport {
   };
   contexts: ContextReport[];
   cost: {
-    totalUsd: number;
+    /** Raw recorded conversation rows, retained for reconciliation only. */
+    recordedTotalUsd: number;
     /**
      * Recorded totals with each scanned conversation's cost replaced by its
      * transcript lineage total. Null when no transcript scans were available.
-     * Diverges from `totalUsd` for rows written before the accrual fix
+     * Diverges from `recordedTotalUsd` for rows written before the accrual fix
      * (cumulative-consumed-as-delta inflation).
      */
     correctedTotalUsd: number | null;
@@ -453,7 +464,23 @@ export interface AuditReport {
   };
   time: {
     wallClockMs: number | null;
+    /** Main implementer prompt intervals only; not total workflow labor. */
     agentTurnMsTotal: number;
+    /** Observed completed intervals only; null when none could be measured. */
+    validatorMsTotal: number | null;
+    advisoryResponseMsTotal: number | null;
+    incompleteValidatorIntervalCount: number;
+    incompleteAdvisoryResponseCount: number;
+    /** Measured advisory dispatch-to-admission waits; null without paired evidence. */
+    advisoryAdmissionWaitMsTotal: number | null;
+    advisoryAdmissionRequestCount: number;
+    advisoryAdmissions: Array<{
+      contextId: string | null;
+      conversationId: string;
+      requestedAt: string;
+      admittedAt: string;
+      waitMs: number;
+    }>;
     /** Total time inside hung turn intervals, excluded from agentTurnMsTotal. */
     hungTurnMsTotal: number;
     humanWaitMsTotal: number;
@@ -1081,6 +1108,152 @@ function pairWaits(
   return waits;
 }
 
+/** Iteration logs retain actual park exits even when older builds emitted no resolved event. */
+function pairUserInputWaits(
+  events: AuditEvent[],
+  records: JsonlRecord[],
+  contextId: string,
+): WaitReport[] {
+  const eventWaits = pairWaits(
+    events,
+    "graph-workflow-user-input-pending",
+    "graph-workflow-user-input-resolved",
+    "requestedAt",
+    "resolvedAt",
+    "resolution",
+    contextId,
+  ).sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+  const logWaits: WaitReport[] = [];
+  let pending: JsonlRecord | null = null;
+  const ordered = [...records].sort((a, b) =>
+    a.timestamp.localeCompare(b.timestamp),
+  );
+  for (const record of ordered) {
+    if (record.event === "user_input.waiting") {
+      if (pending !== null) {
+        logWaits.push({
+          requestedAt: pending.timestamp,
+          resolvedAt: null,
+          decision: null,
+          waitMs: null,
+        });
+      }
+      pending = record;
+    } else if (record.event === "user_input.wait_exit" && pending !== null) {
+      const start = parseIso(pending.timestamp);
+      const end = parseIso(record.timestamp);
+      logWaits.push({
+        requestedAt: pending.timestamp,
+        resolvedAt: record.timestamp,
+        decision: fieldStr(record.fields, "cause"),
+        waitMs:
+          start !== null && end !== null ? Math.max(0, end - start) : null,
+      });
+      pending = null;
+    }
+  }
+  if (pending !== null) {
+    logWaits.push({
+      requestedAt: pending.timestamp,
+      resolvedAt: null,
+      decision: null,
+      waitMs: null,
+    });
+  }
+
+  const replaced = new Set<WaitReport>();
+  const supplemental: WaitReport[] = [];
+  for (const wait of logWaits) {
+    const start = parseIso(wait.requestedAt);
+    const end = parseIso(wait.resolvedAt);
+    if (start === null) continue;
+    // Modern resolved events remain authoritative. A log interval represents
+    // the same wait if their measured windows overlap; never add it twice.
+    if (
+      eventWaits.some((eventWait) => {
+        const eventStart = parseIso(eventWait.requestedAt);
+        const eventEnd = parseIso(eventWait.resolvedAt);
+        return (
+          eventStart !== null &&
+          eventEnd !== null &&
+          eventEnd >= start &&
+          (end === null || eventStart <= end)
+        );
+      })
+    )
+      continue;
+    const candidate = eventWaits.findLast(
+      (eventWait) =>
+        !replaced.has(eventWait) &&
+        eventWait.resolvedAt === null &&
+        eventWait.requestedAt <= wait.requestedAt,
+    );
+    if (candidate !== undefined) replaced.add(candidate);
+    supplemental.push(wait);
+  }
+  return [
+    ...eventWaits.filter((wait) => !replaced.has(wait)),
+    ...supplemental,
+  ].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+}
+
+function collectPhaseIntervals(
+  records: JsonlRecord[],
+  startEvents: Set<string>,
+  endEvents: Set<string>,
+  keyField: string,
+): { intervals: Interval[]; incompleteCount: number } {
+  const pending = new Map<string, number>();
+  const intervals: Interval[] = [];
+  let incompleteCount = 0;
+  for (const record of records) {
+    const at = parseIso(record.timestamp);
+    if (at === null) continue;
+    const key = String(record.fields[keyField] ?? "default");
+    if (startEvents.has(record.event)) {
+      if (pending.has(key)) incompleteCount += 1;
+      pending.set(key, at);
+    } else if (endEvents.has(record.event)) {
+      const start = pending.get(key);
+      pending.delete(key);
+      if (start !== undefined && at >= start)
+        intervals.push({ start, end: at });
+    }
+  }
+  return { intervals, incompleteCount: incompleteCount + pending.size };
+}
+
+function pairAdvisoryAdmissions(
+  events: RuntimeAdmissionEvent[],
+): AuditReport["time"]["advisoryAdmissions"] {
+  const pending = new Map<string, RuntimeAdmissionEvent>();
+  const admissions: AuditReport["time"]["advisoryAdmissions"] = [];
+  const ordered = [...events].sort((a, b) =>
+    a.timestamp.localeCompare(b.timestamp),
+  );
+  for (const event of ordered) {
+    const key = `${event.traceId}:${event.conversationId}`;
+    if (event.kind === "advisory_requested") {
+      pending.set(key, event);
+      continue;
+    }
+    const request = pending.get(key);
+    if (request === undefined) continue;
+    pending.delete(key);
+    const start = parseIso(request.timestamp);
+    const end = parseIso(event.timestamp);
+    if (start === null || end === null || end < start) continue;
+    admissions.push({
+      contextId: request.contextId,
+      conversationId: request.conversationId,
+      requestedAt: request.timestamp,
+      admittedAt: event.timestamp,
+      waitMs: end - start,
+    });
+  }
+  return admissions;
+}
+
 function buildValidations(
   events: AuditEvent[],
   contextId: string,
@@ -1253,13 +1426,66 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     Array<{ startedAt: string; durationMs: number }>
   >();
   const contexts: ContextReport[] = [];
+  let validatorMsTotal: number | null = null;
+  let advisoryResponseMsTotal: number | null = null;
+  let incompleteValidatorIntervalCount = 0;
+  let incompleteAdvisoryResponseCount = 0;
+  let advisoryAdmissionRequestCount = 0;
+  const advisoryAdmissions = pairAdvisoryAdmissions(
+    input.runtimeAdmissionEvents ?? [],
+  );
+  const advisoryAdmissionWaitMsTotal =
+    advisoryAdmissions.length > 0
+      ? advisoryAdmissions.reduce((sum, admission) => sum + admission.waitMs, 0)
+      : null;
+  const admissionIntervals = advisoryAdmissions.map((admission) => ({
+    start: Date.parse(admission.requestedAt),
+    end: Date.parse(admission.admittedAt),
+  }));
 
   for (const contextId of contextIds) {
     const state = execution.contextStates[contextId] ?? EMPTY_CONTEXT_STATE;
     const logs = contextLogs[contextId] ?? EMPTY_LOGS;
     const iterations = buildIterations(logs.iterations);
+    advisoryAdmissionRequestCount += logs.iterations.filter(
+      (record) => record.event === "advisory_response.started",
+    ).length;
     const turnSplit = splitTurnIntervals(logs.iterations, lastActivityMs);
     workIntervals.push(...turnSplit.work);
+    const validatorPhases = collectPhaseIntervals(
+      logs.validation,
+      new Set(["validator.invoked"]),
+      new Set(["validator.result_parsed", "validator.infra_error"]),
+      "assignmentId",
+    );
+    const advisoryPhases = collectPhaseIntervals(
+      logs.iterations,
+      new Set(["advisory_response.started"]),
+      new Set(["advisory_response.recorded"]),
+      "roundSeq",
+    );
+    if (validatorPhases.intervals.length > 0) {
+      validatorMsTotal =
+        (validatorMsTotal ?? 0) +
+        validatorPhases.intervals.reduce(
+          (sum, interval) => sum + interval.end - interval.start,
+          0,
+        );
+    }
+    if (advisoryPhases.intervals.length > 0) {
+      advisoryResponseMsTotal =
+        (advisoryResponseMsTotal ?? 0) +
+        advisoryPhases.intervals.reduce(
+          (sum, interval) => sum + interval.end - interval.start,
+          0,
+        );
+    }
+    incompleteValidatorIntervalCount += validatorPhases.incompleteCount;
+    incompleteAdvisoryResponseCount += advisoryPhases.incompleteCount;
+    workIntervals.push(
+      ...validatorPhases.intervals,
+      ...advisoryPhases.intervals,
+    );
     workIntervals.push(
       ...collectStartToNextIntervals(
         logs.validation,
@@ -1320,13 +1546,9 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       "decision",
       contextId,
     );
-    const userInputWaits = pairWaits(
+    const userInputWaits = pairUserInputWaits(
       events,
-      "graph-workflow-user-input-pending",
-      "graph-workflow-user-input-resolved",
-      "requestedAt",
-      "resolvedAt",
-      "resolution",
+      logs.iterations,
       contextId,
     );
     for (const wait of [...approvalWaits, ...userInputWaits]) {
@@ -1451,7 +1673,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   // Conversations whose output-capture turn left an unpriced reply in the
   // transcript: capture used to run as a task run, which wrote no usage frame.
   const unpricedCaptureConversationIds: string[] = [];
-  let totalUsd = 0;
+  let recordedTotalUsd = 0;
   let missingCostCount = 0;
   let anyTranscriptCost = false;
   let correctedSum = 0;
@@ -1467,7 +1689,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     if (cost === null) {
       missingCostCount += 1;
     } else {
-      totalUsd += cost;
+      recordedTotalUsd += cost;
     }
     const transcriptCost = conversation.transcript?.costUsd ?? null;
     const unpricedCapture =
@@ -1476,13 +1698,14 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     if (unpricedCapture) {
       unpricedCaptureConversationIds.push(conversation.conversationId);
     }
+    let effectiveCost = cost ?? 0;
     if (transcriptCost !== null) {
       anyTranscriptCost = true;
       // The recorded row already includes a Codex capture turn the transcript
       // never saw; correcting down to the transcript would drop real spend.
       const recordedIncludesCapture =
         unpricedCapture && cost !== null && cost > transcriptCost;
-      correctedSum += recordedIncludesCapture ? cost : transcriptCost;
+      effectiveCost = recordedIncludesCapture ? cost : transcriptCost;
       if (
         !recordedIncludesCapture &&
         cost !== null &&
@@ -1498,15 +1721,12 @@ export function buildAuditReport(input: AuditInput): AuditReport {
           transcriptUsd: transcriptCost,
         });
       }
-    } else {
-      correctedSum += cost ?? 0;
     }
+    correctedSum += effectiveCost;
     const lane = conversation.lane ?? "unattributed";
-    byLane[lane] = (byLane[lane] ?? 0) + (cost ?? 0);
-    if (conversation.contextId !== null) {
-      byContext[conversation.contextId] =
-        (byContext[conversation.contextId] ?? 0) + (cost ?? 0);
-    }
+    const contextId = conversation.contextId ?? "unattributed";
+    byLane[lane] = (byLane[lane] ?? 0) + effectiveCost;
+    byContext[contextId] = (byContext[contextId] ?? 0) + effectiveCost;
   }
   const correctedTotalUsd = anyTranscriptCost ? correctedSum : null;
 
@@ -1704,8 +1924,13 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       if (at !== null) points.push({ at, label: record.event });
     }
   }
+  for (const interval of admissionIntervals) {
+    points.push({ at: interval.start, label: "advisory_admission.requested" });
+    points.push({ at: interval.end, label: "advisory_admission.admitted" });
+  }
   points.sort((a, b) => a.at - b.at);
 
+  const mergedAdmission = mergeIntervals(admissionIntervals);
   const mergedWork = mergeIntervals(workIntervals);
   const mergedHuman = mergeIntervals(humanIntervals);
   const mergedHalt = mergeIntervals(haltIntervals);
@@ -1727,6 +1952,8 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       classification = "halt_wait";
     } else if (overlapMs(gap, mergedHuman) / gapMs > 0.5) {
       classification = "human_wait";
+    } else if (overlapMs(gap, mergedAdmission) / gapMs > 0.5) {
+      classification = "admission_wait";
     } else if (overlapMs(gap, mergedHung) / gapMs > 0.5) {
       classification = "hung_turn";
     } else if (overlapMs(gap, mergedValidationCompute) / gapMs > 0.5) {
@@ -2147,9 +2374,13 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     });
   }
   const resolvedWaits = contexts.flatMap((context) =>
-    [...context.approvalWaits, ...context.userInputWaits].filter(
-      (w) => w.waitMs !== null,
-    ),
+    [
+      ...context.approvalWaits,
+      ...context.userInputWaits.filter(
+        (wait) =>
+          wait.decision === "answered" || wait.decision === "answers_observed",
+      ),
+    ].filter((wait) => wait.waitMs !== null),
   );
   if (
     resolvedWaits.length > 0 &&
@@ -2164,7 +2395,18 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   }
 
   // ---- telemetry confidence ---------------------------------------------
-  const confidence: ConfidenceNote[] = [];
+  const confidence: ConfidenceNote[] = [
+    {
+      kind: "cost_boundary",
+      summary:
+        "Costs cover recorded CC agent usage, not all model usage launched by shell commands or subprocesses. External model costs are unknown unless separately evidenced; report known external contributions separately.",
+    },
+    {
+      kind: "phase_timing",
+      summary:
+        "Main implementer, validator dispatch, advisory response, and gate durations are elapsed intervals that may overlap across lanes or contain waiting. They are not additive labor or a partition of wall clock. Incomplete phase intervals have unknown duration.",
+    },
+  ];
   const occupancyUnmeasurable = contexts.filter(
     (context) =>
       context.peakContextTokens !== null && context.peakOccupancyPct === null,
@@ -2214,6 +2456,10 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       summary: `${costGapConversations.length} active conversation(s) recorded zero/absent cost — the cost total is a floor`,
     });
   }
+  confidence.push({
+    kind: "admission_timing",
+    summary: `Advisory admission timing has ${advisoryAdmissions.length} observed runtime request/admission pair(s) for ${advisoryAdmissionRequestCount} logged response start(s), matched by execution, trace, and conversation. Global-log rotation or missing pairs leave waits unknown. Other phases' admission waits are not measured separately; measured waits can overlap phase intervals.`,
+  });
   const unscannedCount = conversationReports.filter(
     (conversation) => conversation.transcript === null,
   ).length;
@@ -2256,7 +2502,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     },
     contexts,
     cost: {
-      totalUsd,
+      recordedTotalUsd,
       correctedTotalUsd,
       byLane,
       byContext,
@@ -2267,6 +2513,13 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     time: {
       wallClockMs,
       agentTurnMsTotal,
+      validatorMsTotal,
+      advisoryResponseMsTotal,
+      incompleteValidatorIntervalCount,
+      incompleteAdvisoryResponseCount,
+      advisoryAdmissionWaitMsTotal,
+      advisoryAdmissionRequestCount,
+      advisoryAdmissions,
       hungTurnMsTotal,
       humanWaitMsTotal,
       operatorRecoveryWaitMsTotal,
@@ -2378,19 +2631,13 @@ export function renderMarkdown(report: AuditReport): string {
   lines.push("## Cost");
   lines.push("");
   lines.push(
-    `Total recorded cost: **${formatUsd(report.cost.totalUsd)}** across ${report.cost.knownConversationCount} conversation(s)` +
+    `CC agent conversation cost: **${formatUsd(report.cost.correctedTotalUsd ?? report.cost.recordedTotalUsd)}** across ${report.cost.knownConversationCount} conversation(s)` +
       (report.cost.missingCostCount > 0
         ? ` (${report.cost.missingCostCount} with no recorded cost)`
         : ""),
+    `- raw recorded conversation rows: ${formatUsd(report.cost.recordedTotalUsd)} (retained for reconciliation; breakdowns use the effective corrected basis)`,
+    "- boundary: CC agents only; model usage launched by shell commands or subprocesses is untracked here. Separately evidenced external costs may be added explicitly; unknown costs remain unknown.",
   );
-  if (
-    report.cost.correctedTotalUsd !== null &&
-    Math.abs(report.cost.correctedTotalUsd - report.cost.totalUsd) > 0.01
-  ) {
-    lines.push(
-      `- transcript-corrected total: **${formatUsd(report.cost.correctedTotalUsd)}** (recorded rows written before the accrual fix are inflated — prefer this figure)`,
-    );
-  }
   for (const [lane, cost] of Object.entries(report.cost.byLane)) {
     lines.push(`- by lane · ${lane}: ${formatUsd(cost)}`);
   }
@@ -2412,7 +2659,7 @@ export function renderMarkdown(report: AuditReport): string {
   lines.push("## Time");
   lines.push("");
   lines.push(
-    `Wall clock ${formatMaybeMs(report.time.wallClockMs)} · agent turns ${formatMs(report.time.agentTurnMsTotal)}` +
+    `Wall clock ${formatMaybeMs(report.time.wallClockMs)} · main implementer turns ${formatMs(report.time.agentTurnMsTotal)}` +
       (report.time.hungTurnMsTotal > 0
         ? ` · hung turns ${formatMs(report.time.hungTurnMsTotal)} (excluded from agent turns)`
         : "") +
@@ -2420,6 +2667,13 @@ export function renderMarkdown(report: AuditReport): string {
       (report.time.haltRecoveries.length > 0
         ? ` · operator recovery ${formatMs(report.time.operatorRecoveryWaitMsTotal)}`
         : ""),
+  );
+  lines.push(
+    `- observed completed validator dispatch intervals: ${report.time.validatorMsTotal === null ? "unknown (no completed interval observed)" : formatMs(report.time.validatorMsTotal)} · observed completed advisory response intervals: ${report.time.advisoryResponseMsTotal === null ? "unknown (no completed interval observed)" : formatMs(report.time.advisoryResponseMsTotal)}`,
+    `- validator dispatch intervals without an observed completion: ${report.time.incompleteValidatorIntervalCount} (duration unknown)`,
+    `- advisory response intervals without an observed completion: ${report.time.incompleteAdvisoryResponseCount} (duration unknown)`,
+    `- measured advisory admission wait: ${formatMaybeMs(report.time.advisoryAdmissionWaitMsTotal)} (${report.time.advisoryAdmissions.length} observed pair(s) / ${report.time.advisoryAdmissionRequestCount} logged advisory starts; remaining coverage unknown)`,
+    "- these elapsed intervals may overlap and include waiting; they do not sum to workflow labor or wall clock.",
   );
   if (report.time.haltRecoveries.length > 0) {
     lines.push("");

@@ -70,9 +70,7 @@ const lifecycles: Awaited<ReturnType<typeof createLifecycleFixture>>[] = [];
 let db: Db;
 let repo: GraphWorkflowExecutionsRepo;
 let logDirRoot: string;
-// A real directory: the runner composes each lane's write envelope before
-// dispatch, and that composition canonicalizes the candidate worktree and fails
-// closed when it cannot resolve.
+// Workspace preparation needs a real candidate directory before dispatch.
 const worktreeDir = mkdtempSync(path.join(tmpdir(), "cc-cohort-wt-"));
 
 /**

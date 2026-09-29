@@ -1,11 +1,7 @@
-import {
-  getFsWriteRestrictionForBackend,
-  getConfiguredBackendModelCatalog,
-} from "@/lib/agent-backends/catalog";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { validateModelSelection } from "@/lib/agent-backends/model-selection";
 import type { ExecutionCatalogEntry } from "@/lib/agent-backends/execution-admission";
 import { validateWorkflowExecutionAdmission } from "./execution-admission";
-import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
@@ -216,8 +212,6 @@ export function validateWorkflowDefinition(
     ...validateContextOutputSchemas(definition.executionContexts),
     ...validateLaneDependencyAcyclicity(definition),
     ...validateExplicitLaneBarrierCoverage(definition),
-    ...validateCohortWriteRestriction(definition.executionContexts, deps),
-    ...validateWorkflowTierCohortWriteRestriction(definition, deps),
     ...validateEdgeGuards(definition.executionContexts, definition.edges),
     ...validateLoopGroups(definition),
   ];
@@ -464,7 +458,6 @@ export function validateResolvedWorkflow(
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
     ...validateWorkflowExecutionAdmission(resolved, deps.executionEntryFor),
-    ...validateCohortWriteRestriction(resolved.executionContexts, deps),
   ];
 
   for (const site of collectResolvedWorkflowModelSelectionSites(resolved)) {
@@ -513,109 +506,10 @@ function resolvedSelectionUseSite(site: {
   return `${context} ${site.role} agent`;
 }
 
-/**
- * Backend facts a definition check needs but a definition does not carry.
- * Injected because the write-restriction lookup is a per-backend capability
- * declaration: a test proves refusal by supplying a backend that cannot apply
- * write limits, either natively or through instructions.
- */
+/** Backend facts required by definition admission and model-selection checks. */
 export interface BackendCapabilityDeps {
   executionEntryFor?(backend: AgentBackendId): ExecutionCatalogEntry;
-  fsWriteRestrictionFor?(backend: AgentBackendId): FsWriteRestrictionSupport;
   configuredModelSelectionFor?(
     backend: AgentBackendId,
   ): BackendModelSelection | undefined;
-}
-
-/** The cohort shape every tier — global-seeded, workflow, context — exposes. */
-interface WriteRestrictionCheckableCohort {
-  enabled: boolean;
-  assignments: readonly { id: string; agent: { backend: AgentBackendId } }[];
-}
-
-/** The cohort shape both the authored and the resolved context expose. */
-interface WriteRestrictionCheckableContext {
-  id: string;
-  contextValidator?: WriteRestrictionCheckableCohort;
-}
-
-/**
- * Refuse cohort members whose backend cannot apply the lane's write policy.
- *
- * The refusal is at definition accept-time rather than at dispatch because a
- * validator needs its write limits delivered on every turn. Instruction-only
- * limits are supported and disclosed by the backend contract. The check is
- * attached to the STRUCTURAL validator (which
- * every accept path calls) and to the resolved check (which sees cascade-supplied
- * cohorts the authored document never named), because a backend id is an enum
- * member, never a substitution target, so the check is identical on both sides
- * of the authored → concrete transition.
- *
- * Implementer placement is checked by execution admission. A disabled cohort is
- * skipped because it is dormant configuration, not a run; model-selection
- * admission still validates it so enabling the cohort cannot expose a latent
- * invalid selection.
- */
-function validateCohortWriteRestriction(
-  contexts: readonly WriteRestrictionCheckableContext[],
-  deps: BackendCapabilityDeps,
-): WorkflowGraphValidationError[] {
-  return contexts.flatMap((context, contextIndex) =>
-    checkCohortWriteRestriction(context.contextValidator, deps, {
-      contextId: context.id,
-      fieldPath: `executionContexts.${contextIndex}.contextValidator`,
-      useSite: `Context "${context.id}"`,
-    }),
-  );
-}
-
-/**
- * The workflow-tier cohort is a use site in its own right (R7.2).
- *
- * Assignments replace as whole units across the cascade, so a context that
- * declares no cohort of its own runs THIS one verbatim — an unsandboxable
- * assignment here is not dormant configuration, it is every such context's
- * lanes. Checking only `executionContexts` would admit the definition and leave
- * the refusal to launch-time resolution, which is exactly the deferral the
- * definition-validate gate exists to prevent.
- *
- * The global tier has no definition to validate: it enters through the cascade
- * and is caught by `validateResolvedWorkflow` before a run is seeded.
- */
-function validateWorkflowTierCohortWriteRestriction(
-  definition: ValidatableDefinition,
-  deps: BackendCapabilityDeps,
-): WorkflowGraphValidationError[] {
-  if (!("workflowConfig" in definition)) return [];
-  return checkCohortWriteRestriction(
-    definition.workflowConfig.contextValidator,
-    deps,
-    {
-      fieldPath: "workflowConfig.contextValidator",
-      useSite: "Workflow-level",
-    },
-  );
-}
-
-function checkCohortWriteRestriction(
-  cohort: WriteRestrictionCheckableCohort | undefined,
-  deps: BackendCapabilityDeps,
-  site: { contextId?: string; fieldPath: string; useSite: string },
-): WorkflowGraphValidationError[] {
-  if (!cohort?.enabled) return [];
-  const fsWriteRestrictionFor =
-    deps.fsWriteRestrictionFor ?? getFsWriteRestrictionForBackend;
-
-  const errors: WorkflowGraphValidationError[] = [];
-  for (const [index, assignment] of cohort.assignments.entries()) {
-    const { backend } = assignment.agent;
-    if (fsWriteRestrictionFor(backend) !== "unsupported") continue;
-    errors.push({
-      code: "validator-write-restriction-unsupported",
-      message: `${site.useSite} validator assignment "${assignment.id}" runs on ${backend}, which cannot apply a filesystem write policy for this validator assignment`,
-      ...(site.contextId === undefined ? {} : { contextId: site.contextId }),
-      field: `${site.fieldPath}.assignments.${index}.agent.backend`,
-    });
-  }
-  return errors;
 }

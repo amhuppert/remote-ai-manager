@@ -88,22 +88,10 @@ const REFERENCE_LINT_CODES: ReadonlySet<string> = new Set([
   "referenced-parameter-without-value",
 ]);
 
-/** Codes raised at either tier; only the context tier's name a context. */
-const DUAL_TIER_SCREEN_PATHS: Readonly<Record<string, readonly string[]>> = {
-  "validator-write-restriction-unsupported": ["gates", VALIDATOR_SCREEN_ID],
-};
-
 export function routeValidationError(
   error: WorkflowGraphValidationError,
 ): ValidationErrorRoute {
   const contextId = error.contextId ?? null;
-
-  const dualTier = DUAL_TIER_SCREEN_PATHS[error.code];
-  if (dualTier !== undefined) {
-    return contextId === null
-      ? { contextId: null, scope: "workflow", screenPath: dualTier }
-      : { contextId, scope: "context", screenPath: dualTier };
-  }
 
   const workflowScreen = WORKFLOW_SCREEN_PATHS[error.code];
   if (workflowScreen !== undefined) {

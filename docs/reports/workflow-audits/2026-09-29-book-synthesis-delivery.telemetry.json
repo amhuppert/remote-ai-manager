@@ -1,0 +1,1395 @@
+{
+  "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+  "extractedAt": "2026-09-29",
+  "sources": {
+    "extractorCommand": "bun run workflow:audit -- --execution 62c5ad5a-4c6a-4ab5-ac53-3091a5007cca --json",
+    "gitObject": "9373130d263242fee969a20ecc430a9cc5e8d588",
+    "gitDir": "/Users/alex/github/book-ingest/.git",
+    "workflowLogs": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca"
+  },
+  "overview": {
+    "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+    "seedDefinitionId": "c041cd91-fbdf-4707-bd6b-cb2b79dee04f",
+    "seedDefinitionRevision": 7,
+    "launchedTier": "project",
+    "boundInputs": {},
+    "status": "completed",
+    "source": "archived",
+    "startedAt": "2026-09-24T22:23:51.064Z",
+    "completedAt": "2026-09-25T14:26:54.798Z",
+    "wallClockMs": 57783734,
+    "contextsTotal": 23,
+    "contextsCompleted": 23,
+    "haltReason": null,
+    "pendingHaltReason": null,
+    "secondaryHaltReasons": [],
+    "charterPresent": true,
+    "sharedDocumentCount": 28
+  },
+  "publish": {
+    "commitSha": "9373130d263242fee969a20ecc430a9cc5e8d588",
+    "fileCount": 137,
+    "totalAdditions": 17748,
+    "totalDeletions": 2,
+    "scratchFiles": []
+  },
+  "correctedWorkflowCostUsd": 212.28643499999998,
+  "rawRecordedWorkflowCostUsd": 360.1692917,
+  "correctedByLaneUsd": {
+    "implementer": 89.96021099999999,
+    "context_validator": 122.32622399999998
+  },
+  "contexts": [
+    {
+      "contextId": "scaffold",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-24T22:32:08.495Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 131982,
+      "conversations": [
+        {
+          "conversationId": "25e9344f-0610-4e0d-870d-970102b60961",
+          "lane": "implementer",
+          "recordedUsd": 1.9880441999999996,
+          "correctedUsd": 1.0765061999999999,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/25e9344f-0610-4e0d-870d-970102b60961.jsonl",
+          "toolCalls": 19,
+          "erroredTools": 1
+        },
+        {
+          "conversationId": "8b71e11e-ca5d-4075-b9bd-caa509d1cf3e",
+          "lane": "context_validator",
+          "recordedUsd": 4.446,
+          "correctedUsd": 4.446,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/8b71e11e-ca5d-4075-b9bd-caa509d1cf3e.jsonl",
+          "toolCalls": 38,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "question-set",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-24T22:37:47.997Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 421313,
+      "conversations": [
+        {
+          "conversationId": "71abd8e0-faab-4e54-81e7-f17d0bd3d943",
+          "lane": "context_validator",
+          "recordedUsd": 3.9914097499999994,
+          "correctedUsd": 3.9914097499999994,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/71abd8e0-faab-4e54-81e7-f17d0bd3d943.jsonl",
+          "toolCalls": 34,
+          "erroredTools": 5
+        },
+        {
+          "conversationId": "af300a6e-5a4b-4723-807f-8b830118ec37",
+          "lane": "implementer",
+          "recordedUsd": 7.3424705999999995,
+          "correctedUsd": 3.7811668,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/af300a6e-5a4b-4723-807f-8b830118ec37.jsonl",
+          "toolCalls": 42,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "thin-path",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-24T22:59:03.025Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-24T23:01:23.349Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 1134906,
+      "conversations": [
+        {
+          "conversationId": "737f9e0e-e1d3-464b-b255-235b902eddbe",
+          "lane": "implementer",
+          "recordedUsd": 17.453051800000004,
+          "correctedUsd": 9.075837400000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/737f9e0e-e1d3-464b-b255-235b902eddbe.jsonl",
+          "toolCalls": 96,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "7da694c4-ef99-433c-a6f1-e05eea197298",
+          "lane": "context_validator",
+          "recordedUsd": 12.21521125,
+          "correctedUsd": 6.838906499999999,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/7da694c4-ef99-433c-a6f1-e05eea197298.jsonl",
+          "toolCalls": 51,
+          "erroredTools": 2
+        }
+      ]
+    },
+    {
+      "contextId": "extraction-full-book",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-24T23:20:45.587Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 461715,
+      "conversations": [
+        {
+          "conversationId": "221b0d99-d75b-4774-b511-d0a534d9d1b8",
+          "lane": "context_validator",
+          "recordedUsd": 6.1958400000000005,
+          "correctedUsd": 6.1958400000000005,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/221b0d99-d75b-4774-b511-d0a534d9d1b8.jsonl",
+          "toolCalls": 53,
+          "erroredTools": 3
+        },
+        {
+          "conversationId": "34fd759d-7b63-4003-a8d5-8f65b0cc0cdf",
+          "lane": "implementer",
+          "recordedUsd": 6.8324374,
+          "correctedUsd": 3.558248,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/34fd759d-7b63-4003-a8d5-8f65b0cc0cdf.jsonl",
+          "toolCalls": 51,
+          "erroredTools": 0
+        }
+      ]
+    },
+    {
+      "contextId": "submission-contract",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-24T23:35:19.442Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-24T23:37:53.615Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 468194,
+      "conversations": [
+        {
+          "conversationId": "db47de39-a5d4-4caa-88ff-4ba42b8998a8",
+          "lane": "implementer",
+          "recordedUsd": 6.919994,
+          "correctedUsd": 3.7521687999999997,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/db47de39-a5d4-4caa-88ff-4ba42b8998a8.jsonl",
+          "toolCalls": 41,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "ea462a80-c871-4cc4-8412-c4656f32e389",
+          "lane": "context_validator",
+          "recordedUsd": 11.23159,
+          "correctedUsd": 6.456801250000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/ea462a80-c871-4cc4-8412-c4656f32e389.jsonl",
+          "toolCalls": 49,
+          "erroredTools": 3
+        }
+      ]
+    },
+    {
+      "contextId": "unit-lifecycle",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-24T23:56:23.494Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T00:00:33.451Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 590347,
+      "conversations": [
+        {
+          "conversationId": "08d39f25-5e83-49f1-bedb-69f7235ebcca",
+          "lane": "context_validator",
+          "recordedUsd": 13.422404499999999,
+          "correctedUsd": 7.5911365,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/08d39f25-5e83-49f1-bedb-69f7235ebcca.jsonl",
+          "toolCalls": 53,
+          "erroredTools": 5
+        },
+        {
+          "conversationId": "e3d9fc08-d5af-4792-976b-d9735a7e2901",
+          "lane": "implementer",
+          "recordedUsd": 9.667472,
+          "correctedUsd": 5.315549600000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/e3d9fc08-d5af-4792-976b-d9735a7e2901.jsonl",
+          "toolCalls": 69,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "fixture-package",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T00:13:06.078Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 363613,
+      "conversations": [
+        {
+          "conversationId": "100689cc-c0b2-465d-8e20-41a6670076a2",
+          "lane": "context_validator",
+          "recordedUsd": 4.39547325,
+          "correctedUsd": 4.39547325,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/100689cc-c0b2-465d-8e20-41a6670076a2.jsonl",
+          "toolCalls": 33,
+          "erroredTools": 3
+        },
+        {
+          "conversationId": "72f9a971-6cfe-4589-b901-cc1af27291c3",
+          "lane": "implementer",
+          "recordedUsd": 4.917083400000003,
+          "correctedUsd": 2.5737788000000013,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/72f9a971-6cfe-4589-b901-cc1af27291c3.jsonl",
+          "toolCalls": 41,
+          "erroredTools": 0
+        }
+      ]
+    },
+    {
+      "contextId": "query-read",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T00:38:15.548Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 938367,
+      "conversations": [
+        {
+          "conversationId": "7730958b-4a4a-465e-af20-e65be65e18ed",
+          "lane": "implementer",
+          "recordedUsd": 11.6986162,
+          "correctedUsd": 6.0044862000000006,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/7730958b-4a4a-465e-af20-e65be65e18ed.jsonl",
+          "toolCalls": 73,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "ff584bca-4fa1-45cf-938d-f88ead1d647a",
+          "lane": "context_validator",
+          "recordedUsd": 5.80798275,
+          "correctedUsd": 5.80798275,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/ff584bca-4fa1-45cf-938d-f88ead1d647a.jsonl",
+          "toolCalls": 44,
+          "erroredTools": 7
+        }
+      ]
+    },
+    {
+      "contextId": "query-trace",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T00:48:37.009Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T00:50:19.622Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 271217,
+      "conversations": [
+        {
+          "conversationId": "5c0998f5-6e39-4da6-8b7a-e39011111dbb",
+          "lane": "implementer",
+          "recordedUsd": 4.026014,
+          "correctedUsd": 2.1733001999999995,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/5c0998f5-6e39-4da6-8b7a-e39011111dbb.jsonl",
+          "toolCalls": 37,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "b7f7373d-fb0d-48a4-8a2b-ddbc2ae4e735",
+          "lane": "context_validator",
+          "recordedUsd": 8.355626,
+          "correctedUsd": 4.6489855,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/b7f7373d-fb0d-48a4-8a2b-ddbc2ae4e735.jsonl",
+          "toolCalls": 36,
+          "erroredTools": 7
+        }
+      ]
+    },
+    {
+      "contextId": "occurrences",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T01:07:43.453Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T01:11:21.473Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 402880,
+      "conversations": [
+        {
+          "conversationId": "94f8c204-9183-4886-b25d-7c42321a9d12",
+          "lane": "implementer",
+          "recordedUsd": 5.695099000000001,
+          "correctedUsd": 3.1079740000000005,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/94f8c204-9183-4886-b25d-7c42321a9d12.jsonl",
+          "toolCalls": 41,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "cf10b801-9ed0-4f2d-97bb-b01074cc51e4",
+          "lane": "context_validator",
+          "recordedUsd": 11.677840250000003,
+          "correctedUsd": 6.603429750000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/cf10b801-9ed0-4f2d-97bb-b01074cc51e4.jsonl",
+          "toolCalls": 37,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "index-report",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T01:21:19.646Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 141409,
+      "conversations": [
+        {
+          "conversationId": "191e9d3a-c0fc-4c53-ae5b-00d62912df59",
+          "lane": "context_validator",
+          "recordedUsd": 3.3549589999999996,
+          "correctedUsd": 3.3549589999999996,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/191e9d3a-c0fc-4c53-ae5b-00d62912df59.jsonl",
+          "toolCalls": 34,
+          "erroredTools": 2
+        },
+        {
+          "conversationId": "ee5ec16c-0e7f-475f-8931-ae14c5731eaa",
+          "lane": "implementer",
+          "recordedUsd": 1.8124710000000002,
+          "correctedUsd": 0.9920310000000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/ee5ec16c-0e7f-475f-8931-ae14c5731eaa.jsonl",
+          "toolCalls": 17,
+          "erroredTools": 0
+        }
+      ]
+    },
+    {
+      "contextId": "search-grammar",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T01:31:52.199Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T01:33:52.444Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 274991,
+      "conversations": [
+        {
+          "conversationId": "36f602ed-bba2-406a-980a-79bfb66d7cd6",
+          "lane": "implementer",
+          "recordedUsd": 3.6063842,
+          "correctedUsd": 2.0015448,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/36f602ed-bba2-406a-980a-79bfb66d7cd6.jsonl",
+          "toolCalls": 35,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "fd4402ee-6725-4eb6-8884-ef21165a0b4f",
+          "lane": "context_validator",
+          "recordedUsd": 8.5649085,
+          "correctedUsd": 4.73920975,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/fd4402ee-6725-4eb6-8884-ef21165a0b4f.jsonl",
+          "toolCalls": 37,
+          "erroredTools": 4
+        }
+      ]
+    },
+    {
+      "contextId": "search-results",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T01:50:07.011Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T01:52:44.585Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 472001,
+      "conversations": [
+        {
+          "conversationId": "6ea8467e-3d4d-4763-9e65-b28cb370df05",
+          "lane": "context_validator",
+          "recordedUsd": 11.271920999999999,
+          "correctedUsd": 6.274882249999999,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/6ea8467e-3d4d-4763-9e65-b28cb370df05.jsonl",
+          "toolCalls": 49,
+          "erroredTools": 2
+        },
+        {
+          "conversationId": "bab74c99-575c-4394-be09-95b349faf519",
+          "lane": "implementer",
+          "recordedUsd": 6.718892999999997,
+          "correctedUsd": 3.6371627999999983,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/bab74c99-575c-4394-be09-95b349faf519.jsonl",
+          "toolCalls": 54,
+          "erroredTools": 0
+        }
+      ]
+    },
+    {
+      "contextId": "instructions",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T02:06:11.099Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T02:08:14.041Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 438159,
+      "conversations": [
+        {
+          "conversationId": "6046a54d-d8a6-4fd4-9e70-073d43b70451",
+          "lane": "implementer",
+          "recordedUsd": 7.293029000000001,
+          "correctedUsd": 3.908539,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/6046a54d-d8a6-4fd4-9e70-073d43b70451.jsonl",
+          "toolCalls": 62,
+          "erroredTools": 1
+        },
+        {
+          "conversationId": "883ffd3a-a6e0-48cd-acf1-e0594bb64058",
+          "lane": "context_validator",
+          "recordedUsd": 8.838929,
+          "correctedUsd": 4.922477,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/883ffd3a-a6e0-48cd-acf1-e0594bb64058.jsonl",
+          "toolCalls": 43,
+          "erroredTools": 2
+        }
+      ]
+    },
+    {
+      "contextId": "ingest-1",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T02:26:28.445Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 643127,
+      "conversations": [
+        {
+          "conversationId": "366b4f06-c604-420d-8a9d-4cd6df26d868",
+          "lane": "implementer",
+          "recordedUsd": 8.3957506,
+          "correctedUsd": 4.3043450000000005,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/366b4f06-c604-420d-8a9d-4cd6df26d868.jsonl",
+          "toolCalls": 60,
+          "erroredTools": 1
+        },
+        {
+          "conversationId": "d3018841-9647-4e9c-8dbb-22b4e20c7bc7",
+          "lane": "context_validator",
+          "recordedUsd": 4.13239325,
+          "correctedUsd": 4.13239325,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/d3018841-9647-4e9c-8dbb-22b4e20c7bc7.jsonl",
+          "toolCalls": 23,
+          "erroredTools": 3
+        }
+      ]
+    },
+    {
+      "contextId": "ingest-2",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T02:47:41.232Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 722886,
+      "conversations": [
+        {
+          "conversationId": "577b511f-2d00-4467-a32c-88d9863a690d",
+          "lane": "implementer",
+          "recordedUsd": 9.570534400000001,
+          "correctedUsd": 4.900924400000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/577b511f-2d00-4467-a32c-88d9863a690d.jsonl",
+          "toolCalls": 64,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "db72e387-68cd-43f2-b675-79f361970b1d",
+          "lane": "context_validator",
+          "recordedUsd": 5.4953639999999995,
+          "correctedUsd": 5.4953639999999995,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/db72e387-68cd-43f2-b675-79f361970b1d.jsonl",
+          "toolCalls": 38,
+          "erroredTools": 3
+        }
+      ]
+    },
+    {
+      "contextId": "ingest-3",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T03:05:33.864Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 681655,
+      "conversations": [
+        {
+          "conversationId": "733d0797-c86b-479d-acb9-e9e365291b9f",
+          "lane": "implementer",
+          "recordedUsd": 9.3217542,
+          "correctedUsd": 4.7720796000000005,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/733d0797-c86b-479d-acb9-e9e365291b9f.jsonl",
+          "toolCalls": 62,
+          "erroredTools": 1
+        },
+        {
+          "conversationId": "f2cd20f7-ed88-4cce-a9fa-1bb2ef5a67ab",
+          "lane": "context_validator",
+          "recordedUsd": 4.621676,
+          "correctedUsd": 4.621676,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/f2cd20f7-ed88-4cce-a9fa-1bb2ef5a67ab.jsonl",
+          "toolCalls": 34,
+          "erroredTools": 2
+        }
+      ]
+    },
+    {
+      "contextId": "ingest-4",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T03:24:39.408Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 798831,
+      "conversations": [
+        {
+          "conversationId": "917ce753-fbd7-43e7-9ced-df41a1ce4250",
+          "lane": "implementer",
+          "recordedUsd": 9.858553399999998,
+          "correctedUsd": 5.042691999999999,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/917ce753-fbd7-43e7-9ced-df41a1ce4250.jsonl",
+          "toolCalls": 59,
+          "erroredTools": 1
+        },
+        {
+          "conversationId": "c2f4628b-dc2d-4053-8fea-77e8cb332758",
+          "lane": "context_validator",
+          "recordedUsd": 3.097165,
+          "correctedUsd": 3.097165,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/c2f4628b-dc2d-4053-8fea-77e8cb332758.jsonl",
+          "toolCalls": 24,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "ingest-5",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T03:39:31.800Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 543465,
+      "conversations": [
+        {
+          "conversationId": "534660f0-2a4c-42bd-b9a6-8fbb1e88048d",
+          "lane": "implementer",
+          "recordedUsd": 6.878387,
+          "correctedUsd": 3.5438984,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/534660f0-2a4c-42bd-b9a6-8fbb1e88048d.jsonl",
+          "toolCalls": 46,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "96540568-f590-49cb-b497-839160c610da",
+          "lane": "context_validator",
+          "recordedUsd": 4.8425044999999995,
+          "correctedUsd": 4.8425044999999995,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/96540568-f590-49cb-b497-839160c610da.jsonl",
+          "toolCalls": 39,
+          "erroredTools": 0
+        }
+      ]
+    },
+    {
+      "contextId": "ingest-6",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T03:49:54.129Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 363885,
+      "conversations": [
+        {
+          "conversationId": "02becdec-18f9-45d5-b4ed-b647b2eda926",
+          "lane": "context_validator",
+          "recordedUsd": 2.7457132499999997,
+          "correctedUsd": 2.7457132499999997,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/02becdec-18f9-45d5-b4ed-b647b2eda926.jsonl",
+          "toolCalls": 14,
+          "erroredTools": 1
+        },
+        {
+          "conversationId": "362acfc8-1824-4c56-ab5f-ed1e6cd69019",
+          "lane": "implementer",
+          "recordedUsd": 5.3246348,
+          "correctedUsd": 2.7535844000000003,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/362acfc8-1824-4c56-ab5f-ed1e6cd69019.jsonl",
+          "toolCalls": 42,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "evaluation-harness",
+      "iterationCount": 2,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T04:23:14.855Z",
+          "pass": false
+        },
+        {
+          "occurredAt": "2026-09-25T04:27:45.457Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 1398705,
+      "conversations": [
+        {
+          "conversationId": "9283f16f-09b0-4833-9614-9edab995a49a",
+          "lane": "implementer",
+          "recordedUsd": 12.915767799999998,
+          "correctedUsd": 6.610814199999999,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/9283f16f-09b0-4833-9614-9edab995a49a.jsonl",
+          "toolCalls": 74,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "eb292614-e9ef-487e-b6e9-745db4ce849d",
+          "lane": "context_validator",
+          "recordedUsd": 13.846072249999999,
+          "correctedUsd": 7.5646245,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/eb292614-e9ef-487e-b6e9-745db4ce849d.jsonl",
+          "toolCalls": 68,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "evaluation-run",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T04:50:09.437Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T13:57:41.409Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T13:58:57.976Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T14:02:50.824Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 1029097,
+      "conversations": [
+        {
+          "conversationId": "282833ba-839d-4b0b-b82b-acb53a47e286",
+          "lane": "context_validator",
+          "recordedUsd": 27.545146000000003,
+          "correctedUsd": 8.636980000000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/282833ba-839d-4b0b-b82b-acb53a47e286.jsonl",
+          "toolCalls": 38,
+          "erroredTools": 2
+        },
+        {
+          "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72",
+          "lane": "implementer",
+          "recordedUsd": 2.272697,
+          "correctedUsd": 1.6045101999999998,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/d998fd8d-f174-41c8-95d6-cd562d79bd72.jsonl",
+          "toolCalls": 22,
+          "erroredTools": 1
+        }
+      ]
+    },
+    {
+      "contextId": "final-verification",
+      "iterationCount": 1,
+      "verdicts": [
+        {
+          "occurredAt": "2026-09-25T14:24:46.204Z",
+          "pass": true
+        },
+        {
+          "occurredAt": "2026-09-25T14:26:33.487Z",
+          "pass": true
+        }
+      ],
+      "agentTurnMs": 941926,
+      "conversations": [
+        {
+          "conversationId": "51efefc7-0ff2-4988-a0aa-efb767d2b061",
+          "lane": "implementer",
+          "recordedUsd": 10.507324200000003,
+          "correctedUsd": 5.469069200000001,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/51efefc7-0ff2-4988-a0aa-efb767d2b061.jsonl",
+          "toolCalls": 93,
+          "erroredTools": 0
+        },
+        {
+          "conversationId": "c727a9ce-f722-4943-92c3-61ddebad674b",
+          "lane": "context_validator",
+          "recordedUsd": 9.056698999999998,
+          "correctedUsd": 4.92231025,
+          "transcriptPath": "/Users/alex/Library/Application Support/cc/transcripts/c727a9ce-f722-4943-92c3-61ddebad674b.jsonl",
+          "toolCalls": 33,
+          "erroredTools": 3
+        }
+      ]
+    }
+  ],
+  "workflowTokens": {
+    "inputTokens": 414535,
+    "outputTokens": 2064643,
+    "cacheReadInputTokens": 196720617,
+    "cacheCreationInputTokens": 7782145
+  },
+  "tokenMethod": "For each conversation, sum the final raw.modelUsage counters by model/session lineage, closing a lineage when total_cost_usd drops. Includes cached tokens and helper models; excludes nested evaluation CLI calls.",
+  "timing": {
+    "extractor": {
+      "wallClockMs": 57783734,
+      "agentTurnMsTotal": 13634671,
+      "hungTurnMsTotal": 0,
+      "humanWaitMsTotal": 0,
+      "operatorRecoveryWaitMsTotal": 0,
+      "haltRecoveries": [],
+      "gaps": [
+        {
+          "startedAt": "2026-09-25T04:50:09.805Z",
+          "endedAt": "2026-09-25T13:56:01.398Z",
+          "gapMs": 32751593,
+          "classification": "unexplained",
+          "fromEvent": "advisory_response.started",
+          "toEvent": "graph-workflow-status"
+        },
+        {
+          "startedAt": "2026-09-25T04:27:59.682Z",
+          "endedAt": "2026-09-25T04:44:29.083Z",
+          "gapMs": 989401,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "iteration.agent_turn_completed"
+        },
+        {
+          "startedAt": "2026-09-25T03:50:13.251Z",
+          "endedAt": "2026-09-25T04:06:18.874Z",
+          "gapMs": 965623,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "iteration.agent_turn_completed"
+        },
+        {
+          "startedAt": "2026-09-25T03:06:03.417Z",
+          "endedAt": "2026-09-25T03:19:11.528Z",
+          "gapMs": 788111,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "graph-workflow-context-status"
+        },
+        {
+          "startedAt": "2026-09-24T22:38:02.245Z",
+          "endedAt": "2026-09-24T22:50:26.477Z",
+          "gapMs": 744232,
+          "classification": "agent_work",
+          "fromEvent": "lane_commit.completed",
+          "toEvent": "graph-workflow-context-status"
+        },
+        {
+          "startedAt": "2026-09-25T02:26:48.056Z",
+          "endedAt": "2026-09-25T02:38:40.694Z",
+          "gapMs": 712638,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "graph-workflow-context-status"
+        },
+        {
+          "startedAt": "2026-09-25T14:04:50.192Z",
+          "endedAt": "2026-09-25T14:16:26.114Z",
+          "gapMs": 695922,
+          "classification": "agent_work",
+          "fromEvent": "graph-workflow-task-status",
+          "toEvent": "graph-workflow-context-status"
+        },
+        {
+          "startedAt": "2026-09-25T00:13:32.959Z",
+          "endedAt": "2026-09-25T00:24:56.714Z",
+          "gapMs": 683755,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "graph-workflow-context-status"
+        },
+        {
+          "startedAt": "2026-09-25T02:48:03.301Z",
+          "endedAt": "2026-09-25T02:59:13.537Z",
+          "gapMs": 670236,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "graph-workflow-context-status"
+        },
+        {
+          "startedAt": "2026-09-25T02:08:23.737Z",
+          "endedAt": "2026-09-25T02:18:55.077Z",
+          "gapMs": 631340,
+          "classification": "agent_work",
+          "fromEvent": "iteration.prompt_sent",
+          "toEvent": "graph-workflow-context-status"
+        }
+      ]
+    },
+    "validatorMs": 10427129.0,
+    "scriptMs": 273025.0,
+    "advisoryResponseMs": 1021293.0,
+    "advisoryStarts": 36,
+    "recertifications": 12,
+    "questionWaitMs": 307592,
+    "pauseResumeMs": 6904
+  },
+  "validatorRereviews": [
+    {
+      "context": "thin-path",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.4626017500000001,
+      "firstFormattedResultLine": 2318,
+      "lastResultLine": 2502
+    },
+    {
+      "context": "submission-contract",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.6820125000000008,
+      "firstFormattedResultLine": 2005,
+      "lastResultLine": 2314
+    },
+    {
+      "context": "unit-lifecycle",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.7598685000000005,
+      "firstFormattedResultLine": 2437,
+      "lastResultLine": 2719
+    },
+    {
+      "context": "query-trace",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 0.9423450000000004,
+      "firstFormattedResultLine": 1374,
+      "lastResultLine": 1488
+    },
+    {
+      "context": "occurrences",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.5290192500000002,
+      "firstFormattedResultLine": 2407,
+      "lastResultLine": 2707
+    },
+    {
+      "context": "search-grammar",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 0.9135109999999997,
+      "firstFormattedResultLine": 1371,
+      "lastResultLine": 1517
+    },
+    {
+      "context": "search-results",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.2778434999999995,
+      "firstFormattedResultLine": 2384,
+      "lastResultLine": 2560
+    },
+    {
+      "context": "instructions",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.0060249999999997,
+      "firstFormattedResultLine": 1617,
+      "lastResultLine": 1785
+    },
+    {
+      "context": "evaluation-harness",
+      "firstVerdictPass": false,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 1.28317675,
+      "firstFormattedResultLine": 2317,
+      "lastResultLine": 2499
+    },
+    {
+      "context": "evaluation-run",
+      "firstVerdictPass": true,
+      "additionalRounds": 3,
+      "costAfterFirstFormattedVerdict": 4.844332250000001,
+      "firstFormattedResultLine": 1394,
+      "lastResultLine": 1681
+    },
+    {
+      "context": "final-verification",
+      "firstVerdictPass": true,
+      "additionalRounds": 1,
+      "costAfterFirstFormattedVerdict": 0.7879215000000004,
+      "firstFormattedResultLine": 1666,
+      "lastResultLine": 1758
+    }
+  ],
+  "postGoRevalidationValidatorCostUsd": 16.20548025,
+  "rereviewMethod": "Subtract first formatted-verdict result cumulative cost from final cumulative cost, only for contexts with firstVerdictPass=true; source result line numbers above. This is review cost after optional edits, not all avoidable waste.",
+  "evaluation": {
+    "source": "9373130d:eval/runs/2026-09-25/results.jsonl",
+    "conditions": {
+      "full-context": {
+        "answers": 45,
+        "judged": 45,
+        "correct": 45,
+        "unjudged": 0,
+        "answerCostUsd": 51.288211,
+        "answerTokens": {
+          "input": 90,
+          "output": 34650,
+          "cache_creation": 6322715,
+          "cache_read": 65655
+        },
+        "toolCalls": 0,
+        "errors": {
+          "attribution": 0,
+          "citation": 0,
+          "unsupported_negative": 0,
+          "missing_limit": 0
+        }
+      },
+      "proposed": {
+        "answers": 45,
+        "judged": 41,
+        "correct": 41,
+        "unjudged": 4,
+        "answerCostUsd": 4.288174,
+        "answerTokens": {
+          "input": 400,
+          "output": 64495,
+          "cache_creation": 329401,
+          "cache_read": 1807330
+        },
+        "toolCalls": 175,
+        "errors": {
+          "attribution": 0,
+          "citation": 12,
+          "unsupported_negative": 0,
+          "missing_limit": 0
+        }
+      },
+      "source-search": {
+        "answers": 45,
+        "judged": 45,
+        "correct": 44,
+        "unjudged": 0,
+        "answerCostUsd": 2.611937,
+        "answerTokens": {
+          "input": 356,
+          "output": 44381,
+          "cache_creation": 194350,
+          "cache_read": 840465
+        },
+        "toolCalls": 158,
+        "errors": {
+          "attribution": 0,
+          "citation": 7,
+          "unsupported_negative": 0,
+          "missing_limit": 0
+        }
+      },
+      "summary-only": {
+        "answers": 45,
+        "judged": 41,
+        "correct": 33,
+        "unjudged": 4,
+        "answerCostUsd": 22.057654999999997,
+        "answerTokens": {
+          "input": 90,
+          "output": 39043,
+          "cache_creation": 2657913,
+          "cache_read": 65655
+        },
+        "toolCalls": 0,
+        "errors": {
+          "attribution": 0,
+          "citation": 10,
+          "unsupported_negative": 0,
+          "missing_limit": 0
+        }
+      }
+    },
+    "rejectedJudgeLines": [12, 43, 56, 61, 77, 132, 148, 180],
+    "mainAnswerCostUsd": 80.245977,
+    "fixtureAnswerCostUsd": 0.4094444,
+    "costLimit": "Answer costs only. Judge, smoke and earlier discarded nested CLI calls are not fully priced by saved records; amounts are provider usage-equivalent USD, not invoice charges."
+  },
+  "events": [
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/lifecycle.jsonl",
+      "line": 142,
+      "record": {
+        "timestamp": "2026-09-25T13:56:01.482Z",
+        "event": "execution.paused",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "actor": "operator"
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/lifecycle.jsonl",
+      "line": 143,
+      "record": {
+        "timestamp": "2026-09-25T13:56:08.386Z",
+        "event": "execution.resumed",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "previousStatus": "paused",
+        "actor": "operator",
+        "resolvedHaltType": null,
+        "resolvedHaltContextId": null,
+        "hasInterruptedTasks": false,
+        "resetContextIds": ["evaluation-run"],
+        "refilledRoundContextIds": [],
+        "retiredRoundContextIds": []
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/extraction-full-book/iterations.jsonl",
+      "line": 6,
+      "record": {
+        "timestamp": "2026-09-24T23:05:32.499Z",
+        "event": "user_input.waiting",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "extraction-full-book",
+        "conversationIds": ["34fd759d-7b63-4003-a8d5-8f65b0cc0cdf"]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/extraction-full-book/iterations.jsonl",
+      "line": 7,
+      "record": {
+        "timestamp": "2026-09-24T23:07:15.709Z",
+        "event": "user_input.wait_exit",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "extraction-full-book",
+        "cause": "answers_observed",
+        "questionBatchIds": ["q_3f7bebdb-548f-4a7f-ac8b-8269199ebe1e"],
+        "stillParkedCount": 0
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/extraction-full-book/iterations.jsonl",
+      "line": 14,
+      "record": {
+        "timestamp": "2026-09-24T23:20:45.742Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "extraction-full-book",
+        "roundSeq": 1,
+        "conversationId": "34fd759d-7b63-4003-a8d5-8f65b0cc0cdf",
+        "advisoryCount": 6
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/extraction-full-book/iterations.jsonl",
+      "line": 15,
+      "record": {
+        "timestamp": "2026-09-24T23:21:09.899Z",
+        "event": "advisory_response.recorded",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "extraction-full-book",
+        "roundSeq": 1,
+        "dispositions": [
+          "deferred",
+          "deferred",
+          "deferred",
+          "declined",
+          "declined",
+          "declined"
+        ]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-harness/iterations.jsonl",
+      "line": 6,
+      "record": {
+        "timestamp": "2026-09-25T04:06:18.996Z",
+        "event": "user_input.waiting",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-harness",
+        "conversationIds": ["9283f16f-09b0-4833-9614-9edab995a49a"]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-harness/iterations.jsonl",
+      "line": 7,
+      "record": {
+        "timestamp": "2026-09-25T04:09:43.378Z",
+        "event": "user_input.wait_exit",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-harness",
+        "cause": "answers_observed",
+        "questionBatchIds": ["q_d71e15b2-f808-4d5a-a829-67d4cb93c9b4"],
+        "stillParkedCount": 0
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-harness/iterations.jsonl",
+      "line": 22,
+      "record": {
+        "timestamp": "2026-09-25T04:27:45.697Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-harness",
+        "roundSeq": 2,
+        "conversationId": "9283f16f-09b0-4833-9614-9edab995a49a",
+        "advisoryCount": 1
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-harness/iterations.jsonl",
+      "line": 23,
+      "record": {
+        "timestamp": "2026-09-25T04:27:57.024Z",
+        "event": "advisory_response.recorded",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-harness",
+        "roundSeq": 2,
+        "dispositions": ["deferred"]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 10,
+      "record": {
+        "timestamp": "2026-09-25T04:50:09.805Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 1,
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72",
+        "advisoryCount": 4
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 12,
+      "record": {
+        "timestamp": "2026-09-25T13:56:13.224Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 1,
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72",
+        "advisoryCount": 4
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 13,
+      "record": {
+        "timestamp": "2026-09-25T13:56:36.479Z",
+        "event": "advisory_response.recorded",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 1,
+        "dispositions": ["deferred", "deferred", "deferred", "addressed"]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 16,
+      "record": {
+        "timestamp": "2026-09-25T13:57:41.596Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 2,
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72",
+        "advisoryCount": 3
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 17,
+      "record": {
+        "timestamp": "2026-09-25T13:57:56.417Z",
+        "event": "advisory_response.recorded",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 2,
+        "dispositions": ["deferred", "deferred", "deferred"]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 20,
+      "record": {
+        "timestamp": "2026-09-25T13:58:58.154Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 3,
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72",
+        "advisoryCount": 4
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 21,
+      "record": {
+        "timestamp": "2026-09-25T14:02:06.027Z",
+        "event": "advisory_response.recorded",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 3,
+        "dispositions": ["deferred", "deferred", "deferred", "addressed"]
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 24,
+      "record": {
+        "timestamp": "2026-09-25T14:02:50.959Z",
+        "event": "advisory_response.started",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 4,
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72",
+        "advisoryCount": 3
+      }
+    },
+    {
+      "source": "/Users/alex/Library/Application Support/cc/workflow-logs/62c5ad5a-4c6a-4ab5-ac53-3091a5007cca/contexts/evaluation-run/iterations.jsonl",
+      "line": 25,
+      "record": {
+        "timestamp": "2026-09-25T14:02:59.288Z",
+        "event": "advisory_response.recorded",
+        "executionId": "62c5ad5a-4c6a-4ab5-ac53-3091a5007cca",
+        "contextId": "evaluation-run",
+        "roundSeq": 4,
+        "dispositions": ["deferred", "deferred", "deferred"]
+      }
+    }
+  ],
+  "runtimeLogEvidence": [
+    {
+      "source": "logs/global.log",
+      "line": 80513,
+      "record": {
+        "timestamp": "2026-09-25T04:44:29.124Z",
+        "module": "conversation-manager",
+        "message": "conversation-manager.turn_admitted",
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72"
+      }
+    },
+    {
+      "source": "logs/global.log",
+      "line": 80544,
+      "record": {
+        "timestamp": "2026-09-25T04:44:29.213Z",
+        "module": "query-session",
+        "message": "query-session.external_turn_started",
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72"
+      }
+    },
+    {
+      "source": "logs/global.log",
+      "line": 80661,
+      "record": {
+        "timestamp": "2026-09-25T04:44:29.586Z",
+        "module": "claude:conversation-runtime",
+        "message": "claude-runtime.turn_start",
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72"
+      }
+    },
+    {
+      "source": "logs/global.log",
+      "line": 81471,
+      "record": {
+        "timestamp": "2026-09-25T04:50:09.805Z",
+        "module": "graph-workflow-advisory-response",
+        "message": "graph-workflow.advisory_response.turn_started",
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72"
+      }
+    },
+    {
+      "source": "logs/global.log",
+      "line": 86213,
+      "record": {
+        "timestamp": "2026-09-25T13:56:01.515Z",
+        "module": "conversation-manager",
+        "message": "conversation-manager.turn_admitted",
+        "conversationId": "d998fd8d-f174-41c8-95d6-cd562d79bd72"
+      }
+    }
+  ]
+}

@@ -602,6 +602,14 @@ question-ending turn; the durable conversation and pending question remain.
 AgentCall skips structured-output enforcement when the actor reports a pending
 question, and the graph iteration orchestrator owns parking the context.
 
+Graph validators start in the candidate worktree. Their instructions allow
+scratch writes only beneath that worktree's `.cc/temp`, with a separate scratch
+directory per assignment. This is an instruction-only write limit: the
+provider write envelopes require relocating cwd to a writable root, which
+would hide the candidate behind an empty scratch working directory. Graph
+validators therefore dispatch without that envelope; implementer ownership
+envelopes and other callers keep their existing enforcement.
+
 D2 output capture continues the implementer's live lane runtime with a
 `single` structured-output turn. It must match the implementer turn's model,
 write policy, and ask-user setting: any difference rebuilds the runtime, and a
@@ -612,8 +620,8 @@ instruction contracts.
 
 ### The advisory loop
 
-Every advisory reaches the implementer lane, which may act on it or decline it
-without obligation, and every one gets a durable disposition:
+Advisories from an ordinary validation round reach the implementer lane, which
+may act on them or decline them without obligation. Each gets a durable disposition:
 
 - **Failing round** — the round's fresh advisories ride the existing task-failure
   messages, so the implementer sees them beside the fixes it must make.
@@ -638,9 +646,12 @@ without obligation, and every one gets a durable disposition:
   dispositions are testimony, so an implementer that declines everything and
   edits anyway is still re-certified.
 
-The loop is bounded by construction: a round's batch is delivered exactly once,
-and the re-certification round runs no advisory lanes, so it cannot raise a fresh
-batch and trigger a second response turn.
+An initial round's batch is delivered exactly once. Passing re-certification
+completes the context without another advisory-response turn: optional findings
+from its blocking reviewers remain review evidence and cannot reopen the
+optional edit cycle. Failing re-certification still enters ordinary remediation
+with its blocking issues and advisories. Removing advisory-only seats does not
+itself bound the loop, since blocking reviewers can also return advisories.
 
 **Advisory-only cohorts ship uncertified.** Because re-certification is
 blocking-only, a cohort with no blocking seat and no script gate has nothing to

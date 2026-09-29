@@ -163,23 +163,6 @@ describe("routeValidationError", () => {
     ).toEqual(["gates", "validator"]);
   });
 
-  // The write-restriction check runs at both tiers; only the context tier's
-  // errors name a context, and the workflow tier's cohort screen is its own.
-  it("routes the workflow-tier cohort code to the workflow scope", () => {
-    expect(
-      routeValidationError(
-        error({
-          code: "validator-write-restriction-unsupported",
-          field: "workflowConfig.contextValidator.assignments.0.agent.backend",
-        }),
-      ),
-    ).toEqual({
-      contextId: null,
-      scope: "workflow",
-      screenPath: ["gates", "validator"],
-    });
-  });
-
   // Graph-shape errors have no screen: the edge that raised them is edited on
   // the canvas, so the row selects nothing and leaves the panel at its root.
   it("leaves structural graph codes at the panel root", () => {

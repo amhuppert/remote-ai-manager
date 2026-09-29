@@ -734,14 +734,9 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
       async readValidatorConversationTelemetry() {
         return null;
       },
-      composeLaneWriteEnvelope: () => ({
-        policy: {
-          mode: "allowlist",
-          allowWrite: ["/tmp/validator-lane", "/tmp/validator-lane/tmp"],
-          denyWrite: ["/repo/worktree"],
-        },
-        laneScratchDir: "/tmp/validator-lane",
-        laneTmpDir: "/tmp/validator-lane/tmp",
+      prepareWorkspace: () => ({
+        worktreePath: "/repo/worktree",
+        scratchDirectory: "/repo/worktree/.cc/temp/validators/assignment",
       }),
     });
 

@@ -13,8 +13,8 @@
  * record is the whole bookkeeping: the fresh set is the round's advisories that
  * carry none, and the mutation that delivers them stamps them. Nothing dedups
  * across rounds because nothing needs to — a round's advisories belong to that
- * round's `seq`, and the re-certification round runs no advisory lanes, so it
- * raises none to deliver.
+ * round's `seq`. Passing re-certification retains any further observations as
+ * review evidence without opening another optional response turn.
  *
  * Third, the answer is a contract, not a courtesy. The dispositions come back
  * through the same structured-output gate every other engine capture uses. The
