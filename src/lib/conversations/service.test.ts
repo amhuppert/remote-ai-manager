@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  rm,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -60,7 +67,7 @@ function syntheticForkImpl(
 ): FakeForkImpl {
   return async (_ref, input) => {
     const seed = await buildSyntheticForkSeed(
-      input.sourceTranscriptPath,
+      input.transcriptSnapshotPath,
       input.messageIndex,
     );
     if (!seed) {
@@ -71,6 +78,11 @@ function syntheticForkImpl(
     }
     return { kind: "synthetic_seed", seed };
   };
+}
+
+/** A native outcome as an adapter reports it, cut at `locator`. */
+function nativeForkImpl(ref: AgentSessionRef, locator: string): FakeForkImpl {
+  return async () => ({ kind: "native", ref, locator });
 }
 
 function makeFakeContinuity(
@@ -110,6 +122,7 @@ function createTestServices(
       (async () => ({
         kind: "native",
         ref: { backend: "claude", ref: "fake-forked-session-id" },
+        locator: "fake-locator",
       })),
   );
   const codexContinuity = makeFakeContinuity(
@@ -1076,10 +1089,10 @@ describe("forkConversation", () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations, claudeContinuity } = createTestServices({
-      claudeFork: async () => ({
-        kind: "native",
-        ref: { backend: "claude", ref: "forked-1" },
-      }),
+      claudeFork: nativeForkImpl(
+        { backend: "claude", ref: "forked-1" },
+        "uuid-a1",
+      ),
     });
 
     // u0, a1, u2, a3
@@ -1131,8 +1144,7 @@ describe("forkConversation", () => {
       ref: { backend: "claude", ref: "src-session-abc" },
       input: {
         projectPath: "/proj",
-        anchorMessageId: "uuid-a1",
-        sourceTranscriptPath: transcriptPath,
+        transcriptSnapshotPath: fork!.transcriptPath,
         messageIndex: 1,
       },
     });
@@ -1142,10 +1154,10 @@ describe("forkConversation", () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations, claudeContinuity } = createTestServices({
-      claudeFork: async () => ({
-        kind: "native",
-        ref: { backend: "claude", ref: "forked-2" },
-      }),
+      claudeFork: nativeForkImpl(
+        { backend: "claude", ref: "forked-2" },
+        "uuid-a1",
+      ),
     });
 
     await seedWithSourceTranscript(state, sourceId, transcriptPath, [
@@ -1192,8 +1204,7 @@ describe("forkConversation", () => {
       ref: { backend: "claude", ref: "src-session-abc" },
       input: {
         projectPath: "/proj",
-        anchorMessageId: "uuid-a1",
-        sourceTranscriptPath: transcriptPath,
+        transcriptSnapshotPath: fork!.transcriptPath,
         messageIndex: 1,
       },
     });
@@ -1383,12 +1394,11 @@ describe("forkConversation", () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
 
-    // Initial validation read at the top of forkConversation() succeeds.
-    // The injected fork deletes the transcript file before running the real
-    // synthetic path, so buildSyntheticForkSeed returns null and the adapter
-    // throws ContinuityForkError — exercising the typed-error path.
+    // The injected fork deletes the snapshot it was handed before running
+    // the real synthetic path, so buildSyntheticForkSeed returns null and the
+    // adapter throws ContinuityForkError — exercising the typed-error path.
     const claudeFork: FakeForkImpl = async (ref, input) => {
-      await rm(transcriptPath, { force: true });
+      await rm(input.transcriptSnapshotPath, { force: true });
       return syntheticForkImpl("claude")(ref, input);
     };
     const { state, conversations, claudeContinuity } = createTestServices({
@@ -1415,12 +1425,7 @@ describe("forkConversation", () => {
     expect(claudeContinuity.forkCalls).toHaveLength(1);
   });
 
-  it("legacy transcript without assistant UUID: passes a null anchor to the adapter and surfaces the synthetic outcome", async () => {
-    // When the transcript predates UUID storage (or the assistant entry lacks
-    // a uuid), findForkAnchorUuid returns null. The service must hand the
-    // adapter a null anchorMessageId — never a fabricated one — because an
-    // unanchored native fork would silently carry the full source history
-    // past the visible fork point.
+  it("synthetic outcome records no locator and keeps the seed the adapter built from the snapshot", async () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations, claudeContinuity } = createTestServices({
@@ -1445,7 +1450,6 @@ describe("forkConversation", () => {
     );
     expect(fork).toBeTruthy();
     expect(claudeContinuity.forkCalls).toHaveLength(1);
-    expect(claudeContinuity.forkCalls[0]!.input.anchorMessageId).toBeNull();
     expect(fork!.backendRef).toBeNull();
     expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
     expect(fork!.forkedFrom!.forkLocator).toBeNull();
@@ -1454,7 +1458,7 @@ describe("forkConversation", () => {
     expect(fork!.forkedFrom!.syntheticSeed).toContain("hi back");
   });
 
-  it("codex source: fork produces a synthetic seed (forkMode synthetic, backendRef null, immutable seed)", async () => {
+  it("codex source: a synthetic outcome keeps backendRef null and stores the immutable seed", async () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations } = createTestServices();
@@ -1465,7 +1469,7 @@ describe("forkConversation", () => {
       transcriptPath,
       [
         userEntry("codex question", "2024-01-01T00:00:00Z"),
-        assistantEntry("codex answer", "uuid-a1", "2024-01-01T00:00:01Z"),
+        assistantEntryNoUuid("codex answer", "2024-01-01T00:00:01Z"),
       ],
       {
         agentBackend: "codex",
@@ -1488,9 +1492,98 @@ describe("forkConversation", () => {
     expect(fork!.agentBackend).toBe("codex");
     expect(fork!.backendRef).toBeNull();
     expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
+    expect(fork!.forkedFrom!.forkLocator).toBeNull();
     expect(fork!.forkedFrom!.syntheticSeed).toBeDefined();
     expect(fork!.forkedFrom!.syntheticSeed).toContain("codex question");
     expect(fork!.forkedFrom!.syntheticSeed).toContain("codex answer");
+  });
+
+  it("codex source: a native outcome persists the forked thread and the adapter's cut", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices({
+      codexFork: nativeForkImpl(
+        { backend: "codex", ref: "thread-forked" },
+        "turn-1",
+      ),
+    });
+
+    await seedWithSourceTranscript(
+      state,
+      sourceId,
+      transcriptPath,
+      [
+        userEntry("set ALPHA", "2024-01-01T00:00:00Z"),
+        assistantEntryNoUuid("ok", "2024-01-01T00:00:01Z"),
+      ],
+      {
+        agentBackend: "codex",
+        backendRef: { backend: "codex", ref: "thread-src-1" },
+      },
+    );
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1,
+    });
+
+    const fork = await state.getConversation(
+      "/proj",
+      "test",
+      result.conversationId,
+    );
+    expect(result.forkMode).toBe("native");
+    expect(fork?.backendRef).toEqual({
+      backend: "codex",
+      ref: "thread-forked",
+    });
+    expect(fork?.forkedFrom?.forkMode).toBe("native");
+    expect(fork?.forkedFrom?.forkLocator).toBe("turn-1");
+    expect(fork?.forkedFrom?.syntheticSeed).toBeUndefined();
+    expect(fork?.forkedFrom?.forkPending).toBe(false);
+  });
+
+  it("snapshot isolation: source lines appended while the fork is in flight never reach the adapter's snapshot or seed", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    let snapshotAtFork = "";
+    // The source is still streaming its last assistant message: more of that
+    // message lands after the copy, before the adapter reads its input.
+    const claudeFork: FakeForkImpl = async (ref, input) => {
+      await appendFile(
+        transcriptPath,
+        JSON.stringify(
+          assistantEntry("late part", "uuid-late", "2024-01-01T00:00:02Z"),
+        ) + "\n",
+      );
+      snapshotAtFork = await readFile(input.transcriptSnapshotPath, "utf-8");
+      return syntheticForkImpl("claude")(ref, input);
+    };
+    const { state, conversations } = createTestServices({ claudeFork });
+
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("first part", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1,
+    });
+
+    const fork = await state.getConversation(
+      "/proj",
+      "test",
+      result.conversationId,
+    );
+    expect(snapshotAtFork).toContain("uuid-a1");
+    expect(snapshotAtFork).not.toContain("uuid-late");
+    expect(fork?.forkedFrom?.syntheticSeed).toContain("first part");
+    expect(fork?.forkedFrom?.syntheticSeed).not.toContain("late part");
   });
 
   it("keeps an exclusive synthetic history seed separate from the editable user draft", async () => {

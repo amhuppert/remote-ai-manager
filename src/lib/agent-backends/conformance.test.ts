@@ -80,8 +80,7 @@ const continuityHarness: ContinuityConformanceHarness = {
   context: { projectPath: "/conformance", sessionName: "conformance" },
   forkInput: {
     projectPath: "/conformance",
-    anchorMessageId: "uuid-anchor-1",
-    sourceTranscriptPath: "/conformance/source.jsonl",
+    transcriptSnapshotPath: "/conformance/snapshot.jsonl",
     messageIndex: 1,
   },
 };
@@ -167,6 +166,18 @@ const claudeDescriptor = createClaudeBackendDescriptor({
   conversationFactory: claudeConversationBackendFactory,
   continuity: createClaudeContinuityAdapter({
     forkSession: async () => ({ sessionId: "conformance-forked-session" }),
+    // The fork snapshot ends in an anchored assistant message.
+    readSnapshotLines: async () => [
+      { seq: 0, visible: true, mergedIndex: 0, opensUnit: true, role: "user" },
+      {
+        seq: 1,
+        visible: true,
+        mergedIndex: 1,
+        opensUnit: true,
+        role: "assistant",
+        uuid: "uuid-anchor-1",
+      },
+    ],
     buildSyntheticForkSeed: async () => "conformance seed",
   }),
   runtimeConfig: createClaudeRuntimeConfigAdapter({
@@ -236,6 +247,27 @@ const codexDescriptor = createCodexBackendDescriptor({
   },
   continuity: createCodexContinuityAdapter({
     buildSyntheticForkSeed: async () => "conformance seed",
+    // The fork snapshot ends on a completed turn of the source thread.
+    async *readSnapshotRecords() {
+      yield {
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      };
+      yield {
+        type: "codex_app_server",
+        raw: {
+          record: JSON.stringify({
+            method: "turn/completed",
+            params: {
+              threadId: "conformance-fork-source",
+              turn: { id: "conformance-turn-1", status: "completed" },
+            },
+          }),
+        },
+      };
+    },
+    forkThread: async () => "conformance-forked-thread",
   }),
   runtimeConfig: createCodexRuntimeConfigAdapter(),
   skillCatalog: { getCommands: async () => [] },

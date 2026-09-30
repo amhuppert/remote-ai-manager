@@ -29,15 +29,14 @@ export interface ContinuityContext {
 export interface ForkInput {
   projectPath: string;
   /**
-   * Backend-native fork anchor (e.g. a transcript message uuid) locating the
-   * precise fork point. Null when no anchor could be derived — adapters with
-   * native fork must NOT fork without one (an unanchored native fork silently
-   * carries the full source history past the visible fork point).
+   * The fork's own copied transcript: an immutable prefix of the source
+   * transcript through the visible fork point, written once before the adapter
+   * is called. Its merged message indexes equal the source's. The adapter
+   * derives both its native cut and any synthetic seed from this snapshot,
+   * never from the source transcript, which can still be growing.
    */
-  anchorMessageId: string | null;
-  /** CC-local transcript of the source conversation, for seed construction. */
-  sourceTranscriptPath: string;
-  /** Fork point in the CC transcript (inclusive for seed construction). */
+  transcriptSnapshotPath: string;
+  /** Last merged message index in the snapshot (inclusive for seed construction). */
   messageIndex: number;
 }
 
@@ -51,8 +50,15 @@ export interface ContinuityResumption {
   recovered: boolean;
 }
 
+/**
+ * `native` is returned only when the adapter can place its provider cut
+ * exactly at the end of the snapshot; `locator` is that cut's opaque provider
+ * position, recorded for diagnostics. When no exact cut exists the adapter
+ * returns `synthetic_seed` rather than a native fork carrying more or less
+ * history than the snapshot shows.
+ */
 export type ForkOutcome =
-  | { kind: "native"; ref: AgentSessionRef }
+  | { kind: "native"; ref: AgentSessionRef; locator: string }
   | { kind: "synthetic_seed"; seed: string }
   | { kind: "unsupported" };
 

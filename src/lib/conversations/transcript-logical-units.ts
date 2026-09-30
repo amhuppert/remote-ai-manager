@@ -4,7 +4,8 @@
  * Four call sites reduce a raw JSONL transcript to logical messages: the
  * conversation read path (`readConversationMessagesWithSeq`), the compact
  * renderer (`groupTranscriptEntries`), the fork/copy merged-index counting
- * (`copyTranscriptUpTo`), and the fork-anchor UUID lookup (`findForkAnchorUuid`).
+ * (`copyTranscriptUpTo`), and the fork-snapshot line classification continuity
+ * adapters read their native cut from (`readTranscriptLineClassifications`).
  * They want different products — merged content, per-entry render units,
  * raw-line spans, line-boundary anchors — but must agree on *which lines belong
  * to which merged unit*, or a merged-message index means one thing to the UI
@@ -17,7 +18,7 @@
  *   - {@link iterateLineClassifications} walks every raw line (visible entries,
  *     `tool_result` lines, and other non-visible lines alike) and classifies
  *     each with its merged-unit index, whether it opens a unit, and its role /
- *     uuid — the line-level product the copy and fork-anchor projections slice.
+ *     uuid — the line-level product the copy and fork-cut projections slice.
  *   - {@link groupLogicalUnits} folds that stream into merged units, each with
  *     its parts (consecutive same-role entries plus interleaved `tool_result`
  *     lines, every part keeping its own seq) — the unit-level product the read
@@ -119,15 +120,15 @@ export interface LineClassification {
   opensUnit: boolean;
   /** Role of a visible entry; null for non-visible lines. */
   role: LogicalUnitRole | null;
-  /** SDK UUID of a visible message entry when present (fork anchoring). */
+  /** Adapter-stamped message anchor of a visible entry, when present. */
   uuid?: string | undefined;
 }
 
 /**
  * Walk every raw line and classify it against the merged-unit grouping. This is
  * the line-level product: the copy path slices raw line ranges by
- * `mergedIndex`/`opensUnit`, and the fork-anchor lookup reads `mergedIndex`,
- * `role`, and `uuid`. Non-visible lines are yielded too (with their real seq)
+ * `mergedIndex`/`opensUnit`, and a continuity adapter's fork cut reads
+ * `mergedIndex`, `role`, and `uuid`. Non-visible lines are yielded too (with their real seq)
  * so callers that need raw spans see every line.
  */
 export function* iterateLineClassifications(

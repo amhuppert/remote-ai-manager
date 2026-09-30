@@ -375,7 +375,7 @@ export function createCursorContinuityAdapter(
         (await import("@/lib/sessions/synthetic-fork-seed"))
           .buildSyntheticForkSeed;
       const seed = await buildSeed(
-        input.sourceTranscriptPath,
+        input.transcriptSnapshotPath,
         input.messageIndex,
       );
       if (!seed) {

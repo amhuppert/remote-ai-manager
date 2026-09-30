@@ -126,6 +126,8 @@ type NativeInput =
   | { type: "localImage"; path: string };
 interface ScriptedTurn {
   events: ThreadEvent[];
+  /** Inherited thread totals the app-server reports while resuming. */
+  resumeUsage?: Usage;
   setupError?: Error;
   terminalError?: Error;
   capturedInput: NativeInput[] | null;
@@ -135,10 +137,11 @@ interface ScriptedTurn {
 /** Existing scenario data is translated to native wire notifications only in this fixture. */
 function makeThread(
   events: ThreadEvent[],
-  opts?: { runStreamedThrows?: Error },
+  opts?: { runStreamedThrows?: Error; resumeUsage?: Usage },
 ): ScriptedTurn {
   return {
     events,
+    resumeUsage: opts?.resumeUsage,
     setupError: opts?.runStreamedThrows,
     capturedInput: null,
     capturedTurnOptions: undefined,
@@ -193,6 +196,22 @@ function makeScriptedAppServer(
     drain = drain.then(() => options.onFrame(frame));
     await drain;
   }
+  async function emitUsage(scope: string, usage: Usage): Promise<void> {
+    await emit("thread/tokenUsage/updated", {
+      threadId,
+      turnId: scope,
+      tokenUsage: {
+        total: {
+          inputTokens: usage.input_tokens,
+          cachedInputTokens: usage.cached_input_tokens,
+          cacheWriteInputTokens: usage.cache_write_input_tokens ?? 0,
+          outputTokens: usage.output_tokens,
+          reasoningOutputTokens: usage.reasoning_output_tokens ?? 0,
+          totalTokens: usage.input_tokens + usage.output_tokens,
+        },
+      },
+    });
+  }
   async function finish(status: string, message?: string): Promise<void> {
     terminated = true;
     await emit("turn/completed", {
@@ -210,21 +229,7 @@ function makeScriptedAppServer(
             turn: { id: turnId, status: "inProgress" },
           });
         } else if (event.type === "turn.completed") {
-          const usage = event.usage;
-          await emit("thread/tokenUsage/updated", {
-            threadId,
-            turnId,
-            tokenUsage: {
-              total: {
-                inputTokens: usage.input_tokens,
-                cachedInputTokens: usage.cached_input_tokens,
-                cacheWriteInputTokens: usage.cache_write_input_tokens ?? 0,
-                outputTokens: usage.output_tokens,
-                reasoningOutputTokens: usage.reasoning_output_tokens ?? 0,
-                totalTokens: usage.input_tokens + usage.output_tokens,
-              },
-            },
-          });
+          await emitUsage(turnId, event.usage);
           await finish("completed");
         } else if (event.type === "turn.failed")
           await finish("failed", event.error.message);
@@ -343,6 +348,8 @@ function makeScriptedAppServer(
           (typeof params.threadId === "string"
             ? params.threadId
             : "thread-123");
+        if (method === "thread/resume" && script.resumeUsage)
+          await emitUsage("previous-turn", script.resumeUsage);
         return {
           thread: { id: threadId },
           model: params.model,
@@ -2289,8 +2296,9 @@ describe("CodexConversationRuntime", () => {
   });
 
   describe("sendTurn — cumulative cost attribution", () => {
-    // App-server counters accumulate only inside one process. CC carries the
-    // lineage ledger forward independently of each process's token counters.
+    // App-server totals are thread-cumulative; a resumed process reports the
+    // inherited totals as its baseline. CC prices each turn as the growth past
+    // that baseline and carries the lineage ledger forward itself.
     const cumulativeUsage1: Usage = {
       input_tokens: 100,
       cached_input_tokens: 10,
@@ -2309,8 +2317,16 @@ describe("CodexConversationRuntime", () => {
     // gpt-5.4 default rates: $2.50 / $0.25 / $15 per 1M
     const COST_1 = 0.0009775; // 90*2.5 + 10*0.25 + 50*15 (per 1M)
     const COST_2 = 0.0024825; // 270*2.5 + 30*0.25 + 120*15 (per 1M)
+    const TURN_2_COST = 0.001505; // 180*2.5 + 20*0.25 + 70*15 (per 1M)
+    const noUsage: Usage = {
+      input_tokens: 0,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 0,
+      output_tokens: 0,
+      reasoning_output_tokens: 0,
+    };
 
-    it("prices the full process-local total on each later turn", async () => {
+    it("prices a resumed turn as the growth past its resume baseline", async () => {
       setupThread([
         threadStarted("thread-123"),
         agentMessageCompleted("first"),
@@ -2321,15 +2337,18 @@ describe("CodexConversationRuntime", () => {
       expect(first.costUsd).toBeCloseTo(COST_1, 10);
 
       resumeThreadFn.mockReturnValue(
-        makeThread([
-          threadStarted("thread-123"),
-          agentMessageCompleted("second"),
-          turnCompleted(cumulativeUsage2),
-        ]),
+        makeThread(
+          [
+            threadStarted("thread-123"),
+            agentMessageCompleted("second"),
+            turnCompleted(cumulativeUsage2),
+          ],
+          { resumeUsage: cumulativeUsage1 },
+        ),
       );
       const second = await runtime.sendTurn(makeTurnInput());
 
-      expect(second.costUsd).toBeCloseTo(COST_2, 10);
+      expect(second.costUsd).toBeCloseTo(TURN_2_COST, 10);
     });
 
     it("accumulates independently measured process costs into the CC lineage", async () => {
@@ -2343,16 +2362,19 @@ describe("CodexConversationRuntime", () => {
       expect(first.cumulativeCostUsd).toBeCloseTo(COST_1, 10);
 
       resumeThreadFn.mockReturnValue(
-        makeThread([
-          threadStarted("thread-123"),
-          agentMessageCompleted("second"),
-          turnCompleted(cumulativeUsage2),
-        ]),
+        makeThread(
+          [
+            threadStarted("thread-123"),
+            agentMessageCompleted("second"),
+            turnCompleted(cumulativeUsage2),
+          ],
+          { resumeUsage: cumulativeUsage1 },
+        ),
       );
       const second = await runtime.sendTurn(makeTurnInput());
 
-      expect(second.cumulativeCostUsd).toBeCloseTo(COST_1 + COST_2, 10);
-      expect(second.costUsd).toBeCloseTo(COST_2, 10);
+      expect(second.cumulativeCostUsd).toBeCloseTo(COST_1 + TURN_2_COST, 10);
+      expect(second.costUsd).toBeCloseTo(TURN_2_COST, 10);
     });
 
     it("prices a lower fresh-process counter without treating it as a reset", async () => {
@@ -2365,13 +2387,17 @@ describe("CodexConversationRuntime", () => {
       const first = await runtime.sendTurn(makeTurnInput());
       expect(first.costUsd).toBeCloseTo(COST_2, 10);
 
-      // Cumulative DROPPED below the baseline — thread restarted server-side.
+      // The resumed process reports totals below the previous process's
+      // (thread restarted server-side); only its own baseline is subtracted.
       resumeThreadFn.mockReturnValue(
-        makeThread([
-          threadStarted("thread-123"),
-          agentMessageCompleted("second"),
-          turnCompleted(cumulativeUsage1),
-        ]),
+        makeThread(
+          [
+            threadStarted("thread-123"),
+            agentMessageCompleted("second"),
+            turnCompleted(cumulativeUsage1),
+          ],
+          { resumeUsage: noUsage },
+        ),
       );
       const second = await runtime.sendTurn(makeTurnInput());
 
@@ -2383,11 +2409,16 @@ describe("CodexConversationRuntime", () => {
         threadRef: "thread-existing",
         cumulativeCostUsd: COST_1,
       });
-      setupThread([
-        threadStarted("thread-existing"),
-        agentMessageCompleted("resumed"),
-        turnCompleted(cumulativeUsage2),
-      ]);
+      resumeThreadFn.mockReturnValue(
+        makeThread(
+          [
+            threadStarted("thread-existing"),
+            agentMessageCompleted("resumed"),
+            turnCompleted(cumulativeUsage2),
+          ],
+          { resumeUsage: cumulativeUsage1 },
+        ),
+      );
       const runtime = new CodexConversationRuntime(
         makeCreateInput({
           persistedRef: { backend: "codex", ref: "thread-existing" },
@@ -2401,8 +2432,8 @@ describe("CodexConversationRuntime", () => {
         "conv-123",
         "thread-existing",
       );
-      expect(result.costUsd).toBeCloseTo(COST_2, 10);
-      expect(result.cumulativeCostUsd).toBeCloseTo(COST_1 + COST_2, 10);
+      expect(result.costUsd).toBeCloseTo(TURN_2_COST, 10);
+      expect(result.cumulativeCostUsd).toBeCloseTo(COST_1 + TURN_2_COST, 10);
     });
 
     it("ignores a persisted cost record for a different thread", async () => {
@@ -2410,11 +2441,16 @@ describe("CodexConversationRuntime", () => {
         threadRef: "some-other-thread",
         cumulativeCostUsd: COST_1,
       });
-      setupThread([
-        threadStarted("thread-existing"),
-        agentMessageCompleted("resumed"),
-        turnCompleted(cumulativeUsage2),
-      ]);
+      resumeThreadFn.mockReturnValue(
+        makeThread(
+          [
+            threadStarted("thread-existing"),
+            agentMessageCompleted("resumed"),
+            turnCompleted(cumulativeUsage2),
+          ],
+          { resumeUsage: cumulativeUsage1 },
+        ),
+      );
       const runtime = new CodexConversationRuntime(
         makeCreateInput({
           persistedRef: { backend: "codex", ref: "thread-existing" },
@@ -2424,7 +2460,8 @@ describe("CodexConversationRuntime", () => {
 
       const result = await runtime.sendTurn(makeTurnInput());
 
-      expect(result.costUsd).toBeCloseTo(COST_2, 10);
+      expect(result.costUsd).toBeCloseTo(TURN_2_COST, 10);
+      expect(result.cumulativeCostUsd).toBeNull();
     });
   });
 

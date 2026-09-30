@@ -94,12 +94,12 @@ describe("shouldBuildRuntimeSyntheticSeed", () => {
     ).toBe(false);
   });
 
-  it("returns true for non-Claude fork with a transcript and no backendRef", () => {
+  it("returns true for a synthetic-fork backend with a transcript and no backendRef", () => {
     expect(
       shouldBuildRuntimeSyntheticSeed({
-        forkedFrom: { ...forkedFromBase, sourceBackend: "codex" },
+        forkedFrom: { ...forkedFromBase, sourceBackend: "cursor" },
         backendRef: null,
-        agentBackend: "codex",
+        agentBackend: "cursor",
         transcriptPath: "/p.jsonl",
       }),
     ).toBe(true);
@@ -152,13 +152,13 @@ describe("resolveSyntheticForkSeed", () => {
     },
   ];
 
-  it("builds a seed from the transcript slice up to the fork point for a non-Claude fork", async () => {
+  it("builds a seed from the transcript slice up to the fork point for a synthetic-fork backend", async () => {
     const readConversationMessages = vi.fn(async () => messages);
     const seed = await resolveSyntheticForkSeed(
       { readConversationMessages },
       {
         sessionName: "s",
-        agentBackend: "codex",
+        agentBackend: "cursor",
         backendRef: null,
         forkedFrom: { messageIndex: 1 },
         transcriptPath: "/p.jsonl",
@@ -210,7 +210,7 @@ describe("resolveSyntheticForkSeed", () => {
       { readConversationMessages },
       {
         sessionName: "s",
-        agentBackend: "codex",
+        agentBackend: "cursor",
         backendRef: null,
         forkedFrom: { messageIndex: 1 },
         transcriptPath: "/p.jsonl",

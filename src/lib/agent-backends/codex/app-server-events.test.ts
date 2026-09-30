@@ -125,14 +125,14 @@ const usage = (
 });
 describe("Codex process token accounting", () => {
   it("rejects impossible category increments despite individually valid cumulative snapshots", () => {
-    const counts = new CodexAppServerUsage();
+    const counts = new CodexAppServerUsage({ resumed: true });
     counts.observe(usage(100, 5), true);
     counts.observe(usage(110, 7, 100), false);
     expect(counts.tokens).toBeNull();
     expect(counts.invalid).toBe(true);
   });
   it("uses final process total, with only an observed same-process baseline subtracted", () => {
-    const counts = new CodexAppServerUsage();
+    const counts = new CodexAppServerUsage({ resumed: true });
     counts.observe(usage(10, 2), true);
     counts.observe(usage(30, 5, 5), false);
     counts.observe(usage(50, 10, 5), false);
@@ -141,22 +141,39 @@ describe("Codex process token accounting", () => {
       cached_input_tokens: 5,
       output_tokens: 8,
     });
-    const resumed = new CodexAppServerUsage();
-    resumed.observe(usage(20, 3), false);
-    expect(resumed.tokens).toEqual({
+    const started = new CodexAppServerUsage({ resumed: false });
+    started.observe(usage(20, 3), false);
+    expect(started.tokens).toEqual({
       input_tokens: 20,
       cached_input_tokens: 0,
       output_tokens: 3,
     });
   });
+  it("cannot price a resumed thread's inherited totals without a baseline", () => {
+    const counts = new CodexAppServerUsage({ resumed: true });
+    counts.observe(usage(20, 3), false);
+    expect(counts.tokens).toBeNull();
+    expect(counts.invalid).toBe(false);
+  });
+  it("ignores a pre-turn sample once the turn has been measured", () => {
+    const counts = new CodexAppServerUsage({ resumed: true });
+    counts.observe(usage(100, 5), true);
+    counts.observe(usage(150, 9), false);
+    counts.observe(usage(100, 5), true);
+    expect(counts.tokens).toEqual({
+      input_tokens: 50,
+      cached_input_tokens: 0,
+      output_tokens: 4,
+    });
+  });
   it("does not repair a decreasing or invalid counter with a later sample", () => {
-    const counts = new CodexAppServerUsage();
+    const counts = new CodexAppServerUsage({ resumed: false });
     counts.observe(usage(30, 5), false);
     counts.observe(usage(20, 5), false);
     counts.observe(usage(40, 7), false);
     expect(counts.tokens).toBeNull();
     expect(counts.invalid).toBe(true);
-    const invalid = new CodexAppServerUsage();
+    const invalid = new CodexAppServerUsage({ resumed: false });
     invalid.observe(usage(10, 2, 11), false);
     expect(invalid.tokens).toBeNull();
     expect(invalid.invalid).toBe(true);

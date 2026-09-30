@@ -12,7 +12,7 @@ Claude, Codex, and future providers vary behind one registered composition bound
 
 ## Managed skills
 
-Command Center's own skills (the bundled `plugins/command-center` plugin) are host environment, not user capabilities: they are published at startup as an immutable content-addressed bundle (`src/lib/managed-skills/`) and attached to every normal launch below the seam. Every descriptor declares `managedSkills` per execution facet (`bundled` or an explicit `hermetic`); a backend cannot register without deciding. Delivery is adapter-owned: Claude attaches the published bundle as an SDK-local plugin (suppressing a non-equivalent user-installed copy via the flag layer only); Codex reconciles one `info/exclude`-hidden `.agents/skills/command-center` link in the launch checkout before each turn (`codex/managed-skills-bridge.ts`) because the exec transport has no skill-root injection — replace the bridge with native process-scoped roots if that changes. Isolated one-shot profiles stay hermetic. Managed skills never enter the user capability cascade and never write backend-owned user configuration.
+Command Center's own skills (the bundled `plugins/command-center` plugin) are host environment, not user capabilities: they are published at startup as an immutable content-addressed bundle (`src/lib/managed-skills/`) and attached to every normal launch below the seam. Every descriptor declares `managedSkills` per execution facet (`bundled` or an explicit `hermetic`); a backend cannot register without deciding. Delivery is adapter-owned: Claude attaches the published bundle as an SDK-local plugin (suppressing a non-equivalent user-installed copy via the flag layer only); Codex reconciles one `info/exclude`-hidden `.agents/skills/command-center` link in the launch checkout before each turn (`codex/managed-skills-bridge.ts`) instead of injecting a skill root into the app-server launch — replace the bridge with native process-scoped roots if that changes. Isolated one-shot profiles stay hermetic. Managed skills never enter the user capability cascade and never write backend-owned user configuration.
 
 ## Native provider memory
 
@@ -40,6 +40,10 @@ Neutral callers own:
 - behavior selected from declared capabilities rather than provider identity
 
 Raw provider payloads may cross the seam only inside the lossless transcript envelope. Code above the seam records the envelope without reading or branching on its `raw` payload.
+
+## Conversation forks
+
+`forkConversation` copies the source transcript through the fork point once; that copy is the fork's immutable snapshot, and `ForkInput.transcriptSnapshotPath` hands it to the source backend's continuity adapter. The adapter selects its own native cut from the snapshot — Claude from the message anchors it stamps on assistant frames (`claude/fork-anchor.ts`), Codex from the source thread's recorded `turn/completed` envelopes (`codex/fork-boundary.ts`) — and returns `native` (with an opaque `locator`, persisted as `forkedFrom.forkLocator`) only when that cut sits exactly at the end of the snapshot. Otherwise it returns `synthetic_seed` built from the same snapshot. Neutral fork code never selects, parses, or validates a provider position.
 
 ## Provider-billed cost
 

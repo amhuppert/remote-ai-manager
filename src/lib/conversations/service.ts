@@ -30,7 +30,6 @@ import {
   copyTranscriptUpTo,
   getTranscriptPath,
   readConversationMessages,
-  findForkAnchorUuid,
   type CopyTranscriptMode,
 } from "../prompt/transcript";
 import { getErrorMessage } from "../shared/errors";
@@ -562,16 +561,19 @@ export function createConversationService(
     // --- Phase 2: Compute role-aware fork parameters ---
     //
     // Three cases:
-    //   (1) assistant fork at any index → inclusive copy + inclusive anchor.
-    //       The new conversation keeps the assistant's response visible; the
-    //       native backend fork anchors on that assistant UUID.
-    //   (2) user fork at index N > 0 → exclusive copy + exclusive anchor.
-    //       The new conversation copies messages 0..N-1; the user's text at
-    //       N becomes pendingPromptText for re-prompting after edit.
+    //   (1) assistant fork at any index → inclusive copy. The new
+    //       conversation keeps the assistant's response visible.
+    //   (2) user fork at index N > 0 → exclusive copy. The new conversation
+    //       copies messages 0..N-1; the user's text at N becomes
+    //       pendingPromptText for re-prompting after edit.
     //   (3) user fork at index 0 → "edit and start over". No transcript copy,
-    //       no SDK anchor, no derived backend ref. pendingPromptText holds
-    //       the user's first-message text. The new conversation is brand-new
-    //       except for the forkedFrom reference back to the source.
+    //       no derived backend ref. pendingPromptText holds the user's
+    //       first-message text. The new conversation is brand-new except for
+    //       the forkedFrom reference back to the source.
+    //
+    // The copy is the fork's snapshot: the adapter reads its native cut and
+    // any synthetic seed from it, never from the source, which may still be
+    // growing.
     const now = new Date().toISOString();
     const newId = crypto.randomUUID();
     const turnNumber = Math.floor(messageIndex / 2) + 1;
@@ -579,35 +581,26 @@ export function createConversationService(
     const forkName = `Fork of ${sourceName} @ turn ${turnNumber}`;
 
     let copyMode: CopyTranscriptMode | null;
-    let anchorMode: CopyTranscriptMode | null;
     let pendingPromptText: string | null;
     let derivedSourceRef: AgentSessionRef | null;
 
     if (targetRole === "assistant") {
       copyMode = "inclusive";
-      anchorMode = "inclusive";
       pendingPromptText = null;
       derivedSourceRef = sourceBackendRef;
     } else if (messageIndex > 0) {
       copyMode = "exclusive";
-      anchorMode = "exclusive";
       pendingPromptText = extractUserText(targetMessage);
       derivedSourceRef = sourceBackendRef;
     } else {
       copyMode = null;
-      anchorMode = null;
       pendingPromptText = extractUserText(targetMessage);
       derivedSourceRef = null;
     }
 
-    let forkLocator: string | null = null;
     let transcriptPath: string | null = null;
 
-    if (copyMode && anchorMode) {
-      forkLocator = await findForkAnchorUuid(source.transcriptPath, {
-        atMessageIndex: messageIndex,
-        mode: anchorMode,
-      });
+    if (copyMode) {
       transcriptPath = await getTranscriptPath(newId, configDir);
       await copyTranscriptUpTo({
         sourceTranscriptPath: source.transcriptPath,
@@ -649,7 +642,7 @@ export function createConversationService(
       messageIndex,
       sourceBackend: derivedSourceRef ? derivedSourceRef.backend : null,
       sourceBackendRef: derivedSourceRef,
-      forkLocator,
+      forkLocator: null,
       forkMode: null,
       forkPending: derivesFromSession,
     };
@@ -687,16 +680,17 @@ export function createConversationService(
     // is removed — no conversation is created.
     let backendRef: AgentSessionRef | null = null;
     let forkMode: "native" | "synthetic" | null = null;
+    let forkLocator: string | null = null;
     let syntheticSeed: string | undefined;
 
-    if (derivedSourceRef) {
+    // Both are set exactly when history is derived (cases 1 and 2).
+    if (derivedSourceRef && transcriptPath) {
       const continuity = getContinuityAdapter(derivedSourceRef.backend);
       let outcome: Awaited<ReturnType<BackendContinuityAdapter["fork"]>>;
       try {
         outcome = await continuity.fork(derivedSourceRef, {
           projectPath,
-          anchorMessageId: forkLocator,
-          sourceTranscriptPath: source.transcriptPath,
+          transcriptSnapshotPath: transcriptPath,
           messageIndex: targetRole === "user" ? messageIndex - 1 : messageIndex,
         });
         if (outcome.kind === "unsupported")
@@ -717,7 +711,6 @@ export function createConversationService(
           sourceConversationId,
           backend: derivedSourceRef.backend,
           sourceSessionRef: derivedSourceRef.ref,
-          forkLocator,
           reason,
         });
         throw new ForkCreationError("fork_failed", reason, { cause: err });
@@ -726,6 +719,7 @@ export function createConversationService(
       if (outcome.kind === "native") {
         backendRef = outcome.ref;
         forkMode = "native";
+        forkLocator = outcome.locator;
         logger.info("conversation.fork.native", {
           projectPath,
           sessionName,
@@ -742,7 +736,6 @@ export function createConversationService(
           sessionName,
           sourceConversationId,
           sourceSessionRef: derivedSourceRef.ref,
-          forkLocator,
           seedLength: outcome.seed.length,
         });
       }
@@ -759,6 +752,7 @@ export function createConversationService(
           conversation.pendingPromptText = settledPendingPromptText;
           if (conversation.forkedFrom) {
             conversation.forkedFrom.forkMode = forkMode;
+            conversation.forkedFrom.forkLocator = forkLocator;
             conversation.forkedFrom.syntheticSeed = syntheticSeed;
             conversation.forkedFrom.forkPending = false;
           }

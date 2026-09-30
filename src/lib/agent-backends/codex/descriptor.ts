@@ -94,7 +94,7 @@ export const codexConversationCapabilities: BackendConversationCapabilities = {
     deliveryTiming: CODEX_IN_TURN_DELIVERY_ENABLED ? "in_turn" : "next_turn",
   },
   continuationStrength: "synthetic_thread",
-  fork: "synthetic",
+  fork: "native",
   structuredOutput: "post_validation",
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,

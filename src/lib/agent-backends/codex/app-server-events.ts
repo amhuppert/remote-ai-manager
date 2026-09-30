@@ -235,12 +235,20 @@ const fields = [
   "reasoningOutputTokens",
   "totalTokens",
 ] as const;
+/**
+ * Measures one turn as the growth of the thread's cumulative totals past the
+ * last pre-turn sample; a pre-turn sample arriving after the turn's own usage
+ * is stale. A resumed thread's totals include every earlier turn, so without
+ * a baseline its turn usage is unknown rather than the whole thread's.
+ */
 export class CodexAppServerUsage {
   private previous: Counters | null = null;
   private baseline: Counters | null = null;
   private invalidated = false;
   private measuredTurn = false;
-  observe(params: unknown, beforeStart: boolean): void {
+  constructor(private readonly thread: { resumed: boolean }) {}
+  observe(params: unknown, preTurn: boolean): void {
+    if (preTurn && this.measuredTurn) return;
     const parsed = usageEnvelope.safeParse(params);
     if (!parsed.success) {
       this.invalidated = true;
@@ -268,14 +276,21 @@ export class CodexAppServerUsage {
     )
       this.invalidated = true;
     this.previous = total;
-    if (beforeStart) this.baseline = total;
+    if (preTurn) this.baseline = total;
     else this.measuredTurn = true;
   }
-  get hasBaseline(): boolean {
-    return this.baseline !== null;
+  /** A resumed turn used tokens that cannot be attributed for lack of a baseline. */
+  get baselineMissing(): boolean {
+    return this.thread.resumed && this.measuredTurn && this.baseline === null;
   }
   get tokens(): CodexUsageTokens | null {
-    if (this.invalidated || !this.measuredTurn || !this.previous) return null;
+    if (
+      this.invalidated ||
+      !this.measuredTurn ||
+      !this.previous ||
+      this.baselineMissing
+    )
+      return null;
     return {
       input_tokens:
         this.previous.inputTokens - (this.baseline?.inputTokens ?? 0),

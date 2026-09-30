@@ -176,6 +176,7 @@ function services(
 const nativeFork = async (): Promise<ForkOutcome> => ({
   kind: "native",
   ref: { backend: "claude", ref: "forked-session" },
+  locator: "anchor-1",
 });
 
 async function reload(
@@ -269,12 +270,14 @@ describe("a session-derived fork", () => {
     expect(provisional!.profileSnapshot).toEqual(sourceSnapshot);
     expect(provisional!.profileLockedAt).not.toBeNull();
     expect(provisional!.forkedFrom?.forkPending).toBe(true);
+    expect(provisional!.forkedFrom?.forkLocator).toBeNull();
     expect(provisional!.backendRef).toBeNull();
 
-    // Finalized once the adapter answered.
+    // Finalized once the adapter answered, with the adapter's cut recorded.
     const forked = await reload(result.conversationId);
     expect(forked!.forkedFrom?.forkPending).toBe(false);
     expect(forked!.forkedFrom?.forkMode).toBe("native");
+    expect(forked!.forkedFrom?.forkLocator).toBe("anchor-1");
     expect(forked!.backendRef).toEqual({
       backend: "claude",
       ref: "forked-session",

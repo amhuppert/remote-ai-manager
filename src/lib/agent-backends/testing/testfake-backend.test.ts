@@ -212,8 +212,7 @@ describe("createTestFakeBackend continuity", () => {
       { backend: TESTFAKE_BACKEND_ID, ref: "fake-ref-1" },
       {
         projectPath: "/p",
-        anchorMessageId: null,
-        sourceTranscriptPath: "/p/t.jsonl",
+        transcriptSnapshotPath: "/p/t.jsonl",
         messageIndex: 0,
       },
     );

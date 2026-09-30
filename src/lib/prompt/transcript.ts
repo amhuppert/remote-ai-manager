@@ -31,6 +31,7 @@ import {
   groupLogicalUnits,
   iterateLineClassifications,
   startsNewLogicalUnit,
+  type LineClassification,
   type LogicalUnitEntry,
   type LogicalUnitRole,
 } from "@/lib/conversations/transcript-logical-units";
@@ -65,7 +66,10 @@ export interface TranscriptEntry {
   raw?: unknown;
   /** Complete canonical model selection used for this turn. */
   modelSelection?: BackendModelSelection;
-  /** SDK message UUID (stored on assistant entries for fork resumeSessionAt) */
+  /**
+   * Opaque message anchor the conversation's adapter stamps on assistant
+   * entries; only that adapter reads it back, to place a native fork cut.
+   */
   uuid?: string;
   /** Where this entry originated. Absent on legacy entries and any caller that
    *  doesn't yet thread it through. Persisted verbatim to JSONL. */
@@ -505,89 +509,21 @@ export async function copyTranscriptUpTo(
 }
 
 // ============================================================
-// Fork UUID Lookup
+// Line Classification
 // ============================================================
 
 /**
- * Returns the Claude SDK message UUID a fork should anchor on for the given
- * merged-message index and mode. Mirrors the merged-message counting used by
- * copyTranscriptUpTo.
- *
- * - `mode: "exclusive"` returns the UUID of the most recent assistant entry
- *   STRICTLY BEFORE the target merged index. The SDK's `upToMessageId` is
- *   inclusive, so anchoring on the prior assistant gives the SDK a copy
- *   whose last message is that assistant turn — i.e., the source state right
- *   before the user message at the target index.
- *
- * - `mode: "inclusive"` returns the UUID of the LAST assistant entry AT the
- *   target merged index. Intended for assistant-message forks where the new
- *   conversation should keep the target assistant's turn. Returns null if
- *   the target merged message is not an assistant turn (caller should
- *   guard against this).
- *
- * Returns null when the target cannot be addressed by UUID — e.g., legacy
- * transcripts without UUID fields, or no assistant exists in the relevant
- * range.
+ * Classify every line of a transcript against the merged-unit grouping, using
+ * the same walk as {@link copyTranscriptUpTo} so a fork snapshot's units and
+ * indexes match the source's. Continuity adapters read their native fork cut
+ * from these rows.
  */
-export async function findForkAnchorUuid(
+export async function readTranscriptLineClassifications(
   transcriptPath: string,
-  opts: {
-    atMessageIndex: number;
-    mode: CopyTranscriptMode;
-  },
-): Promise<string | null> {
+): Promise<LineClassification[]> {
   const raw = await readFile(transcriptPath, "utf-8");
-
-  let lastAssistantUuidBefore: string | null = null;
-  let targetMergedRole: LogicalUnitRole | null = null;
-  let inclusiveAnchorUuid: string | null = null;
-
-  // Reuse the shared grouping owner's line walk so the merged-index the anchor
-  // resolves against is identical to the one the copy path slices and the UI
-  // counts.
-  const forkEntries = (function* (): Generator<LogicalUnitEntry> {
-    for (const parsed of parseJsonl(raw)) {
-      const entry = parsed as TranscriptEntry;
-      if (!isVisibleEntry(entry)) {
-        yield { seq: 0, kind: "nonvisible" };
-        continue;
-      }
-      yield {
-        seq: 0,
-        kind: "message",
-        role: entry.role,
-        content: entry.content,
-        ...(entry.origin ? { origin: entry.origin } : {}),
-        entryId: entry.id ?? null,
-        timestamp: entry.timestamp ?? null,
-        ...(entry.uuid !== undefined ? { uuid: entry.uuid } : {}),
-      };
-    }
-  })();
-
-  for (const row of iterateLineClassifications(forkEntries)) {
-    if (!row.visible) continue;
-
-    if (opts.mode === "exclusive") {
-      if (row.mergedIndex >= opts.atMessageIndex) break;
-      if (row.role === "assistant" && row.uuid) {
-        lastAssistantUuidBefore = row.uuid;
-      }
-    } else {
-      if (row.mergedIndex > opts.atMessageIndex) break;
-      if (row.mergedIndex === opts.atMessageIndex) {
-        targetMergedRole = row.role;
-        if (row.role === "assistant" && row.uuid) {
-          inclusiveAnchorUuid = row.uuid;
-        }
-      }
-    }
-  }
-
-  if (opts.mode === "exclusive") {
-    return lastAssistantUuidBefore;
-  }
-  return targetMergedRole === "assistant" ? inclusiveAnchorUuid : null;
+  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+  return [...iterateLineClassifications(toCopyEntries(lines, isVisibleEntry))];
 }
 
 // ============================================================

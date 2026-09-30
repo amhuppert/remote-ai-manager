@@ -272,8 +272,7 @@ describe("cursor fork", () => {
     });
     const outcome = await adapter.fork(ref("agent-live"), {
       projectPath: "/repo",
-      anchorMessageId: null,
-      sourceTranscriptPath: "/source.jsonl",
+      transcriptSnapshotPath: "/source.jsonl",
       messageIndex: 1,
     });
     expect(outcome.kind).toBe("synthetic_seed");
@@ -288,8 +287,7 @@ describe("cursor fork", () => {
         { backend: "claude", ref: "source" },
         {
           projectPath: "/repo",
-          anchorMessageId: null,
-          sourceTranscriptPath: "/source.jsonl",
+          transcriptSnapshotPath: "/source.jsonl",
           messageIndex: 1,
         },
       ),
@@ -305,8 +303,7 @@ describe("cursor fork", () => {
     await expect(
       adapter.fork(ref("source"), {
         projectPath: "/repo",
-        anchorMessageId: null,
-        sourceTranscriptPath: "/missing.jsonl",
+        transcriptSnapshotPath: "/missing.jsonl",
         messageIndex: 1,
       }),
     ).rejects.toMatchObject({ name: "ContinuityForkError" });

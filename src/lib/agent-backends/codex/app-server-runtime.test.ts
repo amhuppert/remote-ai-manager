@@ -31,6 +31,14 @@ import {
   type CodexConversationRuntimeDeps,
 } from "./conversation-runtime";
 import type { CodexInstructionRecord } from "./instruction-state";
+import { conversationTranscriptFrame } from "../transcript";
+import {
+  copyTranscriptUpTo,
+  getTranscriptPath,
+  type TranscriptEntry,
+} from "@/lib/prompt/transcript";
+import { selectCodexForkTurn } from "./fork-boundary";
+import { readCodexTranscriptRecords } from "./transcript-records";
 
 const modelSelection = {
   modelId: "gpt-5.4",
@@ -907,6 +915,19 @@ describe("Codex app-server conversation runtime", () => {
     );
     h.notify("thread/tokenUsage/updated", {
       threadId: "thread-1",
+      turnId: "turn-0",
+      tokenUsage: {
+        total: {
+          inputTokens: 40,
+          cachedInputTokens: 5,
+          outputTokens: 10,
+          reasoningOutputTokens: 0,
+          totalTokens: 50,
+        },
+      },
+    });
+    h.notify("thread/tokenUsage/updated", {
+      threadId: "thread-1",
       turnId: "turn-1",
       tokenUsage: {
         total: {
@@ -1230,6 +1251,124 @@ describe("Codex app-server conversation runtime", () => {
       retryable: false,
     });
     expect(h.events.filter((event) => event.type === "content")).toEqual([]);
+  });
+});
+
+describe("Codex turn usage baseline", () => {
+  // App-server totals are thread-cumulative: a resumed thread reports its
+  // inherited totals in an update scoped to the previous turn, and that update
+  // may arrive before or after the turn starts.
+  const resumed = {
+    persistedRef: { backend: "codex", ref: "thread-1" },
+  } as const;
+  const inherited = 54_000_000;
+  const usageUpdate = (turnId: string, inputTokens: number) => ({
+    threadId: "thread-1",
+    turnId,
+    tokenUsage: {
+      total: {
+        inputTokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+        totalTokens: inputTokens,
+      },
+    },
+  });
+  const inputCost = (inputTokens: number) => (inputTokens * 2.5) / 1_000_000;
+  async function reportInTurnUsage(
+    h: ReturnType<typeof harness>,
+    inputTokens: number,
+  ) {
+    await until(() =>
+      h.events.some((event) => event.type === "input_accepted"),
+    );
+    h.notify("thread/tokenUsage/updated", usageUpdate("turn-1", inputTokens));
+  }
+
+  it("subtracts a resume baseline delivered during thread/resume", async () => {
+    const h = harness(resumed);
+    const request = h.client.request;
+    h.client.request = async (method, params) => {
+      if (method === "thread/resume")
+        h.notify("thread/tokenUsage/updated", usageUpdate("turn-0", inherited));
+      return request(method, params);
+    };
+    const turn = h.runtime.sendTurn(h.input);
+    await reportInTurnUsage(h, inherited + 1_000);
+    h.finish();
+    expect((await turn).costUsd).toBeCloseTo(inputCost(1_000), 10);
+  });
+
+  it("subtracts a resume baseline delivered after the turn/start acknowledgement", async () => {
+    const h = harness(resumed);
+    const turn = h.runtime.sendTurn(h.input);
+    await until(() =>
+      h.events.some((event) => event.type === "input_accepted"),
+    );
+    h.notify("thread/tokenUsage/updated", usageUpdate("turn-0", inherited));
+    h.notify(
+      "thread/tokenUsage/updated",
+      usageUpdate("turn-1", inherited + 1_000),
+    );
+    h.finish();
+    expect((await turn).costUsd).toBeCloseTo(inputCost(1_000), 10);
+  });
+
+  it("subtracts a resume baseline processed before the turn id is known", async () => {
+    const h = harness(resumed);
+    const request = h.client.request;
+    h.client.request = async (method, params) => {
+      if (method === "turn/start") {
+        h.notify("thread/tokenUsage/updated", usageUpdate("turn-0", inherited));
+        await h.client.flush();
+      }
+      return request(method, params);
+    };
+    const turn = h.runtime.sendTurn(h.input);
+    await reportInTurnUsage(h, inherited + 1_000);
+    h.finish();
+    expect((await turn).costUsd).toBeCloseTo(inputCost(1_000), 10);
+  });
+
+  it("ignores a prior-turn update that arrives after in-turn usage", async () => {
+    const h = harness(resumed);
+    const request = h.client.request;
+    h.client.request = async (method, params) => {
+      if (method === "thread/resume")
+        h.notify("thread/tokenUsage/updated", usageUpdate("turn-0", inherited));
+      return request(method, params);
+    };
+    const turn = h.runtime.sendTurn(h.input);
+    await reportInTurnUsage(h, inherited + 1_000);
+    h.notify("thread/tokenUsage/updated", usageUpdate("turn-0", inherited));
+    h.finish();
+    expect((await turn).costUsd).toBeCloseTo(inputCost(1_000), 10);
+  });
+
+  it("reports unknown cost for a resumed turn that never observed a baseline", async () => {
+    const h = harness(resumed, {
+      readPersistedCostBaseline: async () => ({
+        threadRef: "thread-1",
+        cumulativeCostUsd: 3,
+      }),
+    });
+    const turn = h.runtime.sendTurn(h.input);
+    await reportInTurnUsage(h, inherited + 1_000);
+    h.finish();
+    const result = await turn;
+    expect(result.costUsd).toBeNull();
+    expect(result.cumulativeCostUsd).toBeNull();
+  });
+
+  it("counts a started thread's usage from zero without a baseline", async () => {
+    const h = harness();
+    const turn = h.runtime.sendTurn(h.input);
+    await reportInTurnUsage(h, 1_000);
+    h.finish();
+    const result = await turn;
+    expect(result.costUsd).toBeCloseTo(inputCost(1_000), 10);
+    expect(result.cumulativeCostUsd).toBeCloseTo(inputCost(1_000), 10);
   });
 });
 
@@ -1848,4 +1987,120 @@ it("shows an actionable host-skill delivery notice while preserving the conversa
     },
   });
   expect(result.failure).toBeNull();
+});
+
+describe("fork snapshot boundary over production frame ordering", () => {
+  /**
+   * Persist runtime events the way the conversation actor does for Codex
+   * (`persistContentEvents`), pausing right after the `turn/completed`
+   * envelope is appended — the window in which a fork's copy can land.
+   */
+  async function driveTurnPausedAtCompletion(
+    items: Array<{ id: string; text: string; phase: string | null }>,
+  ) {
+    const configDir = await mkdtemp(path.join(tmpdir(), "codex-fork-order-"));
+    const sourcePath = await getTranscriptPath("source", configDir);
+    const append = (line: TranscriptEntry) =>
+      appendFile(sourcePath, JSON.stringify(line) + "\n", "utf-8");
+    await append({
+      timestamp: "t",
+      type: "user",
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+    });
+    const completionArchived = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const h = harness();
+    const turn = h.runtime.sendTurn({
+      ...h.input,
+      onEvent: async (event) => {
+        if (event.type === "content") {
+          await append({
+            timestamp: "t",
+            type: "assistant",
+            role: "assistant",
+            content: [event.block],
+          });
+          return;
+        }
+        if (event.type !== "transcript_entry") return;
+        const frame = conversationTranscriptFrame(event.entry);
+        await append(frame);
+        if (JSON.stringify(frame).includes("turn/completed")) {
+          completionArchived.resolve();
+          await release.promise;
+        }
+      },
+    });
+    await until(() =>
+      h.requests.some((request) => request.method === "turn/start"),
+    );
+    for (const item of items)
+      h.notify("item/completed", {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: { ...item, type: "agentMessage" },
+      });
+    h.finish();
+    await completionArchived.promise;
+
+    /** Fork at the turn's assistant message, as the fork service would. */
+    async function cutForForkAtAssistant(snapshotId: string) {
+      await copyTranscriptUpTo({
+        sourceTranscriptPath: sourcePath,
+        targetConversationId: snapshotId,
+        upToMessageIndex: 1,
+        mode: "inclusive",
+        configDir,
+      });
+      return selectCodexForkTurn(
+        readCodexTranscriptRecords(
+          await getTranscriptPath(snapshotId, configDir),
+        ),
+        "thread-1",
+      );
+    }
+    async function settle() {
+      release.resolve();
+      await turn;
+    }
+    async function cleanup() {
+      await rm(configDir, { recursive: true, force: true });
+    }
+    return { cutForForkAtAssistant, settle, cleanup };
+  }
+
+  it("never cuts natively when the turn's final text is still buffered past its completion", async () => {
+    const drive = await driveTurnPausedAtCompletion([
+      { id: "a", text: "looking", phase: "commentary" },
+      { id: "b", text: "the answer", phase: null },
+    ]);
+    try {
+      // Copied while the phase-less answer has not been appended yet.
+      await expect(drive.cutForForkAtAssistant("early")).resolves.toBeNull();
+      await drive.settle();
+      // Settled: the answer lands after the completion, so still no cut.
+      await expect(drive.cutForForkAtAssistant("settled")).resolves.toBeNull();
+    } finally {
+      await drive.cleanup();
+    }
+  });
+
+  it("cuts through the turn when every message was projected before its completion", async () => {
+    const drive = await driveTurnPausedAtCompletion([
+      { id: "a", text: "looking", phase: "commentary" },
+      { id: "b", text: "the answer", phase: "final_answer" },
+    ]);
+    try {
+      await expect(drive.cutForForkAtAssistant("early")).resolves.toBe(
+        "turn-1",
+      );
+      await drive.settle();
+      await expect(drive.cutForForkAtAssistant("settled")).resolves.toBe(
+        "turn-1",
+      );
+    } finally {
+      await drive.cleanup();
+    }
+  });
 });

@@ -5,6 +5,7 @@ import {
   ContinuityRefMismatchError,
   type ForkInput,
 } from "../continuity";
+import type { LineClassification } from "@/lib/conversations/transcript-logical-units";
 import {
   createClaudeContinuityAdapter,
   type ClaudeContinuityDeps,
@@ -19,20 +20,45 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
+/** Snapshot rows for `user` then one assistant message stamped `uuid`. */
+function snapshotLines(uuid: string | undefined): LineClassification[] {
+  return [
+    { seq: 0, visible: true, mergedIndex: 0, opensUnit: true, role: "user" },
+    { seq: 1, visible: false, mergedIndex: 0, opensUnit: false, role: null },
+    {
+      seq: 2,
+      visible: true,
+      mergedIndex: 1,
+      opensUnit: true,
+      role: "assistant",
+      uuid,
+    },
+  ];
+}
+
 function makeDeps(overrides: Partial<ClaudeContinuityDeps> = {}) {
   const forkCalls: Array<{
     sessionId: string;
     options: { dir?: string; upToMessageId?: string };
   }> = [];
+  const snapshotReads: string[] = [];
+  const seedReads: string[] = [];
   const deps: ClaudeContinuityDeps = {
     forkSession: async (sessionId, options) => {
       forkCalls.push({ sessionId, options });
       return { sessionId: "forked-session-id" };
     },
-    buildSyntheticForkSeed: async () => "SYNTHETIC SEED",
+    readSnapshotLines: async (transcriptPath) => {
+      snapshotReads.push(transcriptPath);
+      return snapshotLines("uuid-a1");
+    },
+    buildSyntheticForkSeed: async (transcriptPath) => {
+      seedReads.push(transcriptPath);
+      return "SYNTHETIC SEED";
+    },
     ...overrides,
   };
-  return { deps, forkCalls };
+  return { deps, forkCalls, snapshotReads, seedReads };
 }
 
 const context = { projectPath: "/proj", sessionName: "sess" };
@@ -40,8 +66,7 @@ const context = { projectPath: "/proj", sessionName: "sess" };
 function forkInput(overrides: Partial<ForkInput> = {}): ForkInput {
   return {
     projectPath: "/proj",
-    anchorMessageId: "uuid-a1",
-    sourceTranscriptPath: "/t/source.jsonl",
+    transcriptSnapshotPath: "/t/snapshot.jsonl",
     messageIndex: 1,
     ...overrides,
   };
@@ -115,8 +140,8 @@ describe("createClaudeContinuityAdapter", () => {
   });
 
   describe("fork", () => {
-    it("anchored fork goes native: forkSession receives the SDK session ref, dir, and anchor", async () => {
-      const { deps, forkCalls } = makeDeps();
+    it("forks natively through the snapshot's anchored assistant message", async () => {
+      const { deps, forkCalls, snapshotReads } = makeDeps();
       const adapter = createClaudeContinuityAdapter(deps);
 
       const outcome = await adapter.fork(claudeRef, forkInput());
@@ -124,7 +149,9 @@ describe("createClaudeContinuityAdapter", () => {
       expect(outcome).toEqual({
         kind: "native",
         ref: { backend: "claude", ref: "forked-session-id" },
+        locator: "uuid-a1",
       });
+      expect(snapshotReads).toEqual(["/t/snapshot.jsonl"]);
       expect(forkCalls).toEqual([
         {
           sessionId: "sdk-session-1",
@@ -133,8 +160,8 @@ describe("createClaudeContinuityAdapter", () => {
       ]);
     });
 
-    it("falls back to a synthetic seed when the native fork throws", async () => {
-      const { deps } = makeDeps({
+    it("falls back to a seed built from the snapshot when the native fork throws", async () => {
+      const { deps, seedReads } = makeDeps({
         forkSession: async () => {
           throw new Error("anchor compacted away");
         },
@@ -147,22 +174,36 @@ describe("createClaudeContinuityAdapter", () => {
         kind: "synthetic_seed",
         seed: "SYNTHETIC SEED",
       });
+      expect(seedReads).toEqual(["/t/snapshot.jsonl"]);
     });
 
-    it("never calls the SDK without an anchor — goes straight to the synthetic seed", async () => {
-      const { deps, forkCalls } = makeDeps();
+    it("never calls the SDK when the snapshot has no anchor — goes straight to the synthetic seed", async () => {
+      const { deps, forkCalls } = makeDeps({
+        readSnapshotLines: async () => snapshotLines(undefined),
+      });
       const adapter = createClaudeContinuityAdapter(deps);
 
-      const outcome = await adapter.fork(
-        claudeRef,
-        forkInput({ anchorMessageId: null }),
-      );
+      const outcome = await adapter.fork(claudeRef, forkInput());
 
       expect(forkCalls).toHaveLength(0);
       expect(outcome).toEqual({
         kind: "synthetic_seed",
         seed: "SYNTHETIC SEED",
       });
+    });
+
+    it("treats an unreadable snapshot as having no anchor", async () => {
+      const { deps, forkCalls } = makeDeps({
+        readSnapshotLines: async () => {
+          throw new Error("ENOENT");
+        },
+      });
+      const adapter = createClaudeContinuityAdapter(deps);
+
+      const outcome = await adapter.fork(claudeRef, forkInput());
+
+      expect(forkCalls).toHaveLength(0);
+      expect(outcome.kind).toBe("synthetic_seed");
     });
 
     it("throws ContinuityForkError when the native fork throws and the seed cannot be built", async () => {
@@ -183,12 +224,15 @@ describe("createClaudeContinuityAdapter", () => {
     });
 
     it("throws ContinuityForkError when no anchor exists and the seed cannot be built", async () => {
-      const { deps } = makeDeps({ buildSyntheticForkSeed: async () => null });
+      const { deps } = makeDeps({
+        readSnapshotLines: async () => snapshotLines(undefined),
+        buildSyntheticForkSeed: async () => null,
+      });
       const adapter = createClaudeContinuityAdapter(deps);
 
-      await expect(
-        adapter.fork(claudeRef, forkInput({ anchorMessageId: null })),
-      ).rejects.toBeInstanceOf(ContinuityForkError);
+      await expect(adapter.fork(claudeRef, forkInput())).rejects.toBeInstanceOf(
+        ContinuityForkError,
+      );
     });
   });
 });

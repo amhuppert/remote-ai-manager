@@ -695,8 +695,7 @@ export function describeBackendConformance(
       };
       const forkInput: ForkInput = {
         projectPath: "/conformance",
-        anchorMessageId: null,
-        sourceTranscriptPath: "/conformance/source.jsonl",
+        transcriptSnapshotPath: "/conformance/snapshot.jsonl",
         messageIndex: 0,
       };
 

@@ -795,12 +795,12 @@ export class CodexConversationRuntime
     this.active = state;
     let nativeCursor: CodexNativeCursor | null = null;
     let nativeCursorFailed = false;
+    const wasFresh = this.threadId === null;
     const projector = new CodexAppServerEvents();
-    const usage = new CodexAppServerUsage();
+    const usage = new CodexAppServerUsage({ resumed: !wasFresh });
     const blocks: MessageContentBlock[] = [];
     let sequence = 0;
     const unsupportedRequests = new Set<string | number>();
-    const wasFresh = this.threadId === null;
     const dispatchedMcp = this.stagedPortableMcp;
     const dispatchedCapabilities = this.stagedCapabilityConfig;
     const mcpConfigHash = dispatchedMcp
@@ -996,8 +996,11 @@ export class CodexConversationRuntime
           const scope = notificationScopeSchema.safeParse(message.params);
           if (!scope.success || scope.data.threadId !== state.threadId) return;
           if (message.method === "thread/tokenUsage/updated") {
-            if (!state.startRequested || scope.data.turnId === state.turnId)
-              usage.observe(message.params, !state.startRequested);
+            // onNotification records the turn id on receipt of turn/started,
+            // before any of the turn's own usage, so an update not scoped to
+            // that id describes pre-turn state. Resume may deliver its
+            // baseline after turn/start was requested.
+            usage.observe(message.params, scope.data.turnId !== state.turnId);
             return;
           }
           const compaction =
@@ -1292,8 +1295,12 @@ export class CodexConversationRuntime
             );
     const clear = failure?.kind === "stale_resume_ref";
     if (clear) this.threadId = null;
-    const measuredTokens =
-      this.captureAttempt && !usage.hasBaseline ? null : usage.tokens;
+    if (usage.baselineMissing)
+      logger.warn("codex-runtime.usage_baseline_missing", {
+        conversationId: this.conversationId,
+        threadIdDigest: providerRefDigest(this.threadId),
+      });
+    const measuredTokens = usage.tokens;
     const costUsd = await this.estimateTurnCost(measuredTokens);
     if (this.captureAttempt) {
       this.captureAttempt.tokens = measuredTokens;
