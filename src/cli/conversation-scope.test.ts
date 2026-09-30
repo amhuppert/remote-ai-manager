@@ -83,24 +83,28 @@ const validationVerbCases = [
     argv: ["validate", "list"],
     suffix: "/validation",
     method: "GET",
+    inboxProbe: true,
   },
   {
     verb: "run",
     argv: ["validate", "run", "test"],
     suffix: "/validation",
     method: "POST",
+    inboxProbe: false,
   },
   {
     verb: "status",
     argv: ["validate", "status", "vrun-1"],
     suffix: "/validation/vrun-1",
     method: "GET",
+    inboxProbe: true,
   },
   {
     verb: "cancel",
     argv: ["validate", "cancel", "vrun-1"],
     suffix: "/validation/vrun-1/cancel",
     method: "POST",
+    inboxProbe: true,
   },
 ] as const;
 
@@ -121,6 +125,12 @@ function makeHost(
     requests,
     async fetch(url, init) {
       requests.push({ url, init });
+      if (pathOf(url).endsWith("/inbox/summary")) {
+        return new Response(
+          JSON.stringify({ pendingCount: 2, hintsEnabled: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       return respond({ url, init });
     },
     async readTextFile(filePath) {
@@ -183,6 +193,26 @@ function onlyRequest(host: { requests: RecordedRequest[] }): RecordedRequest {
   return first;
 }
 
+/** Successful attributed commands may append exactly one non-consuming hint probe. */
+function primaryRequestWithInboxProbe(
+  host: { requests: RecordedRequest[] },
+  targetBase: string,
+): RecordedRequest {
+  expect(host.requests).toHaveLength(2);
+  const [primary, probe] = host.requests;
+  if (primary === undefined || probe === undefined) {
+    throw new Error(
+      "expected a primary command request and its inbox hint probe",
+    );
+  }
+  expect(probe.url).toBe(`http://127.0.0.1:3000${targetBase}/inbox/summary`);
+  expect(probe.init.method).toBe("GET");
+  expect(probe.init.body).toBeUndefined();
+  expect(probe.init.timeoutMs).toBe(300);
+  expect(probe.init.headers?.["x-cc-conversation-id"]).toBe("conv-1");
+  return primary;
+}
+
 function pathOf(url: string): string {
   return new URL(url).pathname;
 }
@@ -194,7 +224,12 @@ describe("cctl at project conversation scope — project-supported commands", ()
       const result = await runCcWithHost([...testCase.argv], projectEnv, host);
 
       expect(result.stderr).not.toContain("CC_SESSION");
-      const request = onlyRequest(host);
+      const request = testCase.inboxProbe
+        ? primaryRequestWithInboxProbe(
+            host,
+            "/api/projects/cc/conversations/conv-1",
+          )
+        : onlyRequest(host);
       expect(pathOf(request.url)).toBe(
         `/api/projects/cc/conversations/conv-1${testCase.suffix}`,
       );
@@ -209,9 +244,14 @@ describe("cctl at project conversation scope — project-supported commands", ()
     const result = await runCcWithHost(["notify", "done"], projectEnv, host);
 
     expect(result.exitCode).toBe(0);
-    expect(pathOf(onlyRequest(host).url)).toBe(
+    const request = primaryRequestWithInboxProbe(
+      host,
+      "/api/projects/cc/conversations/conv-1",
+    );
+    expect(pathOf(request.url)).toBe(
       "/api/projects/cc/conversations/conv-1/notifications",
     );
+    expect(request.init.method).toBe("POST");
   });
 
   it("ask posts to the project conversation ask route", async () => {
@@ -337,7 +377,13 @@ describe("cctl at project conversation scope — project-supported commands", ()
     );
 
     expect(result.exitCode, result.stderr).toBe(0);
-    const body: unknown = JSON.parse(onlyRequest(host).init.body ?? "{}");
+    const request = primaryRequestWithInboxProbe(
+      host,
+      "/api/projects/cc/conversations/conv-1",
+    );
+    expect(pathOf(request.url)).toBe("/api/projects/cc/tickets/12/attachments");
+    expect(request.init.method).toBe("POST");
+    const body: unknown = JSON.parse(request.init.body ?? "{}");
     expect(body).toEqual({
       description: "d",
       payload: {
@@ -584,7 +630,12 @@ describe("cctl validate at session conversation scope", () => {
       const host = makeHost(validationResponse);
       await runCcWithHost([...testCase.argv], sessionEnv, host);
 
-      const request = onlyRequest(host);
+      const request = testCase.inboxProbe
+        ? primaryRequestWithInboxProbe(
+            host,
+            "/api/projects/cc/sessions/feature/conversations/conv-1",
+          )
+        : onlyRequest(host);
       expect(pathOf(request.url)).toBe(
         `/api/projects/cc/sessions/feature/conversations/conv-1${testCase.suffix}`,
       );

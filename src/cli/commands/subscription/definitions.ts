@@ -1,5 +1,6 @@
 import { bytes, defineGroup } from "cli-for-agents";
 import { ccCommands } from "../../framework/family";
+import { subscriptionControlCommands } from "./controls-definitions";
 
 const paging = {
   limit: {
@@ -108,21 +109,29 @@ export const subscriptionWaitGetSpec = {
     { path: "inbox get", description: "Inspect the saved source delivery" },
     {
       path: "subscription unfollow",
-      description: "Cancel an unbatched or proven orphaned wait",
+      description: "Cancel a wait when queue evidence permits it",
     },
   ],
 } as const;
 
 export const subscriptionListSpec = {
   path: "subscription list",
-  summary: "Inspect this conversation's automatic follows and opt-outs",
+  summary: "Inspect this conversation's subscriptions and opt-outs",
   description:
-    "List bounded subscription records with their source, reason, cursor and delivery problem. Both session and project conversations are supported; an explicit unfollow remains recorded.",
+    "List a bounded outline with stable detail handles, source, reason, mode, pause state and delivery problem. Both session and project conversations are supported; an explicit unfollow remains recorded.",
   requires: "cc",
   effects: "read",
   args: [],
   flags: paging,
   related: [
+    {
+      path: "subscription subscribe",
+      description: "Explicitly subscribe to an exact source",
+    },
+    {
+      path: "subscription get",
+      description: "Inspect one subscription and its wait evidence",
+    },
     {
       path: "subscription waits",
       description: "Inspect active terminal waits",
@@ -142,7 +151,7 @@ export const subscriptionUnfollowSpec = {
   path: "subscription unfollow",
   summary: "Stop following a source and remember the opt-out",
   description:
-    "Unfollow one subscription belonging to the addressed conversation. Later reads or involvement do not reactivate it. Cancels an unbatched active wait. An uncertain batch also permits cancellation when the server proves that no matching queue row or accepted transcript receipt exists. Only the selected wait is cancelled; other members remain unresolved until individually unfollowed. Planned, queued, failed and other uncertain batches require queue review. Existing delivery evidence remains inspectable.",
+    "Unfollow one subscription belonging to the addressed conversation and remember the opt-out. Later reads or involvement do not reactivate it. A finite wait is cancelled when queue evidence permits: pending wakes and unsent planned batches can be withdrawn, while delivering, failed or ambiguous wakes require review. An uncertain batch permits cancellation if the server proves no queue row or accepted transcript receipt exists. Accepted turns cannot be recalled. Existing delivery evidence remains inspectable.",
   requires: "cc",
   effects: "write",
   args: [subscriptionId],
@@ -311,6 +320,7 @@ export const inboxGetCommand = ccCommands.defineCommand(inboxGetSpec, {
   }),
 });
 export const subscriptionCommands = [
+  ...subscriptionControlCommands,
   subscriptionListCommand,
   subscriptionUnfollowCommand,
   subscriptionWaitCommand,

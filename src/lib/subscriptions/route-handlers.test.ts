@@ -341,6 +341,7 @@ describe("subscription HTTP boundary", () => {
       createdAt: wait.createdAt,
       updatedAt: wait.updatedAt,
       unfollowedAt: wait.updatedAt,
+      pausedAt: null,
       missingAt: null,
       lastError: null,
     };

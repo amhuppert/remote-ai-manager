@@ -63,6 +63,7 @@ export function subscriptionWakeHold(input: {
 
 export function createSubscriptionWakeAdmissionReader(deps: {
   hasAcceptedInput(conversationId: string, batchId: string): Promise<boolean>;
+  isBatchCurrent?(batchId: string): Promise<boolean>;
   readHold(input: {
     projectPath: string;
     sessionName: string;
@@ -80,6 +81,12 @@ export function createSubscriptionWakeAdmissionReader(deps: {
       (await deps.hasAcceptedInput(input.conversationId, input.batchId))
     )
       return "Subscription wake already has durable input acceptance";
+    if (
+      input.batchId &&
+      deps.isBatchCurrent &&
+      !(await deps.isBatchCurrent(input.batchId))
+    )
+      return "Subscription wake reservation is no longer current";
     return deps.readHold(input);
   };
 }

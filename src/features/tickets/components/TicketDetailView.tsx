@@ -1,4 +1,5 @@
 "use client";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -301,6 +302,10 @@ export function TicketDossier({
             {TICKET_WORK_TYPE_LABELS[detail.workType]}
           </Badge>
           <div className="ml-auto flex items-center gap-sm max-768:grid max-768:w-full max-768:grid-cols-2">
+            <SubscriptionEntry
+              scope={{ project: detail.projectName }}
+              source={{ kind: "ticket", id: detail.id }}
+            />
             <CopyTicketReferenceButton
               projectName={detail.projectName}
               ticketNumber={detail.number}

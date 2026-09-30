@@ -1,4 +1,5 @@
 "use client";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/ui/cn";
@@ -814,7 +815,7 @@ export default function NotepadOpenView({
         )}
         <div
           className={cn(
-            "ml-auto flex shrink-0 items-center gap-[6px] max-768:shrink max-768:flex-wrap",
+            "ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-[6px]",
             historyOpen && "hidden",
           )}
         >
@@ -842,6 +843,7 @@ export default function NotepadOpenView({
             <SegmentedControlItem value="read">read</SegmentedControlItem>
             <SegmentedControlItem value="review">review</SegmentedControlItem>
           </SegmentedControl>
+          <SubscriptionEntry source={{ kind: "notepad", id: notepad.id }} />
           <Select
             value={notepad.writeMode}
             onValueChange={(value) => {

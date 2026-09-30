@@ -2,6 +2,7 @@
 
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import ConversationProfileChip from "@/components/conversation/ConversationProfileChip";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 import { deriveConversationProfileChipState } from "@/components/conversation/conversation-profile-chip-state";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { memo, useCallback, useState } from "react";
@@ -171,6 +172,9 @@ function MobileInfoPanel({
       </div>
       {projectName && sessionName && (
         <div className={ACTIONS_CLASS}>
+          <SubscriptionEntry
+            scope={{ project: projectName, session: sessionName }}
+          />
           <ScopedAgentCapabilitiesConfig
             level="session"
             projectName={projectName}

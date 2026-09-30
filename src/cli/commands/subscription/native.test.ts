@@ -63,6 +63,25 @@ const pendingDelivery = {
   lastError: null,
 };
 
+const subscription = {
+  id: "subscription-one",
+  recipient: activeWait.recipient,
+  source: { kind: "notepad", id: "notepad-one" },
+  reason: "Track the decisions",
+  mode: "passive",
+  eventKinds: null,
+  expiresAt: null,
+  status: "following",
+  cursor: "revision:2",
+  createdAt: activeWait.createdAt,
+  updatedAt: activeWait.updatedAt,
+  unfollowedAt: null,
+  pausedAt: null,
+  missingAt: null,
+  lastError: null,
+};
+const detail = { subscription, wait: null, batch: null };
+
 function fixture(response: unknown, env = projectEnv) {
   const requests: Array<{ url: string; init: FetchInit }> = [];
   const host: CliHost = {
@@ -92,6 +111,226 @@ function fixture(response: unknown, env = projectEnv) {
 }
 
 describe("conversation subscription commands", () => {
+  it("discovers source identities, events and supported modes without conversation identity", async () => {
+    const catalog = {
+      sources: [
+        {
+          kind: "notepad",
+          label: "Notepads",
+          description: "Document revisions",
+          identityDescription: "Exact notepad id",
+          allowedModes: ["passive"],
+          eventKinds: [{ id: "notepad-content-revised", label: "Revised" }],
+        },
+      ],
+    };
+    const test = fixture(catalog, { ...projectEnv, CC_CONVERSATION_ID: "" });
+    const result = await test.run(["subscription", "catalog"]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(test.requests[0]?.url).toBe(
+      "http://cc.test/api/subscriptions/catalog",
+    );
+    expect(JSON.parse(result.stdout).payload.data).toEqual(catalog);
+  });
+
+  it("explicitly subscribes in passive mode with a detail recovery handle", async () => {
+    const test = fixture(detail);
+    const result = await test.run([
+      "subscription",
+      "subscribe",
+      "notepad",
+      "notepad-one",
+      "--reason",
+      subscription.reason,
+      "--event-kind",
+      "notepad-content-revised",
+    ]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(test.requests).toHaveLength(1);
+    expect(test.requests[0]?.init.method).toBe("POST");
+    expect(JSON.parse(test.requests[0]?.init.body ?? "{}")).toEqual({
+      source: subscription.source,
+      reason: subscription.reason,
+      mode: "passive",
+      eventKinds: ["notepad-content-revised"],
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      effect: "applied",
+      recovery: { references: [{ kind: "subscription", id: subscription.id }] },
+      payload: {
+        data: {
+          ...detail,
+          getCommand: expect.stringContaining("subscription get"),
+        },
+      },
+    });
+  });
+
+  it("registers an explicit finite active subscription", async () => {
+    const test = fixture({ ...detail, wait: activeWait });
+    const result = await test.run([
+      "subscription",
+      "subscribe",
+      "workflow",
+      "run-one",
+      "--reason",
+      "Continue",
+      "--mode",
+      "active",
+      "--expires-in",
+      "120",
+    ]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(test.requests[0]?.init.body ?? "{}")).toMatchObject({
+      mode: "active",
+      expiresIn: 120,
+      source: { kind: "workflow", id: "run-one" },
+    });
+  });
+
+  it("inspects one subscription with wait and wake evidence without mutation", async () => {
+    const test = fixture({ ...detail, wait: activeWait });
+    const result = await test.run(["subscription", "get", subscription.id]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(test.requests[0]?.init.method).toBe("GET");
+    expect(test.requests[0]?.url).toBe(
+      "http://cc.test/api/projects/project-one/conversations/conversation-one/subscriptions/subscription-one",
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      effect: "read",
+      payload: { data: { subscription, wait: activeWait, batch: null } },
+    });
+  });
+
+  it.each(["pause", "resume", "cancel"])(
+    "applies the explicit %s control",
+    async (action) => {
+      const test = fixture(detail);
+      const result = await test.run(["subscription", action, subscription.id]);
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(test.requests[0]?.init.method).toBe("PATCH");
+      expect(JSON.parse(test.requests[0]?.init.body ?? "{}")).toEqual({
+        action,
+      });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        effect: "applied",
+        payload: { data: { subscription } },
+      });
+    },
+  );
+
+  it("changes mode through the same control contract and preserves expiry", async () => {
+    const test = fixture(detail);
+    const result = await test.run([
+      "subscription",
+      "mode",
+      subscription.id,
+      "active",
+      "--expires-in",
+      "3600",
+    ]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(test.requests[0]?.init.body ?? "{}")).toEqual({
+      action: "mode",
+      mode: "active",
+      expiresIn: 3600,
+    });
+  });
+
+  it("reads recorded inbox counts and changes the advisory preference", async () => {
+    const counts = fixture({ pendingCount: 2, hintsEnabled: true });
+    const read = await counts.run(["inbox", "summary"]);
+    expect(read.exitCode, read.stdout).toBe(0);
+    expect(counts.requests[0]?.url).toContain("/inbox/summary");
+    expect(JSON.parse(read.stdout).payload.data).toEqual({
+      pendingCount: 2,
+      hintsEnabled: true,
+    });
+    const prefs = fixture({ hintsEnabled: false });
+    const write = await prefs.run(["inbox", "hints", "off"]);
+    expect(write.exitCode, write.stdout).toBe(0);
+    expect(prefs.requests[0]?.url).toContain("/inbox/preferences");
+    expect(prefs.requests[0]?.init.method).toBe("PATCH");
+    expect(JSON.parse(prefs.requests[0]?.init.body ?? "{}")).toEqual({
+      hintsEnabled: false,
+    });
+  });
+
+  it.each([
+    ["subscription", "subscribe", "unknown", "id", "--reason", "Track"],
+    ["subscription", "subscribe", "notepad", "id"],
+    ["subscription", "mode", "id", "unknown"],
+    ["subscription", "pause", "not an id"],
+    ["inbox", "hints", "maybe"],
+  ])("rejects invalid control input locally: %j", async (...argv) => {
+    const test = fixture(detail);
+    const result = await test.run(argv);
+    expect(result.exitCode).toBe(2);
+    expect(test.requests).toHaveLength(0);
+  });
+
+  it("keeps malformed control acknowledgement unknown with the addressed recovery id", async () => {
+    const test = fixture({});
+    const result = await test.run(["subscription", "pause", subscription.id]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      effect: "unknown",
+      recovery: { references: [{ kind: "subscription", id: subscription.id }] },
+    });
+  });
+
+  it("adds stable detail handles to the bounded subscription outline", async () => {
+    const test = fixture({
+      subscriptions: [subscription],
+      total: 2,
+      limit: 1,
+      offset: 0,
+    });
+    const result = await test.run(["subscription", "list", "--limit", "1"]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    const data = JSON.parse(result.stdout).payload.data;
+    expect(data.subscriptions[0].getCommand).toContain("subscription get");
+    expect(data.subscriptions[0].getCommand).toContain(subscription.id);
+    expect(data.subscriptions[0].getCommand).toContain(
+      "--conversation=conversation-one",
+    );
+    expect(data.next).toContain("--offset=1");
+  });
+
+  it("bounds subscription reasons in structured and text outlines", async () => {
+    const test = fixture({
+      subscriptions: [{ ...subscription, reason: "r".repeat(1000) }],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    });
+    const result = await test.run(["subscription", "list"]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    const row = JSON.parse(result.stdout).payload.data.subscriptions[0];
+    expect(row.reasonSummary.length).toBeLessThanOrEqual(240);
+    expect(row.reasonCharacters).toBe(1000);
+    expect(row.reason).toBeUndefined();
+  });
+
+  it("bounds saved update content in the JSON inbox outline with its full-detail handle", async () => {
+    const test = fixture({
+      deliveries: [
+        {
+          ...pendingDelivery,
+          fact: { ...pendingDelivery.fact, summary: "s".repeat(10000) },
+        },
+      ],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    });
+    const result = await test.run(["inbox", "list"]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    const row = JSON.parse(result.stdout).payload.data.deliveries[0];
+    expect(row.summary.length).toBeLessThanOrEqual(240);
+    expect(row.summaryCharacters).toBe(10000);
+    expect(row.getCommand).toContain("inbox get");
+    expect(row.fact).toBeUndefined();
+  });
   it.each(["workflow", "validation", "git_job"])(
     "registers a nonblocking terminal wait for %s in project scope",
     async (kind) => {
@@ -348,6 +587,7 @@ describe("conversation subscription commands", () => {
       createdAt: "2026-09-30T00:00:00Z",
       updatedAt: "2026-09-30T01:00:00Z",
       unfollowedAt: "2026-09-30T01:00:00Z",
+      pausedAt: null,
       missingAt: null,
       lastError: null,
     };

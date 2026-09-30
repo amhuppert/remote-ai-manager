@@ -24,6 +24,8 @@ const INFRASTRUCTURE_READERS: Readonly<Record<string, string>> = {
     "Owns environment identity parsing; commands use the typed context resolver.",
   "framework/context.ts":
     "Resolves typed server/project/session/conversation contexts.",
+  "framework/inbox-hint.ts":
+    "Uses explicit ambient attribution only when it matches the addressed conversation before a bounded read-only advisory inbox summary; supports project and session scopes.",
   "session-env-inventory.ts": "Declares the scope contract.",
 };
 

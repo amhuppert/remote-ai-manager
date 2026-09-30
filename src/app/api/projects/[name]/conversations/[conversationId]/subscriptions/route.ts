@@ -1,1 +1,4 @@
-export { projectSubscriptionListGET as GET } from "@/lib/subscriptions/production-route-handlers";
+export {
+  projectSubscriptionListGET as GET,
+  projectSubscriptionPOST as POST,
+} from "@/lib/subscriptions/production-route-handlers";

@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
+import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
 import TranscriptClipCapture from "@/components/notepad-capture/TranscriptClipCapture";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import ConversationTranscript, {
@@ -204,6 +206,12 @@ export default function ConversationPanelContainer({
       canStop={canStop}
       onStop={onStop}
       promptInputSlot={undefined}
+      headerActionsSlot={
+        activeConversation &&
+        isOrdinaryConversationRole(activeConversation.role) ? (
+          <SubscriptionEntry target={clipTarget} />
+        ) : undefined
+      }
     />
   );
 }

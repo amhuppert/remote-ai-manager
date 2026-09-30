@@ -62,6 +62,7 @@ export interface ActiveWaitDispatchService {
 
 export interface ActiveWaitDispatcherDeps {
   service: ActiveWaitDispatchService;
+  reconcilePassive?(): Promise<void>;
   observe(batch: SubscriptionWakeBatch): Promise<WakeDispatchObservation>;
   enqueue(batch: SubscriptionWakeBatch): Promise<void>;
   drain(batch: SubscriptionWakeBatch): Promise<void>;
@@ -127,6 +128,7 @@ export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
 
   async function run(): Promise<void> {
     await deps.service.reconcile();
+    await deps.reconcilePassive?.();
     if (stopped) return;
     const visited = new Set<string>();
     for (const batch of await deps.service.listPendingBatches()) {

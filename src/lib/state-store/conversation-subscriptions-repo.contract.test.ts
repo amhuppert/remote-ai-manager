@@ -27,6 +27,7 @@ const maximalSubscription = () =>
     createdAt: "2026-09-01T00:00:00Z",
     updatedAt: "2026-09-30T00:00:00Z",
     unfollowedAt: "2026-09-29T00:00:00Z",
+    pausedAt: "2026-09-27T00:00:00Z",
     missingAt: "2026-09-28T00:00:00Z",
     lastError: "Source read failed",
   });

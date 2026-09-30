@@ -1,4 +1,5 @@
 import type { CommandsChangedEvent } from "@/lib/commands/schemas";
+import type { SubscriptionsChangedEvent } from "@/lib/subscriptions/controls-schemas";
 import type { BundleTransferEvent } from "@/lib/tickets/bundle-transfer-schemas";
 import { z } from "zod";
 import type {
@@ -211,6 +212,7 @@ export type SpecSseEvent = z.infer<typeof specSseEventSchema>;
 
 /** SSE event type */
 export type SSEEvent =
+  | SubscriptionsChangedEvent
   | ConversationStatusEvent
   | MessageAppendedEvent
   | MessageUpdatedEvent

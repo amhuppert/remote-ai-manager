@@ -17,7 +17,33 @@ import {
   type SubscriptionRecipient,
 } from "@/lib/subscriptions/schemas";
 
+export type SubscriptionControlChange = Partial<
+  Pick<
+    ConversationSubscription,
+    "status" | "mode" | "pausedAt" | "expiresAt" | "reason" | "eventKinds"
+  >
+> & { cancelWait?: boolean };
 export interface ConversationSubscriptionWaitsRepo {
+  applyControl(
+    recipient: SubscriptionRecipient,
+    subscriptionId: string,
+    change: SubscriptionControlChange,
+    at: string,
+    releaseBatchId?: string,
+  ): Promise<void>;
+  /** Used only within the canonical queue's serialized conversation write. */
+  applyControlWithinWrite(
+    recipient: SubscriptionRecipient,
+    subscriptionId: string,
+    change: SubscriptionControlChange,
+    at: string,
+    releaseBatchId?: string,
+  ): void;
+  isBatchDispatchable(batchId: string): Promise<boolean>;
+  rateLimitUntil(
+    recipient: SubscriptionRecipient,
+    at: string,
+  ): Promise<string | null>;
   register(
     wait: ActiveSubscriptionWait,
     subscription: ConversationSubscription,
@@ -181,7 +207,7 @@ export function createConversationSubscriptionWaitsRepo(
     return (
       db
         .prepare(
-          "SELECT 1 FROM conversation_subscriptions WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id AND mode='active' AND status='following'",
+          "SELECT 1 FROM conversation_subscriptions WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id AND mode='active' AND status='following' AND paused_at IS NULL",
         )
         .get({ id: wait.subscriptionId, ...scope(wait.recipient) }) !==
       undefined
@@ -207,8 +233,8 @@ export function createConversationSubscriptionWaitsRepo(
       )
         throw new Error("Active wait does not belong to its subscription");
       db.prepare(
-        `INSERT INTO conversation_subscriptions (id,project_path,conversation_id,source_kind,source_id,reason,mode,event_kinds_json,expires_at,status,cursor,created_at,updated_at,unfollowed_at,missing_at,last_error)
-      VALUES (@id,@project_path,@conversation_id,@source_kind,@source_id,@reason,'active',NULL,@expires_at,'following',@cursor,@created_at,@updated_at,NULL,NULL,NULL)
+        `INSERT INTO conversation_subscriptions (id,project_path,conversation_id,source_kind,source_id,reason,mode,event_kinds_json,expires_at,status,cursor,created_at,updated_at,unfollowed_at,paused_at,missing_at,last_error)
+      VALUES (@id,@project_path,@conversation_id,@source_kind,@source_id,@reason,'active',NULL,@expires_at,'following',@cursor,@created_at,@updated_at,NULL,@paused_at,NULL,NULL)
       ON CONFLICT(project_path,conversation_id,source_kind,source_id) DO NOTHING`,
       ).run({
         id: subscription.id,
@@ -220,6 +246,7 @@ export function createConversationSubscriptionWaitsRepo(
         cursor: subscription.cursor,
         created_at: subscription.createdAt,
         updated_at: subscription.updatedAt,
+        paused_at: subscription.pausedAt,
       });
       const row = z.object({ id: z.string() }).parse(
         db
@@ -236,12 +263,13 @@ export function createConversationSubscriptionWaitsRepo(
       if (existing) return existing;
       const value = { ...input, subscriptionId: row.id };
       db.prepare(
-        "UPDATE conversation_subscriptions SET mode='active',status='following',reason=@reason,expires_at=@expires_at,updated_at=@at,unfollowed_at=NULL,missing_at=NULL,last_error=NULL WHERE id=@id",
+        "UPDATE conversation_subscriptions SET mode='active',status='following',reason=@reason,expires_at=@expires_at,updated_at=@at,unfollowed_at=NULL,paused_at=@paused_at,missing_at=NULL,last_error=NULL WHERE id=@id",
       ).run({
         id: row.id,
         reason: input.reason,
         expires_at: input.expiresAt,
         at: input.updatedAt,
+        paused_at: subscription.pausedAt,
       });
       writeWait(value);
       return value;
@@ -255,7 +283,15 @@ export function createConversationSubscriptionWaitsRepo(
       at: string,
     ) => {
       const wait = readWait(waitId);
-      if (!wait || wait.state !== "waiting" || !following(wait)) return false;
+      if (!wait || wait.state !== "waiting") return false;
+      if (
+        db
+          .prepare(
+            "SELECT 1 FROM conversation_subscriptions WHERE id=? AND status='following'",
+          )
+          .get(wait.subscriptionId) === undefined
+      )
+        return false;
       const delivery = subscriptionDeliverySchema.parse(input);
       if (
         delivery.subscriptionId !== wait.subscriptionId ||
@@ -359,6 +395,111 @@ export function createConversationSubscriptionWaitsRepo(
       return next;
     },
   );
+  function isBatchDispatchable(batchId: string): boolean {
+    const batch = readBatch(batchId);
+    if (!batch || (batch.state !== "planned" && batch.state !== "queued"))
+      return false;
+    return batch.waitIds.every((id, index) => {
+      const wait = readWait(id);
+      if (
+        !wait ||
+        wait.state !== "ready" ||
+        wait.batchId !== batch.id ||
+        wait.deliveryId !== batch.deliveryIds[index] ||
+        !following(wait)
+      )
+        return false;
+      return (
+        db
+          .prepare(
+            "SELECT 1 FROM conversation_subscription_deliveries WHERE id=? AND attempt_id=? AND state='queued'",
+          )
+          .get(wait.deliveryId, batch.id) !== undefined
+      );
+    });
+  }
+  const controlTx = db.transaction(
+    (
+      recipient: SubscriptionRecipient,
+      subscriptionId: string,
+      change: SubscriptionControlChange,
+      at: string,
+      releaseBatchId?: string,
+    ) => {
+      const wait = readRecipientWait(recipient, subscriptionId);
+      const batch = wait?.batchId ? readBatch(wait.batchId) : null;
+      if (batch && batch.state !== "accepted" && batch.state !== "cancelled") {
+        if (
+          batch.id !== releaseBatchId ||
+          (batch.state !== "planned" && batch.state !== "queued")
+        )
+          throw new ActiveWaitConflictError();
+        writeBatch({
+          ...batch,
+          state: "cancelled",
+          updatedAt: at,
+          finishedAt: at,
+          lastError: "Pending wake withdrawn for subscription control",
+        });
+        for (const id of batch.waitIds) {
+          const member = readWait(id);
+          if (!member || member.batchId !== batch.id)
+            throw new Error("Wake batch lost its wait ownership");
+          writeWait({ ...member, batchId: null, updatedAt: at });
+          db.prepare(
+            "UPDATE conversation_subscription_deliveries SET state='pending',attempt_id=NULL,queued_at=NULL,accepted_at=NULL,finished_at=NULL,last_error=NULL WHERE id=? AND attempt_id=? AND state='queued'",
+          ).run(member.deliveryId, batch.id);
+        }
+      }
+      const current = readRecipientWait(recipient, subscriptionId);
+      if (
+        change.cancelWait &&
+        current &&
+        current.state !== "settled" &&
+        current.state !== "cancelled"
+      )
+        writeWait({
+          ...current,
+          state: "cancelled",
+          updatedAt: at,
+          finishedAt: at,
+        });
+      const entries: object = change;
+      const assignments: string[] = ["updated_at=@at"];
+      const params: Record<string, string | number | null> = {
+        ...scope(recipient),
+        id: subscriptionId,
+        at,
+      };
+      for (const [field, value] of Object.entries(entries)) {
+        const column = (
+          {
+            status: "status",
+            mode: "mode",
+            pausedAt: "paused_at",
+            expiresAt: "expires_at",
+            reason: "reason",
+            eventKinds: "event_kinds_json",
+          } as Record<string, string>
+        )[field];
+        if (!column) continue;
+        assignments.push(`${column}=@${column}`);
+        params[column] =
+          field === "eventKinds" && value !== null
+            ? JSON.stringify(value)
+            : (value as string | null);
+      }
+      if (change.status !== undefined)
+        assignments.push(
+          change.status === "following"
+            ? "unfollowed_at=NULL"
+            : "unfollowed_at=COALESCE(unfollowed_at,@at)",
+        );
+      db.prepare(
+        `UPDATE conversation_subscriptions SET ${assignments.join(",")} WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id`,
+      ).run(params);
+    },
+  );
   const reserveTx = db.transaction((batch: SubscriptionWakeBatch) => {
     const incumbent = pendingBatch(batch.recipient);
     if (incumbent) return incumbent;
@@ -456,6 +597,51 @@ export function createConversationSubscriptionWaitsRepo(
     },
   );
   return {
+    async applyControl(recipient, subscriptionId, change, at, releaseBatchId) {
+      await writeQueue.withWriteQueueSync("subscriptions.wait.control", () =>
+        controlTx.immediate(
+          recipient,
+          subscriptionId,
+          change,
+          at,
+          releaseBatchId,
+        ),
+      );
+    },
+    applyControlWithinWrite(
+      recipient,
+      subscriptionId,
+      change,
+      at,
+      releaseBatchId,
+    ) {
+      controlTx.immediate(
+        recipient,
+        subscriptionId,
+        change,
+        at,
+        releaseBatchId,
+      );
+    },
+    async isBatchDispatchable(batchId) {
+      return isBatchDispatchable(batchId);
+    },
+    async rateLimitUntil(recipient, at) {
+      const cutoff = new Date(Date.parse(at) - 60_000).toISOString();
+      const rows: unknown[] = db
+        .prepare(
+          "SELECT created_at FROM conversation_subscription_wake_batches WHERE project_path=@project_path AND conversation_id=@conversation_id AND created_at>@cutoff ORDER BY created_at DESC LIMIT 3",
+        )
+        .all({ ...scope(recipient), cutoff });
+      const oldest = rows.at(-1);
+      return rows.length < 3 || oldest === undefined
+        ? null
+        : new Date(
+            Date.parse(
+              z.object({ created_at: z.string() }).parse(oldest).created_at,
+            ) + 60_000,
+          ).toISOString();
+    },
     async register(wait, subscription) {
       const parsed = activeSubscriptionWaitSchema.parse(wait);
       const parent = conversationSubscriptionSchema.parse(subscription);

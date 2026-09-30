@@ -828,6 +828,16 @@ async function executePromptForMachine(
     role: "user",
     content: transcriptBlocks,
     modelSelection: effectiveModelSelection,
+    ...(input.turn.queuedDelivery?.subscriptionBatchId
+      ? {
+          origin: {
+            source: "subscription_update" as const,
+            subscriptionUpdate: {
+              batchId: input.turn.queuedDelivery.subscriptionBatchId,
+            },
+          },
+        }
+      : {}),
   });
 
   const queuedAccounting = createQueuedDeliveryAccounting(deps.effects, {

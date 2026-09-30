@@ -441,6 +441,7 @@ describe("passive subscription policy", () => {
       createdAt: at,
       updatedAt: at,
       unfollowedAt: null,
+      pausedAt: null,
       missingAt: null,
       lastError: null,
     });
@@ -486,6 +487,7 @@ describe("passive subscription policy", () => {
         createdAt: at,
         updatedAt: at,
         unfollowedAt: null,
+        pausedAt: null,
         missingAt: null,
         lastError: null,
       }),
@@ -540,4 +542,42 @@ describe("passive subscription policy", () => {
         .block,
     ).toBeNull();
   });
+});
+
+it("ingests source changes for recorded paused recipients during background reconciliation", async () => {
+  const h = setup();
+  const followed = await h.follow();
+  if (!followed) throw Error("Expected subscription");
+  await h.repo.updateControls(
+    recipient,
+    followed.id,
+    { ...followed, pausedAt: at },
+    at,
+  );
+  await h.service.reconcileRecordedRecipients();
+  const inbox = await h.repo.readInbox(recipient, {});
+  expect(inbox.items).toHaveLength(1);
+  expect(inbox.items[0]?.state).toBe("pending");
+  const briefing = await h.service.prepareBriefing({
+    recipient,
+    attemptId: "paused-input",
+  });
+  expect(briefing.block).toBeNull();
+  expect((await h.repo.readInbox(recipient, {})).items[0]?.state).toBe(
+    "pending",
+  );
+});
+it("publishes source changes once and does not invalidate clients for repeated identical reconciliation", async () => {
+  const changes: string[] = [];
+  const h = setup({
+    onChange: (_recipient, source) => {
+      changes.push(source?.id ?? "receipt");
+    },
+  });
+  await h.follow();
+  await h.service.reconcile(recipient);
+  const afterChange = changes.length;
+  await h.service.reconcile(recipient);
+  expect((await h.repo.readInbox(recipient, {})).total).toBe(1);
+  expect(changes).toHaveLength(afterChange);
 });

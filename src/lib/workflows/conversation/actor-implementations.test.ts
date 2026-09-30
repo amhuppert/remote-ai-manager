@@ -5586,6 +5586,46 @@ describe("executePromptForMachine", () => {
         );
     }
 
+    it("records a generated wake's batch origin only after backend input acceptance", async () => {
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          expect(userAppendCalls()).toHaveLength(0);
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+      const input = makeExecutePromptInput({
+        turn: {
+          promptText: "Quoted finite wait outcome",
+          inputOrigin: "generated",
+          queuedDelivery: {
+            messageIds: ["batch"],
+            deliveryAttemptId: "attempt",
+            subscriptionBatchId: "batch",
+          },
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
+      );
+      registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
+        abortController: new AbortController(),
+      });
+      await conversationActors.executePromptForMachine(input);
+      const entry = userAppendCalls()[0]?.[1];
+      expect(entry).toMatchObject({
+        id: "batch",
+        role: "user",
+        origin: {
+          source: "subscription_update",
+          subscriptionUpdate: { batchId: "batch" },
+        },
+      });
+    });
+
     it("appends exactly one user transcript entry after backend acceptance and marks rows delivered", async () => {
       const appendOrder: string[] = [];
       mockDeps = createMockDeps({

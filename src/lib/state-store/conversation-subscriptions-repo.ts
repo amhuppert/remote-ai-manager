@@ -39,6 +39,23 @@ export interface ConversationSubscriptionsRepo {
     source: SubscriptionSourceRef,
   ): Promise<ConversationSubscription | null>;
   list(recipient: SubscriptionRecipient): Promise<ConversationSubscription[]>;
+  listAll(): Promise<ConversationSubscription[]>;
+  listFiniteWaitSubscriptionIds(
+    recipient: SubscriptionRecipient,
+  ): Promise<string[]>;
+  listDeliveriesForOverview(
+    recipient?: SubscriptionRecipient,
+  ): Promise<SubscriptionDelivery[]>;
+  pendingCount(recipient?: SubscriptionRecipient): Promise<number>;
+  updateControls(
+    recipient: SubscriptionRecipient,
+    id: string,
+    input: Pick<
+      ConversationSubscription,
+      "status" | "mode" | "pausedAt" | "eventKinds" | "expiresAt" | "reason"
+    >,
+    at: string,
+  ): Promise<ConversationSubscription | null>;
   unfollow(
     recipient: SubscriptionRecipient,
     id: string,
@@ -95,6 +112,7 @@ const subscriptionRowSchema = z
     created_at: z.string(),
     updated_at: z.string(),
     unfollowed_at: z.string().nullable(),
+    paused_at: z.string().nullable(),
     missing_at: z.string().nullable(),
     last_error: z.string().nullable(),
   })
@@ -140,6 +158,7 @@ function subscriptionFromRow(raw: unknown): ConversationSubscription {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     unfollowedAt: row.unfollowed_at,
+    pausedAt: row.paused_at,
     missingAt: row.missing_at,
     lastError: row.last_error,
   });
@@ -190,8 +209,8 @@ export function createConversationSubscriptionsRepo(
     `SELECT * FROM conversation_subscriptions WHERE project_path=@project_path AND conversation_id=@conversation_id ORDER BY created_at,id`,
   );
   const create =
-    db.prepare(`INSERT INTO conversation_subscriptions (id,project_path,conversation_id,source_kind,source_id,reason,mode,event_kinds_json,expires_at,status,cursor,created_at,updated_at,unfollowed_at,missing_at,last_error)
-    VALUES (@id,@project_path,@conversation_id,@source_kind,@source_id,@reason,@mode,@event_kinds_json,@expires_at,@status,@cursor,@created_at,@updated_at,@unfollowed_at,@missing_at,@last_error)
+    db.prepare(`INSERT INTO conversation_subscriptions (id,project_path,conversation_id,source_kind,source_id,reason,mode,event_kinds_json,expires_at,status,cursor,created_at,updated_at,unfollowed_at,paused_at,missing_at,last_error)
+    VALUES (@id,@project_path,@conversation_id,@source_kind,@source_id,@reason,@mode,@event_kinds_json,@expires_at,@status,@cursor,@created_at,@updated_at,@unfollowed_at,@paused_at,@missing_at,@last_error)
     ON CONFLICT(project_path,conversation_id,source_kind,source_id) DO NOTHING`);
   const insertDelivery =
     db.prepare(`INSERT INTO conversation_subscription_deliveries (id,subscription_id,project_path,conversation_id,source_kind,source_id,occurrence_id,fact_json,recorded_at,state,attempt_id,attempt_count,queued_at,accepted_at,finished_at,last_error)
@@ -202,11 +221,11 @@ export function createConversationSubscriptionsRepo(
   );
   const advance =
     db.prepare(`UPDATE conversation_subscriptions SET cursor=@next_cursor,missing_at=@missing_at,updated_at=@at,last_error=NULL
-    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND mode='passive' AND missing_at IS NULL`);
+    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND mode='passive' AND missing_at IS NULL AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=conversation_subscriptions.id)`);
   const claim =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state='queued',attempt_id=@attempt_id,attempt_count=attempt_count+1,queued_at=@at,accepted_at=NULL,finished_at=NULL,last_error=NULL
     WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND state IN ('pending','failed')
-    AND EXISTS (SELECT 1 FROM conversation_subscriptions s WHERE s.id=subscription_id AND s.project_path=@project_path AND s.conversation_id=@conversation_id AND s.status='following' AND s.mode='passive' AND (s.expires_at IS NULL OR s.expires_at>@at))`);
+    AND EXISTS (SELECT 1 FROM conversation_subscriptions s WHERE s.id=subscription_id AND s.project_path=@project_path AND s.conversation_id=@conversation_id AND s.status='following' AND s.mode='passive' AND s.paused_at IS NULL AND ((s.expires_at IS NULL OR s.expires_at>@at) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL)))`);
   const settle =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state=@state,accepted_at=CASE WHEN @state='accepted' THEN @at ELSE NULL END,finished_at=@at,last_error=@error
     WHERE project_path=@project_path AND conversation_id=@conversation_id AND attempt_id=@attempt_id
@@ -309,6 +328,7 @@ export function createConversationSubscriptionsRepo(
           created_at: value.createdAt,
           updated_at: value.updatedAt,
           unfollowed_at: value.unfollowedAt,
+          paused_at: value.pausedAt,
           missing_at: value.missingAt,
           last_error: value.lastError,
         });
@@ -335,6 +355,75 @@ export function createConversationSubscriptionsRepo(
     },
     async list(recipient) {
       return (list.all(scope(recipient)) as unknown[]).map(subscriptionFromRow);
+    },
+    async listFiniteWaitSubscriptionIds(recipient) {
+      return (
+        db
+          .prepare(
+            "SELECT subscription_id FROM conversation_subscription_waits WHERE project_path=@project_path AND conversation_id=@conversation_id",
+          )
+          .all(scope(recipient)) as unknown[]
+      ).map(
+        (raw) =>
+          z.object({ subscription_id: z.string() }).parse(raw).subscription_id,
+      );
+    },
+    async listAll() {
+      return (
+        db
+          .prepare(
+            "SELECT * FROM conversation_subscriptions ORDER BY created_at,id",
+          )
+          .all() as unknown[]
+      ).map(subscriptionFromRow);
+    },
+    async listDeliveriesForOverview(recipient) {
+      const rows: unknown[] = recipient
+        ? db
+            .prepare(
+              "SELECT * FROM conversation_subscription_deliveries WHERE project_path=@project_path AND conversation_id=@conversation_id ORDER BY recorded_at DESC,rowid DESC",
+            )
+            .all(scope(recipient))
+        : db
+            .prepare(
+              "SELECT * FROM conversation_subscription_deliveries ORDER BY recorded_at DESC,rowid DESC",
+            )
+            .all();
+      return rows.map(deliveryFromRow);
+    },
+    async pendingCount(recipient) {
+      const row: unknown = recipient
+        ? db
+            .prepare(
+              "SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE state<>'accepted' AND project_path=@project_path AND conversation_id=@conversation_id",
+            )
+            .get(scope(recipient))
+        : db
+            .prepare(
+              "SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE state<>'accepted'",
+            )
+            .get();
+      return z.object({ total: z.number() }).parse(row).total;
+    },
+    async updateControls(recipient, id, input, at) {
+      return writeQueue.withWriteQueueSync("subscriptions.controls", () => {
+        db.prepare(
+          "UPDATE conversation_subscriptions SET status=@status,mode=@mode,paused_at=@paused_at,event_kinds_json=@event_kinds_json,expires_at=@expires_at,reason=@reason,updated_at=@at,unfollowed_at=CASE WHEN @status='following' THEN NULL ELSE COALESCE(unfollowed_at,@at) END WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id",
+        ).run({
+          ...scope(recipient),
+          id,
+          status: input.status,
+          mode: input.mode,
+          paused_at: input.pausedAt,
+          event_kinds_json:
+            input.eventKinds === null ? null : JSON.stringify(input.eventKinds),
+          expires_at: input.expiresAt,
+          reason: input.reason,
+          at,
+        });
+        const raw: unknown = find.get({ ...scope(recipient), id });
+        return raw === undefined ? null : subscriptionFromRow(raw);
+      });
     },
     async unfollow(recipient, id, at) {
       return writeQueue.withWriteQueueSync(

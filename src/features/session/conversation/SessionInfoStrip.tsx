@@ -33,6 +33,7 @@ import {
 } from "@/stores/session-detail.store";
 import { useTicketSessionLinksQuery } from "@/lib/tickets/queries";
 import CopyableId from "@/components/CopyableId";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
@@ -286,6 +287,9 @@ function SessionInfoStrip({
           />
         </div>
         <div className="ml-auto inline-flex shrink-0 items-center justify-end gap-sm @min-[760px]:@max-[1440px]:basis-full max-768:hidden">
+          <SubscriptionEntry
+            scope={{ project: projectName, session: sessionName }}
+          />
           <DevServersButton
             open={dsOpen}
             servers={dsServers}

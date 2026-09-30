@@ -106,6 +106,7 @@ export function createCommandCenterCli(
       cc: async ({ env, globals, signal }) => {
         const transport = await resolveCcHost(host, env, signal);
         let laneReminderState: unknown;
+        let inboxHintState: unknown;
         return {
           ok: true,
           app: {
@@ -113,6 +114,9 @@ export function createCommandCenterCli(
             globals,
             get laneReminderState() {
               return laneReminderState;
+            },
+            get inboxHintState() {
+              return inboxHintState;
             },
             host: {
               ...transport,
@@ -124,6 +128,12 @@ export function createCommandCenterCli(
                   "laneReminderState" in body
                 )
                   laneReminderState = body.laneReminderState;
+                if (
+                  typeof body === "object" &&
+                  body !== null &&
+                  "inboxHintState" in body
+                )
+                  inboxHintState = body.inboxHintState;
               },
             },
           },

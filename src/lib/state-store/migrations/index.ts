@@ -1,3 +1,4 @@
+import { addConversationSubscriptionControls } from "./0060-add-conversation-subscription-controls";
 import { addConversationSubscriptionWaits } from "./0059-add-conversation-subscription-waits";
 import { addConversationSubscriptions } from "./0058-add-conversation-subscriptions";
 import { closeWithdrawnRevisionApprovalRequests } from "./0056-close-withdrawn-revision-approval-requests";
@@ -155,6 +156,7 @@ export const migrations: readonly StateMigration[] = [
   continuousSpecReview,
   addConversationSubscriptions,
   addConversationSubscriptionWaits,
+  addConversationSubscriptionControls,
 ];
 
 export type { StateMigration } from "./types";

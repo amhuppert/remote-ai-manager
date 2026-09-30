@@ -41,6 +41,7 @@ import {
 import { ccRequestFailure, ccWriteFailure } from "../../framework/request";
 import { quoteLiteralText } from "../../framework/literal-text";
 import { cliRequest, encodePathSegment } from "../../transport";
+import { subscriptionGetCommand } from "./controls-definitions";
 import {
   subscriptionListCommand,
   inboxListCommand,
@@ -118,6 +119,10 @@ function omissionText(
 }
 function singleLine(text: string) {
   return text.replace(/\s+/g, " ");
+}
+function summary(text: string, limit = 240) {
+  const line = singleLine(text);
+  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
 }
 
 export const subscriptionWaitHandler: Write<typeof subscriptionWaitSpec> = {
@@ -325,11 +330,21 @@ export const subscriptionWaitGetHandler: Read<typeof subscriptionWaitGetSpec> =
     }),
   };
 
+type SubscriptionOutline = Pick<
+  ConversationSubscription,
+  "id" | "source" | "mode" | "status" | "pausedAt" | "missingAt"
+> & {
+  reasonSummary: string;
+  reasonCharacters: number;
+  lastErrorSummary: string | null;
+  getCommand: string;
+};
+
 export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
   run: runner<
     Input<typeof subscriptionListSpec>,
     {
-      subscriptions: readonly ConversationSubscription[];
+      subscriptions: readonly SubscriptionOutline[];
       omission: Omission;
       next: string | null;
     },
@@ -353,8 +368,34 @@ export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
       const parsed = subscriptionsResponse.safeParse(response.body);
       if (!parsed.success) return invalidResponse();
       const { subscriptions, total, offset, limit } = parsed.data;
+      const flags = {
+        ...explicitScopeFlags(app),
+        project: target.projectName,
+        conversation: target.conversationId,
+        ...(target.scope === "session" ? { session: target.sessionName } : {}),
+      };
       const source = {
-        items: subscriptions,
+        items: subscriptions.map((subscription) => ({
+          id: subscription.id,
+          source: subscription.source,
+          mode: subscription.mode,
+          status: subscription.status,
+          pausedAt: subscription.pausedAt,
+          missingAt: subscription.missingAt,
+          reasonSummary: summary(subscription.reason),
+          reasonCharacters: subscription.reason.length,
+          lastErrorSummary:
+            subscription.lastError === null
+              ? null
+              : summary(subscription.lastError),
+          getCommand: renderInvocation(
+            invocation(subscriptionGetCommand, {
+              args: { "subscription-id": subscription.id },
+              flags,
+            }),
+            "cctl",
+          ),
+        })),
         total: { kind: "known", count: count(total) } as const,
       };
       const bounded = page(
@@ -390,16 +431,28 @@ export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
     },
     text: ({ subscriptions, omission, next }) =>
       quoteLiteralText(
-        `${omissionText("subscriptions", omission, next)}\n${subscriptions.map((s) => `${s.id}  ${s.status}  ${s.mode}  ${s.source.kind}:${s.source.id}\n  reason: ${singleLine(s.reason)}${s.lastError ? `\n  problem: ${singleLine(s.lastError)}` : ""}${s.missingAt ? `\n  source missing: ${s.missingAt}` : ""}`).join("\n")}\n`,
+        `${omissionText("subscriptions", omission, next)}\n${subscriptions.map((s) => `${s.id}  ${s.status}  ${s.mode}${s.pausedAt ? "  paused" : ""}  ${s.source.kind}:${s.source.id}\n  reason (${s.reasonCharacters} chars): ${s.reasonSummary}${s.lastErrorSummary ? `\n  problem: ${s.lastErrorSummary}` : ""}${s.missingAt ? `\n  source missing: ${s.missingAt}` : ""}\n  get: ${s.getCommand}`).join("\n")}\n`,
       ),
   }),
+};
+
+type DeliveryOutline = Pick<
+  SubscriptionDelivery,
+  "id" | "subscriptionId" | "source" | "state"
+> & {
+  eventKind: string;
+  occurredAt: string;
+  sourceTitle: string;
+  summary: string;
+  summaryCharacters: number;
+  getCommand: string;
 };
 
 export const inboxListHandler: Read<typeof inboxListSpec> = {
   run: runner<
     Input<typeof inboxListSpec>,
     {
-      deliveries: readonly (SubscriptionDelivery & { getCommand: string })[];
+      deliveries: readonly DeliveryOutline[];
       omission: Omission;
       next: string | null;
     },
@@ -425,7 +478,15 @@ export const inboxListHandler: Read<typeof inboxListSpec> = {
       if (!parsed.success) return invalidResponse();
       const { deliveries, total, offset, limit } = parsed.data;
       const addressedDeliveries = deliveries.map((delivery) => ({
-        ...delivery,
+        id: delivery.id,
+        subscriptionId: delivery.subscriptionId,
+        source: delivery.source,
+        state: delivery.state,
+        eventKind: delivery.fact.eventKind,
+        occurredAt: delivery.fact.occurredAt,
+        sourceTitle: summary(delivery.fact.sourceTitle, 120),
+        summary: summary(delivery.fact.summary),
+        summaryCharacters: delivery.fact.summary.length,
         getCommand: renderInvocation(
           invocation(inboxGetCommand, {
             args: { "delivery-id": delivery.id },
@@ -479,7 +540,7 @@ export const inboxListHandler: Read<typeof inboxListSpec> = {
     },
     text: ({ deliveries, omission, next }) =>
       quoteLiteralText(
-        `${omissionText("updates", omission, next)}\n${deliveries.map((d) => `${d.id}  ${d.state}  ${d.fact.eventKind}  ${d.fact.occurredAt}\n  ${singleLine(d.fact.sourceTitle)}: ${singleLine(d.fact.summary).slice(0, 240)}\n  get: ${d.getCommand}`).join("\n")}\n`,
+        `${omissionText("updates", omission, next)}\n${deliveries.map((d) => `${d.id}  ${d.state}  ${d.eventKind}  ${d.occurredAt}\n  ${d.sourceTitle} (${d.summaryCharacters} chars): ${d.summary}\n  get: ${d.getCommand}`).join("\n")}\n`,
       ),
   }),
 };

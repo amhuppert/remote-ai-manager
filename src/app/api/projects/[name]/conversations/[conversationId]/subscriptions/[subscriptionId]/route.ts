@@ -1,1 +1,5 @@
-export { projectSubscriptionUnfollowDELETE as DELETE } from "@/lib/subscriptions/production-route-handlers";
+export {
+  projectSubscriptionUnfollowDELETE as DELETE,
+  projectSubscriptionDetailGET as GET,
+  projectSubscriptionControlPATCH as PATCH,
+} from "@/lib/subscriptions/production-route-handlers";

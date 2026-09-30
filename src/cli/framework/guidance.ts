@@ -1,4 +1,8 @@
-import { defineReminderRule, evaluateGuidance } from "cli-for-agents/guidance";
+import {
+  defineReminderRule,
+  defineSteering,
+  evaluateGuidance,
+} from "cli-for-agents/guidance";
 import type { GuidanceProvider } from "cli-for-agents/runtime";
 import { createLogger } from "@/lib/logging";
 import { LANE_REMINDER_RULES } from "@/lib/workflow-graph/lane-reminders";
@@ -14,6 +18,7 @@ import {
 } from "../commands/workflow/definitions";
 import type { CcContexts } from "./family";
 import { CLIENT_ADVISORIES, ccTempPayloadAdvisory } from "./payload-location";
+import { loadInboxHint } from "./inbox-hint";
 
 const logger = createLogger("cli.guidance");
 const laneCommands = {
@@ -66,10 +71,32 @@ const guidance: GuidanceProvider<CcContexts> = async (input) => {
       text: (state) => (state === undefined ? "" : rule.text(state)),
     }),
   );
+  const inboxHint =
+    input.requires !== "none" &&
+    input.outcome.result.ok &&
+    !input.outcome.result.hint &&
+    !input.outcome.result.instruction &&
+    !input.command.spec.path.startsWith("inbox ") &&
+    !input.command.spec.path.startsWith("subscription ") &&
+    !input.command.spec.path.startsWith("conversation ") &&
+    !input.command.spec.path.startsWith("fixture ")
+      ? await loadInboxHint(input.app)
+      : undefined;
+  const inboxRules = inboxHint
+    ? [
+        defineSteering<LaneReminderInput | undefined>({
+          id: "pending-inbox",
+          tier: "hint",
+          appliesTo: [input.command],
+          when: () => true,
+          render: () => inboxHint,
+        }),
+      ]
+    : [];
   return evaluateGuidance({
     command: input.command,
     state: laneState,
-    rules: [localRule, ...laneRules],
+    rules: [localRule, ...laneRules, ...inboxRules],
     eventSink: (event) =>
       logger.info(event.type, {
         commandPath: event.commandPath,

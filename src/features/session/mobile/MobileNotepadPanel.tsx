@@ -1,4 +1,5 @@
 "use client";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 
 import { useMemo, useState } from "react";
 import NotepadPanel from "@/features/session/conversation/NotepadPanel";
@@ -514,14 +515,17 @@ function MobileNotepadReadView({
         </span>
       </div>
 
-      <div className="flex min-h-[44px] shrink-0 items-center gap-sm border-0 border-b border-solid border-border-subtle bg-bg-base px-[16px] py-[4px]">
-        <span className="inline-flex items-center gap-[6px] font-mono text-[0.72rem] text-text-tertiary">
+      <div className="flex min-h-[44px] shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle bg-bg-base px-[16px] py-[4px]">
+        <span className="inline-flex basis-full items-center gap-[6px] font-mono text-[0.72rem] text-text-tertiary">
           <span
             aria-hidden="true"
             className="h-[6px] w-[6px] rounded-full bg-green"
           />
           {metaLine}
         </span>
+        <div className="shrink-0 whitespace-nowrap">
+          <SubscriptionEntry source={{ kind: "notepad", id: notepad.id }} />
+        </div>
         <button
           type="button"
           onClick={() => setSheetOpen(true)}

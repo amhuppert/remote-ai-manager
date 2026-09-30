@@ -43,6 +43,9 @@ const srcDir = path.join(repoRoot, "src");
  * is migrated so far, keeping its still-legacy siblings under the guard.
  */
 const UTILITY_FIRST_PATHS = [
+  // Subscription controls are new utility-first surfaces with no legacy CSS.
+  `${path.sep}components${path.sep}subscriptions${path.sep}`,
+  `${path.sep}features${path.sep}subscriptions${path.sep}`,
   // Memory library surfaces: authored utility-first from the start (no legacy
   // CSS ever existed for them), so both directories are dir-scoped.
   `${path.sep}components${path.sep}memory${path.sep}`,

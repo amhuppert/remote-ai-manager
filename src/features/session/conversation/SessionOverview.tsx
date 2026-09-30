@@ -1,4 +1,5 @@
 "use client";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -206,6 +207,9 @@ export default function SessionOverview({
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-sm">
+            <SubscriptionEntry
+              scope={{ project: projectName, session: session.sessionName }}
+            />
             {createAction}
             {sessionActions}
           </div>

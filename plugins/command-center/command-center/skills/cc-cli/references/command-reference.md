@@ -134,9 +134,13 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - `cctl inbox <command> [options]`
 - `cctl inbox get` — Inspect one subscription delivery and its source
   - `cctl inbox get <delivery-id> [options]`
+- `cctl inbox hints` — Enable or disable advisory inbox hints for this conversation
+  - `cctl inbox hints <state> [options]`
 - `cctl inbox list` — Inspect pending subscription updates without acknowledging delivery
   - `cctl inbox list [options]`
   - Flags: `--limit`, `--offset`, `--all`.
+- `cctl inbox summary` — Read recorded pending counts and the advisory hint preference
+  - `cctl inbox summary [options]`
 - `cctl logs` — Analyze local structured logs
   - `cctl logs <command> [options]`
 - `cctl logs compare` — Compare performance before and after a change
@@ -378,9 +382,25 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--against`.
 - `cctl subscription` — Manage conversation follows and terminal waits
   - `cctl subscription <command> [options]`
-- `cctl subscription list` — Inspect this conversation's automatic follows and opt-outs
+- `cctl subscription cancel` — Cancel one finite active wait
+  - `cctl subscription cancel <subscription-id> [options]`
+- `cctl subscription catalog` — Discover subscription sources, event kinds and supported modes
+  - `cctl subscription catalog [options]`
+- `cctl subscription get` — Inspect one subscription, finite wait and wake batch
+  - `cctl subscription get <subscription-id> [options]`
+- `cctl subscription list` — Inspect this conversation's subscriptions and opt-outs
   - `cctl subscription list [options]`
   - Flags: `--limit`, `--offset`.
+- `cctl subscription mode` — Change one subscription's passive or active mode
+  - `cctl subscription mode <subscription-id> <mode> [options]`
+  - Flags: `--expires-in`.
+- `cctl subscription pause` — Pause delivery and waking for one subscription
+  - `cctl subscription pause <subscription-id> [options]`
+- `cctl subscription resume` — Resume one paused subscription
+  - `cctl subscription resume <subscription-id> [options]`
+- `cctl subscription subscribe` — Explicitly subscribe this conversation to an exact source
+  - `cctl subscription subscribe <kind> <source-id> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`, `--mode`, `--event-kind`, `--expires-in`.
 - `cctl subscription unfollow` — Stop following a source and remember the opt-out
   - `cctl subscription unfollow <subscription-id> [options]`
 - `cctl subscription wait` — Register a terminal wait and return immediately

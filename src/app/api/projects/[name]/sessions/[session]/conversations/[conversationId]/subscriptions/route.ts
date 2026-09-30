@@ -1,1 +1,4 @@
-export { sessionSubscriptionListGET as GET } from "@/lib/subscriptions/production-route-handlers";
+export {
+  sessionSubscriptionListGET as GET,
+  sessionSubscriptionPOST as POST,
+} from "@/lib/subscriptions/production-route-handlers";

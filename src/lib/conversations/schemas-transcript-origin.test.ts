@@ -76,3 +76,27 @@ describe("transcriptMessageSchema — optional origin field", () => {
     expect(result.success).toBe(false);
   });
 });
+
+it("preserves a generated subscription wake's exact batch receipt", () => {
+  const origin = {
+    source: "subscription_update",
+    subscriptionUpdate: { batchId: "batch" },
+  };
+  const result = transcriptMessageSchema.safeParse({ ...baseMessage, origin });
+  expect(result.success).toBe(true);
+  if (result.success) expect(result.data.origin).toEqual(origin);
+});
+it("refuses subscription receipt origins without a batch or attached to ordinary input", () => {
+  expect(
+    transcriptMessageSchema.safeParse({
+      ...baseMessage,
+      origin: { source: "subscription_update" },
+    }).success,
+  ).toBe(false);
+  expect(
+    transcriptMessageSchema.safeParse({
+      ...baseMessage,
+      origin: { source: "user", subscriptionUpdate: { batchId: "batch" } },
+    }).success,
+  ).toBe(false);
+});

@@ -1350,6 +1350,15 @@ async function readConversationMessagesWithSeqImpl(
       // already carries the parsed command block when the unit is a command).
       const content = projectTranscriptContent(unit.parts);
       const lastPart = unit.parts[unit.parts.length - 1]!;
+      const firstOrigin = unit.parts[0]?.origin;
+      const originKey = JSON.stringify(firstOrigin);
+      // Mixed provenance stays on individual parts so a generated receipt
+      // cannot label ordinary user input merged into the same message.
+      const origin =
+        firstOrigin &&
+        unit.parts.every((part) => JSON.stringify(part.origin) === originKey)
+          ? firstOrigin
+          : undefined;
       const meta =
         unit.role === "user"
           ? selectLatestExplicitTurnAgentSettings(
@@ -1361,6 +1370,7 @@ async function readConversationMessagesWithSeqImpl(
         role: unit.role,
         content,
         timestamp: unit.timestamp ?? null,
+        ...(origin ? { origin } : {}),
         // User entries carry their own metadata; assistant entries inherit.
         // CC-authored notices are not agent turns and carry neither.
         ...(unit.role === "notice"

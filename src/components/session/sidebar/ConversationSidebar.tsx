@@ -88,6 +88,7 @@ import {
 import PeekPopover, {
   type PeekApprovalGate,
 } from "@/components/session/sidebar/PeekPopover";
+import { SubscriptionWakeRail } from "@/components/subscriptions/SubscriptionWakeRail";
 import ActiveWorkSection from "@/components/session/sidebar/ActiveWorkSection";
 import type {
   ActiveWorkAction,
@@ -1245,6 +1246,7 @@ function ConversationSidebar({
                 onAction={handleActiveWorkAction}
                 onDismissAttention={handleDismissAttention}
               />
+              <SubscriptionWakeRail project={projectFilter ?? undefined} />
               {(!clientStateReady || isPending) && (
                 <div
                   role="status"

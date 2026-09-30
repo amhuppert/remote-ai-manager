@@ -2,6 +2,8 @@
 
 import { useCallback } from "react";
 import { StopIcon } from "@/components/icons";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
+import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
 import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import { useSessionQuery } from "@/lib/sessions/queries";
@@ -191,6 +193,16 @@ export default function Pane({
           aria-hidden="true"
         />
         <span className={titleClass}>{vm.title}</span>
+        {isOrdinaryConversationRole(conversation.role) && (
+          <SubscriptionEntry
+            target={{
+              scope: "session",
+              projectName: conversation.projectName,
+              sessionName: conversation.sessionName,
+              conversationId: conversation.id,
+            }}
+          />
+        )}
         {canStop && (
           <button
             type="button"

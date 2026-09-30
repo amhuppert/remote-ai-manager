@@ -65,13 +65,22 @@ export type ConversationStatus =
 
 export const transcriptMessageOriginSchema = z
   .object({
-    source: z.enum(["user", "workflow", "checkpoint_capture"]),
+    source: z.enum([
+      "user",
+      "workflow",
+      "checkpoint_capture",
+      "subscription_update",
+    ]),
     workflow: z
       .object({
         executionId: z.string(),
         nodeId: z.string(),
         iterationIndex: z.number().int().nonnegative(),
       })
+      .optional(),
+    subscriptionUpdate: z
+      .object({ batchId: z.string().min(1) })
+      .strict()
       .optional(),
     checkpointCapture: z
       .object({
@@ -92,6 +101,19 @@ export const transcriptMessageOriginSchema = z
       message:
         "checkpoint capture origin requires its operation, capture and part",
       path: ["checkpointCapture"],
+    },
+  )
+  .refine(
+    (origin) =>
+      origin.source === "subscription_update"
+        ? origin.subscriptionUpdate !== undefined &&
+          origin.workflow === undefined &&
+          origin.checkpointCapture === undefined
+        : origin.subscriptionUpdate === undefined,
+    {
+      message:
+        "subscription update origin requires only its exact batch receipt",
+      path: ["subscriptionUpdate"],
     },
   );
 export type TranscriptMessageOrigin = z.infer<

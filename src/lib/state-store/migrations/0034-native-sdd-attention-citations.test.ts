@@ -443,6 +443,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0057-continuous-spec-review",
       "0058-add-conversation-subscriptions",
       "0059-add-conversation-subscription-waits",
+      "0060-add-conversation-subscription-controls",
     ]);
   });
 

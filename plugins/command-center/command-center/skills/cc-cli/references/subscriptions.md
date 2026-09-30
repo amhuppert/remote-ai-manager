@@ -6,7 +6,15 @@ context, linked tickets, spec authorship/review and launched work. A read or
 search alone does not create a follow.
 
 ```
+cctl subscription catalog
+cctl subscription subscribe notepad <notepad-id> --reason "Track decisions"
+cctl subscription subscribe workflow <execution-id> --reason "Continue after completion" --mode active --expires-in 3600
 cctl subscription list
+cctl subscription get <subscription-id>
+cctl subscription pause <subscription-id>
+cctl subscription resume <subscription-id>
+cctl subscription mode <subscription-id> passive
+cctl subscription cancel <subscription-id>
 cctl subscription unfollow <subscription-id>
 cctl subscription wait workflow <execution-id> --reason "Continue after the workflow finishes"
 cctl subscription wait validation <run-id> --reason "Inspect the verdict" --expires-in 3600
@@ -16,17 +24,69 @@ cctl subscription wait-get <subscription-id>
 cctl inbox list
 cctl inbox list --all --limit 20 --offset 20
 cctl inbox get <delivery-id>
+cctl inbox summary
+cctl inbox hints off
+cctl inbox hints on
 ```
 
-`subscription list` includes the reason, remembered opt-out and any source-read
-problem. `unfollow` persists the opt-out so later involvement cannot silently
-reactivate it. Existing delivery evidence remains available.
+`subscription catalog` names source identity requirements, supported event ids
+and allowed modes. Use the exact source id: ticket UUID, native spec id, notepad
+id, workflow execution id, validation run id or git job id. A ticket number or
+spec slug is not the source id. The catalog needs server credentials, but no
+conversation identity.
+
+`subscription subscribe` explicitly creates or updates a follow, including a
+remembered general passive opt-out, and deliberately resumes delivery. Passive
+mode is the default. Repeat `--event-kind <id>` to
+select catalog events; omit it to follow all supported events. Event selection
+is for passive subscriptions. Use `--reason-file <path>` for literal prose.
+Active mode registers a finite terminal wait and returns immediately, with the
+same lifetime and lease constraints as `subscription wait` below.
+An existing finite wait retains its exact reason and expiry. A changed reason
+returns `ACTIVE_WAIT_REASON_LOCKED`; a changed expiry returns
+`ACTIVE_WAIT_EXPIRY_LOCKED`. A spent finite source returns `ACTIVE_WAIT_SPENT`
+in either mode; register a different operation's exact source instead.
+
+`subscription list` returns bounded reason excerpts, pause state, remembered
+opt-outs and source-read problems. Text and JSON contain the same selected data.
+Each row includes a stable id and scoped `subscription get` command. Detail
+shows the full reason, cursor, finite wait and wake batch. `pause` holds delivery
+and waking while source collection and the finite expiry clock continue.
+Outcomes remain inspectable. It safely withdraws a pending wake or an unsent
+planned batch, subject to the queue evidence described below. `resume` resumes
+delivery of retained outcomes; it does not recreate a cancelled wait or clear
+an opt-out. Accepted turns cannot be recalled.
+
+`subscription mode` changes an existing follow to passive or to a finite active
+wait. Active mode supports only exact terminal sources: workflow, validation
+and git_job. Use `--expires-in` when creating a finite wait; an existing wait's
+expiry is immutable. Mode changes retain pause state. Passive mode keeps the
+finite wait and its outcome, including an expired outcome for the next explicit
+user message. A pending or unsent planned wake can be safely withdrawn on
+downgrade; an unsafe delivery needs queue review. `cancel` cancels a finite wait with the same queue
+evidence checks as `unfollow`; `unfollow` remembers a general source opt-out so
+later involvement cannot silently reactivate it. Existing delivery evidence
+remains available.
 
 `inbox list` reconciles durable source changes and returns a bounded page.
-Omission metadata names the next read. `get` returns one saved occurrence and its
+Omission metadata names the next read. Outline excerpts include their original
+character count and a scoped detail command. `get` returns one saved occurrence and its
 source retrieval command. Neither read acknowledges delivery or starts a turn.
 Use `--all` to include accepted history. An uncertain delivery needs inspection;
 it is not automatically replayed. Runtime acceptance does not prove agent action.
+
+`inbox summary` reads the recorded pending count and hint preference without
+reconciling sources or changing delivery/read state. Advisory hints default to
+on for ordinary conversations. After a successful command, an attributable
+conversation may receive a compact pending count and `inbox list` hint. Hints
+never deliver contents, acknowledge input or start a turn, and remain optional.
+Command-specific hints take precedence. Offline help, lanes and commands aimed
+at a different conversation do not query an inbox for hints. A bounded summary
+request failure silently omits the hint.
+
+`inbox hints off` persists the preference for the addressed conversation;
+`inbox hints on` restores it. Inspect the current preference with `inbox summary`.
+Explicit inbox inspection remains available with hints disabled.
 
 Passive updates accompany the user's next message. Generated turns and feedback
 do not consume unrelated pending updates. Repeated revisions may be summarized,
@@ -68,17 +128,18 @@ acceptance: inspect the batch state and the returned `inbox get` command for
 delivery evidence. Failed or uncertain wake delivery requires inspection and is
 not blindly replayed. Runtime acceptance does not prove agent action.
 
-`subscription unfollow` cancels a wait before its wake is batched. Inspect a
-batched wait with `wait-get` first. For an uncertain batch, the server also
-permits cancellation if it proves that the canonical conversation queue has no
-matching row and the transcript has no accepted input receipt. This cancels only
-the selected wait and its inbox delivery. Other members stay unresolved; find
-their subscription ids through `subscription waits` and unfollow each remaining
-member, at most six per batch. Once every member is cancelled, the orphaned batch
-closes and releases the conversation's wake limit. Nothing is resent.
+`pause`, passive mode, `cancel` and `unfollow` can safely withdraw a whole pending
+wake row, or release a planned batch with no queue row. They cancel that batch
+and release all member claims. Other waits remain ready and pending, and can
+batch again. A batch marked queued with no queue row requires review; absence
+alone does not prove that it was never delivered.
 
-A planned, queued or failed batch, or an uncertain batch with a queue row,
-remains refused with `ACTIVE_WAIT_QUEUE_REVIEW_REQUIRED`. Review the existing
-queue delivery before retrying or discarding it. An accepted transcript receipt
-is acceptance evidence and cannot be treated as a missing send. Mode changes,
-advisory inbox hints and full UI controls are later deliverables.
+A delivering, failed or ambiguous wake remains refused with
+`ACTIVE_WAIT_QUEUE_REVIEW_REQUIRED`. Inspect its queue and delivery evidence
+before retrying. For an uncertain batch, explicit `cancel` or `unfollow` also
+permits discarding the selected member if the server proves that the canonical
+conversation queue has no matching row and the transcript has no accepted input
+receipt. Other members stay unresolved until separately cancelled; the last
+cancellation closes that orphaned batch and releases its wake limit. Nothing
+is resent. An accepted transcript receipt is immutable acceptance evidence and
+cannot be treated as a missing send or recalled turn.

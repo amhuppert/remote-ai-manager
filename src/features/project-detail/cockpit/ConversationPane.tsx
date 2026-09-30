@@ -34,6 +34,7 @@ export interface ConversationPaneProps {
    * `ConversationCheckpointControls`. Absent when no conversation is open.
    */
   checkpoint?: ReactNode;
+  headerActions?: ReactNode;
   /** ConversationTabs slot (rendered above the header). */
   tabs?: ReactNode;
   /** ProjectTranscriptHost slot. */
@@ -102,6 +103,7 @@ export default function ConversationPane({
   canStop = false,
   onStop,
   checkpoint,
+  headerActions,
   tabs,
   transcript,
   composer,
@@ -162,6 +164,7 @@ export default function ConversationPane({
             {checkpoint}
           </span>
         )}
+        {headerActions}
         {canStop && (
           <button
             type="button"

@@ -57,6 +57,7 @@ function getDispatcher() {
     }
     return createActiveWaitDispatcher({
       service: runtime.activeWaitService,
+      reconcilePassive: () => runtime.service.reconcileRecordedRecipients(),
       logger,
       async observe(batch) {
         const identity = identityFor(batch);
@@ -79,6 +80,8 @@ function getDispatcher() {
         };
       },
       async enqueue(batch) {
+        if (!(await runtime.waitsRepo.isBatchDispatchable(batch.id)))
+          throw new Error("Subscription wake reservation is no longer current");
         const identity = identityFor(batch);
         if (
           !identity ||
@@ -97,6 +100,7 @@ function getDispatcher() {
         });
       },
       async drain(batch) {
+        if (!(await runtime.waitsRepo.isBatchDispatchable(batch.id))) return;
         const identity = identityFor(batch);
         if (
           !identity ||

@@ -1,4 +1,5 @@
 "use client";
+import { SubscriptionWakeReceipt } from "@/components/subscriptions/SubscriptionWakeReceipt";
 import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-schemas";
 
 import { memo } from "react";
@@ -189,6 +190,10 @@ const MessageRow = memo(function MessageRow({
     );
   }
   const isUserMsg = msg.role === "user";
+  const subscriptionBatch =
+    msg.origin?.source === "subscription_update"
+      ? msg.origin.subscriptionUpdate?.batchId
+      : undefined;
   // The copy-reference gate: only rows whose display index is their durable
   // transcript position can produce a message reference. Queued rows render at
   // a provisional index, and in-flight optimistic rows are not durable at all,
@@ -246,9 +251,11 @@ const MessageRow = memo(function MessageRow({
         <div className={cn(messageRoleClass, roleColor)}>
           {capture
             ? `Checkpoint handoff · ${capture.part}`
-            : isUserMsg
-              ? "You"
-              : backendLabel(selectedBackend)}
+            : subscriptionBatch
+              ? "Subscription"
+              : isUserMsg
+                ? "You"
+                : backendLabel(selectedBackend)}
           {queuedStatus ? (
             <span className="ml-sm font-medium text-text-secondary normal-case">
               {queuedStatus === "uncertain"
@@ -295,6 +302,9 @@ const MessageRow = memo(function MessageRow({
           </p>
         </div>
       )}
+      {isFirstPart && subscriptionBatch ? (
+        <SubscriptionWakeReceipt batchId={subscriptionBatch} />
+      ) : null}
       <div className="message-content" {...clipSourceAttrs}>
         <MessageContent
           content={msg.content}

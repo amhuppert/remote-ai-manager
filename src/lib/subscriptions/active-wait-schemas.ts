@@ -22,7 +22,11 @@ export const activeSubscriptionWaitSchema = z
     subscriptionId: z.string().min(1),
     recipient: subscriptionRecipientSchema,
     source: activeWaitSourceSchema,
-    reason: z.string().trim().min(1).max(1000),
+    reason: z
+      .string()
+      .min(1)
+      .max(1000)
+      .refine((value) => value.trim().length > 0),
     expiresAt: z.iso.datetime({ offset: true }),
     state: z.enum(["waiting", "ready", "settled", "cancelled"]),
     outcome: z
@@ -70,7 +74,11 @@ export const registerActiveWaitSchema = z
   .object({
     recipient: subscriptionRecipientSchema,
     source: activeWaitSourceSchema,
-    reason: z.string().trim().min(1).max(1000),
+    reason: z
+      .string()
+      .min(1)
+      .max(1000)
+      .refine((value) => value.trim().length > 0),
     expiresAt: z.iso.datetime({ offset: true }).optional(),
     causationBatchIds: z.array(z.string().min(1)).max(8).default([]),
   })

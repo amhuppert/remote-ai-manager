@@ -24,7 +24,11 @@ describe("0058 additive conversation subscriptions", () => {
     await migrate(raw);
     raw
       .prepare(
-        `INSERT INTO conversation_subscriptions VALUES ('sub','/project','conversation','ticket','ticket','Linked','passive',NULL,NULL,'following','1','created','updated',NULL,NULL,NULL)`,
+        `INSERT INTO conversation_subscriptions (
+          id, project_path, conversation_id, source_kind, source_id, reason,
+          mode, event_kinds_json, expires_at, status, cursor, created_at,
+          updated_at, unfollowed_at, missing_at, last_error
+        ) VALUES ('sub','/project','conversation','ticket','ticket','Linked','passive',NULL,NULL,'following','1','created','updated',NULL,NULL,NULL)`,
       )
       .run();
     raw

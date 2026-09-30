@@ -64,6 +64,7 @@ export const conversationSubscriptionSchema = z
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
     unfollowedAt: z.string().nullable(),
+    pausedAt: z.string().nullable(),
     missingAt: z.string().nullable(),
     lastError: z.string().nullable(),
   })
@@ -108,3 +109,17 @@ export const subscriptionInboxPageSchema = z
   })
   .strict();
 export type SubscriptionInboxPage = z.infer<typeof subscriptionInboxPageSchema>;
+
+export const recipientSubscriptionPreferencesSchema = z
+  .object({ hintsEnabled: z.boolean() })
+  .strict();
+export type RecipientSubscriptionPreferences = z.infer<
+  typeof recipientSubscriptionPreferencesSchema
+>;
+export const subscriptionDeliveryReadStateSchema = z
+  .object({
+    recipient: subscriptionRecipientSchema,
+    deliveryId: z.string().min(1),
+    readAt: z.string().min(1),
+  })
+  .strict();

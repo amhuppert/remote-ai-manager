@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
+import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -757,6 +759,18 @@ export default function ProjectCockpit({
         projectName={projectName}
         canStop={canStop}
         onStop={handleStop}
+        headerActions={
+          activeConversation &&
+          isOrdinaryConversationRole(activeConversation.role) ? (
+            <SubscriptionEntry
+              target={{
+                scope: "project",
+                projectName,
+                conversationId: activeConversation.id,
+              }}
+            />
+          ) : undefined
+        }
         {...(activeConversation
           ? {
               status: activeConversation.status,

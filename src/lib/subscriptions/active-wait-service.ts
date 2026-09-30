@@ -39,13 +39,21 @@ export interface ActiveWaitServiceDeps {
     recipient: SubscriptionRecipient,
     source: ActiveWaitSource,
   ): Promise<TerminalSourceRead>;
+  onChange?(recipient: SubscriptionRecipient): void;
+  cancelPendingWait?(
+    recipient: SubscriptionRecipient,
+    subscriptionId: string,
+  ): Promise<void>;
   now?(): string;
   newId?(): string;
   waitGetCommand?(wait: ActiveSubscriptionWait): string;
   canDiscardMissingBatch?(batch: SubscriptionWakeBatch): Promise<boolean>;
 }
 export interface ActiveWaitService {
-  register(input: RegisterActiveWaitInput): Promise<ActiveSubscriptionWait>;
+  register(
+    input: RegisterActiveWaitInput,
+    options?: { pausedAt: string | null },
+  ): Promise<ActiveSubscriptionWait>;
   reconcile(recipient?: SubscriptionRecipient): Promise<{
     checked: number;
     settled: number;
@@ -182,6 +190,7 @@ export function createActiveWaitService(
         };
         if (await deps.repo.settle(wait.id, outcome, delivery, at)) {
           report.settled++;
+          deps.onChange?.(wait.recipient);
           logger.info("subscription.wait.outcome_recorded", {
             conversationId: wait.recipient.conversationId,
             waitId: wait.id,
@@ -223,7 +232,8 @@ export function createActiveWaitService(
         .filter(
           (subscription) =>
             subscription.mode === "active" &&
-            subscription.status === "following",
+            subscription.status === "following" &&
+            subscription.pausedAt === null,
         )
         .map((subscription) => subscription.id),
     );
@@ -275,17 +285,19 @@ export function createActiveWaitService(
       lastError: null,
     });
     const reserved = await deps.repo.reserveBatch(batch);
-    if (reserved?.id === id)
+    if (reserved?.id === id) {
+      deps.onChange?.(recipient);
       logger.info("subscription.wake.batch_reserved", {
         conversationId: recipient.conversationId,
         batchId: id,
         waitCount: chosen.length,
         messageChars: batch.message.length,
       });
+    }
     return reserved;
   }
   return {
-    async register(input) {
+    async register(input, options) {
       const parsed = registerActiveWaitSchema.parse(input);
       if (!(await deps.isRecipientEligible(parsed.recipient)))
         throw new ActiveWaitRegistrationError(
@@ -348,9 +360,11 @@ export function createActiveWaitService(
         createdAt: at,
         updatedAt: at,
         unfollowedAt: null,
+        pausedAt: options?.pausedAt ?? null,
         missingAt: null,
         lastError: null,
       });
+      deps.onChange?.(parsed.recipient);
       await reconcile(parsed.recipient);
       logger.info("subscription.wait.registered", {
         conversationId: parsed.recipient.conversationId,
@@ -373,25 +387,48 @@ export function createActiveWaitService(
       const batch = wait?.batchId
         ? await deps.repo.getBatch(wait.batchId)
         : null;
+      if (
+        (batch?.state === "planned" || batch?.state === "queued") &&
+        deps.cancelPendingWait
+      ) {
+        await deps.cancelPendingWait(recipient, subscriptionId);
+        return deps.repo.get(recipient, subscriptionId);
+      }
       const discardMissingBatchId =
         wait?.state !== "cancelled" &&
         batch?.state === "uncertain" &&
         (await deps.canDiscardMissingBatch?.(batch))
           ? batch.id
           : undefined;
-      return deps.repo.cancel(
+      const result = await deps.repo.cancel(
         recipient,
         subscriptionId,
         now(),
         discardMissingBatchId,
       );
+      if (result) deps.onChange?.(recipient);
+      return result;
     },
     listRecipients: () => deps.repo.listRecipients(),
     prepareBatch,
     listPendingBatches: () => deps.repo.listPendingBatches(),
     getBatch: (batchId) => deps.repo.getBatch(batchId),
-    markBatchQueued: (batchId) => deps.repo.markBatchQueued(batchId, now()),
-    settleBatch: (batchId, state, error) =>
-      deps.repo.settleBatch(batchId, state, now(), error ?? null),
+    async markBatchQueued(batchId) {
+      const before = await deps.repo.getBatch(batchId);
+      await deps.repo.markBatchQueued(batchId, now());
+      if (
+        before &&
+        before.state !== "queued" &&
+        before.state !== "accepted" &&
+        before.state !== "cancelled"
+      )
+        deps.onChange?.(before.recipient);
+    },
+    async settleBatch(batchId, state, error) {
+      const before = await deps.repo.getBatch(batchId);
+      await deps.repo.settleBatch(batchId, state, now(), error ?? null);
+      if (before && before.state !== "accepted" && before.state !== "cancelled")
+        deps.onChange?.(before.recipient);
+    },
   };
 }

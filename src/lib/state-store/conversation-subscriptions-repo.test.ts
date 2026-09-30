@@ -37,6 +37,7 @@ function subscription() {
     createdAt: at,
     updatedAt: at,
     unfollowedAt: null,
+    pausedAt: null,
     missingAt: null,
     lastError: null,
   });
@@ -89,6 +90,7 @@ describe("conversation subscriptions durable state", () => {
       status: "unfollowed",
       cursor: "1",
       unfollowedAt: at,
+      pausedAt: null,
     });
   });
   it("advances a cursor and inserts a distinct occurrence atomically; stale reconciles cannot write", async () => {

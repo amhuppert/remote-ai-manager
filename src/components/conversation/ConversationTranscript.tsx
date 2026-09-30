@@ -12,6 +12,8 @@ import ConversationVirtuosoList, {
   type ConversationVirtuosoListProps,
   type VirtuosoHandle,
 } from "./ConversationVirtuosoList";
+import { subscriptionMessageIndex } from "@/lib/subscriptions/turn-links";
+import { useRequestMessageNav } from "@/stores/session-detail.store";
 import MessageRow from "./MessageRow";
 import TypingIndicator from "./TypingIndicator";
 import BackgroundActivityIndicator from "./BackgroundActivityIndicator";
@@ -247,6 +249,21 @@ function TranscriptCore({
     messages ?? EMPTY_MESSAGES,
     pendingQueue,
   );
+
+  const requestLinkedMessage = useRequestMessageNav();
+  const visitedMessageLink = useRef<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const index = subscriptionMessageIndex(
+      params,
+      conversationId,
+      displayMessages,
+    );
+    const key = conversationId + ":" + params.get("m");
+    if (index === null || visitedMessageLink.current === key) return;
+    visitedMessageLink.current = key;
+    requestLinkedMessage(conversationId, index);
+  }, [conversationId, displayMessages, requestLinkedMessage]);
 
   const collabEnvelope = collab?.envelope;
   const hiddenMessageIndex = collab?.hiddenMessageIndex ?? null;

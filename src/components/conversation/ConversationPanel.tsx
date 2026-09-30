@@ -39,6 +39,7 @@ export interface ConversationPanelProps {
   buildMarkdown?: () => string | null;
 
   promptInputSlot: ReactNode;
+  headerActionsSlot?: ReactNode;
 }
 
 export default function ConversationPanel({
@@ -61,6 +62,7 @@ export default function ConversationPanel({
   onStop,
   buildMarkdown,
   promptInputSlot,
+  headerActionsSlot,
 }: ConversationPanelProps): React.JSX.Element {
   const panelBackend = selectedBackend;
   const conversationTitle = activeConversation?.name ?? sessionName;
@@ -80,7 +82,7 @@ export default function ConversationPanel({
       className="prompt-panel group/panel flex min-h-0 flex-col overflow-clip bg-bg-surface"
       data-agent={panelBackend}
     >
-      <div className="panel-header flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle px-lg py-md group-data-[agent=claude]/panel:border-b-[var(--cc-cyan-a18)] group-data-[agent=claude]/panel:bg-[linear-gradient(90deg,var(--cyan-glow),var(--bg-base)_55%)] group-data-[agent=codex]/panel:border-b-[var(--cc-violet-a18)] group-data-[agent=codex]/panel:bg-[linear-gradient(90deg,var(--violet-glow),var(--bg-base)_55%)] max-768:min-h-[40px] max-768:min-w-0 max-768:shrink-0 max-768:flex-nowrap max-768:gap-xs max-768:px-sm max-768:py-xs">
+      <div className="panel-header flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle px-lg py-md group-data-[agent=claude]/panel:border-b-[var(--cc-cyan-a18)] group-data-[agent=claude]/panel:bg-[linear-gradient(90deg,var(--cyan-glow),var(--bg-base)_55%)] group-data-[agent=codex]/panel:border-b-[var(--cc-violet-a18)] group-data-[agent=codex]/panel:bg-[linear-gradient(90deg,var(--violet-glow),var(--bg-base)_55%)] max-768:min-h-[40px] max-768:min-w-0 max-768:shrink-0 max-768:flex-wrap max-768:gap-xs max-768:px-sm max-768:py-xs">
         {conversations && (
           <button
             className="hidden max-768:flex max-768:shrink-0 max-768:cursor-pointer max-768:items-center max-768:gap-[4px] max-768:rounded-sm max-768:border max-768:border-solid max-768:border-border-default max-768:bg-bg-surface max-768:px-[8px] max-768:py-[6px] max-768:font-mono max-768:text-[0px] max-768:leading-none max-768:text-text-secondary max-768:transition-all max-768:duration-150 max-768:ease-[ease] max-768:before:text-[0.95rem] max-768:before:leading-none max-768:before:content-['☰'] max-768:hover:bg-bg-hover max-768:hover:text-text-primary"
@@ -103,7 +105,14 @@ export default function ConversationPanel({
         {activeConversation?.forkedFrom?.forkMode === "synthetic" && (
           <SyntheticForkBadge />
         )}
-        <div className="ml-auto inline-flex shrink-0 items-center gap-[6px] max-768:gap-[4px]">
+        {headerActionsSlot && (
+          <div className="ml-auto inline-flex shrink-0 items-center gap-sm">
+            {headerActionsSlot}
+          </div>
+        )}
+        <div
+          className={`ml-auto inline-flex shrink-0 items-center gap-[6px] max-768:gap-[4px] ${headerActionsSlot ? "max-768:basis-full max-768:justify-end" : ""}`}
+        >
           <ConversationNav
             currentIndex={currentMessageIndex}
             totalCount={totalMessages}

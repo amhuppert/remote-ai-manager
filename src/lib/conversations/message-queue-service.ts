@@ -1,3 +1,4 @@
+import { registerSubscriptionWakeQueueControl } from "@/lib/subscriptions/wake-queue-control";
 import { stampCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { isQueuedUserMessage } from "./queued-input-provenance";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -653,6 +654,7 @@ export interface ClaimedQueuedBatch {
 
 export interface MessageQueueServiceDeps {
   readSubscriptionWakeHold?(input: ConversationKey): Promise<string | null>;
+  isSubscriptionWakeCurrent?(batchId: string): Promise<boolean>;
   onSubscriptionWakeDiscarded?(input: {
     projectPath: string;
     conversationId: string;
@@ -723,6 +725,13 @@ export interface MessageQueueService {
   confirmSubscriptionWakeAccepted(
     input: ConversationKey & { batchId: string },
   ): Promise<number>;
+  withdrawSubscriptionWake(
+    input: ConversationKey & {
+      batchId: string;
+      allowMissing: boolean;
+      commit(): void;
+    },
+  ): Promise<boolean>;
   cancel(
     input: ConversationKey & { id: string },
   ): Promise<"cancelled" | "not_found" | "not_cancellable">;
@@ -776,7 +785,13 @@ export function createMessageQueueService(
       sessionName,
       conversationId,
       "enqueueQueuedMessage",
-      (conversation) => {
+      async (conversation) => {
+        if (
+          metadata?.kind === "subscription_update" &&
+          deps.isSubscriptionWakeCurrent &&
+          !(await deps.isSubscriptionWakeCurrent(metadata.batchId))
+        )
+          throw new Error("Subscription wake reservation is no longer current");
         const existing = input.id
           ? conversation.pendingQueue.find((row) => row.id === input.id)
           : undefined;
@@ -986,7 +1001,7 @@ export function createMessageQueueService(
           wakeHold == null,
         );
         if (
-          deps.readSubscriptionWakeHold &&
+          (deps.readSubscriptionWakeHold || deps.isSubscriptionWakeCurrent) &&
           result.claimed[0]?.metadata?.kind === "subscription_update"
         )
           return {
@@ -1006,16 +1021,30 @@ export function createMessageQueueService(
     );
 
     let { claimed, command, refused } = initial;
-    if (initial.needsExternalWakeHold && deps.readSubscriptionWakeHold) {
-      const externalWakeHold = await deps.readSubscriptionWakeHold(input);
+    if (initial.needsExternalWakeHold) {
+      const externalWakeHold = await deps.readSubscriptionWakeHold?.(input);
       const checked = await deps.mutateConversation(
         projectPath,
         sessionName,
         conversationId,
         "claimSubscriptionWakeBatch",
-        (conversation) => {
+        async (conversation) => {
+          const pendingWake = conversation.pendingQueue.find(
+            (row) =>
+              row.status === "pending" &&
+              row.metadata?.kind === "subscription_update",
+          );
+          const staleWake =
+            pendingWake?.metadata?.kind === "subscription_update" &&
+            deps.isSubscriptionWakeCurrent
+              ? !(await deps.isSubscriptionWakeCurrent(
+                  pendingWake.metadata.batchId,
+                ))
+              : false;
           const wakeHold =
-            externalWakeHold ??
+            (staleWake
+              ? "Subscription wake reservation is no longer current"
+              : externalWakeHold) ??
             subscriptionWakeHold({
               conversation,
               sessionArchived: false,
@@ -1204,6 +1233,51 @@ export function createMessageQueueService(
       recoverable: false,
       error,
     });
+  }
+
+  async function withdrawSubscriptionWake(
+    input: ConversationKey & {
+      batchId: string;
+      allowMissing: boolean;
+      commit(): void;
+    },
+  ): Promise<boolean> {
+    const outcome = await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "withdrawSubscriptionWake",
+      (conversation) => {
+        const entry = conversation.pendingQueue.find(
+          (row) =>
+            row.metadata?.kind === "subscription_update" &&
+            row.metadata.batchId === input.batchId,
+        );
+        if (!entry) {
+          if (!input.allowMissing) return { withdrawn: false, entry: null };
+          input.commit();
+          return { withdrawn: true, entry: null };
+        }
+        if (entry.status !== "pending")
+          return { withdrawn: false, entry: null };
+        input.commit();
+        const removed = detachQueueRow({
+          ...entry,
+          status: "cancelled",
+          cancelledAt: deps.now(),
+          updatedAt: deps.now(),
+        });
+        conversation.pendingQueue = conversation.pendingQueue.filter(
+          (row) => row.id !== entry.id,
+        );
+        return { withdrawn: true, entry: removed };
+      },
+    );
+    if (outcome.entry)
+      broadcastUpdated(input, deps.getProjectDisplayName(input.projectPath), [
+        outcome.entry,
+      ]);
+    return outcome.withdrawn;
   }
 
   async function cancel(
@@ -1512,12 +1586,18 @@ export function createMessageQueueService(
     confirmDelivery,
     confirmSubscriptionWakeAccepted,
     cancel,
+    withdrawSubscriptionWake,
     resolveDelivery,
     recoverAbandonedDeliveries,
   };
 }
 
 export const messageQueueService = createMessageQueueService({
+  async isSubscriptionWakeCurrent(batchId) {
+    const { getSubscriptionRuntime } =
+      await import("@/lib/subscriptions/service-factory");
+    return getSubscriptionRuntime().waitsRepo.isBatchDispatchable(batchId);
+  },
   readSubscriptionWakeHold,
   async onSubscriptionWakeDiscarded(input) {
     const { getActiveWaitService } =
@@ -1536,4 +1616,8 @@ export const messageQueueService = createMessageQueueService({
   },
   now: () => new Date().toISOString(),
   newId: () => crypto.randomUUID(),
+});
+
+registerSubscriptionWakeQueueControl({
+  withdraw: (input) => messageQueueService.withdrawSubscriptionWake(input),
 });

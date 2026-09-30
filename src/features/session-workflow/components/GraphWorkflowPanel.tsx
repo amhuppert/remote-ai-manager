@@ -14,6 +14,7 @@ import type { GraphWorkflowVisualLayout } from "@/lib/workflow-graph/definition-
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { IconButton } from "@/components/ui/IconButton";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 import {
   railOverlayPanelClass,
   RailOverlaySpacer,
@@ -435,6 +436,10 @@ export default function GraphWorkflowPanel({
           <ExecutionStatusBar
             trailingControls={
               <>
+                <SubscriptionEntry
+                  scope={{ project: projectName, session: sessionName }}
+                  source={{ kind: "workflow", id: execution.id }}
+                />
                 <CopyExecutionReferenceButton
                   projectName={projectName}
                   sessionName={sessionName}

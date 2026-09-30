@@ -174,7 +174,7 @@ const DB_FILE_NAME = "command-center.db";
  * Older builds would pin such an approval by revision id alone, so migration
  * `0057-continuous-spec-review` fences them.
  */
-export const KNOWN_SCHEMA_VERSION = 24;
+export const KNOWN_SCHEMA_VERSION = 25;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -1810,6 +1810,7 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     unfollowed_at TEXT,
+    paused_at TEXT,
     missing_at TEXT,
     last_error TEXT,
     UNIQUE (project_path, conversation_id, source_kind, source_id)
@@ -1845,6 +1846,22 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_ticket_status_changes_ticket
     ON ticket_status_changes (ticket_id, id);
+`;
+
+export const CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS conversation_subscription_preferences (
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    hints_enabled INTEGER NOT NULL CHECK (hints_enabled IN (0,1)),
+    PRIMARY KEY (project_path,conversation_id)
+  );
+  CREATE TABLE IF NOT EXISTS conversation_subscription_read_state (
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    delivery_id TEXT NOT NULL,
+    read_at TEXT NOT NULL,
+    PRIMARY KEY (project_path,conversation_id,delivery_id)
+  );
 `;
 
 export const CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL = `
@@ -2999,6 +3016,7 @@ const SCHEMA_DDL = `
 
   ${NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL}
   ${CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL}
+  ${CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL}
   ${CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL}
 
   ${MEMORY_SCHEMA_DDL}
@@ -3040,6 +3058,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   column: string;
   type: string;
 }> = [
+  { table: "conversation_subscriptions", column: "paused_at", type: "TEXT" },
   {
     table: "conversation_checkpoint_operations",
     column: "handoff_json",

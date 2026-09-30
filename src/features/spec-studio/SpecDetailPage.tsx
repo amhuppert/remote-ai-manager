@@ -1,4 +1,5 @@
 "use client";
+import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -396,6 +397,10 @@ export function SpecDetailContent({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-sm">
+                  <SubscriptionEntry
+                    scope={{ project: projectName }}
+                    source={{ kind: "spec", id: detail.spec.id }}
+                  />
                   <a
                     href={`/api/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}/export`}
                     download={`${detail.spec.slug}.spec.json`}

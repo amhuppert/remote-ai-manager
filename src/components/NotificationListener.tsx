@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { instrumentSseEventSource } from "@/lib/api/sse";
+import { registerSubscriptionSseReactions } from "@/lib/subscriptions/sse-reactions";
 import { registerCommandSseReactions } from "@/lib/commands/sse-reactions";
 import { registerAgentCapabilitySseReactions } from "@/lib/agent-capabilities/sse-reactions";
 import { registerAgentProfileSseReactions } from "@/lib/agent-profiles/sse-reactions";
@@ -118,6 +119,7 @@ export default function NotificationListener(): null {
     registerMemorySseReactions(es, { queryClient });
     registerAgentCapabilitySseReactions(es, { queryClient });
     registerCommandSseReactions(es, { queryClient });
+    registerSubscriptionSseReactions(es, { queryClient });
     registerAgentProfileSseReactions(es, { queryClient });
     registerSessionAlignmentSseReactions(es, { queryClient });
     registerSpecSseReactions(es, { queryClient });

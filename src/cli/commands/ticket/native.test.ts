@@ -485,7 +485,11 @@ describe("native ticket commands", () => {
       timestamp: relation.updatedAt,
       id: relation.id,
     });
-    const test = fixture({ items: [relation], total: 3, nextCursor });
+    const test = fixture((url: string) =>
+      url.endsWith("/inbox/summary")
+        ? { pendingCount: 2, hintsEnabled: true }
+        : { items: [relation], total: 3, nextCursor },
+    );
     const result = await test.run([
       "relation",
       "list",
@@ -505,6 +509,24 @@ describe("native ticket commands", () => {
     expect(data.revealCommand).toContain("--role=depends_on");
     expect(data.revealCommand).toContain(`--cursor=${nextCursor}`);
     expect(data.relationships[0].descriptionPreview).toBe(relation.description);
+    expect(test.requests).toHaveLength(2);
+    const primaryUrl = new URL(test.requests[0]?.url ?? "");
+    expect(primaryUrl.pathname).toBe(
+      "/api/projects/cc/tickets/12/relationships",
+    );
+    expect(primaryUrl.searchParams.get("role")).toBe("depends_on");
+    expect(primaryUrl.searchParams.get("limit")).toBe("1");
+    expect(test.requests[0]?.init.method).toBe("GET");
+    expect(test.requests[1]).toMatchObject({
+      url: "http://cc.test/api/projects/cc/sessions/current-session/conversations/actor-one/inbox/summary",
+      init: {
+        method: "GET",
+        timeoutMs: 300,
+        headers: { "x-cc-conversation-id": "actor-one" },
+      },
+    });
+    expect(test.requests[1]?.init.body).toBeUndefined();
+    const requestsBeforeInvalidCursor = test.requests.length;
     const bad = await test.run([
       "relation",
       "list",
@@ -513,7 +535,7 @@ describe("native ticket commands", () => {
       "malformed",
     ]);
     expect(bad.exitCode).toBe(2);
-    expect(test.requests).toHaveLength(1);
+    expect(test.requests).toHaveLength(requestsBeforeInvalidCursor);
   });
 
   it("refuses a prepared export's missing-content gate before downloading or claiming a write", async () => {

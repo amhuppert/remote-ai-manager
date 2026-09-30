@@ -59,6 +59,7 @@ interface TopbarProps {
     | "tickets"
     | "specs"
     | "memory"
+    | "subscriptions"
     | "dev-servers";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
@@ -328,6 +329,18 @@ export default function Topbar({
             />
           )}
           <QuickTicketButton pathname={pathname} />
+          <Link
+            href="/subscriptions"
+            aria-current={pathname === "/subscriptions" ? "page" : undefined}
+            className={cn(
+              "inline-flex h-[28px] items-center rounded-sm border border-solid bg-transparent px-sm font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline transition-colors hover:border-cyan hover:bg-bg-hover hover:text-text-primary! focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:hidden",
+              pathname === "/subscriptions"
+                ? "border-cyan text-text-primary!"
+                : "border-border-default text-text-secondary!",
+            )}
+          >
+            Subscriptions
+          </Link>
           <MemoryEntryLink
             projectName={activeProjectName}
             placement="topbar"
@@ -484,6 +497,9 @@ export default function Topbar({
               {/* This menu only opens below 768px — its trigger is hidden
                   above it — so every row takes the touch minimum. */}
               <QuickTicketButton pathname={pathname} presentation="menu-item" />
+              <DropdownMenuItem asChild touch>
+                <Link href="/subscriptions">Subscriptions &amp; inbox</Link>
+              </DropdownMenuItem>
               <DropdownMenuItem asChild touch>
                 <MemoryEntryLink
                   projectName={activeProjectName}

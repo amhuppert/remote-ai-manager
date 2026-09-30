@@ -77,6 +77,7 @@ async function setup() {
       createdAt: at,
       updatedAt: at,
       unfollowedAt: null,
+      pausedAt: null,
       missingAt: null,
       lastError: null,
     }),

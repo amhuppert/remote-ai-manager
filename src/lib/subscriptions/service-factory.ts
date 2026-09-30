@@ -1,3 +1,11 @@
+import { withdrawSubscriptionWakeFromQueue } from "./wake-queue-control";
+import { validateSubscriptionSelection } from "./catalog";
+import { createConversationSubscriptionPreferencesRepo } from "@/lib/state-store/conversation-subscription-preferences-repo";
+import {
+  createSubscriptionControlsService,
+  SubscriptionControlError,
+} from "./control-service";
+import { publishSubscriptionChange } from "./events";
 import { randomUUID } from "node:crypto";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { getStateDb } from "@/lib/state-store/store";
@@ -75,9 +83,17 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     );
   }
   const waitsRepo = createConversationSubscriptionWaitsRepo(db, writeQueue);
+  const preferencesRepo = createConversationSubscriptionPreferencesRepo(
+    db,
+    writeQueue,
+  );
   const activeWaitService = createActiveWaitService({
     repo: waitsRepo,
     subscriptions: repo,
+    onChange: publishSubscriptionChange,
+    async cancelPendingWait(recipient, id) {
+      await controlsService.cancel(recipient, id);
+    },
     isRecipientEligible,
     readTerminalSource: createTerminalSourceReader(sourceDeps),
     async canDiscardMissingBatch(batch) {
@@ -109,6 +125,9 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
   });
   const service = createSubscriptionService({
     repo,
+    onChange: publishSubscriptionChange,
+    getPreferences: (recipient) => preferencesRepo.getPreferences(recipient),
+    reconcileFiniteWaits: (recipient) => activeWaitService.reconcile(recipient),
     isRecipientEligible,
     async cancelActiveWait(recipient, subscriptionId) {
       await activeWaitService.cancel(recipient, subscriptionId);
@@ -129,7 +148,70 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
       return `cctl inbox list --project=${quote(projectNameFromPath(recipient.projectPath))}${sessionFlag} --conversation=${quote(recipient.conversationId)}`;
     },
   });
-  return { service, repo, readConversation, activeWaitService, waitsRepo };
+  const controlsService = createSubscriptionControlsService({
+    repo,
+    waits: waitsRepo,
+    activeWaits: activeWaitService,
+    preferences: preferencesRepo,
+    isRecipientEligible,
+    readSource: async (recipient, source) =>
+      createSubscriptionSourceReader(sourceDeps)(recipient, source, null),
+    onChange: publishSubscriptionChange,
+    async validateSelection(input) {
+      const error = validateSubscriptionSelection(
+        input.source.kind,
+        input.mode ?? "passive",
+        input.eventKinds ?? null,
+      );
+      if (error)
+        throw new SubscriptionControlError(
+          "INVALID_SUBSCRIPTION_SELECTION",
+          error,
+          400,
+        );
+    },
+    async withdrawPendingWake(batch, commit) {
+      const identity = readConversation(batch.recipient.conversationId);
+      if (!identity || identity.projectPath !== batch.recipient.projectPath)
+        return false;
+      const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
+      if (await hasTranscriptEntry(batch.recipient.conversationId, batch.id))
+        return false;
+      const { conversationTargetStoreSessionName } =
+        await import("@/lib/conversations/conversation-target");
+      const projectName = projectNameFromPath(identity.projectPath);
+      const target =
+        identity.sessionName === null
+          ? {
+              scope: "project" as const,
+              projectName,
+              conversationId: identity.conversation.id,
+            }
+          : {
+              scope: "session" as const,
+              projectName,
+              sessionName: identity.sessionName,
+              conversationId: identity.conversation.id,
+            };
+      return withdrawSubscriptionWakeFromQueue({
+        projectPath: identity.projectPath,
+        sessionName: conversationTargetStoreSessionName(target),
+        conversationId: identity.conversation.id,
+        batchId: batch.id,
+        allowMissing: batch.state === "planned",
+        commit,
+      });
+    },
+  });
+  return {
+    service,
+    repo,
+    readConversation,
+    activeWaitService,
+    waitsRepo,
+    preferencesRepo,
+    controlsService,
+  };
 }
 
 export function getSubscriptionRuntime() {
@@ -140,6 +222,10 @@ export function getSubscriptionRuntime() {
 
 export function getSubscriptionService() {
   return getSubscriptionRuntime().service;
+}
+
+export function getSubscriptionControlsService() {
+  return getSubscriptionRuntime().controlsService;
 }
 
 export function getActiveWaitService() {

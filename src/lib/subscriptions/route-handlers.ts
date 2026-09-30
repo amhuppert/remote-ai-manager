@@ -332,6 +332,7 @@ export function createSubscriptionRouteHandlers(
     return Response.json({ wait, batch });
   }
   return {
+    resolve,
     listGET,
     unfollowDELETE,
     inboxGET,

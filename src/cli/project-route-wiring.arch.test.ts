@@ -269,6 +269,61 @@ const HISTORY_ENTRY_BODY = {
   images: [],
 };
 
+const SUBSCRIPTION_CONTROL_INVOCATIONS = [
+  {
+    name: "subscription catalog",
+    argv: ["subscription", "catalog"],
+    body: { sources: [] },
+  },
+  {
+    name: "subscription subscribe",
+    argv: [
+      "subscription",
+      "subscribe",
+      "notepad",
+      "notepad-one",
+      "--reason",
+      "Track decisions",
+    ],
+    body: {},
+  },
+  {
+    name: "subscription get",
+    argv: ["subscription", "get", "subscription-one"],
+    body: {},
+  },
+  {
+    name: "subscription pause",
+    argv: ["subscription", "pause", "subscription-one"],
+    body: {},
+  },
+  {
+    name: "subscription resume",
+    argv: ["subscription", "resume", "subscription-one"],
+    body: {},
+  },
+  {
+    name: "subscription mode",
+    argv: ["subscription", "mode", "subscription-one", "passive"],
+    body: {},
+  },
+  {
+    name: "subscription cancel",
+    argv: ["subscription", "cancel", "subscription-one"],
+    body: {},
+  },
+  {
+    name: "inbox summary",
+    argv: ["inbox", "summary"],
+    body: { pendingCount: 0, hintsEnabled: true },
+  },
+  {
+    name: "inbox hints",
+    argv: ["inbox", "hints", "off"],
+    body: { hintsEnabled: false },
+  },
+];
+
 /**
  * Project-supported commands that issue a request with inline arguments. Each
  * entry is a real `cctl` invocation driven through the production dispatch; the
@@ -279,6 +334,7 @@ const PROJECT_SCOPE_INVOCATIONS: {
   argv: string[];
   body: unknown;
 }[] = [
+  ...SUBSCRIPTION_CONTROL_INVOCATIONS,
   { name: "notify", argv: ["notify", "done"], body: { ok: true } },
   {
     name: "ask",
@@ -767,6 +823,7 @@ describe("every project-supported cctl command reaches a real Next.js route", ()
 
 describe("session commands reach real session route modules", () => {
   const invocationCases = [
+    ...SUBSCRIPTION_CONTROL_INVOCATIONS,
     {
       name: "subscription list",
       argv: ["subscription", "list"],

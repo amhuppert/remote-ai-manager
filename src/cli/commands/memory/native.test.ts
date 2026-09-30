@@ -53,6 +53,12 @@ function fixture(
   const host: CliHost = {
     async fetch(url, init) {
       requests.push({ url, init });
+      if (url.endsWith("/inbox/summary")) {
+        return new Response(
+          JSON.stringify({ pendingCount: 2, hintsEnabled: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       return new Response(JSON.stringify(response), {
         status,
         headers: { "content-type": "application/json" },
@@ -231,12 +237,21 @@ describe("native memory commands", () => {
       const test = fixture(response);
       const result = await test.run(argv);
       expect(result.exitCode, result.stdout).toBe(0);
-      expect(test.requests).toHaveLength(1);
+      expect(test.requests).toHaveLength(2);
       expect(test.requests[0]?.url).toBe(`http://cc.test${path}`);
       expect(test.requests[0]?.init.method).toBe(method);
       expect(test.requests[0]?.init.headers["x-cc-conversation-id"]).toBe(
         env.CC_CONVERSATION_ID,
       );
+      expect(test.requests[1]).toMatchObject({
+        url: "http://cc.test/api/projects/project-one/conversations/conversation-one/inbox/summary",
+        init: {
+          method: "GET",
+          timeoutMs: 300,
+          headers: { "x-cc-conversation-id": env.CC_CONVERSATION_ID },
+        },
+      });
+      expect(test.requests[1]?.init.body).toBeUndefined();
     },
   );
 

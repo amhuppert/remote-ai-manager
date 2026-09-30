@@ -379,6 +379,11 @@ export function createProductionConversationManagerDependencies(): ConversationM
   let actorDependencies: Promise<ProductionActorDependencies> | undefined;
   return {
     readSubscriptionWakeHold: createSubscriptionWakeAdmissionReader({
+      async isBatchCurrent(batchId) {
+        const { getSubscriptionRuntime } =
+          await import("@/lib/subscriptions/service-factory");
+        return getSubscriptionRuntime().waitsRepo.isBatchDispatchable(batchId);
+      },
       async hasAcceptedInput(conversationId, batchId) {
         const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
         return hasTranscriptEntry(conversationId, batchId);
