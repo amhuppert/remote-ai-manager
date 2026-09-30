@@ -104,6 +104,7 @@ beforeEach(async () => {
   });
 
   handlers = createNotepadsRouteHandlers({
+    verifyConversationIdentity: async () => true,
     getService: () => service,
     resolveProjectPath: async (projectName) => {
       if (projectName === PROJECT_NAME) return PROJECT_PATH;

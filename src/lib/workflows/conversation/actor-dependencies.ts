@@ -106,6 +106,7 @@ export interface TurnExecutionDependencies {
   registerBackendRuntime(
     conversationId: string,
     runtime: ConversationBackendRuntime,
+    ownInputReceipt?: (finish: () => Promise<void>) => boolean,
   ): void;
 
   /**
@@ -274,6 +275,7 @@ export interface TurnContextDependencies {
   prepareNotepadChangeNotice(
     conversationId: string,
     references?: readonly import("@/lib/notepads/change-notices").NotepadDeliveryRecord[],
+    excludedNotepadIds?: readonly string[],
   ): Promise<PreparedNotepadChangeNotice>;
 
   getReferenceDocuments(
@@ -350,6 +352,7 @@ export interface DebugDependencies {
 }
 
 export interface ConversationActorDependencies {
+  subscriptions?: import("./pre-turn/passive-subscription-context").PassiveSubscriptionContextDependencies;
   execution: TurnExecutionDependencies;
   transcript: TranscriptDependencies;
   effects: ConversationDurableEffects;

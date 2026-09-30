@@ -156,6 +156,9 @@ describe("POST /api/projects/[name]/sessions/[session]/prompt", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
     expect(response.headers.get("Cache-Control")).toBe("no-cache");
+    expect(
+      vi.mocked(deps.executePromptStream).mock.calls[0]?.[7]?.inputOrigin,
+    ).toBe("user");
   });
 
   it("returns 400 when prompt field is missing", async () => {

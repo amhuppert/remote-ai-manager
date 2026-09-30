@@ -315,6 +315,7 @@ function createDeps(
   };
   return {
     auth,
+    verifyConversationIdentity: async () => true,
     resolveProjectPath: async (name) =>
       name === "demo" ? spec.projectPath : null,
     resolveSpec: async (projectPath, slug) =>
@@ -335,6 +336,29 @@ function createDeps(
     ...overrides,
   };
 }
+
+it("refuses an agent mutation whose claimed conversation is not durable", async () => {
+  const handlers = createSpecWriteRouteHandlers(
+    createDeps(createServices(), {
+      verifyConversationIdentity: async () => false,
+    }),
+  );
+  const response = await handlers.specActionPOST(
+    postRequest(
+      {
+        recordId: "question-1",
+        expectedRecordVersion: 1,
+        payload: { kind: "question", text: "Changed" },
+      },
+      {
+        authorization: "Bearer valid",
+        "x-cc-conversation-id": "does-not-exist",
+      },
+    ),
+    routeContext("edit-attention"),
+  );
+  expect(response.status).toBe(400);
+});
 
 describe("spec write route handlers", () => {
   it("maps authoring-agent-only attention refusals to HTTP 403", async () => {
@@ -1239,6 +1263,7 @@ describe("content review acts on the open draft", () => {
     // Only authoring and review actions are exercised here.
     const services = { authoring, review } as unknown as SpecMutationServices;
     handlers = createSpecWriteRouteHandlers({
+      verifyConversationIdentity: async () => true,
       auth,
       resolveProjectPath: async (name) =>
         name === "demo" ? spec.projectPath : null,

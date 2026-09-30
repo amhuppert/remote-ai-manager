@@ -109,7 +109,7 @@ describe("createFirstTurnDispatcher", () => {
     expect(call[0]).toBe("/repo"); // projectPath
     expect(call[2]).toBe("do the thing"); // promptText
     expect(call[4]).toBe(CONVERSATION_ID); // conversationId
-    expect(call[7]).toEqual({ backend: "claude" }); // options
+    expect(call[7]).toEqual({ backend: "claude", inputOrigin: "generated" }); // options
   });
 
   it("dispatches a codex first turn on the codex backend", async () => {
@@ -117,8 +117,26 @@ describe("createFirstTurnDispatcher", () => {
     await dispatchFirstTurn(input("codex", "do the thing"));
     const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
       .calls[0]!;
-    expect(call[7]).toEqual({ backend: "codex" });
+    expect(call[7]).toEqual({ backend: "codex", inputOrigin: "generated" });
     expect(deps.startDualRace).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicit human provenance when the caller supplies a user prompt", async () => {
+    const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
+    await dispatchFirstTurn({
+      ...input("claude", "User request"),
+      inputOrigin: "user",
+    });
+    expect(deps.executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.anything(),
+      "User request",
+      expect.anything(),
+      CONVERSATION_ID,
+      undefined,
+      undefined,
+      { backend: "claude", inputOrigin: "user" },
+    );
   });
 
   it("threads the complete model selection into the first turn", async () => {
@@ -136,7 +154,7 @@ describe("createFirstTurnDispatcher", () => {
       modelId: "gpt-5.4",
       parameters: { fast: "false", reasoning: "high" },
     });
-    expect(call[7]).toEqual({ backend: "codex" });
+    expect(call[7]).toEqual({ backend: "codex", inputOrigin: "generated" });
   });
 
   it("delivers ordered image payloads with the first turn", async () => {
@@ -181,7 +199,7 @@ describe("createFirstTurnDispatcher", () => {
     const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
       .calls[0]!;
     expect(call[5]).toEqual({ modelId: "haiku", parameters: {} });
-    expect(call[7]).toEqual({ backend: "claude" });
+    expect(call[7]).toEqual({ backend: "claude", inputOrigin: "generated" });
   });
 
   it("delivers a single turn for two concurrent dispatches (exactly once)", async () => {

@@ -398,6 +398,17 @@ export const ticketStatusUpdateSchema = z
   .strict();
 export type TicketStatusUpdate = z.infer<typeof ticketStatusUpdateSchema>;
 
+export const ticketStatusChangeSchema = z
+  .object({
+    id: z.number().int().positive(),
+    ticketId: z.string().min(1),
+    status: ticketStatusSchema,
+    actorConversationId: z.string().min(1).nullable(),
+    occurredAt: z.string().min(1),
+  })
+  .strict();
+export type TicketStatusChange = z.infer<typeof ticketStatusChangeSchema>;
+
 export const ticketStatusUpdateSummarySchema = z
   .object({
     total: z.number().int().nonnegative(),

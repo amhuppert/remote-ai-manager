@@ -11,8 +11,18 @@ import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
  * next-turn drain. An unconfirmed delivery stays `uncertain` for user review.
  */
 
-import { getRuntime as defaultGetRuntime } from "@/lib/agent-backends/runtime-registry";
+import {
+  getRuntime as defaultGetRuntime,
+  ownRuntimeInputReceipt,
+} from "@/lib/agent-backends/runtime-registry";
 import { InputDeliveryUncertainError } from "@/lib/agent-backends/errors";
+import { isQueuedUserMessage } from "@/lib/conversations/queued-input-provenance";
+import {
+  preparePassiveSubscriptionContext,
+  prepareAcceptedNotepadReferences,
+  productionPassiveSubscriptionDependencies,
+  type PassiveSubscriptionContextDependencies,
+} from "@/lib/workflows/conversation/pre-turn/passive-subscription-context";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
@@ -129,11 +139,22 @@ interface ConversationKey {
 }
 
 export interface QueueMessageDeps {
+  subscriptions?: PassiveSubscriptionContextDependencies;
+  ownSubscriptionReceipt?(
+    input: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+      runtime: ConversationBackendRuntime;
+    },
+    finish: () => Promise<void>,
+  ): Promise<boolean> | boolean;
   enqueue(
     input: ConversationKey & {
       content: MessageContentBlock[];
       backend?: AgentBackendId;
       metadata?: QueuedMessageMetadata;
+      inputOrigin?: "user" | "generated";
       modelSelection?: BackendModelSelection;
       consumePendingQuestionId?: string;
     },
@@ -201,11 +222,15 @@ export interface QueueMessageDeps {
   prepareNotepadChangeNotice(
     conversationId: string,
     references?: readonly NotepadDeliveryRecord[],
+    excludedNotepadIds?: readonly string[],
   ): Promise<PreparedNotepadChangeNotice>;
   settleNotepadChangeNotice(notice: PreparedNotepadChangeNotice): Promise<void>;
 }
 
 const defaultDeps: QueueMessageDeps = {
+  subscriptions: productionPassiveSubscriptionDependencies,
+  ownSubscriptionReceipt: (input, finish) =>
+    ownRuntimeInputReceipt(input.conversationId, input.runtime, finish),
   enqueue: messageQueueService.enqueue,
   claimLiveDelivery: messageQueueService.claimLiveDelivery,
   markDelivered: messageQueueService.markDelivered,
@@ -225,13 +250,22 @@ const defaultDeps: QueueMessageDeps = {
     getNotepadInjectionReader().readForInjection(notepadId),
   recordNotepadDeliveries: (input) =>
     getNotepadDeliveryTracker().recordDelivered(input),
-  prepareNotepadChangeNotice: (conversationId, references) =>
-    getNotepadDeliveryTracker().prepare(conversationId, references),
+  prepareNotepadChangeNotice: (
+    conversationId,
+    references,
+    excludedNotepadIds,
+  ) =>
+    getNotepadDeliveryTracker().prepare(
+      conversationId,
+      references,
+      excludedNotepadIds,
+    ),
   settleNotepadChangeNotice: (notice) =>
     getNotepadDeliveryTracker().settle(notice),
 };
 
 export interface QueueMessageParams {
+  inputOrigin?: "user" | "generated";
   projectPath: string;
   sessionName: string;
   conversationId: string;
@@ -342,6 +376,7 @@ export async function queueMessage(
     backend,
     modelSelection,
     metadata,
+    inputOrigin,
     consumePendingQuestionId,
     deps: depsOverride,
   } = params;
@@ -366,6 +401,7 @@ export async function queueMessage(
     sessionName,
     conversationId,
     content,
+    ...(inputOrigin ? { inputOrigin } : {}),
     ...(metadata ? { metadata } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(consumePendingQuestionId !== undefined
@@ -598,6 +634,45 @@ async function queueMessageInOrder(
       : buildQueueContent({ text: agentFacingText, images });
 
   // Rendered references provide a local baseline until backend acceptance.
+  let passive;
+  const passiveReceipts: (() => Promise<void>)[] = [];
+  const acceptedNotepadReferences = prepareAcceptedNotepadReferences(
+    deps.subscriptions,
+    { projectPath, conversationId },
+    deliveredNotepads.map(({ id, revision }) => ({ notepadId: id, revision })),
+    (finish) => passiveReceipts.push(finish),
+  );
+  try {
+    passive = await preparePassiveSubscriptionContext(
+      deps.subscriptions,
+      {
+        recipient: { projectPath, conversationId },
+        attemptId: deliveryAttemptId,
+        eligible: isQueuedUserMessage(claimed),
+      },
+      (finish) => passiveReceipts.push(finish),
+    );
+    for (const finish of passiveReceipts) {
+      if (
+        !(await deps.ownSubscriptionReceipt?.(
+          { projectPath, sessionName, conversationId, runtime },
+          finish,
+        ))
+      )
+        throw new Error("Live input receipt owner is no longer available");
+    }
+  } catch (error) {
+    await passive?.finish();
+    await deps.markPending({
+      projectPath,
+      sessionName,
+      conversationId,
+      ids: [entry.id],
+      deliveryAttemptId,
+      error: getErrorMessage(error),
+    });
+    return { entry, deliveryTiming: "next_turn" };
+  }
   let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
   try {
     notepadChangeNotice = await deps.prepareNotepadChangeNotice(
@@ -607,6 +682,7 @@ async function queueMessageInOrder(
         revision,
         openComments,
       })),
+      passive.coveredNotepadIds,
     );
     if (notepadChangeNotice.block !== null) {
       logger.info("queue.notepad_change_notice_prepended", {
@@ -658,6 +734,10 @@ async function queueMessageInOrder(
   const onAccepted = (): Promise<void> => {
     accepted = true;
     acceptance ??= (async () => {
+      const passiveAcceptance = passive.onInputAccepted();
+      const notepadInvolvement = acceptedNotepadReferences.onInputAccepted();
+      void passiveAcceptance.catch(() => {});
+      void notepadInvolvement.catch(() => {});
       if (deliveredNotepads.length > 0) {
         try {
           await deps.recordNotepadDeliveries({
@@ -710,6 +790,9 @@ async function queueMessageInOrder(
           });
         }
       }
+
+      await passiveAcceptance;
+      await notepadInvolvement;
 
       // Append exactly one delivered user transcript entry (the sole JSONL
       // writer), then mark the row delivered.
@@ -797,19 +880,28 @@ async function queueMessageInOrder(
       ? [...deliveryContent, { type: "text", text: summary }]
       : deliveryContent;
     const promptContext = isNativeCommand
-      ? [notepadChangeNotice?.block, summary.trimStart()]
+      ? [passive.block, notepadChangeNotice?.block, summary.trimStart()]
           .filter(Boolean)
           .join("\n\n")
       : undefined;
+    const noticedContent = withNotepadChangeNotice(
+      summarizedContent,
+      notepadChangeNotice,
+    );
+    acceptedNotepadReferences.markDispatched();
+    passive.markDispatched();
     await runtime.queueUserInput({
       userPromptText: text ?? "",
       content: isNativeCommand
         ? deliveryContent
-        : withNotepadChangeNotice(summarizedContent, notepadChangeNotice),
+        : passive.block
+          ? [{ type: "text", text: passive.block }, ...noticedContent]
+          : noticedContent,
       ...(promptContext ? { promptContext } : {}),
       onAccepted,
     });
   } catch (err) {
+    passive.markDispatchFailure(err);
     const error = getErrorMessage(err);
     if (accepted || err instanceof InputDeliveryUncertainError) {
       await holdForReview(error);
@@ -838,6 +930,14 @@ async function queueMessageInOrder(
       error,
     });
     return { entry, deliveryTiming: "next_turn" };
+  } finally {
+    try {
+      await passive.finish();
+      await acceptedNotepadReferences.finish();
+    } catch (error) {
+      settlementError = getErrorMessage(error);
+      await holdForReview(settlementError);
+    }
   }
 
   if (settlementError !== null) {

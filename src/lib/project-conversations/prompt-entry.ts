@@ -89,6 +89,7 @@ export interface ExecuteProjectPromptStreamInput {
   /** Omitted ⇒ create the first project conversation and submit its first turn. */
   conversationId?: string;
   promptText: string;
+  inputOrigin?: "user" | "generated";
   emit: (event: string, data: unknown) => void;
   modelSelection?: BackendModelSelection;
   images?: ImagePayload[];
@@ -277,6 +278,7 @@ export function createProjectPromptExecutor(
       {
         executionTarget,
         binding,
+        inputOrigin: input.inputOrigin,
       },
     );
   }

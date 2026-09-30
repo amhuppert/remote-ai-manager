@@ -87,6 +87,7 @@ beforeEach(() => {
     },
   });
   handlers = createNotepadsRouteHandlers({
+    verifyConversationIdentity: async (id) => id !== "does-not-exist",
     getService: () => service,
     resolveProjectPath: async () => PROJECT_PATH,
     auth,

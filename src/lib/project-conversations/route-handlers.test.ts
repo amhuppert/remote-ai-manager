@@ -119,6 +119,55 @@ async function readStream(res: Response): Promise<string> {
 }
 
 describe("project conversation route handlers", () => {
+  it("distinguishes ordinary user prompts from generated feedback on both prompt routes", async () => {
+    const origins: Array<string | undefined> = [];
+    const h = harness({
+      executeProjectPromptStream: async (input) => {
+        origins.push(input.inputOrigin);
+        return {
+          conversationId: input.conversationId ?? "new-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    });
+    h.store.set("c1", makeConv({ id: "c1" }));
+    for (const feedback of [
+      {},
+      { documentFeedback: { items: [] } },
+      {
+        notepadFeedback: {
+          notepadId: "notes",
+          notepadName: "Notes",
+          notepadRefXml: "",
+          items: [],
+        },
+      },
+    ]) {
+      await readStream(
+        await h.handlers.firstPromptPOST(
+          jsonRequest({ prompt: "Continue", ...feedback }),
+          ctx({ name: "demo" }),
+        ),
+      );
+      await readStream(
+        await h.handlers.promptPOST(
+          jsonRequest({ prompt: "Continue", ...feedback }),
+          ctx({ name: "demo", conversationId: "c1" }),
+        ),
+      );
+    }
+    expect(origins).toEqual([
+      "user",
+      "user",
+      "generated",
+      "generated",
+      "generated",
+      "generated",
+    ]);
+  });
+
   it("createPOST returns 201 with the record and broadcasts scope=project conversation-created", async () => {
     const h = harness();
     const res = await h.handlers.createPOST(

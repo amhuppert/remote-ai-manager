@@ -70,6 +70,8 @@ export interface StartupDeps {
   initializeValidationService(): Promise<void>;
   /** Marks orphaned pending conversation snapshots failed. */
   recoverInterruptedConversationSnapshots(): Promise<number>;
+  /** Marks unacknowledged subscription input from a prior process uncertain. */
+  recoverInterruptedSubscriptionDeliveries?(): Promise<number>;
   /**
    * Deletes `refs/cc-merges/` refs no job row still holds. Optional so a test
    * that is not about parked refs need not supply it.
@@ -149,6 +151,11 @@ const defaultStartupDeps: StartupDeps = {
       repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
       now: () => new Date().toISOString(),
     }),
+  recoverInterruptedSubscriptionDeliveries: async () => {
+    const { recoverInterruptedSubscriptionDeliveries } =
+      await import("./lib/subscriptions/service-factory");
+    return recoverInterruptedSubscriptionDeliveries();
+  },
   collectOrphanedParkedRefs: () => collectOrphanedParkedRefs(),
   reconcileSessionMemory: async () => {
     const { reconcileSessionMemoryAtStartup } =
@@ -333,6 +340,14 @@ export function createStartupRegistrar(
       logger.error("startup.managed_skills_publish_failed", {
         error: getErrorMessage(err),
       });
+    }
+
+    // A prior process may have sent a claimed briefing without persisting its
+    // acceptance. Keep that uncertainty visible before a new turn can claim it.
+    if (deps.recoverInterruptedSubscriptionDeliveries) {
+      const count = await deps.recoverInterruptedSubscriptionDeliveries();
+      if (count > 0)
+        logger.info("startup.subscription_deliveries_uncertain", { count });
     }
 
     // Rehydrate conversation actors from persisted machine snapshots

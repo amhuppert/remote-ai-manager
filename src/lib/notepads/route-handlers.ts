@@ -17,6 +17,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
+import { verifyDurableConversationIdentity } from "@/lib/conversations/provenance";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { readBodyBounded } from "@/lib/shared/bounded-body";
@@ -52,8 +53,8 @@ const logger = createLogger("notepads.routes");
 /**
  * The claimed caller conversation. Present with a valid bearer token, this
  * request is an agent write and is attributed to (and governed for) that
- * conversation; absent, it is the user's own write. The claim is cooperative by
- * design — the same convention the spec and CLI surfaces use.
+ * conversation after its durable identity is verified; absent, it is the user's
+ * own write. Provenance does not grant additional source permissions.
  */
 export const NOTEPAD_CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
 
@@ -77,6 +78,7 @@ export interface NotepadsRouteDeps {
   getService(): NotepadService;
   resolveProjectPath(projectName: string): Promise<string | null>;
   auth: AgentAuth;
+  verifyConversationIdentity(conversationId: string): Promise<boolean>;
 }
 
 export interface NotepadsRouteHandlers {
@@ -495,6 +497,16 @@ export function createNotepadsRouteHandlers(
       .get(NOTEPAD_CALLER_CONVERSATION_HEADER)
       ?.trim();
     if (!conversationId) return { ok: true, value: { kind: "user" } };
+    if (!(await deps.verifyConversationIdentity(conversationId))) {
+      return {
+        ok: false,
+        response: jsonError(
+          "Originating conversation does not exist",
+          400,
+          "conversation_actor_not_found",
+        ),
+      };
+    }
     return { ok: true, value: { kind: "agent", conversationId } };
   }
 
@@ -773,6 +785,8 @@ function defaultDeps(): NotepadsRouteDeps {
     getService: () => getNotepadService(),
     resolveProjectPath: (projectName) => defaultResolveProjectPath(projectName),
     auth: createAgentAuth(),
+    verifyConversationIdentity: async (conversationId) =>
+      verifyDurableConversationIdentity(conversationId),
   };
 }
 

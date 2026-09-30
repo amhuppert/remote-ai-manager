@@ -1058,6 +1058,7 @@ export function createSpecSpineWorld(
   };
 
   const writeHandlers = createSpecWriteRouteHandlers({
+    verifyConversationIdentity: async () => true,
     auth,
     resolveProjectPath,
     resolveSpec: (projectPath, slug) => specs.resolve(projectPath, slug),

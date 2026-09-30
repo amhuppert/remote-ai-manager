@@ -39,6 +39,7 @@ function makeFullSnapshot(): Snapshot<unknown> {
     role: null,
     activeTurn: {
       kind: "conversation_turn",
+      inputOrigin: "user",
       promptText: "hello",
       images: [],
       backend: "claude",
@@ -157,6 +158,7 @@ describe("toPersistedConversationSnapshot", () => {
 
     const activeTurn = ctx.activeTurn as Record<string, unknown>;
     expect(activeTurn.kind).toBe("conversation_turn");
+    expect(activeTurn.inputOrigin).toBe("user");
     expect(activeTurn.streamId).toBe("stream-1");
 
     const lastResult = ctx.lastResult as Record<string, unknown>;

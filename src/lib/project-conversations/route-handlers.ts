@@ -91,6 +91,10 @@ import type {
   RedactedAgentProfileSnapshot,
 } from "@/lib/agent-profiles/schemas";
 import type { ExecuteProjectPromptStreamInput } from "./prompt-entry";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 
 const logger = createLogger("project-conversations.routes");
 
@@ -210,6 +214,8 @@ export function createProjectConversationRouteHandlers(
       modelSelection?: ExecuteProjectPromptStreamInput["modelSelection"];
       backend?: ConversationState["agentBackend"];
       images?: ExecuteProjectPromptStreamInput["images"];
+      documentFeedback?: DocumentFeedbackPayload;
+      notepadFeedback?: NotepadFeedbackPayload;
       /**
        * Only the create-and-send entry can use this: it is the token the created
        * conversation records, and a turn in an existing conversation creates
@@ -244,6 +250,10 @@ export function createProjectConversationRouteHandlers(
             projectPath,
             ...(conversationId !== undefined ? { conversationId } : {}),
             promptText: body.prompt.trim(),
+            inputOrigin:
+              body.documentFeedback || body.notepadFeedback
+                ? "generated"
+                : "user",
             emit,
             ...(body.modelSelection !== undefined
               ? { modelSelection: body.modelSelection }

@@ -49,6 +49,7 @@ export const PROJECT_CONVERSATION_ROUTE_OPERATIONS: ReadonlySet<string> =
     "context-artifacts",
     "generate-name",
     "history",
+    "inbox",
     "mark-read",
     "messages",
     "notifications",
@@ -60,6 +61,7 @@ export const PROJECT_CONVERSATION_ROUTE_OPERATIONS: ReadonlySet<string> =
     "read",
     "rename",
     "spawn",
+    "subscriptions",
     "validation",
   ]);
 

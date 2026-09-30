@@ -82,6 +82,7 @@ const deps: QueueMessageDeps = {
   readLiveReference: async () => null,
   readNotepadForInjection: readNotepadForInjectionMock,
   recordNotepadDeliveries: recordNotepadDeliveriesMock,
+  subscriptions: undefined,
   prepareNotepadChangeNotice: prepareNotepadChangeNoticeMock,
   settleNotepadChangeNotice: settleNotepadChangeNoticeMock,
 };
@@ -1167,6 +1168,7 @@ describe("queueMessage notepad injection", () => {
         backend: "claude",
         deps: {
           ...deps,
+          subscriptions: undefined,
           prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
         },
       });
@@ -1193,6 +1195,7 @@ describe("queueMessage notepad injection", () => {
         backend: "claude",
         deps: {
           ...deps,
+          subscriptions: undefined,
           prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
         },
       });
@@ -1245,6 +1248,7 @@ describe("queueMessage notepad injection", () => {
         backend: "claude",
         deps: {
           ...deps,
+          subscriptions: undefined,
           prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
           settleNotepadChangeNotice,
         },
@@ -1265,6 +1269,7 @@ describe("queueMessage notepad injection", () => {
         backend: "claude",
         deps: {
           ...deps,
+          subscriptions: undefined,
           prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
           settleNotepadChangeNotice,
         },
@@ -1294,6 +1299,7 @@ describe("queueMessage notepad injection", () => {
         backend: "claude",
         deps: {
           ...deps,
+          subscriptions: undefined,
           prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
           settleNotepadChangeNotice,
         },
@@ -1314,6 +1320,7 @@ describe("queueMessage notepad injection", () => {
         backend: "claude",
         deps: {
           ...deps,
+          subscriptions: undefined,
           prepareNotepadChangeNotice: vi.fn(async () => {
             throw new Error("state store unavailable");
           }),

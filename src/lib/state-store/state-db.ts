@@ -1793,6 +1793,60 @@ export const NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL = `
   );
 `;
 
+/** Subscription evidence survives source deletion and recipient retirement. */
+export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS conversation_subscriptions (
+    id TEXT PRIMARY KEY,
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job')),
+    source_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('passive','active')),
+    event_kinds_json TEXT,
+    expires_at TEXT,
+    status TEXT NOT NULL CHECK (status IN ('following','unfollowed')),
+    cursor TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    unfollowed_at TEXT,
+    missing_at TEXT,
+    last_error TEXT,
+    UNIQUE (project_path, conversation_id, source_kind, source_id)
+  );
+  CREATE TABLE IF NOT EXISTS conversation_subscription_deliveries (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job')),
+    source_id TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    fact_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending','queued','accepted','failed','uncertain')),
+    attempt_id TEXT,
+    attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+    queued_at TEXT,
+    accepted_at TEXT,
+    finished_at TEXT,
+    last_error TEXT,
+    UNIQUE (project_path, conversation_id, source_kind, source_id, occurrence_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_subscription_deliveries_inbox
+    ON conversation_subscription_deliveries (project_path, conversation_id, state, recorded_at, id);
+  CREATE TABLE IF NOT EXISTS ticket_status_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    actor_conversation_id TEXT,
+    occurred_at TEXT NOT NULL,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_ticket_status_changes_ticket
+    ON ticket_status_changes (ticket_id, id);
+`;
+
 export const TICKET_RELATIONSHIPS_AND_STATUS_UPDATES_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS ticket_relationships (
     id               TEXT PRIMARY KEY,
@@ -2915,6 +2969,7 @@ const SCHEMA_DDL = `
   ${NOTEPAD_COMMENTS_SCHEMA_DDL}
 
   ${NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL}
+  ${CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL}
 
   ${MEMORY_SCHEMA_DDL}
 

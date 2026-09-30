@@ -111,6 +111,7 @@ describe("propose route files the gate asks it leaves pending", () => {
     // are never reached from it.
     const services = { authoring, review } as unknown as SpecMutationServices;
     handlers = createSpecWriteRouteHandlers({
+      verifyConversationIdentity: async () => true,
       auth,
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,

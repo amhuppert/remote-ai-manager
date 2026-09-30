@@ -253,6 +253,7 @@ export type ActorFixtureDependencies = Omit<
   Omit<ConversationActorDependencies["transcript"], "getRuntime"> &
   Omit<ConversationActorDependencies["policy"], "state"> &
   Omit<ConversationActorDependencies["debug"], "getRuntime"> & {
+    subscriptions?: ConversationActorDependencies["subscriptions"];
     checkpoint: CheckpointDeliveryDependencies;
     log: Logger;
   };
@@ -261,6 +262,7 @@ export function groupActorFixtureDependencies(
   deps: ActorFixtureDependencies,
 ): ConversationActorDependencies {
   return {
+    ...(deps.subscriptions ? { subscriptions: deps.subscriptions } : {}),
     execution: {
       requestUserQuestion: deps.requestUserQuestion,
       acquireConversationLock: deps.acquireConversationLock,

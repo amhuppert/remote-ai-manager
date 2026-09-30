@@ -34,6 +34,7 @@ is available when an offline catalog is useful.
 | Read or update tickets, relationships, attachments, or status posts | [Tickets](references/tickets.md) |
 | Recall or capture shared memory | [Memory](references/memory.md) |
 | Read transcripts, images, compactions, or continuation checkpoints | [Conversations](references/conversations.md) |
+| Inspect passive updates or stop an automatic follow | [Subscriptions and inbox](references/subscriptions.md) |
 | Author or operate workflows; finish a lane task | [Workflows](references/workflows.md) |
 | Read native specs and artifact receipts | [Spec reads](references/spec-reads.md) |
 | Submit an authorized Alignment charter or decision batch | [Alignment](references/alignment.md) |

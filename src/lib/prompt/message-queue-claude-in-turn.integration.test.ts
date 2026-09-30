@@ -151,7 +151,9 @@ describe("Claude in-turn live-delivery flow (integration)", () => {
       ...KEY,
       backend: "claude",
       text: "only once",
+      inputOrigin: "user",
       deps: {
+        subscriptions: undefined,
         enqueue: service.enqueue,
         claimLiveDelivery: service.claimLiveDelivery,
         markPending: service.markPending,
@@ -185,6 +187,7 @@ describe("Claude in-turn live-delivery flow (integration)", () => {
     const appendedEntries: TranscriptEntry[] = [];
 
     const queueDeps: Partial<QueueMessageDeps> = {
+      subscriptions: undefined,
       // Bind the live-delivery lifecycle methods to the REAL service instance
       // operating on the same in-memory store the enqueue mutates.
       enqueue: (input) => service.enqueue(input),
@@ -217,6 +220,7 @@ describe("Claude in-turn live-delivery flow (integration)", () => {
       ...KEY,
       text: "live message",
       backend: "claude",
+      inputOrigin: "user",
       deps: queueDeps,
     });
 

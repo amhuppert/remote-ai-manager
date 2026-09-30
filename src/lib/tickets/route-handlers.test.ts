@@ -32,6 +32,13 @@ import {
   type QuickTicketDiagnostics,
 } from "./schemas";
 import { createTicketService } from "./service";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { createConversationProvenanceReader } from "@/lib/conversations/provenance";
+import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
+import { createProjectConversationsRepo } from "@/lib/state-store/project-conversations-repo";
+import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
+import { createSubscriptionRuntime } from "@/lib/subscriptions/service-factory";
+import { createTicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
 
 type Db = InstanceType<typeof Database>;
 
@@ -70,8 +77,10 @@ function grantedAuth(): AgentAuth {
     async requireToken() {
       return null;
     },
-    async validateOptionalToken() {
-      return { kind: "absent" };
+    async validateOptionalToken(request) {
+      return request.headers.has("authorization")
+        ? { kind: "valid" }
+        : { kind: "absent" };
     },
   };
 }
@@ -174,6 +183,12 @@ beforeEach(() => {
     },
   });
   handlers = createTicketsRouteHandlers({
+    verifyConversationIdentity: async (id) =>
+      createConversationProvenanceReader({
+        conversations: createConversationsRepo(db),
+        projectConversations: createProjectConversationsRepo(db),
+        sessions: createSessionsRepo(db),
+      })(id) !== null,
     getService: () => service,
     resolveProjectPath,
     resolveAvailableProjectPath,
@@ -183,6 +198,95 @@ beforeEach(() => {
 
 afterEach(() => {
   db.close();
+});
+
+it("rejects a claimed ticket actor that does not exist", async () => {
+  const created = await createTicket({ title: "Provenance" });
+  const request = new Request("http://localhost/api/projects/test/tickets/1", {
+    method: "PATCH",
+    headers: {
+      authorization: "Bearer token",
+      "x-cc-conversation-id": "does-not-exist",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ status: "done" }),
+  });
+  const response = await handlers.detailPATCH(
+    request,
+    detailContext(PROJECT_NAME, String(created.number)),
+  );
+  expect(response.status).toBe(400);
+});
+
+it("records verified ticket actors through the real route and suppresses only their own status edit", async () => {
+  const conversationId = "ticket-author";
+  createProjectConversationsRepo(db).upsert(
+    PROJECT_PATH,
+    conversationStateSchema.parse({
+      id: conversationId,
+      scope: "project",
+      transcriptPath: null,
+      status: "idle",
+      promptCount: 0,
+      createdAt: "2026-09-30T10:00:00.000Z",
+      lastActivityAt: "2026-09-30T10:00:00.000Z",
+    }),
+  );
+  const ticket = await createTicket();
+  const recipient = { projectPath: PROJECT_PATH, conversationId };
+  const runtime = createSubscriptionRuntime(db, createWriteQueue());
+  await runtime.service.autoFollow({
+    recipient,
+    source: { kind: "ticket", id: ticket.id },
+    reason: "Explicit involvement",
+  });
+  const own = await handlers.detailPATCH(
+    new Request("http://localhost/ticket", {
+      method: "PATCH",
+      headers: {
+        authorization: "Bearer token",
+        "x-cc-conversation-id": conversationId,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "in_progress",
+        actorConversationId: "forged-body-actor",
+      }),
+    }),
+    detailContext(PROJECT_NAME, String(ticket.number)),
+  );
+  expect(own.status).toBe(200);
+  expect(
+    createTicketStatusChangesRepo(db).listAfter(ticket.id, 0),
+  ).toMatchObject([
+    { actorConversationId: conversationId, status: "in_progress" },
+  ]);
+  expect((await runtime.service.readInbox(recipient, {})).items).toEqual([]);
+  const other = await handlers.detailPATCH(
+    new Request("http://localhost/ticket", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    }),
+    detailContext(PROJECT_NAME, String(ticket.number)),
+  );
+  expect(other.status).toBe(200);
+  expect(
+    (
+      await createSubscriptionRuntime(db, createWriteQueue()).service.readInbox(
+        recipient,
+        {},
+      )
+    ).items,
+  ).toMatchObject([
+    {
+      fact: {
+        eventKind: "ticket-status-changed",
+        outcome: "done",
+        actorConversationId: null,
+      },
+    },
+  ]);
 });
 
 function projectContext(name: string) {
@@ -321,6 +425,7 @@ describe("global list GET /api/tickets", () => {
 
   it("returns 401 when the bearer token is invalid", async () => {
     const gated = createTicketsRouteHandlers({
+      verifyConversationIdentity: async (id) => id !== "does-not-exist",
       getService: () => {
         throw new Error("service must not be reached");
       },
@@ -677,6 +782,7 @@ describe("create POST /api/projects/:name/tickets", () => {
 
   it("returns 401 when the bearer token is invalid", async () => {
     const gated = createTicketsRouteHandlers({
+      verifyConversationIdentity: async (id) => id !== "does-not-exist",
       getService: () => {
         throw new Error("service must not be reached");
       },

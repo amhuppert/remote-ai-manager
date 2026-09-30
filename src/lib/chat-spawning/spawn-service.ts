@@ -229,6 +229,7 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
               projectName,
               session,
               initialPrompt: proposed.initialPrompt ?? "",
+              inputOrigin: "user",
               images: proposed.images,
               agent: proposed.agent,
               modelSelection: proposed.modelSelection,

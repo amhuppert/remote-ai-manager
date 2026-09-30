@@ -16,8 +16,9 @@ export interface DispatchFirstTurnInput {
   projectName: string;
   /** Freshly created session; `conversations[0]` is the dispatch target. */
   session: SessionState;
-  /** The first user turn to send; `null` ⇒ the session stays idle (no-op). */
+  /** The first turn to send; `null` ⇒ the session stays idle (no-op). */
   initialPrompt: string | null;
+  inputOrigin?: "user" | "generated";
   images?: ImagePayload[];
   agent: SpawnAgent;
   /** Complete model selection for a single-backend first turn. */
@@ -120,6 +121,7 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
           input.images,
           {
             backend: agent,
+            inputOrigin: input.inputOrigin ?? "generated",
           },
         );
       }

@@ -350,6 +350,7 @@ export async function drainConversationQueue(
 
     const turn: ConversationTurnSubmission["turn"] = {
       promptText,
+      inputOrigin: batch.hasUserMessage === true ? "user" : "generated",
       ...(images.length ? { images } : {}),
       ...(documentFeedback ? { documentFeedback } : {}),
       ...(notepadFeedback ? { notepadFeedback } : {}),

@@ -1,3 +1,4 @@
+import { addConversationSubscriptions } from "./0058-add-conversation-subscriptions";
 import { closeWithdrawnRevisionApprovalRequests } from "./0056-close-withdrawn-revision-approval-requests";
 import { continuousSpecReview } from "./0057-continuous-spec-review";
 import { graphWorkflowValidatorConversations } from "./0055-graph-workflow-validator-conversations";
@@ -151,6 +152,7 @@ export const migrations: readonly StateMigration[] = [
   graphWorkflowValidatorConversations,
   closeWithdrawnRevisionApprovalRequests,
   continuousSpecReview,
+  addConversationSubscriptions,
 ];
 
 export type { StateMigration } from "./types";

@@ -157,6 +157,12 @@ export class TurnAttempt {
     this.receipts.push(finish);
   }
 
+  tryOwnLiveReceipt(finish: () => Promise<void>): boolean {
+    if (!this.isCurrent() || this.settlement !== undefined) return false;
+    this.ownReceipt(finish);
+    return true;
+  }
+
   /**
    * Durable work that must read what the receipts wrote: it runs once every
    * receipt has settled, before releases and disposers, and a failure is

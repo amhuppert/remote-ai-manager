@@ -81,6 +81,7 @@ export const pendingQueuedMessageSchema = z
     attemptCount: z.number().int().nonnegative(),
     error: z.string().nullable(),
     metadata: queuedMessageMetadataSchema.nullable().default(null),
+    inputOrigin: z.enum(["user", "generated"]).optional(),
     modelSelection: backendModelSelectionSchema.optional(),
   })
   .strict();

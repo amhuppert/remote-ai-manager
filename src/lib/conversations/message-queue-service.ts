@@ -1,4 +1,5 @@
 import { stampCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
+import { isQueuedUserMessage } from "./queued-input-provenance";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
@@ -50,6 +51,7 @@ interface ConversationKey {
 }
 
 interface EnqueueQueuedMessageInput extends ConversationKey {
+  inputOrigin?: "user" | "generated";
   backend?: AgentBackendId;
   content: MessageContentBlock[];
   metadata?: QueuedMessageMetadata;
@@ -74,6 +76,7 @@ interface ConsumingEnqueueQueuedMessageInput extends EnqueueQueuedMessageInput {
  * not the JSONL transcript — owns this entry until delivery is confirmed.
  */
 export function createPendingEntry(args: {
+  inputOrigin?: "user" | "generated";
   id: string;
   content: MessageContentBlock[];
   now: string;
@@ -94,6 +97,7 @@ export function createPendingEntry(args: {
     attemptCount: 0,
     error: null,
     metadata: args.metadata ?? null,
+    ...(args.inputOrigin ? { inputOrigin: args.inputOrigin } : {}),
     ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
   };
 }
@@ -587,6 +591,8 @@ export function cancelTransform(
 }
 
 export interface ClaimedQueuedBatch {
+  /** Derived from the original rows, before generated protocol text is coalesced. */
+  hasUserMessage?: boolean;
   deliveryAttemptId: string;
   messageIds: string[];
   content: MessageContentBlock[];
@@ -696,6 +702,7 @@ export function createMessageQueueService(
     const id = deps.newId();
     const now = deps.now();
     const entry = createPendingEntry({
+      inputOrigin: input.inputOrigin,
       id,
       content,
       now,
@@ -929,6 +936,7 @@ export function createMessageQueueService(
       deliveryAttemptId: attemptId,
       messageIds,
       content: coalesceContent(claimed),
+      hasUserMessage: claimed.some(isQueuedUserMessage),
       command,
       ...(claimed[0]?.modelSelection
         ? { modelSelection: claimed[0].modelSelection }

@@ -255,6 +255,10 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             body.images,
             {
               backend: body.backend,
+              inputOrigin:
+                body.documentFeedback || body.notepadFeedback
+                  ? "generated"
+                  : "user",
               ...(body.documentFeedback
                 ? { documentFeedback: body.documentFeedback }
                 : {}),
@@ -575,6 +579,10 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             body.images,
             {
               backend: body.backend,
+              inputOrigin:
+                body.documentFeedback || body.notepadFeedback
+                  ? "generated"
+                  : "user",
               onAccepted: async () => {
                 await deps.clearConversationPendingPromptTextIfMatches(
                   projectPath,

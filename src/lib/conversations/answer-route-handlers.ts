@@ -260,6 +260,7 @@ async function deliverAnswers(
   // still being this batch. A null result means a concurrent duplicate won
   // the race (the pre-checks above handle the common stale cases).
   const queued = await deps.queueMessage({
+    inputOrigin: "generated",
     projectPath,
     sessionName: storeSessionName,
     conversationId,

@@ -1,5 +1,6 @@
 import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { readRuntimeInstructions } from "./runtime-instructions";
+import { productionPassiveSubscriptionDependencies } from "./pre-turn/passive-subscription-context";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -114,6 +115,7 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     });
 
   return {
+    subscriptions: productionPassiveSubscriptionDependencies,
     execution: {
       acquireConversationLock: lockMod.acquireConversationLock,
       acquireQuerySlot: semaphoreMod.acquireQuerySlot,
@@ -279,10 +281,14 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         notepadServiceFactoryMod
           .getNotepadInjectionReader()
           .readForInjection(notepadId),
-      prepareNotepadChangeNotice: (conversationId, references) =>
+      prepareNotepadChangeNotice: (
+        conversationId,
+        references,
+        excludedNotepadIds,
+      ) =>
         notepadServiceFactoryMod
           .getNotepadDeliveryTracker()
-          .prepare(conversationId, references),
+          .prepare(conversationId, references, excludedNotepadIds),
       getReferenceDocuments: stateMod.getReferenceDocuments,
     },
     policy: {

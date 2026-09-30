@@ -61,6 +61,16 @@ it("retains required receipt failure and still finishes every cleanup", async ()
   expect(laterReceipt).toHaveBeenCalledOnce();
 });
 
+it("refuses live receipt enrollment once settlement has started", async () => {
+  const attempt = createAttempt();
+  const receipt = vi.fn(async () => {});
+  expect(attempt.tryOwnLiveReceipt(receipt)).toBe(true);
+  const settled = attempt.settle();
+  expect(attempt.tryOwnLiveReceipt(receipt)).toBe(false);
+  await settled;
+  expect(receipt).toHaveBeenCalledOnce();
+});
+
 it("retains a close a receipt requested as owned close work and retries it on reconcile", async () => {
   let closeFails = true;
   const closeRuntime = vi.fn(async () => {

@@ -21,8 +21,17 @@ type NotepadContextDependencies = {
 
 export async function prepareNotepadContext(
   deps: NotepadContextDependencies,
-  input: { conversationId: string; promptText: string },
-): Promise<PreparedTurnContribution & { text: string }> {
+  input: {
+    conversationId: string;
+    promptText: string;
+    excludedNotepadIds?: readonly string[];
+  },
+): Promise<
+  PreparedTurnContribution & {
+    text: string;
+    references: readonly NotepadDeliveryRecord[];
+  }
+> {
   let text = input.promptText;
   let references: readonly NotepadDeliveryRecord[] = [];
   // Notepad references expand to full canonical content for the agent only.
@@ -55,6 +64,7 @@ export async function prepareNotepadContext(
     notice = await deps.context.prepareNotepadChangeNotice(
       input.conversationId,
       references,
+      input.excludedNotepadIds,
     );
     if (notice.block)
       deps.log.info("prompt.notepad_change_notice_prepended", {
@@ -70,6 +80,7 @@ export async function prepareNotepadContext(
   let acceptance: Promise<void> | undefined;
   return {
     text,
+    references,
     block: notice?.block ?? null,
     onInputAccepted() {
       acceptance ??= (async () => {

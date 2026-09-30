@@ -4,6 +4,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { createSubscriptionRuntime } from "@/lib/subscriptions/service-factory";
+import { followAcceptedNotepadContext } from "@/lib/subscriptions/involvement";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { PublishFn } from "@/lib/events/publication";
 import {
@@ -75,10 +78,29 @@ const auth: AgentAuth = {
   },
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
   fixture.seedProject(OTHER_PROJECT_PATH);
+  for (const id of [
+    "conv-agent",
+    "conv-writer",
+    "conv-creator",
+    "conv-replier",
+  ]) {
+    await fixture.seedProjectConversation(
+      PROJECT_PATH,
+      conversationStateSchema.parse({
+        id,
+        scope: "project",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-09-30T10:00:00.000Z",
+        lastActivityAt: "2026-09-30T10:00:00.000Z",
+      }),
+    );
+  }
   const writeQueue = createWriteQueue();
   repo = createNotepadsRepo(fixture.db, writeQueue);
   contentBase = mkdtempSync(path.join(tmpdir(), "cc-notepad-routes-"));
@@ -104,6 +126,11 @@ beforeEach(() => {
     },
   });
   handlers = createNotepadsRouteHandlers({
+    verifyConversationIdentity: async (id) =>
+      createSubscriptionRuntime(
+        fixture.db,
+        createWriteQueue(),
+      ).readConversation(id) !== null,
     getService: () => service,
     resolveProjectPath: async (projectName) => PROJECTS[projectName] ?? null,
     auth,
@@ -113,6 +140,74 @@ beforeEach(() => {
 afterEach(() => {
   fixture.close();
   rmSync(contentBase, { recursive: true, force: true });
+});
+
+it("refuses a conversation header that does not identify a durable actor", async () => {
+  const response = await handlers.createPOST(
+    agentRequest(
+      "/api/notepads",
+      jsonInit("POST", { scope: "global", name: "Unknown actor" }),
+      "does-not-exist",
+    ),
+  );
+  expect(response.status).toBe(400);
+  expect(await repo.list({ includeArchived: true, sort: "name" })).toEqual([]);
+});
+
+it("suppresses a verified conversation's own notepad revision and retains the next user revision", async () => {
+  const created = await notepadOf(
+    await handlers.createPOST(
+      browserRequest(
+        "/api/notepads",
+        jsonInit("POST", {
+          scope: "global",
+          name: "Watched",
+          content: "Original",
+        }),
+      ),
+    ),
+  );
+  const recipient = { projectPath: PROJECT_PATH, conversationId: "conv-agent" };
+  const runtime = createSubscriptionRuntime(fixture.db, createWriteQueue());
+  await followAcceptedNotepadContext(
+    recipient,
+    [{ notepadId: created.id, revision: created.revision }],
+    runtime.service,
+  );
+  const context = { params: Promise.resolve({ notepadId: created.id }) };
+  const own = await handlers.contentPOST(
+    agentRequest(
+      `/api/notepads/${created.id}/content`,
+      jsonInit("POST", {
+        operation: "update",
+        content: "Own edit",
+        baseRevision: created.revision,
+      }),
+    ),
+    context,
+  );
+  expect(own.status).toBe(200);
+  expect((await runtime.service.readInbox(recipient, {})).items).toEqual([]);
+  const other = await handlers.contentPOST(
+    browserRequest(
+      `/api/notepads/${created.id}/content`,
+      jsonInit("POST", { operation: "update", content: "User edit" }),
+    ),
+    context,
+  );
+  expect(other.status).toBe(200);
+  expect(
+    (
+      await createSubscriptionRuntime(
+        fixture.db,
+        createWriteQueue(),
+      ).service.readInbox(recipient, {})
+    ).items,
+  ).toMatchObject([
+    {
+      fact: { category: "revision", actorConversationId: null, revision: "3" },
+    },
+  ]);
 });
 
 // ---------------------------------------------------------------------------

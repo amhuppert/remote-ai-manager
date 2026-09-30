@@ -130,6 +130,13 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl fixture status` — Read fixture conversation state
   - `cctl fixture status <project> <session-name> [options]`
   - Flags: `--target`, `--dev`.
+- `cctl inbox` — Inspect subscription updates and delivery evidence
+  - `cctl inbox <command> [options]`
+- `cctl inbox get` — Inspect one subscription delivery and its source
+  - `cctl inbox get <delivery-id> [options]`
+- `cctl inbox list` — Inspect pending subscription updates without acknowledging delivery
+  - `cctl inbox list [options]`
+  - Flags: `--limit`, `--offset`, `--all`.
 - `cctl logs` — Analyze local structured logs
   - `cctl logs <command> [options]`
 - `cctl logs compare` — Compare performance before and after a change
@@ -369,6 +376,13 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl spec verify` — Verify content and lifecycle integrity
   - `cctl spec verify <slug> [options]`
   - Flags: `--against`.
+- `cctl subscription` — Inspect automatic conversation follows and remember opt-outs
+  - `cctl subscription <command> [options]`
+- `cctl subscription list` — Inspect this conversation's automatic follows and opt-outs
+  - `cctl subscription list [options]`
+  - Flags: `--limit`, `--offset`.
+- `cctl subscription unfollow` — Stop following a source and remember the opt-out
+  - `cctl subscription unfollow <subscription-id> [options]`
 - `cctl ticket` — Track and execute project work
   - `cctl ticket <command> [options]`
 - `cctl ticket attach` — Attach reusable work context

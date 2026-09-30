@@ -50,6 +50,16 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "Transcript reads, compaction, and context artifacts are conversation-level and already have project-scoped routes.",
   },
+  subscription: {
+    support: "project-supported",
+    reason:
+      "Follows belong to conversations of either scope; both route trees provide inspection and remembered opt-outs.",
+  },
+  inbox: {
+    support: "project-supported",
+    reason:
+      "Explicit inbox inspection addresses an ordinary session or project conversation without starting a turn.",
+  },
   notify: {
     support: "project-supported",
     reason:

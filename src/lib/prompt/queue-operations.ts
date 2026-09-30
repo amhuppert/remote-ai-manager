@@ -84,6 +84,7 @@ export interface QueueOperationDeps {
   }): Promise<ProjectModelSelectionValidation>;
   getProjectDisplayName(projectPath: string): string;
   queueMessage(params: {
+    inputOrigin?: "user" | "generated";
     projectPath: string;
     sessionName: string;
     conversationId: string;
@@ -299,6 +300,8 @@ export async function enqueueQueuedMessage(
     { projectPath, ...scope, conversationId },
     () =>
       deps.queueMessage({
+        inputOrigin:
+          body.documentFeedback || body.notepadFeedback ? "generated" : "user",
         projectPath,
         sessionName: storeSessionName,
         conversationId,

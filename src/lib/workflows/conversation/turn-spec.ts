@@ -106,6 +106,8 @@ export const conversationTurnSpecSchema = z
     kind: z.literal("conversation_turn").default("conversation_turn"),
     images: z.array(imagePayloadSchema).default([]),
     autonomous: z.boolean().default(false),
+    /** Explicit input provenance; absent means generated, regardless of execution mode. */
+    inputOrigin: z.enum(["user", "generated"]).optional(),
     /**
      * Opt-in: hold this turn open until its in-flight waitable background tasks
      * settle (or the wait times out). Set only by the graph-workflow implementer

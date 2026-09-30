@@ -46,6 +46,7 @@ import {
   type AddTicketRelationshipInput,
 } from "./ticket-relationships-store";
 import { createTicketStatusUpdatesStore } from "./ticket-status-updates-store";
+import { createTicketStatusChangesRepo } from "./ticket-status-changes-repo";
 import type { WriteQueue } from "./write-queue";
 
 type Db = InstanceType<typeof Database>;
@@ -65,6 +66,7 @@ export const updateTicketInputSchema = updateTicketFieldsSchema.extend({
   projectPath: z.string().min(1),
   number: z.number().int().positive(),
   updatedAt: z.string().min(1),
+  actorConversationId: z.string().min(1).nullable().optional(),
 });
 export type UpdateTicketInput = z.infer<typeof updateTicketInputSchema>;
 
@@ -592,6 +594,7 @@ function rawRowToListItem(rawRow: unknown): TicketListItem {
 export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
   const relationshipsStore = createTicketRelationshipsStore(db);
   const statusUpdatesStore = createTicketStatusUpdatesStore(db);
+  const statusChanges = createTicketStatusChangesRepo(db);
   const getCounterStmt = db.prepare(
     `INSERT INTO ticket_counters (project_path, last_number) VALUES (?, 1)
      ON CONFLICT(project_path) DO UPDATE SET last_number = last_number + 1
@@ -1620,48 +1623,62 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
         return timed(
           "update",
           { projectPath: validated.projectPath, number: validated.number },
-          () => {
-            const currentRaw: unknown = findTicketStmt.get(
-              validated.projectPath,
-              validated.number,
-            );
-            if (currentRaw === undefined) return null;
-            const current = rowToTicket(currentRaw);
-            const revision = nextTicketRevision(
-              current.updatedAt,
-              validated.updatedAt,
-            );
-            const sets: string[] = ["updated_at = @updated_at"];
-            const bind: Record<string, string | number> = {
-              project_path: validated.projectPath,
-              ticket_number: validated.number,
-              updated_at: revision,
-            };
-            if (validated.title !== undefined) {
-              sets.push("title = @title");
-              bind.title = validated.title;
-            }
-            if (validated.description !== undefined) {
-              sets.push("description = @description");
-              bind.description = validated.description;
-            }
-            if (validated.workType !== undefined) {
-              sets.push("work_type = @work_type");
-              bind.work_type = validated.workType;
-            }
-            if (validated.status !== undefined) {
-              sets.push("status = @status");
-              bind.status = validated.status;
-            }
-            const result = db
-              .prepare(
-                `UPDATE tickets SET ${sets.join(", ")}
+          () =>
+            db
+              .transaction(() => {
+                const currentRaw: unknown = findTicketStmt.get(
+                  validated.projectPath,
+                  validated.number,
+                );
+                if (currentRaw === undefined) return null;
+                const current = rowToTicket(currentRaw);
+                const revision = nextTicketRevision(
+                  current.updatedAt,
+                  validated.updatedAt,
+                );
+                const sets: string[] = ["updated_at = @updated_at"];
+                const bind: Record<string, string | number> = {
+                  project_path: validated.projectPath,
+                  ticket_number: validated.number,
+                  updated_at: revision,
+                };
+                if (validated.title !== undefined) {
+                  sets.push("title = @title");
+                  bind.title = validated.title;
+                }
+                if (validated.description !== undefined) {
+                  sets.push("description = @description");
+                  bind.description = validated.description;
+                }
+                if (validated.workType !== undefined) {
+                  sets.push("work_type = @work_type");
+                  bind.work_type = validated.workType;
+                }
+                if (validated.status !== undefined) {
+                  sets.push("status = @status");
+                  bind.status = validated.status;
+                }
+                const result = db
+                  .prepare(
+                    `UPDATE tickets SET ${sets.join(", ")}
                  WHERE project_path = @project_path AND ticket_number = @ticket_number`,
-              )
-              .run(bind);
-            if (result.changes === 0) return null;
-            return readDetail(validated.projectPath, validated.number);
-          },
+                  )
+                  .run(bind);
+                if (result.changes === 0) return null;
+                if (
+                  validated.status !== undefined &&
+                  validated.status !== current.status
+                ) {
+                  statusChanges.appendInTransaction({
+                    ticketId: current.id,
+                    status: validated.status,
+                    actorConversationId: validated.actorConversationId ?? null,
+                    occurredAt: revision,
+                  });
+                }
+                return readDetail(validated.projectPath, validated.number);
+              })
+              .immediate(),
         );
       });
     },

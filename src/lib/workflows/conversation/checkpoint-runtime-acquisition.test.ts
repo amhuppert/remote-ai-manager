@@ -128,6 +128,13 @@ describe("checkpoint runtime acquisition", () => {
       actors.acquireCheckpointCaptureRuntime(input, controller.signal),
     ).rejects.toThrow();
     expect(backend.close).toHaveBeenCalledOnce();
-    expect(deps.registerBackendRuntime).toHaveBeenCalledWith("conv", backend);
+    expect(deps.registerBackendRuntime).toHaveBeenCalledWith(
+      "conv",
+      backend,
+      expect.any(Function),
+    );
+    const ownInputReceipt = vi.mocked(deps.registerBackendRuntime).mock
+      .calls[0]?.[2];
+    expect(ownInputReceipt?.(async () => {})).toBe(false);
   });
 });

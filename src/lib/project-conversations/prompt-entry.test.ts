@@ -51,6 +51,7 @@ interface ExecCall {
         executionTarget?: ExecutionTarget;
         binding?: ConversationBinding;
         backend?: unknown;
+        inputOrigin?: "user" | "generated";
       }
     | undefined;
 }
@@ -153,12 +154,14 @@ describe("executeProjectPromptStream", () => {
     await h.executeProjectPromptStream({
       projectPath: "/repo",
       promptText: "hello main",
+      inputOrigin: "user",
       emit: () => {},
     });
     expect(h.createdCount()).toBe(1);
     expect(h.calls).toHaveLength(1);
     expect(h.calls[0]?.conversationId).toBe("created-1");
     expect(h.calls[0]?.text).toBe("hello main");
+    expect(h.calls[0]?.options?.inputOrigin).toBe("user");
   });
 
   it("broadcasts conversation-created when the first-prompt flow creates a PLC", async () => {

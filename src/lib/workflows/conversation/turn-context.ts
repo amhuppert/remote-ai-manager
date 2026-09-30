@@ -13,6 +13,10 @@ import { getDebugManifestPath } from "@/lib/debug-log/service";
 import { prepareNotepadContext } from "./pre-turn/notepad-context";
 import { prepareMemoryContext } from "./pre-turn/memory-context";
 import { prepareWorkflowResultContext } from "./pre-turn/workflow-result-context";
+import {
+  preparePassiveSubscriptionContext,
+  prepareAcceptedNotepadReferences,
+} from "./pre-turn/passive-subscription-context";
 import { acknowledgeSyntheticForkSeed } from "./pre-turn/fork-seed";
 import { createRequiredInputReceipt } from "./pre-turn/required-input-receipt";
 import type { ContinuationSeed } from "./pre-turn/continuation-seed";
@@ -59,9 +63,11 @@ export function assembleTurnPrompt(input: {
   notepadChangeNoticeBlock: string | null;
   memoryIndexBlock: string | null;
   checkpointSeedBlock: string | null;
+  passiveBriefingBlock?: string | null;
 }): string {
   return [
     input.checkpointSeedBlock,
+    input.passiveBriefingBlock,
     input.notepadChangeNoticeBlock,
     input.workflowResultsBlock,
     input.activeTicketBlock,
@@ -69,13 +75,13 @@ export function assembleTurnPrompt(input: {
     input.debugContext,
     input.userText,
   ]
-    .filter((block) => block !== null && block !== "")
+    .filter((block) => block !== null && block !== undefined && block !== "")
     .join("\n\n");
 }
 
 type TurnContextDependencies = Pick<
   ConversationActorDependencies,
-  "context" | "effects" | "log"
+  "context" | "effects" | "log" | "subscriptions"
 > & {
   transcript: Pick<
     ConversationActorDependencies["transcript"],
@@ -157,6 +163,26 @@ export async function prepareConversationTurnContext(
       );
     const syntheticForkSeed =
       continuation.kind === "fork" ? continuation.seed : undefined;
+    const passive = await preparePassiveSubscriptionContext(
+      deps.subscriptions,
+      {
+        recipient: {
+          projectPath: execution.projectPath,
+          conversationId: target.conversationId,
+        },
+        attemptId: execution.executionAttemptId ?? input.resultAttemptId,
+        inspectLegacySources:
+          execution.persistence === "durable" &&
+          execution.role === null &&
+          input.workflowContext === undefined,
+        eligible:
+          execution.persistence === "durable" &&
+          execution.role === null &&
+          input.workflowContext === undefined &&
+          execution.turn.inputOrigin === "user",
+      },
+      ownReceipt,
+    );
     let acceptedBackendRef: AgentSessionRef | null = null;
     const fork = createRequiredInputReceipt(async () => {
       if (!syntheticForkSeed || !acceptedBackendRef) return;
@@ -218,12 +244,23 @@ export async function prepareConversationTurnContext(
     const notepad = await prepareNotepadContext(deps, {
       conversationId: target.conversationId,
       promptText: expanded,
+      excludedNotepadIds: passive.coveredNotepadIds,
     });
     const summarizedText = await appendLiveReferenceSummaries(notepad.text, {
       read: (target) => deps.context.readLiveReference(target),
     });
+    const acceptedNotepadReferences = prepareAcceptedNotepadReferences(
+      deps.subscriptions,
+      {
+        projectPath: execution.projectPath,
+        conversationId: target.conversationId,
+      },
+      notepad.references,
+      ownReceipt,
+    );
     const contextBlocks = {
       checkpointSeedBlock: checkpoint?.block ?? null,
+      passiveBriefingBlock: passive.block,
       activeTicketBlock,
       workflowResultsBlock: workflow.block,
       memoryIndexBlock: memory.block,
@@ -250,6 +287,14 @@ export async function prepareConversationTurnContext(
           userText: summarizedText.slice(notepad.text.length).trimStart(),
         })
       : undefined;
+    let passiveAcceptance: Promise<void> | undefined;
+    const observeInputAccepted = () => {
+      passiveAcceptance ??= passive.onInputAccepted();
+      // The attempt owns retries; capture the evidence before unrelated
+      // policy persistence can reject this accepted event.
+      void passiveAcceptance.catch(() => {});
+      void acceptedNotepadReferences.onInputAccepted().catch(() => {});
+    };
     // Everything the accepted input releases, in the order the durable
     // handoffs require: context receipts first, the queue last, because a
     // released row is the one write nothing later could take back.
@@ -258,6 +303,9 @@ export async function prepareConversationTurnContext(
     ): Promise<void> => {
       await notepad.onInputAccepted?.();
       await memory.onInputAccepted?.();
+      observeInputAccepted();
+      await passiveAcceptance;
+      await acceptedNotepadReferences.onInputAccepted();
       await workflow.onInputAccepted?.();
       if (syntheticForkSeed && backendRef) {
         acceptedBackendRef ??= backendRef;
@@ -271,6 +319,13 @@ export async function prepareConversationTurnContext(
       dispatchPromptText: isNativeCommand ? notepad.text : promptText,
       ...(promptContext ? { promptContext } : {}),
       syntheticForkSeed,
+      markDispatched() {
+        acceptedNotepadReferences.markDispatched();
+        passive.markDispatched();
+      },
+      markDispatchFailure: (error: unknown) =>
+        passive.markDispatchFailure(error),
+      observeInputAccepted,
       async onInputAccepted(backendRef: AgentSessionRef | null) {
         if (!checkpoint) {
           await acknowledgeAccepted(backendRef);

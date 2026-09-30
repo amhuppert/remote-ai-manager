@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { ApiError } from "@/lib/api/errors";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
+import { verifyDurableConversationIdentity } from "@/lib/conversations/provenance";
 import { createLogger, withTracing } from "@/lib/logging";
 import { jsonError, notFound } from "@/lib/shared/route-resolution";
 import { parseTicketNumberSegment } from "./ticket-number";
@@ -42,6 +43,7 @@ export interface TicketsRouteDeps {
   resolveProjectPath(projectName: string): Promise<string | null>;
   resolveAvailableProjectPath(projectName: string): Promise<string | null>;
   auth: AgentAuth;
+  verifyConversationIdentity(conversationId: string): Promise<boolean>;
 }
 
 export interface TicketsRouteHandlers {
@@ -416,6 +418,22 @@ export function createTicketsRouteHandlers(
       const denied = await softGate(request);
       if (denied) return denied;
 
+      const token = await deps.auth.validateOptionalToken(request);
+      const actorConversationId =
+        token.kind === "valid"
+          ? request.headers.get("x-cc-conversation-id")?.trim() || null
+          : null;
+      if (
+        actorConversationId !== null &&
+        !(await deps.verifyConversationIdentity(actorConversationId))
+      ) {
+        return jsonError(
+          "Originating conversation does not exist",
+          400,
+          "conversation_actor_not_found",
+        );
+      }
+
       const identity = await resolveIdentity(context);
       const body = await jsonBodyOrNull(request);
       if (body === null) {
@@ -431,7 +449,9 @@ export function createTicketsRouteHandlers(
       if (!parsed.success) {
         return validationFailedResponse(toTicketValidationIssues(parsed.error));
       }
-      return ticketResponse(await deps.getService().update(parsed.data));
+      return ticketResponse(
+        await deps.getService().update(parsed.data, actorConversationId),
+      );
     },
 
     async detailDELETE(request, context) {
@@ -454,6 +474,8 @@ function defaultDeps(): TicketsRouteDeps {
       return defaultResolveProjectPath(projectName);
     },
     auth: createAgentAuth(),
+    verifyConversationIdentity: async (conversationId) =>
+      verifyDurableConversationIdentity(conversationId),
   };
 }
 

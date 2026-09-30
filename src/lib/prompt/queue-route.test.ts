@@ -265,6 +265,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
       sessionName: "test-session",
       conversationId: "conv-123",
       text: "follow up",
+      inputOrigin: "user",
       images: undefined,
       backend: "claude",
     });
@@ -284,6 +285,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
       sessionName: "test-session",
       conversationId: "conv-123",
       text: undefined,
+      inputOrigin: "user",
       images: [sampleImage],
       backend: "claude",
     });
@@ -301,6 +303,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
       sessionName: "test-session",
       conversationId: "conv-123",
       text: "with picture",
+      inputOrigin: "user",
       images: [sampleImage],
       backend: "claude",
     });
@@ -324,6 +327,7 @@ describe("POST .../conversations/[conversationId]/queue", () => {
       conversationId: "conv-123",
       text: "follow up",
       modelSelection,
+      inputOrigin: "user",
       backend: "claude",
     });
   });

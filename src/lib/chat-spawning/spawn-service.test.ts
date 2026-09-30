@@ -239,6 +239,7 @@ describe("createChatSpawnService.createFromProposal", () => {
       .mock.calls[0]![0];
     expect(dispatchCall.session.sessionName).toBe("alpha");
     expect(dispatchCall.initialPrompt).toBe("go alpha");
+    expect(dispatchCall.inputOrigin).toBe("user");
 
     // A tagged + back-linked; B excluded from the back-link.
     expect(deps.setSessionSpawnedFrom).toHaveBeenCalledTimes(1);

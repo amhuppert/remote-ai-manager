@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
+import { verifyDurableConversationIdentity } from "@/lib/conversations/provenance";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -3649,6 +3650,7 @@ export interface SpecMutationServices {
 
 export interface SpecWriteRouteDeps {
   auth: AgentAuth;
+  verifyConversationIdentity(conversationId: string): Promise<boolean>;
   resolveProjectPath(name: string): Promise<string | null>;
   resolveSpec(projectPath: string, slug: string): Promise<Spec | null>;
   getServices(projectPath: string): Promise<SpecMutationServices>;
@@ -3875,10 +3877,10 @@ const planCommentBodySchema = deliveryPlanCommentRequestSchema;
 type TransportResolution = RouteResolution<ActorProvenance>;
 
 async function resolveTransportActor(
-  auth: AgentAuth,
+  deps: Pick<SpecWriteRouteDeps, "auth" | "verifyConversationIdentity">,
   request: Request,
 ): Promise<TransportResolution> {
-  const transport = await auth.validateOptionalToken(request);
+  const transport = await deps.auth.validateOptionalToken(request);
   if (transport.kind === "invalid") {
     return {
       ok: false,
@@ -3897,6 +3899,16 @@ async function resolveTransportActor(
       ok: false,
       response: jsonError(
         "Originating conversation identity is required for agent mutations",
+        400,
+        "validation",
+      ),
+    };
+  }
+  if (!(await deps.verifyConversationIdentity(conversationId))) {
+    return {
+      ok: false,
+      response: jsonError(
+        "Originating conversation does not exist",
         400,
         "validation",
       ),
@@ -4226,6 +4238,8 @@ function createDefaultWriteDeps(): SpecWriteRouteDeps {
   const events = createSpecEventsRepo(db);
   return {
     auth: createAgentAuth(),
+    verifyConversationIdentity: async (conversationId) =>
+      verifyDurableConversationIdentity(conversationId),
     resolveProjectPath: defaultResolveProjectPath,
     async resolveSpec(projectPath, slug) {
       return specs.resolve(projectPath, slug);
@@ -4250,7 +4264,7 @@ export function createSpecWriteRouteHandlers(
     request: Request,
     context: SpecRouteContext,
   ): Promise<Response> {
-    const actor = await resolveTransportActor(deps.auth, request);
+    const actor = await resolveTransportActor(deps, request);
     if (!actor.ok) return actor.response;
     const project = await resolveSpecProjectRoute(deps, context);
     if (!project.ok) return project.response;
@@ -4303,7 +4317,7 @@ export function createSpecWriteRouteHandlers(
     request: Request,
     context: SpecRouteContext,
   ): Promise<Response> {
-    const actor = await resolveTransportActor(deps.auth, request);
+    const actor = await resolveTransportActor(deps, request);
     if (!actor.ok) return actor.response;
     const resolved = await resolveSpecRoute(deps, context);
     if (!resolved.ok) return resolved.response;

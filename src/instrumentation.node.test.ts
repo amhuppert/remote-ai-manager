@@ -156,6 +156,10 @@ describe("createStartupRegistrar", () => {
         calls.push("conversation-snapshot-recovery");
         return 0;
       },
+      recoverInterruptedSubscriptionDeliveries: async () => {
+        calls.push("subscription-recovery");
+        return 2;
+      },
     });
 
     await register();
@@ -178,6 +182,13 @@ describe("createStartupRegistrar", () => {
       calls.indexOf("conversation-snapshot-recovery"),
     );
     expect(calls.indexOf("conversation-snapshot-recovery")).toBeLessThan(
+      calls.indexOf("rehydrate"),
+    );
+    expect(calls).toContain("subscription-recovery");
+    expect(calls.indexOf("subscription-recovery")).toBeGreaterThan(
+      calls.indexOf("migrations"),
+    );
+    expect(calls.indexOf("subscription-recovery")).toBeLessThan(
       calls.indexOf("rehydrate"),
     );
   });

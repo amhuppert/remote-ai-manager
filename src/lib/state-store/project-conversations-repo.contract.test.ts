@@ -178,6 +178,7 @@ function buildMaximalProjectConversation(): ConversationState {
     },
     pendingQueue: [
       {
+        inputOrigin: "user",
         id: "q-maximal",
         content: [
           { type: "text", text: "queued follow-up that should round-trip" },

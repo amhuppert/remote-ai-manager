@@ -146,6 +146,7 @@ describe("assembleTurnPrompt", () => {
 it("orders every transient contribution ahead of expanded user text", () => {
   expect(
     assembleTurnPrompt({
+      passiveBriefingBlock: "briefing",
       notepadChangeNoticeBlock: "notepads",
       workflowResultsBlock: "workflow",
       activeTicketBlock: "ticket",
@@ -155,7 +156,7 @@ it("orders every transient contribution ahead of expanded user text", () => {
       userText: "original [Image #1]",
     }),
   ).toBe(
-    "notepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\noriginal [Image #1]",
+    "briefing\n\nnotepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\noriginal [Image #1]",
   );
 });
 
@@ -165,6 +166,7 @@ describe("checkpoint seed placement", () => {
     expect(
       assembleTurnPrompt({
         checkpointSeedBlock: seed,
+        passiveBriefingBlock: "briefing",
         notepadChangeNoticeBlock: "notepads",
         workflowResultsBlock: "workflow",
         activeTicketBlock: "ticket",
@@ -173,7 +175,7 @@ describe("checkpoint seed placement", () => {
         userText: "the actual user message",
       }),
     ).toBe(
-      `${seed}\n\nnotepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\nthe actual user message`,
+      `${seed}\n\nbriefing\n\nnotepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\nthe actual user message`,
     );
   });
 
@@ -191,3 +193,22 @@ describe("checkpoint seed placement", () => {
     ).toBe("hello");
   });
 });
+
+it.each([undefined, null, ""])(
+  "preserves exact user text when the passive block is %s",
+  (passiveBriefingBlock) => {
+    const userText = "  exact user text\n";
+    expect(
+      assembleTurnPrompt({
+        checkpointSeedBlock: null,
+        passiveBriefingBlock,
+        notepadChangeNoticeBlock: null,
+        workflowResultsBlock: null,
+        activeTicketBlock: null,
+        memoryIndexBlock: null,
+        debugContext: null,
+        userText,
+      }),
+    ).toBe(userText);
+  },
+);

@@ -60,7 +60,10 @@ export interface TicketService {
   create(input: CreateTicketServiceInput): Promise<TicketCreateResult>;
   list(query: ListTicketsServiceQuery): Promise<TicketResult<TicketListItem[]>>;
   get(identity: TicketIdentity): Promise<TicketResult<TicketDetail>>;
-  update(input: UpdateTicketServiceInput): Promise<TicketResult<TicketDetail>>;
+  update(
+    input: UpdateTicketServiceInput,
+    actorConversationId?: string | null,
+  ): Promise<TicketResult<TicketDetail>>;
   delete(identity: TicketIdentity): Promise<TicketResult<DeletedTicket>>;
 }
 
@@ -326,7 +329,7 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
       return { ok: true, value: detail };
     },
 
-    async update(input) {
+    async update(input, actorConversationId) {
       const parsed = updateTicketServiceInputSchema.safeParse(input);
       if (!parsed.success) {
         logger.info("tickets.service.update.invalid_input", {
@@ -345,6 +348,7 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
           projectPath,
           number,
           updatedAt: deps.now(),
+          actorConversationId: actorConversationId ?? null,
         });
         if (detail === null) {
           return ticketNotFound(projectName, number);

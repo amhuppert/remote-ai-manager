@@ -90,6 +90,8 @@ async function sessionEnvReaders(): Promise<{
     else {
       commands.add(command);
       if (command === "charter") commands.add("decisions");
+      // Both command roots share the conversation resolver in this module.
+      if (command === "subscription") commands.add("inbox");
     }
   }
   return { commands, infrastructure };

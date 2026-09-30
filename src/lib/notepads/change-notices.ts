@@ -82,6 +82,7 @@ export interface NotepadDeliveryTracker {
   prepare(
     conversationId: string,
     references?: readonly NotepadDeliveryRecord[],
+    excludedNotepadIds?: readonly string[],
   ): Promise<PreparedNotepadChangeNotice>;
   /**
    * Advance the watermarks the prepared notice named. Called only after the
@@ -235,7 +236,7 @@ export function createNotepadDeliveryTracker(
 
     listTracked,
 
-    async prepare(conversationId, references = []) {
+    async prepare(conversationId, references = [], excludedNotepadIds = []) {
       const changes: NotepadChange[] = [];
       const advances: RecordNotepadDeliveryWatermarkInput[] = [];
       const now = deps.now();
@@ -258,7 +259,9 @@ export function createNotepadDeliveryTracker(
       for (const { seen, current } of tracked.values()) {
         // Rename, pin, and archive move none of these, so organization never
         // produces a notice — a read returns exactly what it returned before.
-        const contentChanged = current.revision > seen.revision;
+        const contentChanged =
+          current.revision > seen.revision &&
+          !excludedNotepadIds.includes(current.id);
         const newOpenComments = hasNewOpenComments(
           seen.openComments,
           current.openComments,

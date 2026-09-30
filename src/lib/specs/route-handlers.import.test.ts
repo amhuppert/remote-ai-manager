@@ -102,6 +102,7 @@ beforeEach(() => {
     }),
   } as unknown as SpecMutationServices;
   const deps: SpecWriteRouteDeps = {
+    verifyConversationIdentity: async () => true,
     auth,
     resolveProjectPath: async (name) => (name === "demo" ? PROJECT_PATH : null),
     resolveSpec: async () => null,

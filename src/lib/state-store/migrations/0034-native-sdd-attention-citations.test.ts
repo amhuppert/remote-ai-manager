@@ -441,6 +441,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0055-graph-workflow-validator-conversations",
       "0056-close-withdrawn-revision-approval-requests",
       "0057-continuous-spec-review",
+      "0058-add-conversation-subscriptions",
     ]);
   });
 

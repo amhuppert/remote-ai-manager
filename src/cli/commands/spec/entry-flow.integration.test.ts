@@ -125,6 +125,7 @@ describe("native /spec first-save visibility", () => {
     });
     const services = { authoring } as unknown as SpecMutationServices;
     const writeDeps: SpecWriteRouteDeps = {
+      verifyConversationIdentity: async () => true,
       auth,
       resolveProjectPath: async (name) =>
         name === "demo" ? PROJECT_PATH : null,

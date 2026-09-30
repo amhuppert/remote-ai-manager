@@ -379,6 +379,22 @@ const PROJECT_SCOPE_INVOCATIONS: {
     },
   },
   { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },
+  {
+    name: "subscription list",
+    argv: ["subscription", "list"],
+    body: { subscriptions: [], total: 0, limit: 20, offset: 0 },
+  },
+  {
+    name: "subscription unfollow",
+    argv: ["subscription", "unfollow", "sub-1"],
+    body: {},
+  },
+  {
+    name: "inbox list",
+    argv: ["inbox", "list"],
+    body: { deliveries: [], total: 0, limit: 20, offset: 0 },
+  },
+  { name: "inbox get", argv: ["inbox", "get", "delivery-1"], body: {} },
   // The notepad group reads no session env, so it carries no entry in the
   // session-env inventory — but its routes are exactly what a CLI unit test
   // cannot see, and the flat id-addressed shape is new to this surface.
@@ -698,8 +714,24 @@ describe("every project-supported cctl command reaches a real Next.js route", ()
   }
 });
 
-describe("one-off execution commands reach real session route modules", () => {
+describe("session commands reach real session route modules", () => {
   const invocationCases = [
+    {
+      name: "subscription list",
+      argv: ["subscription", "list"],
+      body: { subscriptions: [], total: 0, limit: 20, offset: 0 },
+    },
+    {
+      name: "subscription unfollow",
+      argv: ["subscription", "unfollow", "sub-1"],
+      body: {},
+    },
+    {
+      name: "inbox list",
+      argv: ["inbox", "list"],
+      body: { deliveries: [], total: 0, limit: 20, offset: 0 },
+    },
+    { name: "inbox get", argv: ["inbox", "get", "delivery-1"], body: {} },
     {
       name: "workflow run",
       argv: [

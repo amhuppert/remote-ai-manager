@@ -150,6 +150,7 @@ beforeEach(async () => {
   });
   const auth = createAgentAuth({ configDir: dir });
   handlers = createTicketsRouteHandlers({
+    verifyConversationIdentity: async () => true,
     getService: () => service,
     resolveProjectPath,
     resolveAvailableProjectPath: resolveProjectPath,

@@ -83,6 +83,7 @@ export async function enqueueConversationMessage(
   const backend =
     conversation?.agentBackend ?? (await deps.readConfig()).defaultAgentBackend;
   await deps.queueMessage({
+    inputOrigin: "generated",
     projectPath,
     sessionName,
     conversationId,

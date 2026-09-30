@@ -19,6 +19,10 @@ import {
   alignmentGroups,
 } from "../commands/alignment/definitions";
 import { memoryCommands, memoryGroups } from "../commands/memory/definitions";
+import {
+  subscriptionCommands,
+  subscriptionGroups,
+} from "../commands/subscription/definitions";
 import { ticketCommands, ticketGroups } from "../commands/ticket/definitions";
 import {
   conversationCommands,
@@ -69,6 +73,7 @@ export function createCommandCenterCli(
       ...askCommands,
       ...alignmentCommands,
       ...memoryCommands,
+      ...subscriptionCommands,
       ...ticketCommands,
       ...conversationCommands,
       ...agentCommands,
@@ -85,6 +90,7 @@ export function createCommandCenterCli(
       ...notepadGroups,
       ...alignmentGroups,
       ...memoryGroups,
+      ...subscriptionGroups,
       ...ticketGroups,
       ...conversationGroups,
       ...agentGroups,

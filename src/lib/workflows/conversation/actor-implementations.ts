@@ -1228,7 +1228,13 @@ async function executePromptForMachine(
       newRuntime,
       desiredConfiguration,
       {
-        register: deps.execution.registerBackendRuntime,
+        register: (conversationId, runtime) =>
+          deps.execution.registerBackendRuntime(
+            conversationId,
+            runtime,
+            (finish) =>
+              runtimeState.attempt?.tryOwnLiveReceipt(finish) ?? false,
+          ),
         unregister: deps.execution.unregisterBackendRuntime,
       },
       externalTurnHandler,
@@ -1301,6 +1307,7 @@ async function executePromptForMachine(
     abortWiring.notifyActivity();
     switch (event.type) {
       case "input_accepted": {
+        preparedContext?.observeInputAccepted();
         if (event.mcpConfigHash)
           await recordMcpConfigReceipt(
             deps.policy.state.mcp,
@@ -1580,8 +1587,14 @@ async function executePromptForMachine(
       onEvent,
       syntheticForkSeed,
       observe: {
-        sending: () => checkpoint?.markDispatched(),
-        failed: (error) => checkpoint?.markDispatchFailure(error),
+        sending: () => {
+          preparedContext?.markDispatched();
+          checkpoint?.markDispatched();
+        },
+        failed: (error) => {
+          preparedContext?.markDispatchFailure(error);
+          checkpoint?.markDispatchFailure(error);
+        },
         completed: (result) => {
           completedBackendRef = result.backendRef;
           if (
@@ -2453,7 +2466,12 @@ export async function acquireCheckpointCaptureRuntime(
       instructionSelection: { autonomous: false },
     },
     {
-      register: deps.execution.registerBackendRuntime,
+      register: (conversationId, runtime) =>
+        deps.execution.registerBackendRuntime(
+          conversationId,
+          runtime,
+          (finish) => host.attempt?.tryOwnLiveReceipt(finish) ?? false,
+        ),
       unregister: deps.execution.unregisterBackendRuntime,
     },
   );
