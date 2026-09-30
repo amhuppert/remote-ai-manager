@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { Cursor, type ModelListItem } from "@cursor/sdk";
 
@@ -31,17 +32,7 @@ export async function checkCursorModelCatalog(
     await deps.readArtifact(),
     deps.sdkVersion,
   );
-  const parameterCount = catalog.models.reduce(
-    (count, model) => count + model.parameters.length,
-    0,
-  );
-  const variantCount = catalog.models.reduce(
-    (count, model) => count + model.variants.length,
-    0,
-  );
-  deps.writeOutput(
-    `Cursor model catalog valid: ${plural(catalog.models.length, "model")}, ${plural(parameterCount, "parameter")}, ${plural(variantCount, "variant")}.`,
-  );
+  deps.writeOutput(`Cursor model catalog valid: ${describeSize(catalog)}.`);
   return catalog;
 }
 
@@ -69,19 +60,25 @@ export async function refreshCursorModelCatalog(
     generatedAt: deps.now().toISOString(),
     sdkVersion: deps.sdkVersion,
   });
+  // Every build refreshes the checked-in artifact, and a dirty target checkout
+  // parks merges, so a snapshot that differs only in when it was taken is not
+  // written.
+  const unchanged = isDeepStrictEqual(previousCatalog, {
+    ...catalog,
+    provenance: {
+      ...catalog.provenance,
+      generatedAt: previousCatalog.provenance.generatedAt,
+    },
+  });
+  if (unchanged) {
+    deps.writeOutput(
+      `Cursor model catalog unchanged: ${describeSize(previousCatalog)}; artifact not rewritten.`,
+    );
+    return previousCatalog;
+  }
   await deps.writeArtifact(catalog);
 
-  const parameterCount = catalog.models.reduce(
-    (count, model) => count + model.parameters.length,
-    0,
-  );
-  const variantCount = catalog.models.reduce(
-    (count, model) => count + model.variants.length,
-    0,
-  );
-  deps.writeOutput(
-    `Cursor model catalog refreshed: ${plural(catalog.models.length, "model")}, ${plural(parameterCount, "parameter")}, ${plural(variantCount, "variant")}.`,
-  );
+  deps.writeOutput(`Cursor model catalog refreshed: ${describeSize(catalog)}.`);
   deps.writeOutput(summarizeCatalogDiff(previousCatalog, catalog));
   if (aliases.omissions.length > 0) {
     const detail = aliases.omissions
@@ -202,6 +199,18 @@ function summarizeCatalogDiff(
     `Cursor model catalog diff: models ${modelTokens.join(", ") || "unchanged"}`,
     `parameters ${parameterChanges.join("; ") || "unchanged"}.`,
   ].join("; ");
+}
+
+function describeSize(catalog: BackendModelCatalog): string {
+  const parameterCount = catalog.models.reduce(
+    (count, model) => count + model.parameters.length,
+    0,
+  );
+  const variantCount = catalog.models.reduce(
+    (count, model) => count + model.variants.length,
+    0,
+  );
+  return `${plural(catalog.models.length, "model")}, ${plural(parameterCount, "parameter")}, ${plural(variantCount, "variant")}`;
 }
 
 function plural(

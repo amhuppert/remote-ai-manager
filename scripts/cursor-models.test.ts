@@ -54,7 +54,14 @@ describe("refreshCursorModelCatalog", () => {
   });
 
   it("discovers, validates, and writes the complete authenticated snapshot", async () => {
-    const commandDeps = deps();
+    const previous = buildCursorModelCatalog(
+      [
+        { id: "composer-2.5", displayName: "Composer 2.5" },
+        { id: "model-old", displayName: "Model Old" },
+      ],
+      { generatedAt: generatedAt.toISOString(), sdkVersion: "1.0.28" },
+    );
+    const commandDeps = deps({ readArtifact: vi.fn(async () => previous) });
 
     const refreshed = await refreshCursorModelCatalog(
       "cursor-test-credential",
@@ -76,6 +83,34 @@ describe("refreshCursorModelCatalog", () => {
     expect(
       JSON.stringify(vi.mocked(commandDeps.writeOutput).mock.calls),
     ).not.toContain("cursor-test-credential");
+  });
+
+  it("leaves the artifact untouched when only the generation timestamp would change", async () => {
+    // Every build refreshes; rewriting an unchanged catalog dirties the
+    // checkout, and a dirty target checkout parks merges into it.
+    const commandDeps = deps({
+      now: () => new Date("2026-08-26T09:30:00.000Z"),
+    });
+
+    await expect(
+      refreshCursorModelCatalog("cursor-test-credential", commandDeps),
+    ).resolves.toEqual(catalog);
+    expect(commandDeps.writeArtifact).not.toHaveBeenCalled();
+    expect(commandDeps.writeOutput).toHaveBeenCalledWith(
+      "Cursor model catalog unchanged: 1 model, 0 parameters, 1 variant; artifact not rewritten.",
+    );
+  });
+
+  it("rewrites an otherwise identical catalog generated for another SDK version", async () => {
+    const commandDeps = deps({ sdkVersion: "1.0.31" });
+
+    const refreshed = await refreshCursorModelCatalog(
+      "cursor-test-credential",
+      commandDeps,
+    );
+
+    expect(refreshed.provenance.sdkVersion).toBe("1.0.31");
+    expect(commandDeps.writeArtifact).toHaveBeenCalledWith(refreshed);
   });
 
   it("reports omitted ambiguous aliases deterministically", async () => {
