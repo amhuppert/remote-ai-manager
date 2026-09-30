@@ -919,53 +919,46 @@ describe("execution loop", () => {
     expect(harness.drainAndHaltSpy).toHaveBeenCalled();
   });
 
-  it.each(["ready_to_land", "await_approval"] as const)(
-    "enforces the returned iteration limit before %s handling",
-    async (kind) => {
-      const definition = createSingleContextDefinition(2);
-      const initial = createRunningExecution(definition);
-      const soloCommit = vi.fn(async () => ({
-        status: "skipped" as const,
-        reason: "no_changes" as const,
-      }));
-      const harness = buildHarness({
-        initialExecution: initial,
-        soloContextCommitter: { commit: soloCommit },
-        iterationOrchestrator: {
-          async runIteration(): Promise<GraphWorkflowIterationResult> {
-            const next = structuredClone(harness.getCurrent());
-            const context = next.contextStates["ctx-1"];
-            const task = next.taskStates["task-1"];
-            if (!context || !task)
-              throw new Error("Missing limit fixture state");
-            context.iterationCount = 2;
-            context.status =
-              kind === "ready_to_land" ? "completed" : "awaiting_approval";
-            context.completedTaskCount = 1;
-            task.status = "completed";
-            next.activeContextIds = [];
-            harness.setCurrent(next);
-            return {
-              conversationId: "conv-limit",
-              execution: next,
-              decision: { kind },
-            };
-          },
+  it("lands a context whose tasks finish on its final allowed iteration", async () => {
+    const definition = createSingleContextDefinition(1);
+    const initial = createRunningExecution(definition);
+    const soloCommit = vi.fn(async () => ({
+      status: "skipped" as const,
+      reason: "no_changes" as const,
+    }));
+    const harness = buildHarness({
+      initialExecution: initial,
+      soloContextCommitter: { commit: soloCommit },
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          const context = next.contextStates["ctx-1"];
+          const task = next.taskStates["task-1"];
+          if (!context || !task) throw new Error("Missing limit fixture state");
+          context.iterationCount = 1;
+          context.status = "completed";
+          context.completedTaskCount = 1;
+          task.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-limit",
+            execution: next,
+            decision: { kind: "ready_to_land" },
+          };
         },
-      });
-      const result = await createExecutionLoopFixture(harness.deps).run({
-        projectPath: "/repo",
-        projectName: "test",
-        sessionName: "session-1",
-        execution: initial,
-      });
-      expect(result.haltReason).toMatchObject({
-        type: "max_iterations",
-        iterationCount: 2,
-      });
-      expect(soloCommit).not.toHaveBeenCalled();
-    },
-  );
+      },
+    });
+    const result = await createExecutionLoopFixture(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+    expect(result.haltReason).toBeNull();
+    expect(result.status).toBe("completed");
+    expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
+  });
 
   it("completes normally when tasks finish before maxIterations", async () => {
     const definition = createSingleContextDefinition(5);
@@ -7064,7 +7057,11 @@ describe("execution loop", () => {
         execution: initial,
       });
 
+      // The candidate from the final allowed iteration still reaches the
+      // gate; the second rejection needs a third iteration, which the limit
+      // refuses.
       expect(iterationCallCount).toBe(2);
+      expect(waitForApprovalProgress).toHaveBeenCalledTimes(2);
       expect(result.status).toBe("halted");
       expect(result.haltReason).toEqual({
         type: "max_iterations",
@@ -7072,9 +7069,6 @@ describe("execution loop", () => {
         iterationCount: 2,
         summary: null,
       });
-      // The second park is never resolved: the iteration limit halts the
-      // context before the gate wait re-enters.
-      expect(waitForApprovalProgress).toHaveBeenCalledTimes(1);
       expect(soloCommit).not.toHaveBeenCalled();
     });
   });

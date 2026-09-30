@@ -2071,6 +2071,34 @@ export function createGraphWorkflowExecutionLoop(
       let preTurnLaneHeadSha: string | null = null;
       let laneHeadCaptured = false;
 
+      // The limit refuses another implementer iteration; it never discards a
+      // candidate the final allowed iteration produced.
+      async function haltIfIterationLimitReached(): Promise<boolean> {
+        const contextState = execution.contextStates[contextId];
+        const contextDef = execution.workingDefinition.executionContexts.find(
+          (c) => c.id === contextId,
+        );
+        if (
+          !contextState ||
+          !contextDef ||
+          contextState.iterationCount < contextDef.iterationPolicy.maxIterations
+        ) {
+          return false;
+        }
+        execLogger?.decision("max_iterations.reached", {
+          contextId,
+          iterationCount: contextState.iterationCount,
+          maxIterations: contextDef.iterationPolicy.maxIterations,
+        });
+        await recordHalt({
+          type: "max_iterations",
+          contextId,
+          iterationCount: contextState.iterationCount,
+          summary: null,
+        });
+        return true;
+      }
+
       async function runCommitPhase(): Promise<void> {
         if (
           isolation === "worktree" &&
@@ -2227,6 +2255,7 @@ export function createGraphWorkflowExecutionLoop(
             // Rejected — the next iteration seeds the remediation task and
             // increments the iteration count; validators re-run on the next
             // completion before the gate can trigger again.
+            if (await haltIfIterationLimitReached()) return;
             continue;
           }
 
@@ -2496,22 +2525,10 @@ export function createGraphWorkflowExecutionLoop(
           }
 
           if (
-            contextState &&
-            contextDef &&
-            contextState.iterationCount >=
-              contextDef.iterationPolicy.maxIterations
+            decision.kind !== "ready_to_land" &&
+            decision.kind !== "await_approval" &&
+            (await haltIfIterationLimitReached())
           ) {
-            execLogger?.decision("max_iterations.reached", {
-              contextId,
-              iterationCount: contextState.iterationCount,
-              maxIterations: contextDef.iterationPolicy.maxIterations,
-            });
-            await recordHalt({
-              type: "max_iterations",
-              contextId,
-              iterationCount: contextState.iterationCount,
-              summary: null,
-            });
             return;
           }
 
