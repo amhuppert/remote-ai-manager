@@ -15,6 +15,8 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { Element, Nodes } from "hast";
 import MarkdownLink from "./MarkdownLink";
+import { WithTooltip } from "@/components/ui/WithTooltip";
+import { getReferenceByXmlTag } from "@/lib/prompt-editor/reference-registry";
 import { cn } from "@/lib/ui/cn";
 import { DIFF_KIND_PROPERTY, rehypeDiffMarks } from "./markdown-diff";
 import {
@@ -23,6 +25,12 @@ import {
   CC_SECTION_ATTR,
   rehypeStampSourcePosition,
 } from "./markdown-source-map";
+import {
+  MESSAGE_REF_ATTRS_PROPERTY,
+  MESSAGE_REF_TAG_PROPERTY,
+  protectBlockOpeningMessageRefs,
+  remarkMessageRefs,
+} from "./message-markdown-transforms";
 
 const MermaidDiagram = dynamic(() => import("./MermaidDiagram"), {
   ssr: false,
@@ -180,6 +188,9 @@ const CODE_PRE_CLASSES: Record<MarkdownIntent, string> = {
 
 const LINK_CLASSES =
   "break-words font-medium text-cyan underline decoration-current underline-offset-2 [overflow-wrap:anywhere] hover:text-cyan-dim focus-visible:rounded-sm focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+
+const SKILL_LINK_CLASSES =
+  "inline-flex max-w-full items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised px-sm py-2xs align-[-0.2em] font-mono text-[0.72rem] leading-[1.45] text-text-primary no-underline hover:border-border-strong hover:bg-bg-elevated focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
 
 /**
  * Revision marks sit *inside* whatever Markdown element the changed span
@@ -522,6 +533,50 @@ export function stringProperty(
   return undefined;
 }
 
+function skillLinkName(
+  href: string | undefined,
+  children: React.ReactNode,
+): string | null {
+  if (!href || typeof children !== "string" || !/^\$[^\s$]+$/.test(children)) {
+    return null;
+  }
+  try {
+    const path = decodeURIComponent(href);
+    return path.startsWith("/") &&
+      !path.startsWith("//") &&
+      path.endsWith("/SKILL.md")
+      ? children.slice(1)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function MessageReferenceChip({
+  refTag,
+  attrsJson,
+}: {
+  refTag: string;
+  attrsJson: string;
+}): React.JSX.Element | null {
+  const entry = getReferenceByXmlTag(refTag);
+  if (!entry) return null;
+  let attrs: unknown;
+  try {
+    attrs = JSON.parse(attrsJson);
+  } catch {
+    return null;
+  }
+  const parsed = entry.attrsSchema.safeParse(attrs);
+  if (!parsed.success) return null;
+  const TranscriptChip = entry.TranscriptChip;
+  return (
+    <span data-message-reference={refTag}>
+      <TranscriptChip attrs={parsed.data} />
+    </span>
+  );
+}
+
 function sourceMetadataFromNode(
   node: Element | undefined,
 ): Omit<CodeContainerProps, "className"> {
@@ -663,8 +718,50 @@ export function createMarkdownComponents(intent: MarkdownIntent): Components {
       );
     },
     a({ node: _node, className, ...props }) {
+      const skillName =
+        intent === "document"
+          ? null
+          : skillLinkName(props.href, props.children);
+      if (skillName !== null) {
+        const separator = skillName.lastIndexOf(":");
+        const shortName = skillName.slice(separator + 1);
+        return (
+          <WithTooltip label={`Skill · ${skillName}`}>
+            <span
+              role="note"
+              tabIndex={0}
+              data-skill-reference={skillName}
+              aria-label={`Skill ${skillName}`}
+              className={cn(SKILL_LINK_CLASSES, className)}
+            >
+              <span aria-hidden="true" className="shrink-0 font-bold text-cyan">
+                $
+              </span>
+              <span className="min-w-0 truncate">{shortName}</span>
+            </span>
+          </WithTooltip>
+        );
+      }
       return (
         <MarkdownLink {...props} className={cn(LINK_CLASSES, className)} />
+      );
+    },
+    span({ node, className, children, ...props }) {
+      const refTag = stringProperty(node?.properties[MESSAGE_REF_TAG_PROPERTY]);
+      if (refTag === undefined) {
+        return (
+          <span {...props} className={className}>
+            {children}
+          </span>
+        );
+      }
+      return (
+        <MessageReferenceChip
+          refTag={refTag}
+          attrsJson={
+            stringProperty(node?.properties[MESSAGE_REF_ATTRS_PROPERTY]) ?? ""
+          }
+        />
       );
     },
     table({ node: _node, className, ...props }) {
@@ -786,6 +883,7 @@ const COMPONENTS_BY_INTENT: Record<MarkdownIntent, Components> = {
 // rendering as visible line breaks without a pre-wrap root, which would also
 // render the "\n" text nodes between sibling blocks as blank lines.
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const REMARK_MESSAGE_PLUGINS = [remarkGfm, remarkBreaks, remarkMessageRefs];
 const SOURCE_MAP_PLUGINS = [rehypeStampSourcePosition];
 const DIFF_PLUGINS = [rehypeDiffMarks];
 
@@ -796,6 +894,10 @@ function rehypePlugins(sourceMapped: boolean, diff: boolean) {
 
 const MarkdownRenderer = forwardRef<HTMLDivElement, MarkdownRendererProps>(
   function MarkdownRenderer({ content, intent, sourceMapped, diff }, ref) {
+    const interactiveRefs = intent !== "document" && !diff;
+    const renderedContent = interactiveRefs
+      ? protectBlockOpeningMessageRefs(content)
+      : content;
     return (
       <div
         ref={ref}
@@ -805,11 +907,13 @@ const MarkdownRenderer = forwardRef<HTMLDivElement, MarkdownRendererProps>(
         className={ROOT_CLASSES[intent]}
       >
         <ReactMarkdown
-          remarkPlugins={REMARK_PLUGINS}
+          remarkPlugins={
+            interactiveRefs ? REMARK_MESSAGE_PLUGINS : REMARK_PLUGINS
+          }
           rehypePlugins={rehypePlugins(sourceMapped, diff)}
           components={COMPONENTS_BY_INTENT[intent]}
         >
-          {content}
+          {renderedContent}
         </ReactMarkdown>
       </div>
     );

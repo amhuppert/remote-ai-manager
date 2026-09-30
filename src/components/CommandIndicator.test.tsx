@@ -2,12 +2,11 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import CommandIndicator from "./CommandIndicator";
+import { renderWithQuery } from "@/test/component-mocks";
+import { buildNotepadRefXml } from "@/lib/notepads/references";
 
-// Behavior, not appearance: the inline-vs-expanded split is keyed on whether
-// `args` is multi-line. Expanded arguments render through the canonical
-// `CompactMarkdown` adapter (marked by `data-markdown-intent="compact"`); the
-// collapsed and no-args modes render plain text with no Markdown surface. The
-// legacy `.command-indicator__body` hook and its descendant CSS are gone.
+// All arguments use the canonical compact Markdown adapter, including a
+// one-line command. This keeps references and long arguments readable.
 function compactRoot(container: HTMLElement): HTMLElement | null {
   return container.querySelector<HTMLElement>(
     '[data-markdown-intent="compact"]',
@@ -15,13 +14,14 @@ function compactRoot(container: HTMLElement): HTMLElement | null {
 }
 
 describe("CommandIndicator", () => {
-  it("renders the command name and args inline when args has no newline", () => {
+  it("renders one-line arguments in a labeled, complete argument body", async () => {
     const { container } = render(
       <CommandIndicator name="/collab" args="short single-line argument" />,
     );
     expect(screen.getByText("/collab")).toBeDefined();
-    expect(screen.getByText("short single-line argument")).toBeDefined();
-    expect(compactRoot(container)).toBeNull();
+    expect(screen.getByText("Arguments")).toBeInTheDocument();
+    await waitFor(() => expect(compactRoot(container)).not.toBeNull());
+    expect(screen.getByText("short single-line argument")).toBeInTheDocument();
     expect(container.querySelector(".command-indicator__body")).toBeNull();
   });
 
@@ -72,5 +72,24 @@ describe("CommandIndicator", () => {
     expect(compactRoot(container)?.textContent).toContain(
       "<button data-injected",
     );
+  });
+
+  it("shows collab arguments as readable content with a notepad reference chip", async () => {
+    const ref = buildNotepadRefXml({
+      notepadId: "np-vision",
+      name: "Command Center Vision",
+      scope: "project",
+      projectName: "command-center",
+    });
+    const { container } = renderWithQuery(
+      <CommandIndicator name="/collab" args={`${ref} Review this plan.`} />,
+    );
+
+    expect(await screen.findByText("Arguments")).toBeInTheDocument();
+    expect(await screen.findByTestId("notepad-ref-chip")).toHaveTextContent(
+      "Command Center Vision",
+    );
+    expect(container.textContent).toContain("Review this plan.");
+    expect(container.textContent).not.toContain("<notepad-ref");
   });
 });

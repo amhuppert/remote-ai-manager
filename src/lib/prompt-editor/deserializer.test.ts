@@ -15,6 +15,35 @@ function roundTrip(prompt: string): string {
 }
 
 describe("deserializePromptDoc code formatting", () => {
+  it("restores a built-in command and its argument guide from a saved draft", () => {
+    const prompt = "/merge --no-mark-merged Ship this";
+    const json = deserializePromptDoc(
+      { prompt, images: [] },
+      { restoreBuiltInCommands: true },
+    );
+    expect(json).toMatchObject({
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "slashCommandMarker",
+              attrs: {
+                name: "/merge",
+                kind: "command",
+                source: "built-in",
+                argumentHint: "[--no-mark-merged] [message guidance]",
+              },
+            },
+            { type: "text", text: " --no-mark-merged Ship this" },
+          ],
+        },
+      ],
+    });
+    const doc = ProseMirrorNode.fromJSON(schema, json);
+    expect(serializePromptDoc({ doc, attachments: [] }).prompt).toBe(prompt);
+  });
+
   it("restores an explicit skill as a chip and retains its identity on resubmit", () => {
     const prompt = "Use [$wave](</skills/Alex%20%28personal%29/SKILL.md>) now";
     expect(deserializePromptDoc({ prompt, images: [] })).toMatchObject({

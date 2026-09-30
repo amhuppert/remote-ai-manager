@@ -8,6 +8,8 @@ import type {
   SlashCommandMarkerAttrs,
   SlashCommandTriggerChar,
 } from "@/lib/prompt-editor";
+import { CloseIcon } from "@/components/icons";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 
 function coerceAttrs(value: unknown): SlashCommandMarkerAttrs {
   if (typeof value !== "object" || value === null) {
@@ -37,47 +39,82 @@ function coerceAttrs(value: unknown): SlashCommandMarkerAttrs {
 export default function SlashCommandChip(
   props: ReactNodeViewProps<HTMLElement>,
 ): React.JSX.Element {
-  const { node, selected, deleteNode } = props;
+  const { node, selected, deleteNode, editor } = props;
   const attrs = coerceAttrs(node.attrs);
 
   const handleRemove = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     deleteNode();
+    editor.commands.focus();
   };
 
   const displayName = attrs.name.startsWith(attrs.trigger)
     ? attrs.name.slice(1)
     : attrs.name;
+  const shortName =
+    attrs.kind === "skill" &&
+    attrs.source &&
+    displayName.startsWith(`${attrs.source}:`)
+      ? displayName.slice(attrs.source.length + 1)
+      : displayName;
+  const label = `${attrs.kind === "skill" ? "Skill" : "Command"} ${displayName}`;
 
   return (
     <NodeViewWrapper
       as="span"
-      className="group inline-flex items-center gap-xs rounded-md border border-border-default bg-bg-raised py-2xs pr-xs pl-[6px] align-baseline font-mono text-[0.78rem] leading-none transition-[border-color,box-shadow] duration-150 data-[kind=skill]:border-amber-dim data-[selected=true]:border-cyan-dim data-[selected=true]:shadow-[0_0_0_2px_var(--cyan-glow)] max-768:min-h-[28px] max-768:pt-xs max-768:pr-[6px] max-768:pb-xs max-768:pl-sm"
+      className="group inline-flex max-w-[min(100%,28rem)] items-center rounded-md border border-border-default bg-bg-raised align-middle font-mono text-[0.75rem] leading-none shadow-[inset_2px_0_0_var(--color-cyan)] transition-[border-color,background-color,box-shadow] duration-150 hover:border-border-strong hover:bg-bg-elevated data-[kind=skill]:shadow-[inset_2px_0_0_var(--color-border-strong)] data-[selected=true]:border-cyan-dim data-[selected=true]:shadow-[0_0_0_2px_var(--cyan-glow)]"
       data-selected={selected ? "true" : "false"}
       data-kind={attrs.kind}
       data-trigger={attrs.trigger}
       contentEditable={false}
-      title={attrs.description ?? attrs.name}
     >
-      <span className="font-semibold text-cyan group-data-[kind=skill]:text-amber">
-        {attrs.trigger}
-      </span>
-      <span className="text-text-primary">{displayName}</span>
-      {attrs.source ? (
-        <span className="rounded-[3px] bg-bg-surface px-xs py-[1px] text-[0.7rem] text-text-tertiary lowercase">
-          {attrs.source}
-        </span>
-      ) : null}
-      <button
-        type="button"
-        className="h-[16px] w-[16px] cursor-pointer rounded-[3px] border-0 bg-transparent p-0 text-[12px] leading-none text-text-tertiary hover:bg-red-glow hover:text-red-text max-768:min-h-[24px] max-768:min-w-[24px]"
-        onClick={handleRemove}
-        onMouseDown={(e) => e.preventDefault()}
-        aria-label={`Remove ${attrs.name}`}
+      <WithTooltip
+        label={
+          <span className="flex flex-col gap-xs break-words">
+            <span className="text-[0.7rem] font-semibold tracking-[0.08em] text-cyan">
+              {attrs.kind === "skill" ? "SKILL" : "COMMAND"}
+            </span>
+            <span className="font-semibold text-text-primary">{shortName}</span>
+            {attrs.description ? <span>{attrs.description}</span> : null}
+            {attrs.kind === "skill" ? (
+              <span className="break-all text-text-tertiary">{attrs.name}</span>
+            ) : attrs.source ? (
+              <span className="text-text-tertiary">Source: {attrs.source}</span>
+            ) : null}
+          </span>
+        }
+        side="top"
       >
-        &times;
-      </button>
+        <span
+          className="flex min-h-8 min-w-0 items-center gap-xs rounded-sm py-xs pr-2xs pl-sm outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+          tabIndex={0}
+          aria-label={label}
+        >
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-cyan-glow font-semibold text-cyan">
+            {attrs.trigger}
+          </span>
+          <span className="min-w-0 truncate font-medium text-text-primary">
+            {shortName}
+          </span>
+          {attrs.source && attrs.kind !== "skill" ? (
+            <span className="max-w-[9rem] shrink truncate text-[0.7rem] text-text-tertiary max-768:hidden">
+              {attrs.source}
+            </span>
+          ) : null}
+        </span>
+      </WithTooltip>
+      <WithTooltip label={`Remove ${attrs.kind}`} side="top">
+        <button
+          type="button"
+          className="mr-2xs flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-text-tertiary outline-none transition-colors duration-150 hover:bg-red-glow hover:text-red-text focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:mr-0 max-768:h-[44px] max-768:w-[44px]"
+          onClick={handleRemove}
+          onMouseDown={(e) => e.preventDefault()}
+          aria-label={`Remove ${attrs.name}`}
+        >
+          <CloseIcon size={14} />
+        </button>
+      </WithTooltip>
     </NodeViewWrapper>
   );
 }

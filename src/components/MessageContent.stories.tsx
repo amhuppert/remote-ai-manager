@@ -1,5 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import { renderSkillReference } from "@/lib/commands/skill-reference";
+import { buildNotepadRefXml } from "@/lib/notepads/references";
+import { VisionNotepadStoryProvider } from "@/components/references/VisionNotepadStoryProvider";
 import MessageContent from "./MessageContent";
 
 const meta = {
@@ -16,6 +19,32 @@ export const TextOnly = {
       {
         type: "text",
         text: "I'll help you refactor the authentication module.",
+      },
+    ] satisfies MessageContentBlock[],
+  },
+} satisfies Story;
+
+export const SkillAndReference = {
+  decorators: [
+    (Story) => (
+      <VisionNotepadStoryProvider>
+        <Story />
+      </VisionNotepadStoryProvider>
+    ),
+  ],
+  args: {
+    content: [
+      {
+        type: "text",
+        text: `Review ${renderSkillReference(
+          "agentic-engineering-principles:agent-feedback-tiers",
+          "/skills/agent-feedback-tiers/SKILL.md",
+        )} with ${buildNotepadRefXml({
+          notepadId: "np-vision",
+          name: "Command Center Vision",
+          scope: "project",
+          projectName: "command-center",
+        })} before drafting the response.`,
       },
     ] satisfies MessageContentBlock[],
   },

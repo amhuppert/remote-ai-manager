@@ -1,5 +1,6 @@
 import type { JSONContent } from "@tiptap/core";
 import { findSkillReferences } from "@/lib/commands/skill-reference";
+import { BUILT_IN_COMMANDS } from "@/lib/commands/built-in-commands";
 import {
   segmentTextByRefs,
   type RefSegment,
@@ -17,6 +18,8 @@ type ReferenceSegment = Exclude<RefSegment, { type: "text" }>;
 type InlineToken = InlineTextSegment | ReferenceSegment | { type: "delimiter" };
 
 export interface DeserializePromptDocOptions {
+  /** Restore built-in command chips and their argument syntax in prompt drafts. */
+  restoreBuiltInCommands?: boolean;
   /**
    * Rebuild `notepadImage` nodes from id-addressed `[Image: <id>]` tokens.
    * Only notepad editors register that node, so prompt input leaves the
@@ -149,14 +152,37 @@ export function deserializePromptDoc(
       pushTextAndImageTokens(text.slice(cursor));
     };
 
-    const tokens = tokenizeInlineContent(lines[lineIndex]!);
+    const line = lines[lineIndex]!;
+    const builtInCommand = options.restoreBuiltInCommands
+      ? BUILT_IN_COMMANDS.find(
+          (item) =>
+            line === item.name ||
+            (line.startsWith(item.name) &&
+              /\s/.test(line.charAt(item.name.length))),
+        )
+      : undefined;
+    if (builtInCommand) {
+      content.push({
+        type: "slashCommandMarker",
+        attrs: {
+          name: builtInCommand.name,
+          trigger: "/",
+          kind: "command",
+          source: builtInCommand.source,
+          description: builtInCommand.description ?? null,
+          argumentHint: builtInCommand.argumentHint ?? null,
+        },
+      });
+    }
+    const prefixLength = builtInCommand?.name.length ?? 0;
+    const tokens = tokenizeInlineContent(line.slice(prefixLength));
     const delimiterCount = tokens.filter(
       (token) => token.type === "delimiter",
     ).length;
     const pairedDelimiterCount = delimiterCount - (delimiterCount % 2);
     let delimiterIndex = 0;
     let code = false;
-    let tokenOffset = lineOffsets[lineIndex] ?? 0;
+    let tokenOffset = (lineOffsets[lineIndex] ?? 0) + prefixLength;
 
     for (const token of tokens) {
       const offset = tokenOffset;

@@ -8,6 +8,7 @@ import {
   type PromptEditorHandle,
 } from "@/components/session/prompt/PromptEditor";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
+import type { SlashCommandMarkerAttrs } from "@/lib/prompt-editor";
 
 const CYAN_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFklEQVQYV2P8z8BQz0BKYBw1aBgaBQAgPAX/cbQbLwAAAABJRU5ErkJggg==";
@@ -38,6 +39,10 @@ interface DemoProps {
     index: number;
     thumbnailUrl: string;
   }>;
+  withSlashCommand?: {
+    attrs: SlashCommandMarkerAttrs;
+    args?: string;
+  };
 }
 
 function Demo({
@@ -47,6 +52,7 @@ function Demo({
   disabled,
   placeholder,
   withInlineMarkers,
+  withSlashCommand,
 }: DemoProps): React.JSX.Element {
   const editorRef = useRef<PromptEditorHandle>(null);
   const [pending, setPending] = useState<ImageAttachment[]>(initialImages);
@@ -92,6 +98,30 @@ function Demo({
         .run();
     }
   }, [withInlineMarkers]);
+
+  useEffect(() => {
+    if (!withSlashCommand) return;
+    const editor = editorRef.current?.editor;
+    if (!editor) return;
+    const timeout = window.setTimeout(() => {
+      if (editor.isDestroyed) return;
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "slashCommandMarker", attrs: withSlashCommand.attrs },
+              ...(withSlashCommand.args
+                ? [{ type: "text", text: ` ${withSlashCommand.args}` }]
+                : []),
+            ],
+          },
+        ],
+      });
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [withSlashCommand]);
 
   return (
     <div style={{ maxWidth: 640, padding: 24, background: "#0b1019" }}>
@@ -194,4 +224,62 @@ export const Mobile = {
   parameters: {
     viewport: { defaultViewport: "mobile1" },
   },
+} satisfies Story;
+
+export const SelectedSkill = {
+  args: {
+    initialValue: "",
+    initialImages: [],
+    cumulativeImageCount: 0,
+    withSlashCommand: {
+      attrs: {
+        name: "$agentic-engineering-principles:agent-feedback-tiers",
+        trigger: "$",
+        kind: "skill",
+        source: "agentic-engineering-principles",
+        description:
+          "Define feedback tiers for agent tool output and apply each tier only with evidence.",
+        argumentHint: null,
+        skillPath: "/skills/agent-feedback-tiers/SKILL.md",
+      },
+    },
+  },
+} satisfies Story;
+
+export const BuiltInCommand = {
+  args: {
+    initialValue: "",
+    initialImages: [],
+    cumulativeImageCount: 0,
+    withSlashCommand: {
+      attrs: {
+        name: "/merge",
+        trigger: "/",
+        kind: "command",
+        source: "built-in",
+        description: "Smart-merge the session into its target.",
+        argumentHint: "[--no-mark-merged] [message guidance]",
+      },
+      args: "--no-mark-merged Ship the composer update",
+    },
+  },
+} satisfies Story;
+
+export const RestoredBuiltInCommand = {
+  args: {
+    initialValue: "/merge --no-mark-merged Ship the composer update",
+    initialImages: [],
+    cumulativeImageCount: 0,
+  },
+} satisfies Story;
+
+export const NarrowCommand = {
+  ...BuiltInCommand,
+  decorators: [
+    (Story) => (
+      <div style={{ maxWidth: 360, margin: "0 auto" }}>
+        <Story />
+      </div>
+    ),
+  ],
 } satisfies Story;

@@ -1,5 +1,5 @@
-// @vitest-inputs src/components/markdown/** src/lib/logging/client-logger.ts
-// @vitest-inputs src/lib/ui/cn.ts
+// @vitest-inputs src/components/** src/features/** src/hooks/** src/stores/**
+// @vitest-inputs src/lib/**
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";

@@ -10,13 +10,16 @@ import {
   useRef,
   useState,
 } from "react";
-import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import {
+  scopeRefFromStoreSessionName,
+  scopeRefSessionName,
+} from "@/lib/conversations/conversation-target";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
-  ArgumentHint,
   AssumptionMentionNode,
   CodeFormatting,
   PlainTextPaste,
@@ -65,6 +68,11 @@ import {
   useHotkeyDispatcher,
   useHotkeySnapshot,
 } from "@/components/hotkeys/HotkeyProvider";
+import { cn } from "@/lib/ui/cn";
+import {
+  useCommandsQuery,
+  useProjectCommandsQuery,
+} from "@/lib/commands/queries";
 
 export interface PromptEditorHandle {
   /** Serialize the current document to `{ prompt, images }`. */
@@ -238,6 +246,61 @@ function collectInlineMarkerIds(editor: Editor): string[] {
   return ids;
 }
 
+interface CommandArgumentGuide {
+  name: string;
+  hint: string;
+}
+
+function collectCommandArgumentGuides(
+  doc: ProseMirrorNode,
+): CommandArgumentGuide[] {
+  const guides: CommandArgumentGuide[] = [];
+  doc.descendants((node) => {
+    if (node.type.name !== "slashCommandMarker") return undefined;
+    const name = node.attrs["name"];
+    const hint = node.attrs["argumentHint"];
+    if (
+      node.attrs["kind"] === "command" &&
+      typeof name === "string" &&
+      typeof hint === "string" &&
+      hint.length > 0
+    ) {
+      guides.push({ name, hint });
+    }
+    return false;
+  });
+  return guides;
+}
+
+function hasSkillWithoutMetadata(doc: ProseMirrorNode): boolean {
+  let found = false;
+  doc.descendants((node) => {
+    if (node.type.name !== "slashCommandMarker") return undefined;
+    if (
+      node.attrs["kind"] === "skill" &&
+      typeof node.attrs["skillPath"] === "string" &&
+      (!node.attrs["description"] || !node.attrs["source"])
+    ) {
+      found = true;
+    }
+    return false;
+  });
+  return found;
+}
+
+function guidesEqual(
+  a: CommandArgumentGuide[],
+  b: CommandArgumentGuide[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (guide, index) =>
+        guide.name === b[index]?.name && guide.hint === b[index]?.hint,
+    )
+  );
+}
+
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -332,6 +395,33 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     );
     const [pickerState, setPickerState] =
       useState<ReferencePickerSuggestionState | null>(null);
+    const [argumentGuides, setArgumentGuides] = useState<
+      CommandArgumentGuide[]
+    >([]);
+    const [needsSkillMetadata, setNeedsSkillMetadata] = useState(false);
+    const sessionCommands = useCommandsQuery(
+      projectName ?? "",
+      scopeRefSessionName(scopeRef),
+      backend ?? "claude",
+      {
+        enabled:
+          needsSkillMetadata &&
+          Boolean(projectName) &&
+          scopeRef.scope === "session",
+        conversationId,
+      },
+    );
+    const projectCommands = useProjectCommandsQuery(
+      projectName ?? "",
+      backend ?? "claude",
+      {
+        enabled:
+          needsSkillMetadata &&
+          Boolean(projectName) &&
+          scopeRef.scope === "project",
+        conversationId,
+      },
+    );
     const slashPopupRef = useRef<SlashCommandPopupHandle>(null);
     const pickerPopupRef = useRef<ReferencePickerPopupHandle>(null);
 
@@ -393,7 +483,6 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         SectionMentionNode,
         NotepadMentionNode,
         RefPasteHandler,
-        ArgumentHint,
         ImagePasteHandler.configure({
           onAddImage: (file) =>
             onAddImageRef.current(file).then((att) =>
@@ -443,6 +532,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       ],
       content: deserializePromptDoc(
         initialDocument ?? { prompt: value, images: [] },
+        { restoreBuiltInCommands: true },
       ),
       editorProps: {
         attributes: {
@@ -457,6 +547,11 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       },
       onUpdate: ({ editor: ed }) => {
         compactInlineIndices(ed, cumulativeRef.current);
+        setNeedsSkillMetadata(hasSkillWithoutMetadata(ed.state.doc));
+        const nextGuides = collectCommandArgumentGuides(ed.state.doc);
+        setArgumentGuides((previous) =>
+          guidesEqual(previous, nextGuides) ? previous : nextGuides,
+        );
         const document = serializePromptDoc({
           doc: ed.state.doc,
           attachments: pendingImagesRef.current,
@@ -475,6 +570,48 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       if (!editor) return;
       editor.setEditable(editable);
     }, [editor, editable]);
+
+    useEffect(() => {
+      if (!editor) return;
+      setArgumentGuides(collectCommandArgumentGuides(editor.state.doc));
+      setNeedsSkillMetadata(hasSkillWithoutMetadata(editor.state.doc));
+    }, [editor]);
+
+    const commandItems =
+      scopeRef.scope === "project"
+        ? projectCommands.data?.items
+        : sessionCommands.data?.items;
+    useEffect(() => {
+      if (!editor || !commandItems || !needsSkillMetadata) return;
+      const transaction = editor.state.tr;
+      let changed = false;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "slashCommandMarker") return undefined;
+        if (node.attrs["kind"] !== "skill") return false;
+        const item = commandItems.find(
+          (candidate) =>
+            candidate.type === "skill" &&
+            candidate.name === node.attrs["name"] &&
+            candidate.skillPath === node.attrs["skillPath"],
+        );
+        if (!item) return false;
+        const description = item.description ?? null;
+        if (
+          node.attrs["description"] === description &&
+          node.attrs["source"] === item.source
+        ) {
+          return false;
+        }
+        transaction.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          description,
+          source: item.source,
+        });
+        changed = true;
+        return false;
+      });
+      if (changed) editor.view.dispatch(transaction);
+    }, [commandItems, editor, needsSkillMetadata]);
 
     useEffect(() => {
       if (!editor) return;
@@ -563,8 +700,33 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         ) : null}
         <EditorContent
           editor={editor}
-          className="prompt-editor__content max-h-[50vh] min-h-[80px] overflow-y-auto rounded-md border border-border-default bg-bg-surface px-[14px] py-[12px] font-mono text-[0.85rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 focus-within:border-cyan-dim focus-within:shadow-[0_0_0_3px_var(--cyan-glow)]"
+          className={cn(
+            "prompt-editor__content max-h-[50vh] min-h-[80px] overflow-y-auto rounded-md border border-border-default bg-bg-surface px-[14px] py-[12px] font-mono text-[0.85rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 focus-within:border-cyan-dim focus-within:shadow-[0_0_0_3px_var(--cyan-glow)]",
+            argumentGuides.length > 0 && "rounded-b-none border-b-0",
+          )}
         />
+        {argumentGuides.length > 0 ? (
+          <div
+            className="flex flex-col gap-xs rounded-b-md border border-t-0 border-border-default bg-bg-raised px-md py-sm font-mono"
+            role="note"
+            aria-label="Command arguments"
+          >
+            <span className="text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary">
+              ARGUMENTS
+            </span>
+            {argumentGuides.map((guide, index) => (
+              <div
+                key={`${guide.name}-${index}`}
+                className="flex flex-wrap items-baseline gap-x-sm gap-y-2xs text-[0.8rem] leading-[1.5]"
+              >
+                <span className="font-semibold text-cyan">{guide.name}</span>
+                <code className="break-words whitespace-pre-wrap text-text-primary">
+                  {guide.hint}
+                </code>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   },

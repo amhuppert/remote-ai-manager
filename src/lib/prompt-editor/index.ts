@@ -31,7 +31,6 @@ export type {
 } from "./spec-mention-nodes";
 export { NotepadImageNode } from "./notepad-image-node";
 export { RefPasteHandler } from "./ref-paste-extension";
-export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
 export type { SerializedPromptDoc } from "./serializer";
 export { deserializePromptDoc } from "./deserializer";

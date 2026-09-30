@@ -1,4 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { buildNotepadRefXml } from "@/lib/notepads/references";
+import { VisionNotepadStoryProvider } from "@/components/references/VisionNotepadStoryProvider";
 import CommandIndicator from "./CommandIndicator";
 
 const meta = {
@@ -29,7 +31,26 @@ export const NoArgs = {
 export const LongSingleLine = {
   args: {
     name: "/kiro:spec-status",
-    args: "this is a fairly long argument that should still render on a single line, ellipsizing if it overflows the available width of its container in the conversation view",
+    args: "this is a fairly long argument that should remain readable when it wraps inside a narrow conversation pane instead of disappearing behind an ellipsis",
+  },
+} satisfies Story;
+
+export const ReferencedNotepad = {
+  decorators: [
+    (Story) => (
+      <VisionNotepadStoryProvider>
+        <Story />
+      </VisionNotepadStoryProvider>
+    ),
+  ],
+  args: {
+    name: "/collab",
+    args: `${buildNotepadRefXml({
+      notepadId: "np-vision",
+      name: "Command Center Vision",
+      scope: "project",
+      projectName: "command-center",
+    })} Review the subscription model and propose a concrete plan.`,
   },
 } satisfies Story;
 

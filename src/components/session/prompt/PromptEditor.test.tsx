@@ -942,6 +942,153 @@ describe("shouldOpenSlashPopup", () => {
   });
 });
 
+describe("PromptEditor command arguments", () => {
+  it("keeps the selected command's argument syntax visible while arguments are typed", async () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { container, getByRole, getByText } = render(
+      <PromptEditor
+        ref={ref}
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    act(() => {
+      ref.current?.editor
+        ?.chain()
+        .focus()
+        .insertContent([
+          {
+            type: "slashCommandMarker",
+            attrs: {
+              name: "/merge",
+              trigger: "/",
+              kind: "command",
+              source: "built-in",
+              description: "Merge the session.",
+              argumentHint: "[--no-mark-merged] [message guidance]",
+            },
+          },
+          { type: "text", text: " --no-mark-merged Ship this" },
+        ])
+        .run();
+    });
+
+    expect(getByText("ARGUMENTS")).toBeTruthy();
+    expect(getByText("[--no-mark-merged] [message guidance]")).toBeTruthy();
+    expect(ref.current?.serialize([]).prompt).toBe(
+      "/merge --no-mark-merged Ship this",
+    );
+
+    fireEvent.click(getByRole("button", { name: "Remove /merge" }));
+    expect(container.textContent).not.toContain("ARGUMENTS");
+    expect(ref.current?.serialize([]).prompt).toBe(
+      " --no-mark-merged Ship this",
+    );
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        container.querySelector(".ProseMirror"),
+      );
+    });
+  });
+});
+
+describe("PromptEditor skill chip", () => {
+  it("restores a selected skill's description from the command catalog after a draft reload", async () => {
+    const prompt =
+      "Use [$agentic-engineering-principles:agent-feedback-tiers](</skills/agent-feedback-tiers/SKILL.md>) now";
+    mockUseCommandsQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            name: "$agentic-engineering-principles:agent-feedback-tiers",
+            type: "skill",
+            source: "agentic-engineering-principles",
+            description: "Define feedback tiers for agent tool output.",
+            skillPath: "/skills/agent-feedback-tiers/SKILL.md",
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const ref = createRef<PromptEditorHandle>();
+    render(
+      <PromptEditor
+        ref={ref}
+        value={prompt}
+        initialDocument={{ prompt, images: [] }}
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+        projectName="proj"
+        sessionName="sess"
+        backend="codex"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        ref.current?.editor?.state.doc.firstChild?.child(1).attrs,
+      ).toMatchObject({
+        description: "Define feedback tiers for agent tool output.",
+        source: "agentic-engineering-principles",
+      });
+    });
+    expect(ref.current?.serialize([]).prompt).toBe(prompt);
+  });
+
+  it("provides a focusable designed tooltip for a selected skill's description", () => {
+    const ref = createRef<PromptEditorHandle>();
+    const { getByLabelText } = render(
+      <PromptEditor
+        ref={ref}
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        pendingImages={[]}
+        onAddImage={makeAddImage()}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+      />,
+    );
+
+    act(() => {
+      ref.current?.editor?.commands.insertContent({
+        type: "slashCommandMarker",
+        attrs: {
+          name: "$agentic-engineering-principles:agent-feedback-tiers",
+          trigger: "$",
+          kind: "skill",
+          source: "agentic-engineering-principles",
+          description: "Define feedback tiers for agent tool output.",
+          argumentHint: null,
+          skillPath: "/skills/agent-feedback-tiers/SKILL.md",
+        },
+      });
+    });
+
+    const trigger = getByLabelText(
+      "Skill agentic-engineering-principles:agent-feedback-tiers",
+    );
+    expect(trigger).toHaveAttribute("data-state");
+    expect(trigger).toHaveAttribute("tabindex", "0");
+    expect(trigger).not.toHaveAttribute("title");
+    expect(ref.current?.serialize([]).prompt).toContain(
+      "/skills/agent-feedback-tiers/SKILL.md",
+    );
+  });
+});
+
 describe("PromptEditor — backend-dependent slash/skill triggers", () => {
   function editorTree(
     backend: AgentBackendId,
