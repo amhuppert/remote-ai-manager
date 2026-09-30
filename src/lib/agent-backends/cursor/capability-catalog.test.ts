@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  CURSOR_SKILL_CATALOG_BUDGET_CHARS,
+  cursorSkillCatalogBudgetWarning,
   discoverCursorCatalog,
   renderCursorSkillCatalog,
   selectCursorCatalog,
@@ -213,19 +215,26 @@ it("omits disabled skills and fails closed when discovery for a declared cascade
     selectCursorCatalog(catalog, { backend: "cursor", kinds: [] }),
   ).toEqual([]);
 });
-it("rejects an oversized catalog instead of silently dropping enabled skills", () => {
-  expect(() =>
-    renderCursorSkillCatalog([
-      {
-        id: "large",
-        name: "large",
-        description: "x".repeat(17000),
-        path: "/skills/large/SKILL.md",
-        scope: "user",
-        kind: "skills",
-      },
-    ]),
-  ).toThrow("disable skills");
+it("renders an over-budget catalog in full and warns instead of refusing it", () => {
+  const index = renderCursorSkillCatalog([
+    {
+      id: "large",
+      name: "large",
+      description: "x".repeat(17000),
+      path: "/skills/large/SKILL.md",
+      scope: "user",
+      kind: "skills",
+    },
+  ]);
+  expect(index).toContain("x".repeat(17000));
+  expect(cursorSkillCatalogBudgetWarning(index)).toBe(
+    `The enabled skill catalog is ${index.length.toLocaleString("en-US")} characters, above Command Center's 16,384-character budget for Cursor. It was sent in full with this prompt; disable unused skills in CC to shrink it.`,
+  );
+  expect(
+    cursorSkillCatalogBudgetWarning(
+      "x".repeat(CURSOR_SKILL_CATALOG_BUDGET_CHARS),
+    ),
+  ).toBeNull();
 });
 it("does not follow plugin component paths outside the plugin root", async () => {
   await file(

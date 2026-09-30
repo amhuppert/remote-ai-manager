@@ -6,6 +6,10 @@ import {
   type CursorTaskState,
 } from "./background-tasks";
 import type { CursorCapabilityDelivery } from "./capability-delivery";
+import {
+  CURSOR_SKILL_CATALOG_BUDGET_CHARS,
+  cursorSkillCatalogBudgetWarning,
+} from "./capability-catalog";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
@@ -2281,6 +2285,31 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   // Prompt composition
   // ============================================================
 
+  private warnIfSkillCatalogOverBudget(catalog: string): void {
+    const warning = cursorSkillCatalogBudgetWarning(catalog);
+    if (warning === null) return;
+    logger.warn("cursor-runtime.skill_catalog_over_budget", {
+      conversationId: this.conversationId,
+      catalogChars: catalog.length,
+      budgetChars: CURSOR_SKILL_CATALOG_BUDGET_CHARS,
+    });
+    this.emit({
+      type: "transcript_entry",
+      entry: {
+        backend: "cursor",
+        seq: 0,
+        type: "notice",
+        raw: {
+          id: `cursor-skill-catalog-over-budget:${this.conversationId}`,
+          timestamp: new Date(this.deps.now()).toISOString(),
+          type: "notice",
+          role: "notice",
+          content: [{ type: "text", text: warning }],
+        },
+      },
+    });
+  }
+
   private buildPromptText(input: ConversationBackendTurnInput): string {
     if (this.captureRestricted) return input.promptText;
     const parts: string[] = [];
@@ -2290,8 +2319,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       );
     }
     const skills = this.deps.capabilityDelivery?.snapshot;
-    if (skills && !skills.delivered && skills.catalog)
+    if (skills && !skills.delivered && skills.catalog) {
       parts.push(skills.catalog);
+      this.warnIfSkillCatalogOverBudget(skills.catalog);
+    }
     if (this.instructionsPending && this.sessionInstructions.length > 0) {
       const instructions = this.sessionInstructions.join("\n\n");
       const fenceLength = [...instructions.matchAll(/`+/g)].reduce(

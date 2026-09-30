@@ -36,7 +36,7 @@ export interface CursorCatalogInput {
 }
 const logger = createLogger("cursor:capability-catalog");
 const NAME = /^[a-zA-Z0-9][a-zA-Z0-9_:.-]*$/;
-export const CURSOR_SKILL_CATALOG_MAX_CHARS = 16_384;
+export const CURSOR_SKILL_CATALOG_BUDGET_CHARS = 16_384;
 const manifestSchema = z
   .object({
     name: z.string().regex(NAME),
@@ -395,11 +395,20 @@ export function renderCursorSkillCatalog(
     ),
     "</cc-skills>",
   ].join("\n");
-  if (index.length > CURSOR_SKILL_CATALOG_MAX_CHARS)
-    throw new Error(
-      `Cursor skill catalog exceeds ${CURSOR_SKILL_CATALOG_MAX_CHARS} characters; disable skills in CC before starting a conversation.`,
-    );
   return index;
+}
+
+/**
+ * The budget is CC's own prompt-size guidance, not a provider limit: an
+ * over-budget catalog is still sent in full so no enabled skill is silently
+ * dropped, and the user is told how to shrink it.
+ */
+export function cursorSkillCatalogBudgetWarning(
+  catalog: string,
+): string | null {
+  if (catalog.length <= CURSOR_SKILL_CATALOG_BUDGET_CHARS) return null;
+  const count = (value: number) => value.toLocaleString("en-US");
+  return `The enabled skill catalog is ${count(catalog.length)} characters, above Command Center's ${count(CURSOR_SKILL_CATALOG_BUDGET_CHARS)}-character budget for Cursor. It was sent in full with this prompt; disable unused skills in CC to shrink it.`;
 }
 
 export function cursorSkillCommands(

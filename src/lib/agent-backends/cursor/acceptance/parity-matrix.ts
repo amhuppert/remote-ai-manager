@@ -631,7 +631,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
       "Command Center's immutable managed skill bundle reaches Cursor conversations and tasks, alongside project and user skills discovered from disk, while ambient provider settings stay suppressed.",
     mechanism: "cc-owned",
     limitation:
-      "Skills are delivered as a rendered catalog in the session instructions rather than as provider-native skill objects, and the catalog is capped at 16 KiB.",
+      "Skills are delivered as a rendered catalog in the session instructions rather than as provider-native skill objects; a catalog above Command Center's 16,384-character budget is still delivered in full, with a transcript warning.",
     owner: "command-center#113",
     verdict: "verified",
     blocker: null,

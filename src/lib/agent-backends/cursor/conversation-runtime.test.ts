@@ -17,6 +17,10 @@ import {
   type CursorConversationRuntimeDeps,
 } from "./conversation-runtime";
 import { CURSOR_BACKEND_ID } from "./backend-id";
+import {
+  CURSOR_SKILL_CATALOG_BUDGET_CHARS,
+  cursorSkillCatalogBudgetWarning,
+} from "./capability-catalog";
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import {
   createScriptedTransport,
@@ -1215,6 +1219,51 @@ describe("Cursor capability delivery", () => {
     );
     expect(snapshot.delivered).toBe(true);
     expect(worker.attachments[0]).toMatchObject({ agents: snapshot.agents });
+    expect(transcriptNotices(harness.events)).toEqual([]);
+    await harness.runtime.close();
+  });
+
+  it("sends an over-budget skill index in full and warns once in the transcript", async () => {
+    const catalog = `<cc-skills>${"x".repeat(CURSOR_SKILL_CATALOG_BUDGET_CHARS)}</cc-skills>`;
+    const snapshot = {
+      catalog,
+      commands: [],
+      agents: {},
+      delivered: false,
+      capabilities: { backend: "cursor" as const, kinds: [] },
+    };
+    const harness = createHarness({
+      deps: {
+        capabilityDelivery: {
+          snapshot,
+          async markDelivered() {
+            snapshot.delivered = true;
+          },
+        },
+      },
+    });
+    await harness.send();
+    await harness.send();
+    expect(
+      elementAt(elementAt(harness.transport.workers, 0).turns, 0).input
+        .promptText,
+    ).toContain(catalog);
+    expect(transcriptNotices(harness.events)).toEqual([
+      expect.objectContaining({
+        role: "notice",
+        content: [
+          { type: "text", text: cursorSkillCatalogBudgetWarning(catalog) },
+        ],
+      }),
+    ]);
     await harness.runtime.close();
   });
 });
+
+function transcriptNotices(events: readonly ConversationBackendEvent[]) {
+  return events.flatMap((event) =>
+    event.type === "transcript_entry" && event.entry.type === "notice"
+      ? [event.entry.raw]
+      : [],
+  );
+}
