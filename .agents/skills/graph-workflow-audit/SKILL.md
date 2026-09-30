@@ -25,13 +25,6 @@ Always report **both** friction and what worked well — improvements to the
 engine and to `graph-workflow-planning` need to know what to preserve, not
 just what to fix. An audit that only lists problems is half an audit.
 
-State the audit's learning target at the start, using the user's request and
-conversation context: the delivered product, Command Center's functionality,
-or both. For a CC retrospective, use work-product quality as evidence about
-CC's planning, native SDD, validation, execution, recovery, or skills. Lead
-with those mechanisms and their improvements; application repairs belong in
-the recommendations only when the user includes them in scope.
-
 Vocabulary matches the `graph-workflow-planning` skill: execution contexts,
 tasks, acceptance criteria, implementer / context-validator lanes,
 iterations, script validator, circuit breaker, lanes/joins (worktree merges),
@@ -91,19 +84,13 @@ with gap classification, halt-recovery table with operator wait, detector-
 driven friction findings, detected positives, and a "Telemetry confidence"
 section listing where the run's figures are floors or inconclusive.
 
-**Time semantics:** `main implementer turns` covers the ordinary implementer
-prompt intervals and excludes detected hung-turn intervals, reported
-separately. Validator dispatch and completed advisory-response intervals are
-separate elapsed-time totals. These intervals can overlap or contain waiting;
-they are neither additive labor nor a partition of wall clock. An incomplete
-interval has unknown duration. Advisory admission waits are measured from
-matching execution/trace/conversation records in `logs/global.log`; missing
-or rotated records leave coverage unknown. Other phases' admission waits are
-not separately measured. `Human waits` counts approval/user-input gates,
-using iteration-log wait exits when historical resolved events are missing.
-`Operator recovery` is halted→resumed wait from lifecycle.jsonl. Gap classes:
-`halt_wait`, `hung_turn`, `validation_compute` (script gate), `agent_work`,
-`human_wait`, `admission_wait`, `unexplained`.
+**Time semantics:** `agent turns` excludes hung-turn time (reported
+separately); `human waits` counts only configured approval/user-input gates;
+`operator recovery` is halted→resumed wait from lifecycle.jsonl — before
+this metric existed, runs with hours of halt recovery reported zero human
+wait. Gap classifications: `halt_wait` (execution halted), `hung_turn`
+(covered by a dead turn), `validation_compute` (script gate running),
+`agent_work`, `human_wait`, `unexplained`.
 
 **What the detectors flag** (each maps to a known failure mode):
 
@@ -146,7 +133,7 @@ turns.
 - `iterationCount` much larger than task count ÷ tasks-per-iteration
   suggests grinding; 1–2 iterations for a large task list suggests healthy
   flow.
-- Compare main implementer and review intervals with wall clock using the gap classifications. Parallel
+- Compare `agent turns` with wall clock using the gap classifications. Parallel
   turns overlap, and validation/halt waits also consume wall time; subtraction
   alone cannot establish scheduling overhead.
 
@@ -218,14 +205,6 @@ handoff claiming "independent reviewer APPROVED" or "TDD'd failing-test-
 first" is only true if the transcript shows the reviewer agent invocation /
 the RED test run. Spot-check the claims that the GO verdict leaned on.
 
-For a CC retrospective, explain which CC mechanism contributed to each
-consequential outcome. A product defect alone does not establish an engine
-defect: distinguish an implementation error from a missing contract, an
-ownership gap, ineffective guidance, or a runtime failure. Inspect the current
-code or skill before recommending a change; distinguish the behavior in this
-run from a fix already present in source and from verified deployment. Keep
-successful mechanisms as explicit findings too.
-
 ## Step 5 — Write the audit report
 
 Save to `docs/reports/workflow-audits/<yyyy-mm-dd>-<short-slug>.md` (create
@@ -237,12 +216,9 @@ Template:
 ```markdown
 # Workflow audit — <workflow name> (<executionId>)
 
-Audit objective: <what the user wants to learn; recommendation scope>
-
 ## Verdict
-<2–4 sentences answering the audit objective, supported by outcome quality
-and headline cost/time. For a CC retrospective, lead with how CC performed
-and the most useful CC improvement.>
+<2–4 sentences: overall quality of the produced work, headline cost/time,
+the one change that would most improve the next run.>
 
 ## What worked (preserve these)
 - <mechanism → evidence. e.g. "first-try GO on N/M contexts — ACs were
@@ -253,26 +229,18 @@ and the most useful CC improvement.>
    (engine, planning-skill guidance, or workflow-definition change?)
 
 ## Cost
-CC-recorded agent usage $X across N conversations, on the same effective
-cost basis as the lane/context breakdowns (per-conversation table for outliers).
+Total $X across N conversations (per-conversation table for outliers).
 Implementer vs validator split; wasted spend identified (churn iterations,
 re-derivation, oversized contexts) with $ estimates where possible.
-Separately evidenced external model usage: $Y, or unknown. Shell-launched
-model jobs are outside the CC conversation total.
 
 ## Time
-Wall clock … · main implementer … · validators … · advisory response …
-Measured advisory admission waits … · human waits … · unexplained gaps …
-State overlap and incomplete telemetry; do not add phase totals as labor.
+Wall clock … · agent … · human waits … · unexplained gaps …
 What could have run in parallel but didn't?
 
 ## Recommendations
-<For each: responsible mechanism → observed evidence → current-code or skill
-status → smallest useful general change. Tag: [engine] [native-SDD]
-[skill] [template/definition] [config]. Identify existing fixes or proposals
-before recommending new work; consult
-docs/reports/graph-workflow-improvement-report.md when present. State when
-an observation supports no CC change.>
+<Each maps friction → a concrete change. Tag: [engine] [planning-skill]
+[template/definition] [config]. Note which align with existing proposals in
+docs/reports/graph-workflow-improvement-report.md rather than re-inventing.>
 ```
 
 ## Pitfalls

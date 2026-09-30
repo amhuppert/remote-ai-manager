@@ -1079,7 +1079,13 @@ export class CodexConversationRuntime
         throw new DOMException("Turn cancelled before dispatch", "AbortError");
       await client.request("initialize", {
         clientInfo: { name: "command-center", version: "1.0.0" },
-        capabilities: { experimentalApi: false },
+        capabilities: {
+          experimentalApi: false,
+          // Whole-turn diffs grow with every file edit and can flood archival.
+          // Item notifications already retain each file change; the projector
+          // does not consume these cumulative snapshots.
+          optOutNotificationMethods: ["turn/diff/updated"],
+        },
       });
       client.notify("initialized");
       if (!this.captureAttempt)

@@ -2,6 +2,8 @@ import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { mkdtemp, appendFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough, Writable } from "node:stream";
+import { z } from "zod";
 import { CHECKPOINT_CAPTURE_LIMITS } from "@/lib/conversation-checkpoints/budget";
 import { captureHandoffResultSchema } from "../schemas";
 import { describe, expect, it, vi } from "vitest";
@@ -12,9 +14,10 @@ import type {
   ConversationBackendTurnInput,
   ConversationQueuedUserInput,
 } from "../conversation";
-import type {
-  AppServerClient,
-  AppServerClientOptions,
+import {
+  createCodexAppServerClient,
+  type AppServerClient,
+  type AppServerClientOptions,
 } from "./app-server-client";
 import { InputDeliveryUncertainError } from "../errors";
 import {
@@ -57,6 +60,8 @@ function harness(
   fixture: {
     /** Hold the `turn/start` reply until this resolves. */
     holdTurnStart?: Promise<void>;
+    /** Exercise real byte framing, control dispatch and bounded archival. */
+    transportQueueBytes?: number;
   } = {},
 ) {
   const requests: { method: string; params: unknown }[] = [];
@@ -77,8 +82,15 @@ function harness(
   let barrier = Promise.resolve();
   let closed = 0;
   let failed = false;
+  let wire: PassThrough | undefined;
+  let optedOut: string[] = [];
   const notify = (method: string, params: unknown) => {
+    if (optedOut.includes(method)) return;
     const raw = JSON.stringify({ method, params });
+    if (wire) {
+      wire.write(`${raw}\n`);
+      return;
+    }
     const frame = parseAppServerFrame(raw, Buffer.byteLength(raw));
     if (frame.message.kind !== "notification" || !options)
       throw new Error("fixture not started");
@@ -93,7 +105,17 @@ function harness(
   const client: AppServerClient = {
     async request(method, params) {
       requests.push({ method, params });
-      if (method === "initialize") return {};
+      if (method === "initialize") {
+        const initialization = z
+          .object({
+            capabilities: z.object({
+              optOutNotificationMethods: z.array(z.string()).optional(),
+            }),
+          })
+          .parse(params);
+        optedOut = initialization.capabilities.optOutNotificationMethods ?? [];
+        return {};
+      }
       if (method === "config/read")
         return { config: { skills: options?.config?.skills ?? null } };
       if (method === "skills/list")
@@ -145,6 +167,66 @@ function harness(
     inTurnDeliveryEnabled: true,
     createAppServer(input) {
       options = input;
+      if (fixture.transportQueueBytes !== undefined) {
+        const stdout = new PassThrough();
+        wire = stdout;
+        let alive = true;
+        let onExit: (
+          code: number | null,
+          signal: string | null,
+        ) => void = () => {};
+        const stdin = new Writable({
+          write(chunk: Buffer, _encoding, callback) {
+            const request = z
+              .object({
+                id: z.number().optional(),
+                method: z.string(),
+                params: z.unknown(),
+              })
+              .parse(JSON.parse(chunk.toString()));
+            if (request.id !== undefined) {
+              void client
+                .request(request.method, request.params)
+                .then((result) => {
+                  stdout.write(
+                    `${JSON.stringify({ id: request.id, result })}\n`,
+                  );
+                });
+            }
+            callback();
+          },
+          final(callback) {
+            alive = false;
+            onExit(0, null);
+            callback();
+          },
+        });
+        return createCodexAppServerClient(input, {
+          host: {
+            spawn: () => ({
+              pid: 8123,
+              stdin,
+              stdout,
+              stderr: new PassThrough(),
+              onExit(listener) {
+                onExit = listener;
+                return () => {
+                  onExit = () => {};
+                };
+              },
+              onError: () => () => {},
+            }),
+            processGroupId: () => 8123,
+            startTicks: async () => "start-1",
+            isGroupAlive: () => alive,
+            signalGroup: () => {
+              alive = false;
+              onExit(0, null);
+            },
+          },
+          limits: { queuedBytes: fixture.transportQueueBytes },
+        });
+      }
       return client;
     },
     createInstructionStore: () => ({
@@ -239,6 +321,95 @@ async function until(predicate: () => boolean) {
 }
 
 describe("Codex app-server conversation runtime", () => {
+  it.each([null, { backend: "codex", ref: "thread-1" }] as const)(
+    "finishes a file-change burst without unused cumulative diffs exhausting archival (continuity: %j)",
+    async (persistedRef) => {
+      const h = harness(
+        { persistedRef },
+        {},
+        { transportQueueBytes: 16 * 1024 },
+      );
+      const hold = Promise.withResolvers<void>();
+      let held = false;
+      const turn = h.runtime.sendTurn({
+        ...h.input,
+        onEvent: async (event) => {
+          h.events.push(event);
+          if (held && event.type === "transcript_entry") await hold.promise;
+        },
+      });
+      await until(() =>
+        h.events.some((event) => event.type === "input_accepted"),
+      );
+      // File items fit the queue; repeated whole-turn snapshots do not. The
+      // provider honors the initialize notification subscription on the wire.
+      held = true;
+      for (let i = 0; i < 6; i += 1) {
+        const item = {
+          id: `file-${i}`,
+          type: "fileChange",
+          status: "completed",
+          changes: [
+            {
+              path: `/repo/file-${i}.txt`,
+              kind: { type: "add" },
+              diff: `+line-${i}`,
+            },
+          ],
+        };
+        h.notify("item/started", {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item,
+        });
+        h.notify("item/completed", {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item,
+        });
+        h.notify("turn/diff/updated", {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          diff: "x".repeat((i + 1) * 1024),
+        });
+      }
+      h.notify("item/completed", {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "answer",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "done",
+        },
+      });
+      h.finish();
+      hold.resolve();
+      const result = await turn;
+      expect(result.failure).toBeNull();
+      expect(result.finalText).toBe("done");
+      expect(
+        result.contentBlocks.filter((block) => block.type === "tool_use"),
+      ).toEqual(
+        Array.from({ length: 6 }, (_, i) => ({
+          type: "tool_use",
+          id: `file-${i}:0`,
+          name: "Write",
+          input: { file_path: `/repo/file-${i}.txt` },
+        })),
+      );
+      const archive = h.events.filter(
+        (event) => event.type === "transcript_entry",
+      );
+      const serialized = JSON.stringify(archive);
+      for (let i = 0; i < 6; i += 1) {
+        expect(serialized).toContain(`file-${i}.txt`);
+        expect(serialized).toContain(`+line-${i}`);
+      }
+      expect(serialized).not.toContain("turn/diff/updated");
+    },
+  );
+
   it("holds a steer sent before turn/start is acknowledged and delivers it once the turn id is known", async () => {
     // The conversation reads as running from prompt submission, long before
     // the app-server acknowledges turn/start. A message queued in that window
