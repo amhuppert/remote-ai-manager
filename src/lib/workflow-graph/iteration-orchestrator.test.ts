@@ -8750,6 +8750,65 @@ describe("context output capture (D2)", () => {
     expect(persisted.contextOutputs["context-plan"]).toBeUndefined();
   });
 
+  it("halts a context whose captured output a sibling's pending halt kept from publishing", async () => {
+    const repository = createRepository(createExecutionWithOutputSchema());
+    const siblingHalt = {
+      type: "max_iterations" as const,
+      contextId: "context-sibling",
+      iterationCount: 2,
+      summary: null,
+    };
+    // The sibling's halt lands while this context's format turn is in flight,
+    // after the turn-boundary halt check has already passed.
+    const captureContextOutput = vi.fn(async () => {
+      await repository.mutateActive("/repo", "session-1", (latest) => {
+        const next = structuredClone(latest);
+        next.pendingHaltReason = siblingHalt;
+        return changed(next);
+      });
+      return {
+        kind: "captured" as const,
+        value: { summary: "Plan is ready", risks: ["schema drift"] },
+        parse: { source: "raw_json" as const },
+      };
+    });
+
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async ({ execution }) => execution,
+
+      executionContract: createTestGraphExecutionContract(),
+
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      bindTaskCompletion: vi.fn(),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.decision).toEqual({
+      kind: "halted",
+      haltReason: siblingHalt,
+    });
+    const persisted = repository.read();
+    expect(persisted.contextOutputs["context-plan"]).toBeUndefined();
+    // Only `halted` (or `ready`) returns to work on resume; a context left
+    // `running` outside the active set is never scheduled again.
+    expect(persisted.contextStates["context-plan"]?.status).toBe("halted");
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+  });
+
   it("retries the capture with the previous rejection, and completes once the gate accepts (R3.1)", async () => {
     const repository = createRepository(createExecutionWithOutputSchema());
 

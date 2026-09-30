@@ -827,9 +827,23 @@ export function createGraphWorkflowIterationOrchestrator(
           const haltReason =
             finalizedExecution.pendingHaltReason ??
             finalizedExecution.haltReason;
-          decision = haltReason
-            ? { kind: "halted", haltReason }
-            : { kind: "continue", reason: "output_capture_retry" };
+          if (haltReason) {
+            // Publication refuses while a halt is pending, so a context whose
+            // format turn straddled a sibling's halt owes its output with no
+            // iteration left to retry it. Left `running`, it would leave the
+            // active set here and survive the halt and every resume without
+            // being scheduled again; `halted` returns it on resume through the
+            // validation-only re-entry, which re-captures the output.
+            transitionContextStatus(
+              finalizedExecution,
+              input.contextId,
+              "halted",
+              { reason: "iteration.finalize_withheld_output_halted" },
+            );
+            decision = { kind: "halted", haltReason };
+          } else {
+            decision = { kind: "continue", reason: "output_capture_retry" };
+          }
         } else if (gateEnabled) {
           decision = { kind: "await_approval" };
           approvalGateService.enterAwaitingApproval(finalizedExecution, {

@@ -2307,6 +2307,20 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               },
             );
           }
+          // The halt returns only ACTIVE running contexts to `ready`, so one
+          // that left the active set while still `running` reaches here with
+          // no live iteration — the old generation is retired — and the
+          // scheduler never picks `running` work up again.
+          if (contextState.status === "running") {
+            transitionContextStatus(
+              execution,
+              contextState.contextId,
+              "ready",
+              {
+                reason: "manager.resume_orphaned_running_context",
+              },
+            );
+          }
           if (contextState.status === "ready") {
             // The consecutive-mismatch budget is a manual retry decision for
             // the same reason: a context that halted at the bound would come

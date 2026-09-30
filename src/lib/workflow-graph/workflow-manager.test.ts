@@ -5671,6 +5671,78 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("resumes a halted execution, returning a context left running outside the active set to ready", async () => {
+    const baseExecution = createWorkflowExecution();
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        completedAt: "2026-03-27T15:30:00.000Z",
+        haltReason: {
+          type: "max_iterations",
+          contextId: "context-implement",
+          iterationCount: 2,
+          summary: null,
+        },
+        contextStates: {
+          ...baseExecution.contextStates,
+          // Finished its tasks, but the halt drained before its output was
+          // published, so no iteration owns it any more.
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "running",
+            completedTaskCount: 1,
+            iterationCount: 2,
+          },
+          "context-implement": {
+            ...baseExecution.contextStates["context-implement"]!,
+            status: "halted",
+            iterationCount: 2,
+          },
+        },
+        taskStates: {
+          ...baseExecution.taskStates,
+          "task-plan-1": {
+            ...baseExecution.taskStates["task-plan-1"]!,
+            status: "completed",
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: "2026-03-27T15:10:00.000Z",
+            lastConversationId: "conversation-1",
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "halted",
+          activeContextId: null,
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      getSession: async () => null,
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createTestGraphExecutionContract(),
+
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(execution.status).toBe("running");
+    expect(execution.contextStates["context-plan"]?.status).toBe("ready");
+    expect(execution.contextStates["context-implement"]?.status).toBe("ready");
+    expect(execution.taskStates["task-plan-1"]?.status).toBe("completed");
+  });
+
   it.each([
     "unchanged",
     "template-only",
