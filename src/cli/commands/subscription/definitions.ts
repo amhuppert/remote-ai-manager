@@ -1,4 +1,4 @@
-import { defineGroup } from "cli-for-agents";
+import { bytes, defineGroup } from "cli-for-agents";
 import { ccCommands } from "../../framework/family";
 
 const paging = {
@@ -14,6 +14,105 @@ const paging = {
   },
 } as const;
 
+const subscriptionId = {
+  name: "subscription-id",
+  description: "Stable subscription id from subscription waits or list",
+  value: {
+    kind: "pattern",
+    pattern: "^\\S+$",
+    description: "non-whitespace subscription id",
+  },
+} as const;
+
+export const subscriptionWaitSpec = {
+  path: "subscription wait",
+  summary: "Register a terminal wait and return immediately",
+  description:
+    "Wait for the exact workflow execution, validation run or git job to reach a terminal state. Registration returns the durable wait id and state immediately; it does not block or poll. The server schedules an ordinary conversation turn with the result. The lifetime defaults to 24 hours and is limited to 7 days. A validation wait does not detach the run or renew its private submitter lease; lease interruption is a terminal result. Workflow lanes cannot register waits.",
+  requires: "cc",
+  effects: "write",
+  args: [
+    {
+      name: "kind",
+      description: "Terminal source kind",
+      value: { kind: "enum", values: ["workflow", "validation", "git_job"] },
+    },
+    {
+      name: "source-id",
+      description: "Exact execution, validation run or git job id",
+      value: {
+        kind: "pattern",
+        pattern: "^\\S+$",
+        description: "non-whitespace source id",
+      },
+    },
+  ],
+  flags: {
+    reason: {
+      description: "Why this conversation needs the terminal result",
+      value: { kind: "string", minLength: 1, maxLength: 1000 },
+      required: true,
+      fileSource: { maxBytes: bytes(4000) },
+    },
+    "expires-in": {
+      description:
+        "Wait lifetime in seconds (default 24 hours, maximum 7 days)",
+      value: { kind: "integer", min: 1, max: 604800 },
+      default: 86400,
+    },
+  },
+  related: [
+    {
+      path: "subscription waits",
+      description: "Inspect registered waits and their states",
+    },
+    {
+      path: "subscription wait-get",
+      description: "Inspect one wait and its wake delivery",
+    },
+  ],
+} as const;
+
+export const subscriptionWaitsSpec = {
+  path: "subscription waits",
+  summary: "Inspect this conversation's terminal waits",
+  description:
+    "List a bounded page of durable terminal waits, including settled and cancelled records. Each row names its subscription id and a detail command. A terminal source result alone does not prove that the wake turn was accepted; use wait-get to inspect the batch and delivery.",
+  requires: "cc",
+  effects: "read",
+  args: [],
+  flags: paging,
+  related: [
+    {
+      path: "subscription wait",
+      description: "Register an exact terminal source wait",
+    },
+    {
+      path: "subscription wait-get",
+      description: "Inspect one wait and its wake delivery",
+    },
+  ],
+} as const;
+
+export const subscriptionWaitGetSpec = {
+  path: "subscription wait-get",
+  summary: "Inspect one terminal wait and wake batch",
+  description:
+    "Read the wait, reason, expiry, source result, causal history and wake batch by its subscription id. Batch state records queue and runtime acceptance evidence; failed or uncertain delivery needs inspection. This read does not start or acknowledge a turn.",
+  requires: "cc",
+  effects: "read",
+  args: [subscriptionId],
+  flags: {},
+  related: [
+    { path: "subscription waits", description: "Find wait subscription ids" },
+    { path: "inbox get", description: "Inspect the saved source delivery" },
+    {
+      path: "subscription unfollow",
+      description: "Cancel an unbatched or proven orphaned wait",
+    },
+  ],
+} as const;
+
 export const subscriptionListSpec = {
   path: "subscription list",
   summary: "Inspect this conversation's automatic follows and opt-outs",
@@ -24,6 +123,10 @@ export const subscriptionListSpec = {
   args: [],
   flags: paging,
   related: [
+    {
+      path: "subscription waits",
+      description: "Inspect active terminal waits",
+    },
     {
       path: "subscription unfollow",
       description: "Remember an opt-out for one source",
@@ -39,28 +142,74 @@ export const subscriptionUnfollowSpec = {
   path: "subscription unfollow",
   summary: "Stop following a source and remember the opt-out",
   description:
-    "Unfollow one subscription belonging to the addressed conversation. Later reads or involvement do not reactivate it. Existing delivery evidence remains inspectable.",
+    "Unfollow one subscription belonging to the addressed conversation. Later reads or involvement do not reactivate it. Cancels an unbatched active wait. An uncertain batch also permits cancellation when the server proves that no matching queue row or accepted transcript receipt exists. Only the selected wait is cancelled; other members remain unresolved until individually unfollowed. Planned, queued, failed and other uncertain batches require queue review. Existing delivery evidence remains inspectable.",
   requires: "cc",
   effects: "write",
-  args: [
-    {
-      name: "subscription-id",
-      description: "Stable id from subscription list",
-      value: {
-        kind: "pattern",
-        pattern: "^\\S+$",
-        description: "non-whitespace subscription id",
-      },
-    },
-  ],
+  args: [subscriptionId],
   flags: {},
   related: [
+    {
+      path: "subscription wait-get",
+      description: "Inspect the wake batch before cancelling an active wait",
+    },
     {
       path: "subscription list",
       description: "Inspect follows and remembered opt-outs",
     },
   ],
 } as const;
+
+export const subscriptionWaitCommand = ccCommands.defineCommand(
+  subscriptionWaitSpec,
+  {
+    examples: [
+      {
+        args: { kind: "workflow", "source-id": "execution-one" },
+        flags: {
+          reason: "Continue when the workflow finishes",
+          "expires-in": 3600,
+        },
+        why: "Resume from an exact workflow result without blocking this turn",
+      },
+      {
+        args: { kind: "validation", "source-id": "validation-one" },
+        flags: { reason: "Inspect the test verdict" },
+        why: "Use the default 24 hour lifetime for a validation run",
+      },
+    ],
+    handler: async () => ({
+      default: (await import("./handlers")).subscriptionWaitHandler,
+    }),
+  },
+);
+export const subscriptionWaitsCommand = ccCommands.defineCommand(
+  subscriptionWaitsSpec,
+  {
+    examples: [
+      {
+        flags: { limit: 10 },
+        why: "Inspect recent terminal waits and their detail handles",
+      },
+    ],
+    handler: async () => ({
+      default: (await import("./handlers")).subscriptionWaitsHandler,
+    }),
+  },
+);
+export const subscriptionWaitGetCommand = ccCommands.defineCommand(
+  subscriptionWaitGetSpec,
+  {
+    examples: [
+      {
+        args: { "subscription-id": "subscription-one" },
+        why: "Distinguish a source result from runtime acceptance of its wake turn",
+      },
+    ],
+    handler: async () => ({
+      default: (await import("./handlers")).subscriptionWaitGetHandler,
+    }),
+  },
+);
 
 export const inboxListSpec = {
   path: "inbox list",
@@ -164,15 +313,18 @@ export const inboxGetCommand = ccCommands.defineCommand(inboxGetSpec, {
 export const subscriptionCommands = [
   subscriptionListCommand,
   subscriptionUnfollowCommand,
+  subscriptionWaitCommand,
+  subscriptionWaitsCommand,
+  subscriptionWaitGetCommand,
   inboxListCommand,
   inboxGetCommand,
 ];
 export const subscriptionGroups = [
   defineGroup({
     path: "subscription",
-    summary: "Inspect automatic conversation follows and remember opt-outs",
+    summary: "Manage conversation follows and terminal waits",
     description:
-      "Passive follows stay with the conversation across runtime replacement. Workflow lanes and active wake controls are outside this surface.",
+      "Follows and explicit terminal waits stay with ordinary conversations across runtime replacement. Workflow lanes retain their assigned context policy.",
     related: [{ path: "inbox", description: "Inspect the resulting updates" }],
   }),
   defineGroup({

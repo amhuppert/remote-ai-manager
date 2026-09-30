@@ -28,6 +28,9 @@ import {
 } from "@/lib/conversations/provenance";
 import { createSubscriptionService } from "./service";
 import { createSubscriptionSourceReader } from "./source-adapters";
+import { createTerminalSourceReader } from "./terminal-source-adapters";
+import { createActiveWaitService } from "./active-wait-service";
+import { createConversationSubscriptionWaitsRepo } from "@/lib/state-store/conversation-subscription-waits-repo";
 import { createSubscriptionInvolvementReader } from "./involvement";
 import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
 export { synchronizeSubscriptionInvolvement } from "./involvement";
@@ -49,28 +52,69 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     ticketChanges,
     watermarks: createNotepadDeliveryWatermarksRepo(db, writeQueue),
   });
+  const sourceDeps = {
+    notepads,
+    tickets: createTicketsRepo(db, writeQueue),
+    specs: createSpecsRepo(db, writeQueue),
+    specEvents: createSpecEventsRepo(db),
+    workflows: createGraphWorkflowExecutionsRepo(db),
+    archivedWorkflows: createGraphWorkflowArchivedExecutionsRepo(db),
+    workflowEvents: createGraphWorkflowEventsRepo(db),
+    validations: createValidationRunsRepo(db),
+    jobs: createJobsRepo(db),
+    queries,
+    ticketChanges,
+  };
+  async function isRecipientEligible(recipient: {
+    projectPath: string;
+    conversationId: string;
+  }) {
+    return isEligibleSubscriptionRecipient(
+      readConversation(recipient.conversationId),
+      recipient.projectPath,
+    );
+  }
+  const waitsRepo = createConversationSubscriptionWaitsRepo(db, writeQueue);
+  const activeWaitService = createActiveWaitService({
+    repo: waitsRepo,
+    subscriptions: repo,
+    isRecipientEligible,
+    readTerminalSource: createTerminalSourceReader(sourceDeps),
+    async canDiscardMissingBatch(batch) {
+      const identity = readConversation(batch.recipient.conversationId);
+      if (!identity || identity.projectPath !== batch.recipient.projectPath)
+        return false;
+      if (
+        identity.conversation.pendingQueue.some(
+          (row) =>
+            row.metadata?.kind === "subscription_update" &&
+            row.metadata.batchId === batch.id,
+        )
+      )
+        return false;
+      const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
+      return !(await hasTranscriptEntry(
+        batch.recipient.conversationId,
+        batch.id,
+      ));
+    },
+    waitGetCommand(wait) {
+      const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+      const identity = readConversation(wait.recipient.conversationId);
+      const sessionFlag = identity?.sessionName
+        ? ` --session=${quote(identity.sessionName)}`
+        : "";
+      return `cctl subscription wait-get --project=${quote(projectNameFromPath(wait.recipient.projectPath))}${sessionFlag} --conversation=${quote(wait.recipient.conversationId)} -- ${quote(wait.subscriptionId)}`;
+    },
+  });
   const service = createSubscriptionService({
     repo,
-    async isRecipientEligible(recipient) {
-      return isEligibleSubscriptionRecipient(
-        readConversation(recipient.conversationId),
-        recipient.projectPath,
-      );
+    isRecipientEligible,
+    async cancelActiveWait(recipient, subscriptionId) {
+      await activeWaitService.cancel(recipient, subscriptionId);
     },
     discoverInvolvement,
-    readSource: createSubscriptionSourceReader({
-      notepads,
-      tickets: createTicketsRepo(db, writeQueue),
-      specs: createSpecsRepo(db, writeQueue),
-      specEvents: createSpecEventsRepo(db),
-      workflows: createGraphWorkflowExecutionsRepo(db),
-      archivedWorkflows: createGraphWorkflowArchivedExecutionsRepo(db),
-      workflowEvents: createGraphWorkflowEventsRepo(db),
-      validations: createValidationRunsRepo(db),
-      jobs: createJobsRepo(db),
-      queries,
-      ticketChanges,
-    }),
+    readSource: createSubscriptionSourceReader(sourceDeps),
     now: () => new Date().toISOString(),
     newId: randomUUID,
     inboxCommand(recipient) {
@@ -85,20 +129,26 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
       return `cctl inbox list --project=${quote(projectNameFromPath(recipient.projectPath))}${sessionFlag} --conversation=${quote(recipient.conversationId)}`;
     },
   });
-  return { service, repo, readConversation };
+  return { service, repo, readConversation, activeWaitService, waitsRepo };
 }
 
-function getRuntime() {
+export function getSubscriptionRuntime() {
   return getGlobalSingleton("__cc_subscriptions_runtime", () =>
     createSubscriptionRuntime(getStateDb(), getSharedWriteQueue()),
   );
 }
 
 export function getSubscriptionService() {
-  return getRuntime().service;
+  return getSubscriptionRuntime().service;
+}
+
+export function getActiveWaitService() {
+  return getSubscriptionRuntime().activeWaitService;
 }
 
 /** Startup-only recovery, after the previous process's runtime ownership is gone. */
 export async function recoverInterruptedSubscriptionDeliveries(): Promise<number> {
-  return getRuntime().repo.recoverOrphanedClaims(new Date().toISOString());
+  return getSubscriptionRuntime().repo.recoverOrphanedClaims(
+    new Date().toISOString(),
+  );
 }

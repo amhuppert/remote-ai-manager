@@ -426,14 +426,14 @@ describe("passive subscription policy", () => {
       reloaded.find((delivery) => delivery.fact.occurrenceId === "newer"),
     ).toMatchObject({ state: "queued", attemptId: "competing-attempt" });
   });
-  it("matches configured event kinds but leaves active-mode follows out of passive input", async () => {
+  it("matches configured event kinds for passive follows", async () => {
     const s = setup();
     const subscription = conversationSubscriptionSchema.parse({
       id: "configured",
       recipient,
       source,
       reason: "Configured source",
-      mode: "active",
+      mode: "passive",
       eventKinds: ["approved"],
       expiresAt: null,
       status: "following",
@@ -465,10 +465,45 @@ describe("passive subscription policy", () => {
     expect(
       (await s.service.prepareBriefing({ recipient, attemptId: "passive" }))
         .block,
-    ).toBeNull();
+    ).toContain("Approved");
     expect((await s.reload().readInbox(recipient, {})).items[0]).toMatchObject({
-      state: "pending",
+      state: "queued",
     });
+  });
+  it("leaves active follows to the one-time wait owner during passive reconciliation", async () => {
+    const s = setup();
+    await s.repo.createIfAbsent(
+      conversationSubscriptionSchema.parse({
+        id: "active",
+        recipient,
+        source,
+        reason: "One-time wait",
+        mode: "active",
+        eventKinds: null,
+        expiresAt: null,
+        status: "following",
+        cursor: "1",
+        createdAt: at,
+        updatedAt: at,
+        unfollowedAt: null,
+        missingAt: null,
+        lastError: null,
+      }),
+    );
+    s.setResult({
+      cursor: "2",
+      missing: false,
+      facts: [fact("revision", "Updated")],
+    });
+    await s.service.reconcile(recipient);
+    expect((await s.reload().readInbox(recipient, {})).items).toEqual([]);
+    expect(await s.reload().get(recipient, "active")).toMatchObject({
+      cursor: "1",
+    });
+    expect(
+      (await s.service.prepareBriefing({ recipient, attemptId: "passive" }))
+        .block,
+    ).toBeNull();
   });
   it("refuses archived, deleted and lane recipients and does not inherit forks", async () => {
     const s = setup({

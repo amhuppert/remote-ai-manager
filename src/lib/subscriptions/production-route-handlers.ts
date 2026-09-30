@@ -6,10 +6,19 @@ import {
   createSubscriptionRouteHandlers,
   type SubscriptionRouteDeps,
 } from "./route-handlers";
-import { getSubscriptionService } from "./service-factory";
+import {
+  getActiveWaitService,
+  getSubscriptionService,
+} from "./service-factory";
+import { registerActiveSubscriptionWait } from "./active-wait-production";
 
 const deps: SubscriptionRouteDeps = {
   getService: getSubscriptionService,
+  getWaitService: () => {
+    const service = getActiveWaitService();
+    return { ...service, register: registerActiveSubscriptionWait };
+  },
+  now: () => new Date().toISOString(),
   resolveProjectPath,
   getSession: (projectPath, sessionName) =>
     getStateStore().getSession(projectPath, sessionName),
@@ -32,3 +41,9 @@ export const projectSubscriptionUnfollowDELETE = withTracing(
 );
 export const projectInboxListGET = withTracing(project.inboxGET);
 export const projectInboxDetailGET = withTracing(project.deliveryGET);
+export const sessionSubscriptionWaitPOST = withTracing(session.waitPOST);
+export const sessionSubscriptionWaitsGET = withTracing(session.waitsGET);
+export const sessionSubscriptionWaitDetailGET = withTracing(session.waitGET);
+export const projectSubscriptionWaitPOST = withTracing(project.waitPOST);
+export const projectSubscriptionWaitsGET = withTracing(project.waitsGET);
+export const projectSubscriptionWaitDetailGET = withTracing(project.waitGET);

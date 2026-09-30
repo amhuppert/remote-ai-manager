@@ -55,6 +55,7 @@ import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { isInTurnQuestionId } from "@/lib/conversations/in-turn-questions";
 import { isActiveQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
+import { hasOnlySubscriptionWakeQueue } from "@/lib/conversations/message-queue-subscription-admission";
 
 // The `conversation-manager` module key is a stable log-query key: rehydration
 // events group with the manager's actor lifecycle events, so one module filter
@@ -579,6 +580,34 @@ export async function rehydrateConversationActors(
 
       const resumeSnapshot =
         snapshot && shouldRehydrateSnapshot(snapshot) ? snapshot : undefined;
+      // A wake cannot replace the human answer even when the debounced resume
+      // token was lost. Ordinary queued answers/redirects retain idle recovery.
+      if (
+        !resumeSnapshot &&
+        conversation.pendingQuestionId !== null &&
+        hasOnlySubscriptionWakeQueue(conversation)
+      ) {
+        try {
+          await resolved.queue.recoverAbandonedDeliveries({
+            projectPath,
+            sessionName: storeSessionName,
+            conversationId: conversation.id,
+          });
+          await resolved.repairQueuedAcceptance?.({
+            projectPath,
+            sessionName: storeSessionName,
+            conversationId: conversation.id,
+          });
+        } catch (error) {
+          logger.error("queue.recover_failed", {
+            conversationId: conversation.id,
+            ...scopeRef,
+            error: getErrorMessage(error),
+          });
+        }
+        skippedNonResumable++;
+        return;
+      }
       const hasOrdinaryQueue =
         conversation.role === null &&
         !conversation.archived &&

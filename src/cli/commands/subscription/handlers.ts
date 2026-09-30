@@ -23,6 +23,12 @@ import {
   type SubscriptionDelivery,
 } from "@/lib/subscriptions/schemas";
 import {
+  activeSubscriptionWaitSchema,
+  subscriptionWakeBatchSchema,
+  type ActiveSubscriptionWait,
+  type SubscriptionWakeBatch,
+} from "@/lib/subscriptions/active-wait-schemas";
+import {
   resolveCcConversationTarget,
   explicitScopeFlags,
   type CcErrorCode,
@@ -39,10 +45,15 @@ import {
   subscriptionListCommand,
   inboxListCommand,
   inboxGetCommand,
+  subscriptionWaitGetCommand,
+  subscriptionWaitsCommand,
   type subscriptionListSpec,
   type subscriptionUnfollowSpec,
   type inboxListSpec,
   type inboxGetSpec,
+  type subscriptionWaitSpec,
+  type subscriptionWaitsSpec,
+  type subscriptionWaitGetSpec,
 } from "./definitions";
 
 type Input<S extends CommandSpec> = HandlerInput<
@@ -80,6 +91,14 @@ const deliveryResponse = z.object({ delivery: subscriptionDeliverySchema });
 const unfollowResponse = z.object({
   subscription: conversationSubscriptionSchema,
 });
+const waitResponse = z.object({ wait: activeSubscriptionWaitSchema });
+const waitsResponse = z.object({
+  waits: z.array(activeSubscriptionWaitSchema),
+  ...pagination,
+});
+const waitDetailResponse = waitResponse.extend({
+  batch: subscriptionWakeBatchSchema.nullable(),
+});
 
 function invalidResponse() {
   return {
@@ -100,6 +119,211 @@ function omissionText(
 function singleLine(text: string) {
   return text.replace(/\s+/g, " ");
 }
+
+export const subscriptionWaitHandler: Write<typeof subscriptionWaitSpec> = {
+  run: writeRunner<
+    Input<typeof subscriptionWaitSpec>,
+    { wait: ActiveSubscriptionWait; getCommand: string },
+    CcErrorCode
+  >({
+    async run({ app, ctx }) {
+      const resolved = await resolveCcConversationTarget(app);
+      if (!resolved.ok) return { effect: "not_applied", result: resolved };
+      const { target, ...connection } = resolved.value;
+      const recovery = recoveryFacts([
+        { kind: "conversation", id: target.conversationId },
+      ]);
+      const response = await cliRequest(app.host, {
+        ...connection,
+        headers: { "x-cc-conversation-id": target.conversationId },
+        method: "POST",
+        path: `${conversationTargetApiBase(target)}/subscriptions/waits`,
+        body: {
+          source: { kind: ctx.args.kind, id: ctx.args["source-id"] },
+          reason: ctx.flags.reason,
+          expiresIn: ctx.flags["expires-in"],
+        },
+      });
+      if (response.kind !== "ok") return ccWriteFailure(response, recovery);
+      const parsed = waitResponse.safeParse(response.body);
+      if (!parsed.success)
+        return { effect: "unknown", recovery, result: invalidResponse() };
+      const { wait } = parsed.data;
+      const getCommand = renderInvocation(
+        invocation(subscriptionWaitGetCommand, {
+          args: { "subscription-id": wait.subscriptionId },
+          flags: {
+            ...explicitScopeFlags(app),
+            project: target.projectName,
+            conversation: target.conversationId,
+            ...(target.scope === "session"
+              ? { session: target.sessionName }
+              : {}),
+          },
+        }),
+        "cctl",
+      );
+      return {
+        effect: "applied",
+        recovery: recoveryFacts([
+          { kind: "subscription", id: wait.subscriptionId },
+          { kind: "subscription-wait", id: wait.id },
+        ]),
+        result: { ok: true, data: { wait, getCommand } },
+      };
+    },
+    text: ({ wait, getCommand }) =>
+      quoteLiteralText(
+        `${wait.id}  ${wait.state}  ${wait.source.kind}:${wait.source.id}\nsubscription: ${wait.subscriptionId}\nexpires: ${wait.expiresAt}\nget: ${getCommand}\n`,
+      ),
+  }),
+};
+
+type WaitOutline = Pick<
+  ActiveSubscriptionWait,
+  | "id"
+  | "subscriptionId"
+  | "source"
+  | "state"
+  | "outcome"
+  | "expiresAt"
+  | "batchId"
+  | "deliveryId"
+> & {
+  reasonSummary: string;
+  getCommand: string;
+};
+
+export const subscriptionWaitsHandler: Read<typeof subscriptionWaitsSpec> = {
+  run: runner<
+    Input<typeof subscriptionWaitsSpec>,
+    { waits: readonly WaitOutline[]; omission: Omission; next: string | null },
+    CcErrorCode
+  >({
+    async run({ app, ctx }) {
+      const resolved = await resolveCcConversationTarget(app);
+      if (!resolved.ok) return resolved;
+      const { target, ...connection } = resolved.value;
+      const flags = {
+        ...explicitScopeFlags(app),
+        project: target.projectName,
+        conversation: target.conversationId,
+        ...(target.scope === "session" ? { session: target.sessionName } : {}),
+      };
+      const query = new URLSearchParams({
+        limit: String(ctx.flags.limit),
+        offset: String(ctx.flags.offset),
+      });
+      const response = await cliRequest(app.host, {
+        ...connection,
+        headers: { "x-cc-conversation-id": target.conversationId },
+        method: "GET",
+        path: `${conversationTargetApiBase(target)}/subscriptions/waits?${query}`,
+      });
+      if (response.kind !== "ok") return ccRequestFailure(response);
+      const parsed = waitsResponse.safeParse(response.body);
+      if (!parsed.success) return invalidResponse();
+      const { waits, total, offset, limit } = parsed.data;
+      const items = waits.map((wait) => ({
+        id: wait.id,
+        subscriptionId: wait.subscriptionId,
+        source: wait.source,
+        state: wait.state,
+        outcome: wait.outcome,
+        expiresAt: wait.expiresAt,
+        batchId: wait.batchId,
+        deliveryId: wait.deliveryId,
+        reasonSummary: singleLine(wait.reason).slice(0, 240),
+        getCommand: renderInvocation(
+          invocation(subscriptionWaitGetCommand, {
+            args: { "subscription-id": wait.subscriptionId },
+            flags,
+          }),
+          "cctl",
+        ),
+      }));
+      const source = {
+        items,
+        total: { kind: "known", count: count(total) } as const,
+      };
+      const bounded = page(
+        offset + waits.length < total
+          ? {
+              ...source,
+              more: true,
+              reveal: invocation(subscriptionWaitsCommand, {
+                flags: { ...flags, limit, offset: offset + waits.length },
+              }),
+            }
+          : { ...source, more: false },
+      );
+      return {
+        ok: true,
+        data: {
+          waits: bounded.items,
+          omission: bounded.omission,
+          next: bounded.omission.truncated
+            ? renderInvocation(bounded.omission.reveal, "cctl")
+            : null,
+        },
+      };
+    },
+    text: ({ waits, omission, next }) =>
+      quoteLiteralText(
+        `${omissionText("waits", omission, next)}\n${waits.map((wait) => `${wait.id}  ${wait.state}  ${wait.source.kind}:${wait.source.id}  ${wait.outcome ?? "pending"}\n  subscription: ${wait.subscriptionId}  expires: ${wait.expiresAt}\n  reason: ${wait.reasonSummary}\n  get: ${wait.getCommand}`).join("\n")}\n`,
+      ),
+  }),
+};
+
+export const subscriptionWaitGetHandler: Read<typeof subscriptionWaitGetSpec> =
+  {
+    run: runner<
+      Input<typeof subscriptionWaitGetSpec>,
+      {
+        wait: ActiveSubscriptionWait;
+        batch: SubscriptionWakeBatch | null;
+        deliveryCommand: string | null;
+      },
+      CcErrorCode
+    >({
+      async run({ app, ctx }) {
+        const resolved = await resolveCcConversationTarget(app);
+        if (!resolved.ok) return resolved;
+        const { target, ...connection } = resolved.value;
+        const response = await cliRequest(app.host, {
+          ...connection,
+          headers: { "x-cc-conversation-id": target.conversationId },
+          method: "GET",
+          path: `${conversationTargetApiBase(target)}/subscriptions/waits/${encodePathSegment(ctx.args["subscription-id"])}`,
+        });
+        if (response.kind !== "ok") return ccRequestFailure(response);
+        const parsed = waitDetailResponse.safeParse(response.body);
+        if (!parsed.success) return invalidResponse();
+        const { wait, batch } = parsed.data;
+        const deliveryCommand = wait.deliveryId
+          ? renderInvocation(
+              invocation(inboxGetCommand, {
+                args: { "delivery-id": wait.deliveryId },
+                flags: {
+                  ...explicitScopeFlags(app),
+                  project: target.projectName,
+                  conversation: target.conversationId,
+                  ...(target.scope === "session"
+                    ? { session: target.sessionName }
+                    : {}),
+                },
+              }),
+              "cctl",
+            )
+          : null;
+        return { ok: true, data: { wait, batch, deliveryCommand } };
+      },
+      text: ({ wait, batch, deliveryCommand }) =>
+        quoteLiteralText(
+          `${wait.id}  ${wait.state}  ${wait.outcome ?? "pending"}\nsubscription: ${wait.subscriptionId}\nsource: ${wait.source.kind}:${wait.source.id}\nreason: ${wait.reason}\nexpires: ${wait.expiresAt}\nwake batch: ${batch ? `${batch.id}  ${batch.state}\nqueue message: ${batch.queueMessageId}` : "not batched"}${deliveryCommand ? `\ndelivery: ${deliveryCommand}` : ""}${wait.causationBatchIds.length ? `\ncausation: ${wait.causationBatchIds.join(", ")}` : ""}${(batch?.lastError ?? wait.lastError) ? `\nproblem: ${batch?.lastError ?? wait.lastError}` : ""}\n`,
+        ),
+    }),
+  };
 
 export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
   run: runner<

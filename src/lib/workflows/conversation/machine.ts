@@ -226,6 +226,13 @@ export const conversationMachine = setup({
   },
 
   guards: {
+    acceptsPrompt: ({ context, event }) =>
+      !checkpointHoldsOrdinaryAdmission(context.checkpoint) &&
+      (event.type !== "SUBMIT_PROMPT" ||
+        !event.queuedDelivery?.subscriptionBatchId ||
+        (context.pendingQuestion === null &&
+          context.role === null &&
+          context.debugMode?.active !== true)),
     isActiveTurnTaskRun: ({ context }) =>
       context.activeTurn?.kind === "task_run",
     /**
@@ -513,7 +520,7 @@ export const conversationMachine = setup({
       ],
       on: {
         SUBMIT_PROMPT: {
-          guard: not("checkpointHoldsAdmission"),
+          guard: "acceptsPrompt",
           target: "acquiringResources",
           actions: "claimConversationTurn",
         },
@@ -995,7 +1002,7 @@ export const conversationMachine = setup({
       entry: [{ type: "drainPendingQueue" }],
       on: {
         SUBMIT_PROMPT: {
-          guard: not("checkpointHoldsAdmission"),
+          guard: "acceptsPrompt",
           target: "acquiringResources",
           actions: "claimConversationTurn",
         },
@@ -1062,7 +1069,7 @@ export const conversationMachine = setup({
       ],
       on: {
         SUBMIT_PROMPT: {
-          guard: not("checkpointHoldsAdmission"),
+          guard: "acceptsPrompt",
           target: "acquiringResources",
           actions: "claimConversationTurn",
         },

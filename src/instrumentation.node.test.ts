@@ -160,6 +160,9 @@ describe("createStartupRegistrar", () => {
         calls.push("subscription-recovery");
         return 2;
       },
+      startActiveSubscriptionWakes: async () => {
+        calls.push("subscription-wakes");
+      },
     });
 
     await register();
@@ -190,6 +193,13 @@ describe("createStartupRegistrar", () => {
     );
     expect(calls.indexOf("subscription-recovery")).toBeLessThan(
       calls.indexOf("rehydrate"),
+    );
+    expect(calls).toContain("subscription-wakes");
+    expect(calls.indexOf("subscription-wakes")).toBeGreaterThan(
+      calls.indexOf("notifications"),
+    );
+    expect(calls.indexOf("subscription-wakes")).toBeGreaterThan(
+      calls.indexOf("envelope-recovery"),
     );
   });
 

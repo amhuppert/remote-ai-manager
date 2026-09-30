@@ -38,6 +38,16 @@ export function queuedMessageNeedsReview(
   return status === "uncertain" || status === "failed";
 }
 
+/** Automatic wakes retain review evidence without blocking a human answer. */
+export function queuedMessageBlocksOrdinaryAdmission(
+  entry: Pick<PendingQueuedMessage, "status" | "metadata">,
+): boolean {
+  return (
+    queuedMessageNeedsReview(entry.status) &&
+    entry.metadata?.kind !== "subscription_update"
+  );
+}
+
 export const queueReviewActionSchema = z.enum(["retry", "discard"]);
 export type QueueReviewAction = z.infer<typeof queueReviewActionSchema>;
 
@@ -56,10 +66,16 @@ export function isTerminalQueuedMessageStatus(
 // typed by the user. `question_answers` marks the delimited
 // <cc-question-answers> block the answer route enqueues, so the UI renders an
 // answer card instead of the raw text.
-export const queuedMessageMetadataSchema = z.object({
-  kind: z.literal("question_answers"),
-  questionBatchId: z.string(),
-});
+export const queuedMessageMetadataSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("question_answers"),
+    questionBatchId: z.string(),
+  }),
+  z.object({
+    kind: z.literal("subscription_update"),
+    batchId: z.string().min(1),
+  }),
+]);
 export type QueuedMessageMetadata = z.infer<typeof queuedMessageMetadataSchema>;
 
 // A durably-persisted queued message stored in `ConversationState.pendingQueue`.

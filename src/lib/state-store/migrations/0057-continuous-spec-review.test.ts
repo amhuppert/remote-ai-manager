@@ -363,6 +363,8 @@ describe("0057 continuous spec review", () => {
         CONTINUOUS_SPEC_REVIEW_SCHEMA_VERSION - 1,
       ),
     ).toThrow(/greater than known build version/);
-    expect(KNOWN_SCHEMA_VERSION).toBe(CONTINUOUS_SPEC_REVIEW_SCHEMA_VERSION);
+    expect(KNOWN_SCHEMA_VERSION).toBeGreaterThanOrEqual(
+      CONTINUOUS_SPEC_REVIEW_SCHEMA_VERSION,
+    );
   });
 });

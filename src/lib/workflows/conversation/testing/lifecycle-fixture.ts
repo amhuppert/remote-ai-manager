@@ -27,6 +27,8 @@ import { makeConversationState } from "@/lib/conversations/testing/conversation-
 import { admitConversationProfile } from "@/lib/conversations/profile-admission";
 import { createConversationManagerFixture } from "./manager-fixture";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
+import { subscriptionWakeHold } from "@/lib/conversations/message-queue-subscription-admission";
+import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import { loadActorInput } from "../actor-input-loader";
 import { hydrateCheckpointAuthority } from "../checkpoint-restart";
 import { createActorDependenciesFixture } from "./actor-deps-fixture";
@@ -44,6 +46,12 @@ import {
 import type { ConversationBinding } from "../turn-spec";
 
 export interface LifecycleFixtureOptions {
+  subscriptionWakeHold?(key: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    batchId?: string;
+  }): Promise<string | null>;
   beforeProfileAdmission?(): Promise<void>;
   beforeForkAdmission?(): Promise<void>;
   /** Runs ahead of every admission-state read; throwing fails that read. */
@@ -228,6 +236,20 @@ export async function createLifecycleFixture(
       verifyDebugCleanup: options.verifyDebugCleanup,
       loadActors: async () => conversationActors,
       dependencies: {
+        async readSubscriptionWakeHold(key) {
+          if (options.subscriptionWakeHold)
+            return options.subscriptionWakeHold(key);
+          const conversation = await persistence.store.getConversation(
+            key.projectPath,
+            key.sessionName,
+            key.conversationId,
+          );
+          return subscriptionWakeHold({
+            conversation,
+            sessionArchived: false,
+            execution: null,
+          });
+        },
         readRuntimeInstructions: (input) =>
           readRuntimeInstructions(
             { execution: actorDependencies, context: actorDependencies },
@@ -256,7 +278,7 @@ export async function createLifecycleFixture(
           return {
             found: row !== null,
             requiresQueueReview:
-              row?.pendingQueue.some((item) => item.status === "uncertain") ??
+              row?.pendingQueue.some(queuedMessageBlocksOrdinaryAdmission) ??
               false,
           };
         },

@@ -376,13 +376,21 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl spec verify` — Verify content and lifecycle integrity
   - `cctl spec verify <slug> [options]`
   - Flags: `--against`.
-- `cctl subscription` — Inspect automatic conversation follows and remember opt-outs
+- `cctl subscription` — Manage conversation follows and terminal waits
   - `cctl subscription <command> [options]`
 - `cctl subscription list` — Inspect this conversation's automatic follows and opt-outs
   - `cctl subscription list [options]`
   - Flags: `--limit`, `--offset`.
 - `cctl subscription unfollow` — Stop following a source and remember the opt-out
   - `cctl subscription unfollow <subscription-id> [options]`
+- `cctl subscription wait` — Register a terminal wait and return immediately
+  - `cctl subscription wait <kind> <source-id> (--reason <string> | --reason-file <path>) [options]`
+  - Flags: `--reason` / `--reason-file` (required), `--reason-file`, `--expires-in`.
+- `cctl subscription wait-get` — Inspect one terminal wait and wake batch
+  - `cctl subscription wait-get <subscription-id> [options]`
+- `cctl subscription waits` — Inspect this conversation's terminal waits
+  - `cctl subscription waits [options]`
+  - Flags: `--limit`, `--offset`.
 - `cctl ticket` — Track and execute project work
   - `cctl ticket <command> [options]`
 - `cctl ticket attach` — Attach reusable work context

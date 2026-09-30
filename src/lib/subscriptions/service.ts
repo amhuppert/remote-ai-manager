@@ -46,6 +46,10 @@ export interface SubscriptionServiceDeps {
   now?(): string;
   newId?(): string;
   inboxCommand?(recipient: SubscriptionRecipient): string;
+  cancelActiveWait?(
+    recipient: SubscriptionRecipient,
+    subscriptionId: string,
+  ): Promise<void>;
 }
 export interface PreparedSubscriptionBriefing {
   block: string | null;
@@ -250,7 +254,11 @@ export function createSubscriptionService(
     await sync(recipient);
     const at = now();
     for (const subscription of await deps.repo.list(recipient)) {
-      if (!isLive(subscription, at) || subscription.missingAt !== null)
+      if (
+        !isLive(subscription, at) ||
+        subscription.mode !== "passive" ||
+        subscription.missingAt !== null
+      )
         continue;
       report.subscriptions++;
       try {
@@ -474,6 +482,7 @@ export function createSubscriptionService(
       return deps.repo.list(recipient);
     },
     async unfollow(recipient, id) {
+      await deps.cancelActiveWait?.(recipient, id);
       return (await deps.repo.unfollow(recipient, id, now()))
         ? deps.repo.get(recipient, id)
         : null;

@@ -11,7 +11,7 @@ import { prepareRuntimeInstructions } from "./runtime-instructions";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationActorDependencies } from "./actor-dependencies";
-import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
+import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import type { ExecutionClass } from "@/lib/agent-backends/execution-schemas";
@@ -561,7 +561,7 @@ async function executePromptForMachine(
   ) {
     if (
       persistedConversation?.pendingQueue.some((row) =>
-        queuedMessageNeedsReview(row.status),
+        queuedMessageBlocksOrdinaryAdmission(row),
       )
     ) {
       const error = "Review queued deliveries before sending another prompt.";
@@ -805,7 +805,10 @@ async function executePromptForMachine(
   });
 
   const currentTurnMessageId =
-    input.turn.queuedDelivery?.messageIds[0] ?? input.streamId ?? null;
+    input.turn.queuedDelivery?.subscriptionBatchId ??
+    input.turn.queuedDelivery?.messageIds[0] ??
+    input.streamId ??
+    null;
   runtimeState.currentTurnMessageId = currentTurnMessageId ?? undefined;
   const workflowResultAttemptId =
     input.turn.queuedDelivery?.deliveryAttemptId ??

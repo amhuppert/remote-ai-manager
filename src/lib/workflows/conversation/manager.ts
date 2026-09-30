@@ -67,6 +67,7 @@ import { admitConversationProfileForTurn } from "@/lib/conversations/profile-adm
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import { drainConversationQueue } from "@/lib/conversations/message-queue-drain";
+import { hasOnlySubscriptionWakeQueue } from "@/lib/conversations/message-queue-subscription-admission";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   checkpointHoldsOrdinaryAdmission,
@@ -372,6 +373,12 @@ import type { ConversationRuntimeState } from "./runtime-state";
 import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
 
 export interface ConversationManagerDependencies {
+  readSubscriptionWakeHold?(identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    batchId?: string;
+  }): Promise<string | null>;
   readRuntimeInstructions(
     input: Parameters<typeof readRuntimeInstructions>[1],
   ): ReturnType<typeof readRuntimeInstructions>;
@@ -1120,6 +1127,17 @@ export function createConversationManager(
         message: "Turn admission cancelled",
       };
     const identity = conversationStoreIdentity(binding.address);
+    if (
+      binding.kind === "durable" &&
+      input.turn.kind !== "task_run" &&
+      input.turn.queuedDelivery?.subscriptionBatchId
+    ) {
+      const hold = await deps.readSubscriptionWakeHold?.({
+        ...identity,
+        batchId: input.turn.queuedDelivery.subscriptionBatchId,
+      });
+      if (hold) return { kind: "refused", code: "busy", message: hold };
+    }
     const key = conversationRuntimeKey(
       identity.projectPath,
       identity.sessionName,
@@ -1286,6 +1304,16 @@ export function createConversationManager(
               code: "queue_review_required",
               message: "Review queued deliveries before sending another prompt",
             };
+          if (
+            turn.kind === "conversation_turn" &&
+            turn.queuedDelivery?.subscriptionBatchId
+          ) {
+            const hold = await deps.readSubscriptionWakeHold?.({
+              ...identity,
+              batchId: turn.queuedDelivery.subscriptionBatchId,
+            });
+            if (hold) return { kind: "refused", code: "busy", message: hold };
+          }
         }
         if (input.signal?.aborted || reservation.cancelled)
           return {
@@ -1386,6 +1414,30 @@ export function createConversationManager(
             code: "cancelled",
             message: "Turn admission cancelled",
           };
+        if (
+          binding.kind === "durable" &&
+          turn.kind === "conversation_turn" &&
+          turn.queuedDelivery?.subscriptionBatchId
+        ) {
+          // A wake must still be eligible after every awaited admission step:
+          // profile/fork resolution may have overlapped archival or a new hold.
+          const hold = await deps.readSubscriptionWakeHold?.({
+            ...identity,
+            batchId: turn.queuedDelivery.subscriptionBatchId,
+          });
+          if (hold) return { kind: "refused", code: "busy", message: hold };
+          if (
+            maintenanceHolds(key) ||
+            runtime.stopping ||
+            runtime.disposing ||
+            runtime.managed.externalTurnActive
+          )
+            return {
+              kind: "refused",
+              code: "busy",
+              message: "Subscription recipient is not ready to accept a wake",
+            };
+        }
         if (!admissionIsCurrent())
           return {
             kind: "refused",
@@ -1535,6 +1587,15 @@ export function createConversationManager(
       sessionName,
       conversationId,
     );
+    if (!existing) {
+      const row = await deps.checkpoint.readConversation({
+        projectPath,
+        sessionName,
+        conversationId,
+      });
+      if (row?.pendingQuestionId != null && hasOnlySubscriptionWakeQueue(row))
+        return;
+    }
     const actor = await ensureConversationActor(
       projectPath,
       sessionName,

@@ -1177,6 +1177,17 @@ export function createTranscriptEntryIdIndex(
 
 const productionEntryIdIndex = createTranscriptEntryIdIndex(productionMaxSeqIO);
 
+/** Durable entry evidence; queued user entries are archived only on input acceptance. */
+export async function hasTranscriptEntry(
+  conversationId: string,
+  entryId: string,
+): Promise<boolean> {
+  return productionEntryIdIndex.has(
+    await getTranscriptPath(conversationId),
+    entryId,
+  );
+}
+
 export function _resetTranscriptEntryIdIndexForTesting(): void {
   productionEntryIdIndex.resetCache();
 }

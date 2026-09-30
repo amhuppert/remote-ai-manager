@@ -140,6 +140,113 @@ afterEach(() => {
 });
 
 describe("collectRehydrationCandidates", () => {
+  it.each([
+    { humanRedirect: false, abandoned: false },
+    { humanRedirect: true, abandoned: false },
+    { humanRedirect: false, abandoned: true },
+  ])(
+    "preserves a question behind subscription wakes at restart: %j",
+    async ({ humanRedirect, abandoned }) => {
+      const fixture = createPersistenceFixture();
+      const key = {
+        projectPath: "/wake-startup",
+        sessionName: "s",
+        conversationId: "c",
+      };
+      try {
+        fixture.seedProject(key.projectPath);
+        fixture.seedSession(key.projectPath, key.sessionName);
+        await fixture.seedConversation(
+          key.projectPath,
+          key.sessionName,
+          makeConversationState({
+            id: key.conversationId,
+            pendingQuestionId: "question",
+            pendingQuestions: [],
+          }),
+        );
+        const queue = createMessageQueueService({
+          ...fixture.deps,
+          getProjectDisplayName: () => "wake-startup",
+          broadcast() {},
+          now: () => ts,
+          newId: () => crypto.randomUUID(),
+        });
+        await queue.enqueue({
+          ...key,
+          inputOrigin: "generated",
+          metadata: { kind: "subscription_update", batchId: "batch" },
+          content: [{ type: "text", text: "Source update" }],
+        });
+        if (abandoned) {
+          await fixture.store.mutateConversation(
+            key.projectPath,
+            key.sessionName,
+            key.conversationId,
+            "before wake",
+            (row) => {
+              row.pendingQuestionId = null;
+            },
+          );
+          await queue.claimNextTurnBatch(key);
+          await fixture.store.mutateConversation(
+            key.projectPath,
+            key.sessionName,
+            key.conversationId,
+            "wake asks question",
+            (row) => {
+              row.pendingQuestionId = "question";
+            },
+          );
+        }
+        if (humanRedirect)
+          await queue.enqueue({
+            ...key,
+            inputOrigin: "user",
+            content: [{ type: "text", text: "Redirect" }],
+          });
+        setConversationQueueDeps({
+          ...queue,
+          submitTurn: async () => ({
+            kind: "refused",
+            code: "busy",
+            message: "Boundary only",
+          }),
+          runConversationCommand: async () => {
+            throw new Error("Not a command");
+          },
+        });
+        machineFactory = createTestMachine;
+        const count = await runRehydration({
+          ...rehydrationInfrastructure(),
+          mutateConversation: fixture.store.mutateConversation,
+          readAllForStartup: () => readAllForStartupFromDb(fixture.db),
+          listAllProjectConversations:
+            fixture.store.listAllProjectConversations,
+          getProjectDisplayName: () => "wake-startup",
+          getConversationMachineSnapshot: () => null,
+          validateRestoredSnapshot: () => null,
+        });
+        expect(count).toBe(humanRedirect ? 1 : 0);
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(
+            key.projectPath,
+            key.sessionName,
+            key.conversationId,
+          );
+        expect(reloaded?.pendingQuestionId).toBe(
+          humanRedirect ? null : "question",
+        );
+        if (abandoned)
+          expect(reloaded?.pendingQueue[0]?.status).toBe("uncertain");
+      } finally {
+        managerFixture.dispose();
+        fixture.close();
+      }
+    },
+  );
+
   it.each(["session", "project"] as const)(
     "retires a stopped in-turn question without queued messages (%s)",
     async (scope) => {

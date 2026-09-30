@@ -1,6 +1,10 @@
 import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { readRuntimeInstructions } from "./runtime-instructions";
 import { productionPassiveSubscriptionDependencies } from "./pre-turn/passive-subscription-context";
+import {
+  createSubscriptionWakeAdmissionReader,
+  readSubscriptionWakeHold,
+} from "@/lib/conversations/message-queue-subscription-admission";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -334,7 +338,7 @@ import {
   registerAbortController,
   unregisterAbortController,
 } from "@/lib/conversations/abort-registry";
-import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
+import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import { ephemeralConversationEffects } from "./effects";
 import { conversationCapabilitiesForBackend } from "@/lib/agent-backends/catalog";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
@@ -374,6 +378,13 @@ async function hydrateProductionCheckpointAuthority(
 export function createProductionConversationManagerDependencies(): ConversationManagerDependencies {
   let actorDependencies: Promise<ProductionActorDependencies> | undefined;
   return {
+    readSubscriptionWakeHold: createSubscriptionWakeAdmissionReader({
+      async hasAcceptedInput(conversationId, batchId) {
+        const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
+        return hasTranscriptEntry(conversationId, batchId);
+      },
+      readHold: readSubscriptionWakeHold,
+    }),
     async readRuntimeInstructions(input) {
       return readRuntimeInstructions(
         await loadProductionActorDependencies(),
@@ -515,7 +526,7 @@ export function createProductionConversationManagerDependencies(): ConversationM
         found: row !== null,
         requiresQueueReview:
           row?.pendingQueue.some((item) =>
-            queuedMessageNeedsReview(item.status),
+            queuedMessageBlocksOrdinaryAdmission(item),
           ) ?? false,
       };
     },

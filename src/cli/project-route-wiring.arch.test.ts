@@ -74,9 +74,30 @@ function routeMatches(route: ApiRoute, requestSegments: string[]): boolean {
 
 function findRoute(requestPath: string): ApiRoute | null {
   const requestSegments = requestPath.replace(/^\//, "").split("/");
-  return (
-    API_ROUTES.find((route) => routeMatches(route, requestSegments)) ?? null
+  const segmentRank = (segment: string | undefined) =>
+    segment === undefined
+      ? -1
+      : isCatchAll(segment)
+        ? 0
+        : isDynamic(segment)
+          ? 1
+          : 2;
+  const matches = API_ROUTES.filter((route) =>
+    routeMatches(route, requestSegments),
   );
+  matches.sort((left, right) => {
+    for (
+      let index = 0;
+      index < Math.max(left.segments.length, right.segments.length);
+      index++
+    ) {
+      const difference =
+        segmentRank(right.segments[index]) - segmentRank(left.segments[index]);
+      if (difference) return difference;
+    }
+    return 0;
+  });
+  return matches[0] ?? null;
 }
 
 /** The env a PROJECT conversation's agent receives (R2.2). */
@@ -390,6 +411,28 @@ const PROJECT_SCOPE_INVOCATIONS: {
     body: {},
   },
   {
+    name: "subscription wait",
+    argv: [
+      "subscription",
+      "wait",
+      "workflow",
+      "execution-one",
+      "--reason",
+      "Continue after completion",
+    ],
+    body: {},
+  },
+  {
+    name: "subscription waits",
+    argv: ["subscription", "waits"],
+    body: { waits: [], total: 0, limit: 20, offset: 0 },
+  },
+  {
+    name: "subscription wait-get",
+    argv: ["subscription", "wait-get", "subscription-one"],
+    body: {},
+  },
+  {
     name: "inbox list",
     argv: ["inbox", "list"],
     body: { deliveries: [], total: 0, limit: 20, offset: 0 },
@@ -685,6 +728,14 @@ describe("route enumeration", () => {
       ),
     ).not.toBeNull();
   });
+
+  it("prefers static subscription waits over the dynamic subscription detail route", () => {
+    expect(
+      findRoute(
+        "/api/projects/cc/conversations/conv-1/subscriptions/waits",
+      )?.segments.slice(-2),
+    ).toEqual(["subscriptions", "waits"]);
+  });
 });
 
 describe("every project-supported cctl command reaches a real Next.js route", () => {
@@ -724,6 +775,28 @@ describe("session commands reach real session route modules", () => {
     {
       name: "subscription unfollow",
       argv: ["subscription", "unfollow", "sub-1"],
+      body: {},
+    },
+    {
+      name: "subscription wait",
+      argv: [
+        "subscription",
+        "wait",
+        "validation",
+        "run-one",
+        "--reason",
+        "Continue after completion",
+      ],
+      body: {},
+    },
+    {
+      name: "subscription waits",
+      argv: ["subscription", "waits"],
+      body: { waits: [], total: 0, limit: 20, offset: 0 },
+    },
+    {
+      name: "subscription wait-get",
+      argv: ["subscription", "wait-get", "subscription-one"],
       body: {},
     },
     {

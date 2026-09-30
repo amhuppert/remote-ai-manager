@@ -174,7 +174,7 @@ const DB_FILE_NAME = "command-center.db";
  * Older builds would pin such an approval by revision id alone, so migration
  * `0057-continuous-spec-review` fences them.
  */
-export const KNOWN_SCHEMA_VERSION = 23;
+export const KNOWN_SCHEMA_VERSION = 24;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -1847,6 +1847,35 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     ON ticket_status_changes (ticket_id, id);
 `;
 
+export const CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS conversation_subscription_waits (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL UNIQUE,
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('waiting','ready','settled','cancelled')),
+    expires_at TEXT NOT NULL,
+    delivery_id TEXT,
+    batch_id TEXT,
+    payload_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_subscription_waits_recipient
+    ON conversation_subscription_waits (project_path,conversation_id,state);
+  CREATE TABLE IF NOT EXISTS conversation_subscription_wake_batches (
+    id TEXT PRIMARY KEY,
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('planned','queued','accepted','failed','uncertain','cancelled')),
+    created_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_wake_one_pending
+    ON conversation_subscription_wake_batches (project_path,conversation_id)
+    WHERE state IN ('planned','queued','failed','uncertain');
+  CREATE INDEX IF NOT EXISTS idx_subscription_wake_rate
+    ON conversation_subscription_wake_batches (project_path,conversation_id,created_at);
+`;
+
 export const TICKET_RELATIONSHIPS_AND_STATUS_UPDATES_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS ticket_relationships (
     id               TEXT PRIMARY KEY,
@@ -2970,6 +2999,7 @@ const SCHEMA_DDL = `
 
   ${NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL}
   ${CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL}
+  ${CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL}
 
   ${MEMORY_SCHEMA_DDL}
 

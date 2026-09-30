@@ -72,6 +72,8 @@ export interface StartupDeps {
   recoverInterruptedConversationSnapshots(): Promise<number>;
   /** Marks unacknowledged subscription input from a prior process uncertain. */
   recoverInterruptedSubscriptionDeliveries?(): Promise<number>;
+  /** Starts active wait reconciliation after source recovery and actor rehydration. */
+  startActiveSubscriptionWakes?(): Promise<void>;
   /**
    * Deletes `refs/cc-merges/` refs no job row still holds. Optional so a test
    * that is not about parked refs need not supply it.
@@ -156,6 +158,11 @@ const defaultStartupDeps: StartupDeps = {
       await import("./lib/subscriptions/service-factory");
     return recoverInterruptedSubscriptionDeliveries();
   },
+  startActiveSubscriptionWakes: async () => {
+    const { startActiveSubscriptionWakes } =
+      await import("./lib/subscriptions/active-wait-production");
+    startActiveSubscriptionWakes();
+  },
   collectOrphanedParkedRefs: () => collectOrphanedParkedRefs(),
   reconcileSessionMemory: async () => {
     const { reconcileSessionMemoryAtStartup } =
@@ -164,7 +171,12 @@ const defaultStartupDeps: StartupDeps = {
   },
   startEventLoopStallSentinel,
   installRuntimeShutdownHook: () => {
-    installRuntimeShutdownHook(stopAllConversationActors);
+    installRuntimeShutdownHook(async () => {
+      const { stopActiveSubscriptionWakes } =
+        await import("./lib/subscriptions/active-wait-production");
+      await stopActiveSubscriptionWakes();
+      await stopAllConversationActors();
+    });
   },
   installServerShutdownGuard: () => {
     installServerShutdownGuardForProcess(closeAllEventStreams);
@@ -473,6 +485,16 @@ export function createStartupRegistrar(
 
     // Wire up push notification config reader
     deps.setConfigReader(deps.readConfig);
+
+    // Source recovery (including stale git jobs) and actor rehydration must
+    // finish before an active wait can interpret state or nudge its recipient.
+    try {
+      await deps.startActiveSubscriptionWakes?.();
+    } catch (err) {
+      logger.error("startup.subscription_wakes_failed", {
+        error: getErrorMessage(err),
+      });
+    }
   };
 }
 

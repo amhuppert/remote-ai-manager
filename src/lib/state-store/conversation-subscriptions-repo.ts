@@ -202,7 +202,7 @@ export function createConversationSubscriptionsRepo(
   );
   const advance =
     db.prepare(`UPDATE conversation_subscriptions SET cursor=@next_cursor,missing_at=@missing_at,updated_at=@at,last_error=NULL
-    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND missing_at IS NULL`);
+    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND mode='passive' AND missing_at IS NULL`);
   const claim =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state='queued',attempt_id=@attempt_id,attempt_count=attempt_count+1,queued_at=@at,accepted_at=NULL,finished_at=NULL,last_error=NULL
     WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND state IN ('pending','failed')

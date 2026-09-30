@@ -358,6 +358,9 @@ export async function drainConversationQueue(
       queuedDelivery: {
         messageIds: batch.messageIds,
         deliveryAttemptId: batch.deliveryAttemptId,
+        ...(batch.subscriptionBatchId
+          ? { subscriptionBatchId: batch.subscriptionBatchId }
+          : {}),
       },
     };
 

@@ -468,7 +468,10 @@ async function queueMessageInOrder(
   const entry = await enqueued;
   if (!entry) return null;
 
-  if (deliveryPolicy === "next_turn") {
+  if (
+    deliveryPolicy === "next_turn" ||
+    entry.metadata?.kind === "subscription_update"
+  ) {
     logger.info("queue.delivery_deferred", {
       projectName: deps.getProjectDisplayName(projectPath),
       ...scopeRef,

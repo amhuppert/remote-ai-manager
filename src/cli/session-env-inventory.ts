@@ -53,7 +53,7 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
   subscription: {
     support: "project-supported",
     reason:
-      "Follows belong to conversations of either scope; both route trees provide inspection and remembered opt-outs.",
+      "Follows and explicit terminal waits belong to conversations of either scope; both route trees provide registration, inspection and remembered opt-outs.",
   },
   inbox: {
     support: "project-supported",

@@ -10,6 +10,10 @@ import { publishEvent } from "@/lib/events/publication";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { createLogger } from "@/lib/logging";
 import { modelSelectionKey } from "@/lib/agent-backends/model-selection";
+import {
+  readSubscriptionWakeHold,
+  subscriptionWakeHold,
+} from "./message-queue-subscription-admission";
 
 import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
@@ -20,6 +24,7 @@ import {
   isActiveQueuedMessageStatus,
   pendingQueuedMessageSchema,
   queuedMessageNeedsReview,
+  queuedMessageBlocksOrdinaryAdmission,
 } from "@/lib/conversations/message-queue-schemas";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import type {
@@ -51,6 +56,8 @@ interface ConversationKey {
 }
 
 interface EnqueueQueuedMessageInput extends ConversationKey {
+  /** Stable producer identity makes a planned subscription batch restart-safe. */
+  id?: string;
   inputOrigin?: "user" | "generated";
   backend?: AgentBackendId;
   content: MessageContentBlock[];
@@ -222,14 +229,27 @@ export function claimLiveDeliveryTransform(
   refused: PendingQueuedMessage | null;
 } {
   if (
+    queue.find((entry) => entry.id === id)?.metadata?.kind ===
+    "subscription_update"
+  ) {
+    return { queue: [...queue], claimed: null, refused: null };
+  }
+  if (
     queue.some(
       (entry) =>
-        entry.status === "delivering" || queuedMessageNeedsReview(entry.status),
+        entry.status === "delivering" ||
+        queuedMessageBlocksOrdinaryAdmission(entry),
     )
   ) {
     return { queue: [...queue], claimed: null, refused: null };
   }
-  if (queue.find((entry) => entry.status === "pending")?.id !== id) {
+  if (
+    queue.find(
+      (entry) =>
+        entry.status === "pending" &&
+        entry.metadata?.kind !== "subscription_update",
+    )?.id !== id
+  ) {
     return { queue: [...queue], claimed: null, refused: null };
   }
   let claimed: PendingQueuedMessage | null = null;
@@ -259,14 +279,16 @@ export function claimLiveDeliveryTransform(
 }
 
 /**
- * Atomically claim the next deliverable batch of `pending` rows (in array
- * order) into `delivering` under one shared `attemptId`. The batch is either:
+ * Atomically claim the next deliverable batch of `pending` rows into
+ * `delivering` under one shared `attemptId`. Subscription wakes defer to
+ * pending human input; other rows retain their relative array order. The
+ * batch is either:
  *   (a) the maximal prefix of non-command pending rows — coalesced into one
  *       turn by the caller — stopping before the first conversation command, or
  *   (b) a single command row at the head of the pending queue, claimed alone
  *       so the drain routes it to the command service (req 8.3).
- * Pending rows at the attempt cap become `failed` and block later claims until
- * explicit retry or discard, preserving both the payload and queue order.
+ * Ordinary rows at the attempt cap become `failed` and block later claims
+ * until explicit retry or discard. Wake review holds only other wakes.
  * Returns the next queue, the claimed rows in order, the refused rows, and the
  * parsed command for case (b) (`null` for plain batches). Pure.
  */
@@ -274,6 +296,7 @@ export function claimNextTurnBatchTransform(
   queue: readonly PendingQueuedMessage[],
   attemptId: string,
   now: string,
+  allowSubscriptionWakes = true,
 ): {
   queue: PendingQueuedMessage[];
   claimed: PendingQueuedMessage[];
@@ -285,7 +308,8 @@ export function claimNextTurnBatchTransform(
   if (
     queue.some(
       (entry) =>
-        entry.status === "delivering" || queuedMessageNeedsReview(entry.status),
+        entry.status === "delivering" ||
+        queuedMessageBlocksOrdinaryAdmission(entry),
     )
   ) {
     return { queue: [...queue], claimed: [], command: null, refused: [] };
@@ -302,9 +326,29 @@ export function claimNextTurnBatchTransform(
     survivors.push(entry);
   }
 
-  if (refused.length > 0)
+  if (refused.some((row) => row.metadata?.kind !== "subscription_update"))
     return { queue: survivors, claimed: [], command: null, refused };
-  const pending = survivors.filter((entry) => entry.status === "pending");
+  // Answer enqueue atomically consumes the question marker. Queue provenance
+  // must still prioritize that answer, or an older wake can reach the actor
+  // before the human input that released its hold.
+  const hasPendingHumanInput = survivors.some(
+    (row) =>
+      row.status === "pending" &&
+      (row.inputOrigin === "user" || row.metadata?.kind === "question_answers"),
+  );
+  const wakesAllowed =
+    allowSubscriptionWakes &&
+    !hasPendingHumanInput &&
+    !survivors.some(
+      (row) =>
+        row.metadata?.kind === "subscription_update" &&
+        queuedMessageNeedsReview(row.status),
+    );
+  const pending = survivors.filter(
+    (entry) =>
+      entry.status === "pending" &&
+      (wakesAllowed || entry.metadata?.kind !== "subscription_update"),
+  );
   const head = pending[0];
   if (!head) {
     return { queue: survivors, claimed: [], command: null, refused };
@@ -312,10 +356,11 @@ export function claimNextTurnBatchTransform(
 
   const headCommand = parseConversationCommand(contentToText(head.content));
   const claimIds = new Set<string>();
-  if (headCommand) {
+  if (headCommand || head.metadata?.kind === "subscription_update") {
     claimIds.add(head.id);
   } else {
     for (const entry of pending) {
+      if (entry.metadata?.kind === "subscription_update") break;
       if (parseConversationCommand(contentToText(entry.content))) break;
       if (!sameModelSelection(head.modelSelection, entry.modelSelection)) break;
       claimIds.add(entry.id);
@@ -591,6 +636,7 @@ export function cancelTransform(
 }
 
 export interface ClaimedQueuedBatch {
+  subscriptionBatchId?: string;
   /** Derived from the original rows, before generated protocol text is coalesced. */
   hasUserMessage?: boolean;
   deliveryAttemptId: string;
@@ -606,6 +652,12 @@ export interface ClaimedQueuedBatch {
 }
 
 export interface MessageQueueServiceDeps {
+  readSubscriptionWakeHold?(input: ConversationKey): Promise<string | null>;
+  onSubscriptionWakeDiscarded?(input: {
+    projectPath: string;
+    conversationId: string;
+    batchId: string;
+  }): Promise<void>;
   mutateConversation<T>(
     projectPath: string,
     sessionName: string,
@@ -667,6 +719,10 @@ export interface MessageQueueService {
   confirmDelivery(
     input: ConversationKey & { ids: string[]; deliveryAttemptId: string },
   ): Promise<number>;
+  /** A durable accepted transcript for this batch proves all retries spent. */
+  confirmSubscriptionWakeAccepted(
+    input: ConversationKey & { batchId: string },
+  ): Promise<number>;
   cancel(
     input: ConversationKey & { id: string },
   ): Promise<"cancelled" | "not_found" | "not_cancellable">;
@@ -699,10 +755,13 @@ export function createMessageQueueService(
       modelSelection,
       consumePendingQuestionId,
     } = input;
-    const id = deps.newId();
+    const id = input.id ?? deps.newId();
     const now = deps.now();
     const entry = createPendingEntry({
-      inputOrigin: input.inputOrigin,
+      inputOrigin:
+        metadata?.kind === "subscription_update"
+          ? "generated"
+          : input.inputOrigin,
       id,
       content,
       now,
@@ -712,15 +771,29 @@ export function createMessageQueueService(
 
     // The store's serialized write queue makes the check-consume-append
     // race-free: a concurrent duplicate sees `committed: false`.
-    const committed = await deps.mutateConversation(
+    const result = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
       "enqueueQueuedMessage",
       (conversation) => {
+        const existing = input.id
+          ? conversation.pendingQueue.find((row) => row.id === input.id)
+          : undefined;
+        if (existing) {
+          if (
+            JSON.stringify(existing.content) !==
+              JSON.stringify(entry.content) ||
+            JSON.stringify(existing.metadata) !== JSON.stringify(entry.metadata)
+          )
+            throw new Error(
+              `Queued message identity ${id} already names different input`,
+            );
+          return { committed: true, existing: detachQueueRow(existing) };
+        }
         if (consumePendingQuestionId !== undefined) {
           if (conversation.pendingQuestionId !== consumePendingQuestionId) {
-            return false;
+            return { committed: false, existing: null };
           }
           conversation.pendingQuestionId = null;
           conversation.pendingQuestions = null;
@@ -734,13 +807,13 @@ export function createMessageQueueService(
           conversation.pendingQueue,
           entry,
         );
-        return true;
+        return { committed: true, existing: null };
       },
     );
 
     const projectName = deps.getProjectDisplayName(projectPath);
 
-    if (!committed) {
+    if (!result.committed) {
       logger.info("queue.enqueue_rejected", {
         projectName,
         sessionName,
@@ -750,6 +823,7 @@ export function createMessageQueueService(
       });
       return null;
     }
+    if (result.existing) return result.existing;
 
     try {
       deps.broadcast({
@@ -892,25 +966,73 @@ export function createMessageQueueService(
     const attemptId = deps.newId();
     const now = deps.now();
 
-    const { claimed, command, refused } = await deps.mutateConversation(
+    // Register the ordinary claim before yielding. An empty idle-entry drain
+    // must not claim input enqueued after it started while awaiting wake checks.
+    const initial = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
       "claimNextTurnBatch",
       (conversation) => {
+        const wakeHold = subscriptionWakeHold({
+          conversation,
+          sessionArchived: false,
+          execution: null,
+        });
         const result = claimNextTurnBatchTransform(
           conversation.pendingQueue,
           attemptId,
           now,
+          wakeHold == null,
         );
+        if (
+          deps.readSubscriptionWakeHold &&
+          result.claimed[0]?.metadata?.kind === "subscription_update"
+        )
+          return {
+            claimed: [],
+            command: null,
+            refused: [],
+            needsExternalWakeHold: true,
+          };
         conversation.pendingQueue = result.queue;
         return {
           claimed: result.claimed,
           command: result.command,
           refused: result.refused,
+          needsExternalWakeHold: false,
         };
       },
     );
+
+    let { claimed, command, refused } = initial;
+    if (initial.needsExternalWakeHold && deps.readSubscriptionWakeHold) {
+      const externalWakeHold = await deps.readSubscriptionWakeHold(input);
+      const checked = await deps.mutateConversation(
+        projectPath,
+        sessionName,
+        conversationId,
+        "claimSubscriptionWakeBatch",
+        (conversation) => {
+          const wakeHold =
+            externalWakeHold ??
+            subscriptionWakeHold({
+              conversation,
+              sessionArchived: false,
+              execution: null,
+            });
+          const result = claimNextTurnBatchTransform(
+            conversation.pendingQueue,
+            attemptId,
+            now,
+            wakeHold == null,
+          );
+          conversation.pendingQueue = result.queue;
+          return result;
+        },
+      );
+      ({ claimed, command, refused } = checked);
+    }
 
     const projectName = deps.getProjectDisplayName(projectPath);
     reportRefused(input, projectName, refused);
@@ -937,6 +1059,9 @@ export function createMessageQueueService(
       messageIds,
       content: coalesceContent(claimed),
       hasUserMessage: claimed.some(isQueuedUserMessage),
+      ...(claimed[0]?.metadata?.kind === "subscription_update"
+        ? { subscriptionBatchId: claimed[0].metadata.batchId }
+        : {}),
       command,
       ...(claimed[0]?.modelSelection
         ? { modelSelection: claimed[0].modelSelection }
@@ -1110,6 +1235,7 @@ export function createMessageQueueService(
         messageIds: [cancelled.id],
         status: cancelled.status,
       });
+      await settleSubscriptionWakeDiscard(input, cancelled);
       return result;
     }
 
@@ -1235,6 +1361,65 @@ export function createMessageQueueService(
     return affected.length;
   }
 
+  async function confirmSubscriptionWakeAccepted(
+    input: ConversationKey & { batchId: string },
+  ): Promise<number> {
+    const affected = await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "confirmSubscriptionWakeAccepted",
+      (conversation) => {
+        const accepted: PendingQueuedMessage[] = [];
+        conversation.pendingQueue = conversation.pendingQueue.filter(
+          (entry) => {
+            if (
+              entry.metadata?.kind !== "subscription_update" ||
+              entry.metadata.batchId !== input.batchId
+            )
+              return true;
+            accepted.push(
+              detachQueueRow({
+                ...entry,
+                status: "delivered",
+                deliveredAt: deps.now(),
+                updatedAt: deps.now(),
+                error: null,
+              }),
+            );
+            return false;
+          },
+        );
+        return accepted;
+      },
+    );
+    if (affected.length > 0) {
+      broadcastUpdated(
+        input,
+        deps.getProjectDisplayName(input.projectPath),
+        affected,
+      );
+      logger.info("queue.subscription_acceptance_repaired", {
+        conversationId: input.conversationId,
+        batchId: input.batchId,
+        messageIds: affected.map((row) => row.id),
+      });
+    }
+    return affected.length;
+  }
+
+  async function settleSubscriptionWakeDiscard(
+    key: ConversationKey,
+    row: PendingQueuedMessage,
+  ): Promise<void> {
+    if (row.metadata?.kind !== "subscription_update") return;
+    await deps.onSubscriptionWakeDiscarded?.({
+      projectPath: key.projectPath,
+      conversationId: key.conversationId,
+      batchId: row.metadata.batchId,
+    });
+  }
+
   async function resolveDelivery(
     input: ConversationKey & { id: string; action: QueueReviewAction },
   ): Promise<"resolved" | "not_found" | "not_reviewable"> {
@@ -1251,8 +1436,9 @@ export function createMessageQueueService(
         if (!queuedMessageNeedsReview(entry.status))
           return { result: "not_reviewable" as const };
         const now = deps.now();
-        // Retry is an explicit repeat: a fresh queue identity gives it a distinct
-        // transcript receipt even if the earlier attempt already appended one.
+        // Retry gives ordinary input a distinct transcript receipt. A
+        // subscription wake keeps its stable batch receipt so durable input
+        // acceptance can refuse replay even after the queue row changes id.
         const updated = detachQueueRow(
           input.action === "discard"
             ? {
@@ -1303,6 +1489,8 @@ export function createMessageQueueService(
         deps.getProjectDisplayName(input.projectPath),
         outcome.entries,
       );
+    if (input.action === "discard" && outcome.entries?.[0])
+      await settleSubscriptionWakeDiscard(input, outcome.entries[0]);
     logger.info("queue.review_resolved", {
       conversationId: input.conversationId,
       messageId: input.id,
@@ -1322,6 +1510,7 @@ export function createMessageQueueService(
     markFailed,
     markUncertain,
     confirmDelivery,
+    confirmSubscriptionWakeAccepted,
     cancel,
     resolveDelivery,
     recoverAbandonedDeliveries,
@@ -1329,6 +1518,16 @@ export function createMessageQueueService(
 }
 
 export const messageQueueService = createMessageQueueService({
+  readSubscriptionWakeHold,
+  async onSubscriptionWakeDiscarded(input) {
+    const { getActiveWaitService } =
+      await import("@/lib/subscriptions/service-factory");
+    await getActiveWaitService().settleBatch(
+      input.batchId,
+      "cancelled",
+      "Subscription wake was explicitly discarded",
+    );
+  },
   mutateConversation: defaultMutateConversation,
   getConversation: defaultGetConversation,
   getProjectDisplayName: defaultGetProjectDisplayName,

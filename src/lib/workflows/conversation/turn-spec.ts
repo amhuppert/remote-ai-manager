@@ -50,6 +50,7 @@ export type StructuredOutputFormat = z.infer<
 export const queuedDeliveryMetadataSchema = z.object({
   messageIds: z.array(z.string()),
   deliveryAttemptId: z.string(),
+  subscriptionBatchId: z.string().min(1).optional(),
 });
 export type QueuedDeliveryMetadata = z.infer<
   typeof queuedDeliveryMetadataSchema
