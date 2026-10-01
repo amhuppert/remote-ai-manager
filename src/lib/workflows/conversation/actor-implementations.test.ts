@@ -3840,7 +3840,6 @@ describe("executePromptForMachine", () => {
               stored.push(entry);
             },
             subscriptions: {
-              synchronizeInvolvement: async () => {},
               prepareBriefing: async () => ({
                 block:
                   "<subscription_briefing>Workflow completed: produced a result</subscription_briefing>",
@@ -5380,7 +5379,6 @@ describe("executePromptForMachine", () => {
 
     function failingSubscriptionReceipts(): ActorFixtureDependencies["subscriptions"] {
       return {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => ({
           block:
             "<subscription_briefing>Workflow completed</subscription_briefing>",
@@ -7607,11 +7605,11 @@ describe("executePromptForMachine runtime notices", () => {
     "wires background loss into the %s inbox and human transcript",
     async (scope) => {
       const notices: Parameters<
-        ActorFixtureDependencies["recordAgentNotice"]
+        ActorFixtureDependencies["recordRuntimeLossNotice"]
       >[0][] = [];
       mockDeps = createMockDeps({
         getConversation: async () => makeConversationState(),
-        async recordAgentNotice(notice) {
+        async recordRuntimeLossNotice(notice) {
           notices.push(notice);
           return true;
         },

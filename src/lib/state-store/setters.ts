@@ -33,7 +33,6 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowPendingArtifacts,
   GraphWorkflowLeaseIncumbent,
-  GraphWorkflowResultDelivery,
   SeededWorkflowDocument,
 } from "@/lib/workflow-graph/schemas";
 import {
@@ -266,152 +265,6 @@ export function createSetters(
     return { publications, resultEffects };
   }
 
-  async function claimGraphWorkflowResultDeliveries(
-    projectPath: string,
-    sessionName: string,
-    originConversationId: string,
-    attemptId: string,
-  ): Promise<GraphWorkflowResultDelivery[]> {
-    let flushRepositoryLogs: () => void = () => {};
-    let claimed: GraphWorkflowResultDelivery[];
-    try {
-      claimed = await writeQueue.withWriteQueueSync(
-        `claimGraphWorkflowResultDeliveries[${originConversationId}]`,
-        () => {
-          const captured = captureRepositoryLogs(() =>
-            db.transaction(() => {
-              const pending =
-                repos.graphWorkflowResultDeliveries.listUndeliveredForConversation(
-                  projectPath,
-                  sessionName,
-                  originConversationId,
-                );
-              const rows: GraphWorkflowResultDelivery[] = [];
-              for (const delivery of pending) {
-                const didClaim =
-                  repos.graphWorkflowResultDeliveries.markDelivering(
-                    projectPath,
-                    sessionName,
-                    delivery.executionId,
-                    delivery.boundarySeq,
-                    attemptId,
-                  );
-                if (!didClaim) continue;
-                rows.push({
-                  ...delivery,
-                  state: "delivering",
-                  attemptId,
-                  attemptCount: delivery.attemptCount + 1,
-                });
-              }
-              return rows;
-            })(),
-          );
-          flushRepositoryLogs = captured.flush;
-          return captured.value;
-        },
-      );
-    } catch (err) {
-      releaseDeferredRepositoryLogs();
-      throw err;
-    }
-    flushRepositoryLogs();
-    return claimed;
-  }
-
-  async function settleGraphWorkflowResultDeliveries(
-    projectPath: string,
-    sessionName: string,
-    originConversationId: string,
-    attemptId: string,
-  ): Promise<number> {
-    const deliveredAt = new Date().toISOString();
-    let flushRepositoryLogs: () => void = () => {};
-    let settled: number;
-    try {
-      settled = await writeQueue.withWriteQueueSync(
-        `settleGraphWorkflowResultDeliveries[${originConversationId}]`,
-        () => {
-          const captured = captureRepositoryLogs(() =>
-            db.transaction(() => {
-              const claimed = repos.graphWorkflowResultDeliveries
-                .listUndeliveredForConversation(
-                  projectPath,
-                  sessionName,
-                  originConversationId,
-                )
-                .filter(
-                  (delivery) =>
-                    delivery.state === "delivering" &&
-                    delivery.attemptId === attemptId,
-                );
-              let count = 0;
-              for (const delivery of claimed) {
-                if (
-                  repos.graphWorkflowResultDeliveries.markDelivered(
-                    projectPath,
-                    sessionName,
-                    delivery.executionId,
-                    delivery.boundarySeq,
-                    attemptId,
-                    deliveredAt,
-                  )
-                ) {
-                  count++;
-                }
-              }
-              return count;
-            })(),
-          );
-          flushRepositoryLogs = captured.flush;
-          return captured.value;
-        },
-      );
-    } catch (err) {
-      releaseDeferredRepositoryLogs();
-      throw err;
-    }
-    flushRepositoryLogs();
-    if (settled > 0) {
-      storeLogger.info("state.workflow_result_claims_settled", {
-        projectPath,
-        sessionName,
-        originConversationId,
-        attemptId,
-        settled,
-      });
-    }
-    return settled;
-  }
-
-  async function releaseGraphWorkflowResultDeliveries(
-    projectPath: string,
-    sessionName: string,
-    originConversationId: string,
-    attemptId: string,
-  ): Promise<number> {
-    const released = await writeQueue.withWriteQueueSync(
-      `releaseGraphWorkflowResultDeliveries[${originConversationId}]`,
-      () =>
-        repos.graphWorkflowResultDeliveries.resetAttemptToPending(
-          projectPath,
-          sessionName,
-          originConversationId,
-          attemptId,
-        ),
-    );
-    if (released > 0) {
-      storeLogger.info("state.workflow_result_claims_released", {
-        projectPath,
-        sessionName,
-        originConversationId,
-        attemptId,
-        released,
-      });
-    }
-    return released;
-  }
-
   async function settleGraphWorkflowResultDeliveryFallback(
     projectPath: string,
     sessionName: string,
@@ -570,28 +423,6 @@ export function createSetters(
       });
     }
     return marked;
-  }
-
-  async function recoverGraphWorkflowResultDeliveries(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<number> {
-    const recovered = await writeQueue.withWriteQueueSync(
-      `recoverGraphWorkflowResultDeliveries[${sessionName}]`,
-      () =>
-        repos.graphWorkflowResultDeliveries.resetDeliveringToPending(
-          projectPath,
-          sessionName,
-        ),
-    );
-    if (recovered > 0) {
-      storeLogger.info("state.workflow_result_claims_recovered", {
-        projectPath,
-        sessionName,
-        recovered,
-      });
-    }
-    return recovered;
   }
 
   /**
@@ -2305,13 +2136,9 @@ export function createSetters(
 
     mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes,
-    claimGraphWorkflowResultDeliveries,
-    settleGraphWorkflowResultDeliveries,
-    releaseGraphWorkflowResultDeliveries,
     settleGraphWorkflowResultDeliveryFallback,
     commitGraphWorkflowMissingOriginFallback,
     markGraphWorkflowResultEffectDelivered,
-    recoverGraphWorkflowResultDeliveries,
     createReferenceDocument,
     deleteReferenceDocument,
     upsertSessionMarkdownDocuments,

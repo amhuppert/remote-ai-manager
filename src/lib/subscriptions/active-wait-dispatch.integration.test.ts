@@ -141,11 +141,15 @@ async function setup() {
   let enqueueCount = 0;
   let drainCount = 0;
   let observationGate: Promise<void> | undefined;
+  let reconcileError: Error | null = null;
+  let passiveError: Error | null = null;
   const makeDispatcher = () =>
     createActiveWaitDispatcher({
       logger: createCapturingLogger(),
       service: {
-        async reconcile() {},
+        async reconcile() {
+          if (reconcileError) throw reconcileError;
+        },
         listPendingBatches: () => repo.listPendingBatches(),
         async listRecipients() {
           return [];
@@ -156,6 +160,9 @@ async function setup() {
         markBatchQueued: (id) => repo.markBatchQueued(id, at),
         settleBatch: (id, state, error) =>
           repo.settleBatch(id, state, at, error ?? null),
+      },
+      async reconcilePassive() {
+        if (passiveError) throw passiveError;
       },
       async observe(batch) {
         await observationGate;
@@ -213,10 +220,24 @@ async function setup() {
     setObservationGate(gate: Promise<void>) {
       observationGate = gate;
     },
+    failReconcile(kind: "active" | "passive") {
+      if (kind === "active") reconcileError = new Error("Broken wait read");
+      else passiveError = new Error("Broken passive read");
+    },
   };
 }
 
 describe("durable active wake handoff", () => {
+  it.each(["active", "passive"] as const)(
+    "dispatches already reserved wakes despite an unrelated %s reconciliation failure",
+    async (kind) => {
+      const h = await setup();
+      h.failReconcile(kind);
+      await h.makeDispatcher().tick();
+      expect(h.counts()).toEqual({ enqueueCount: 1, drainCount: 1 });
+      expect((await h.repo.getBatch("batch"))?.state).toBe("queued");
+    },
+  );
   it("resumes the same queued wake after restart and settles from input evidence", async () => {
     const s = await setup();
     const first = s.makeDispatcher();

@@ -15,83 +15,28 @@ type Db = InstanceType<typeof Database>;
 const logger = createLogger("state-store.graph-workflow-result-deliveries");
 
 /**
- * The result-delivery ledger (D7 decision D8): one durable record per lifecycle
- * boundary of an execution whose origin conversation is alive, recorded in the
- * same transaction as the boundary's event append.
- *
- * Deliberately NOT a message queue. Nothing here dispatches an agent turn or
- * touches `conversations.pending_queue`; the states are the queue's proven
- * claim/recover/settle shape reused for a passive ledger a turn reads from.
- * `delivering` is a claim rather than an outcome, which is what makes the
- * contract exactly-once per ACKNOWLEDGED turn: a turn that dies before
- * acknowledgment releases its claim through {@link
- * GraphWorkflowResultDeliveriesRepo.resetDeliveringToPending} and the same
- * boundary re-presents under its stable identity.
+ * Frozen lifecycle-boundary evidence, plus receipts for origin notification
+ * effects. Agent input receipts belong to the subscription inbox. Legacy claim
+ * fields remain readable so ordered migrations can preserve historical proof.
  */
 export interface GraphWorkflowResultDeliveriesRepo {
-  /**
-   * Record a boundary's result. Returns false when this boundary is already in
-   * the ledger, leaving the stored row untouched — the replay a crash between
-   * recording and attachment produces is a no-op, not a second delivery.
-   */
+  /** Recording a repeated boundary leaves its frozen snapshot untouched. */
   record(delivery: GraphWorkflowResultDelivery): boolean;
-  /**
-   * One boundary's record. Keyed by the full project/session/execution triple
-   * like every other read here, so a same-id record from another session can
-   * never reach a projection.
-   */
   findByBoundary(
     projectPath: string,
     sessionName: string,
     executionId: string,
     boundarySeq: number,
   ): GraphWorkflowResultDelivery | null;
-  /**
-   * The boundaries a turn of this conversation still owes, in boundary order.
-   * Scoped by the full project/session/conversation triple so a same-id record
-   * from another session can never reach a turn.
-   */
-  listUndeliveredForConversation(
-    projectPath: string,
-    sessionName: string,
-    originConversationId: string,
-  ): GraphWorkflowResultDelivery[];
-  /** One execution's whole ledger, in boundary order. */
   listByExecution(
     projectPath: string,
     sessionName: string,
     executionId: string,
   ): GraphWorkflowResultDelivery[];
-  /** Rows whose post-commit publication/unread/push effects still need replay. */
   listPendingEffects(
     projectPath: string,
     sessionName: string,
   ): GraphWorkflowResultDelivery[];
-  /**
-   * Claim a pending boundary for `attemptId`, counting the attempt. Returns
-   * false when the boundary is absent or already claimed or settled.
-   */
-  markDelivering(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    boundarySeq: number,
-    attemptId: string,
-  ): boolean;
-  /**
-   * Settle the claim `attemptId` holds. Returns false when another attempt
-   * holds the boundary, so a stale turn cannot mark someone else's claim
-   * delivered.
-   */
-  markDelivered(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    boundarySeq: number,
-    attemptId: string,
-    deliveredAt: string,
-  ): boolean;
-  /** Persist the post-commit effect receipt without settling turn attachment. */
   markEffectsDelivered(
     projectPath: string,
     sessionName: string,
@@ -99,7 +44,7 @@ export interface GraphWorkflowResultDeliveriesRepo {
     boundarySeq: number,
     effectsDeliveredAt: string,
   ): boolean;
-  /** Settle one missing-origin boundary without manufacturing a turn claim. */
+  /** Missing-origin notification settlement is not backend input acceptance. */
   markFallbackDelivered(
     projectPath: string,
     sessionName: string,
@@ -107,7 +52,6 @@ export interface GraphWorkflowResultDeliveriesRepo {
     boundarySeq: number,
     deliveredAt: string,
   ): boolean;
-  /** Settle every unattachable boundary after an execution loses its origin. */
   markExecutionFallbackDelivered(
     projectPath: string,
     sessionName: string,
@@ -115,18 +59,6 @@ export interface GraphWorkflowResultDeliveriesRepo {
     originConversationId: string,
     deliveredAt: string,
   ): number;
-  /** Release one failed turn's unacknowledged claims without touching peers. */
-  resetAttemptToPending(
-    projectPath: string,
-    sessionName: string,
-    originConversationId: string,
-    attemptId: string,
-  ): number;
-  /**
-   * Release every unacknowledged claim in a session back to `pending`, the way
-   * message-queue rehydration does. Returns how many claims were released.
-   */
-  resetDeliveringToPending(projectPath: string, sessionName: string): number;
 }
 
 interface StorageRow {
@@ -245,12 +177,6 @@ export function createGraphWorkflowResultDeliveriesRepo(
         AND execution_id = ? AND boundary_seq = ?
       LIMIT 1`,
   );
-  const listUndeliveredStmt = db.prepare(
-    `SELECT * FROM graph_workflow_result_deliveries
-      WHERE project_path = ? AND session_name = ?
-        AND origin_conversation_id = ? AND delivery_state <> 'delivered'
-      ORDER BY boundary_seq`,
-  );
   const listByExecutionStmt = db.prepare(
     `SELECT * FROM graph_workflow_result_deliveries
       WHERE project_path = ? AND session_name = ? AND execution_id = ?
@@ -261,23 +187,6 @@ export function createGraphWorkflowResultDeliveriesRepo(
       WHERE project_path = ? AND session_name = ?
         AND effects_delivered_at IS NULL
       ORDER BY boundary_seq`,
-  );
-  const claimStmt = db.prepare(
-    `UPDATE graph_workflow_result_deliveries
-        SET delivery_state = 'delivering',
-            attempt_id     = @attempt_id,
-            attempt_count  = attempt_count + 1
-      WHERE project_path = @project_path AND session_name = @session_name
-        AND execution_id = @execution_id AND boundary_seq = @boundary_seq
-        AND delivery_state = 'pending'`,
-  );
-  const settleStmt = db.prepare(
-    `UPDATE graph_workflow_result_deliveries
-        SET delivery_state = 'delivered',
-            delivered_at   = @delivered_at
-      WHERE project_path = @project_path AND session_name = @session_name
-        AND execution_id = @execution_id AND boundary_seq = @boundary_seq
-        AND delivery_state = 'delivering' AND attempt_id = @attempt_id`,
   );
   const settleEffectsStmt = db.prepare(
     `UPDATE graph_workflow_result_deliveries
@@ -305,22 +214,6 @@ export function createGraphWorkflowResultDeliveriesRepo(
         AND origin_conversation_id = @origin_conversation_id
         AND delivery_state <> 'delivered'`,
   );
-  const releaseStmt = db.prepare(
-    `UPDATE graph_workflow_result_deliveries
-        SET delivery_state = 'pending',
-            attempt_id     = NULL
-      WHERE project_path = ? AND session_name = ?
-        AND delivery_state = 'delivering'`,
-  );
-  const releaseAttemptStmt = db.prepare(
-    `UPDATE graph_workflow_result_deliveries
-        SET delivery_state = 'pending',
-            attempt_id     = NULL
-      WHERE project_path = ? AND session_name = ?
-        AND origin_conversation_id = ? AND attempt_id = ?
-        AND delivery_state = 'delivering'`,
-  );
-
   return {
     record(delivery) {
       const validated = graphWorkflowResultDeliverySchema.parse(delivery);
@@ -358,19 +251,6 @@ export function createGraphWorkflowResultDeliveriesRepo(
       if (row === undefined) return null;
       return rowToDomain(row);
     },
-    listUndeliveredForConversation(
-      projectPath,
-      sessionName,
-      originConversationId,
-    ) {
-      return readMany(
-        listUndeliveredStmt.all(
-          projectPath,
-          sessionName,
-          originConversationId,
-        ) as unknown[],
-      );
-    },
     listByExecution(projectPath, sessionName, executionId) {
       return readMany(
         listByExecutionStmt.all(
@@ -384,40 +264,6 @@ export function createGraphWorkflowResultDeliveriesRepo(
       return readMany(
         listPendingEffectsStmt.all(projectPath, sessionName) as unknown[],
       );
-    },
-    markDelivering(
-      projectPath,
-      sessionName,
-      executionId,
-      boundarySeq,
-      attemptId,
-    ) {
-      const result = claimStmt.run({
-        project_path: projectPath,
-        session_name: sessionName,
-        execution_id: executionId,
-        boundary_seq: boundarySeq,
-        attempt_id: attemptId,
-      });
-      return result.changes > 0;
-    },
-    markDelivered(
-      projectPath,
-      sessionName,
-      executionId,
-      boundarySeq,
-      attemptId,
-      deliveredAt,
-    ) {
-      const result = settleStmt.run({
-        project_path: projectPath,
-        session_name: sessionName,
-        execution_id: executionId,
-        boundary_seq: boundarySeq,
-        attempt_id: attemptId,
-        delivered_at: deliveredAt,
-      });
-      return result.changes > 0;
     },
     markEffectsDelivered(
       projectPath,
@@ -465,23 +311,6 @@ export function createGraphWorkflowResultDeliveriesRepo(
         origin_conversation_id: originConversationId,
         delivered_at: deliveredAt,
       });
-      return result.changes;
-    },
-    resetAttemptToPending(
-      projectPath,
-      sessionName,
-      originConversationId,
-      attemptId,
-    ) {
-      return releaseAttemptStmt.run(
-        projectPath,
-        sessionName,
-        originConversationId,
-        attemptId,
-      ).changes;
-    },
-    resetDeliveringToPending(projectPath, sessionName) {
-      const result = releaseStmt.run(projectPath, sessionName);
       return result.changes;
     },
   };

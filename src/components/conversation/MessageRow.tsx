@@ -307,7 +307,11 @@ const MessageRow = memo(function MessageRow({
           <SubscriptionWakeReceipt
             key={batchId}
             batchId={batchId}
-            accepted={queuedMetadata?.kind !== "subscription_update"}
+            status={
+              queuedMetadata?.kind === "subscription_update"
+                ? (queuedStatus ?? "pending")
+                : "accepted"
+            }
           />
         ))}
       <div className="message-content" {...clipSourceAttrs}>

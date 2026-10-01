@@ -33,6 +33,57 @@ function setup() {
   };
 }
 describe("subscription controls", () => {
+  it("rejects missing sources before creating or restoring a follow", async () => {
+    const h = setup();
+    let missing = true;
+    const controls = createSubscriptionControlsService({
+      repo: h.repo,
+      isRecipientEligible: async () => true,
+      readSource: async () => ({ cursor: "latest", facts: [], missing }),
+    });
+    expect(
+      await controls.subscribe({ recipient, source, reason: "Follow" }),
+    ).toBeNull();
+    expect(await h.repo.list(recipient)).toEqual([]);
+    missing = false;
+    const follow = await controls.subscribe({
+      recipient,
+      source,
+      reason: "Follow",
+    });
+    if (!follow) throw Error("Expected follow");
+    await controls.unfollow(recipient, follow.id);
+    const before = await h.repo.get(recipient, follow.id);
+    missing = true;
+    expect(
+      await controls.subscribe({ recipient, source, reason: "Restore" }),
+    ).toBeNull();
+    expect(await h.repo.get(recipient, follow.id)).toEqual(before);
+  });
+  it("establishes a fresh baseline when explicitly refollowing after an opt-out", async () => {
+    const h = setup();
+    const follow = await h.service.autoFollow({
+      recipient,
+      source,
+      reason: "Notes",
+      initialCursor: "old",
+    });
+    if (!follow) throw Error("Expected follow");
+    await h.controls.unfollow(recipient, follow.id);
+    const controls = createSubscriptionControlsService({
+      repo: h.repo,
+      isRecipientEligible: async () => true,
+      readSource: async () => ({ cursor: "new", facts: [], missing: false }),
+    });
+    expect(
+      await controls.subscribe({ recipient, source, reason: "Refollow" }),
+    ).toMatchObject({
+      id: follow.id,
+      status: "following",
+      cursor: "new",
+      missingAt: null,
+    });
+  });
   it("explicit subscription restores an opt-out that automatic involvement preserves", async () => {
     const h = setup();
     const sub = await h.service.autoFollow({
@@ -172,18 +223,18 @@ it("restores an unfollowed own-conversation notice source and preserves its pend
     id: recipient.conversationId,
   } as const;
   const fact = sourceFactSchema.parse({
-    occurrenceId: "lost-task",
-    eventKind: "background-tasks-lost",
-    category: "outcome",
-    sourceTitle: "Background tasks",
-    summary: "The background task terminated",
+    occurrenceId: "legacy-feedback",
+    eventKind: "legacy-text-notice",
+    category: "activity",
+    sourceTitle: "Conversation feedback",
+    summary: "Pending conversation feedback",
     occurredAt: "2026-09-30T12:00:00.000Z",
     revision: null,
-    outcome: "terminated",
+    outcome: null,
     retrievalHandle: "cctl conversation read conversation",
     actorConversationId: null,
   });
-  const notice = { recipient, source, fact, reason: "Runtime notice" };
+  const notice = { recipient, source, fact, reason: "Conversation feedback" };
   await h.service.recordNotice(notice);
   const sub = await h.repo.findBySource(recipient, source);
   if (!sub) throw Error("Expected notice subscription");
@@ -192,9 +243,14 @@ it("restores an unfollowed own-conversation notice source and preserves its pend
   expect(
     await h.service.recordNotice({
       ...notice,
-      fact: { ...fact, occurrenceId: "suppressed-task" },
+      fact: { ...fact, occurrenceId: "suppressed-feedback" },
     }),
   ).toBe(false);
+  expect(
+    (await h.repo.readInbox(recipient, { includeSettled: true })).items,
+  ).toMatchObject([
+    { fact, state: "pending", acceptedAt: null, attemptCount: 0 },
+  ]);
   await h.controls.resume(recipient, sub.id);
   expect(await h.repo.get(recipient, sub.id)).toMatchObject({
     status: "following",
@@ -207,7 +263,7 @@ it("restores an unfollowed own-conversation notice source and preserves its pend
     recipient,
     attemptId: "restored-user-input",
   });
-  expect(briefing.block).toContain("The background task terminated");
+  expect(briefing.block).toContain("Pending conversation feedback");
   await briefing.onInputAccepted();
   const reloaded = createConversationSubscriptionsRepo(
     fixture?.db ??
@@ -222,7 +278,7 @@ it("restores an unfollowed own-conversation notice source and preserves its pend
   expect(
     await h.service.recordNotice({
       ...notice,
-      fact: { ...fact, occurrenceId: "next-task" },
+      fact: { ...fact, occurrenceId: "next-feedback" },
     }),
   ).toBe(true);
 });
@@ -333,7 +389,7 @@ it("preserves pause atomically when passive follow first becomes a finite active
   expect((await h.active.get(recipient, sub.id))?.state).toBe("ready");
   expect(await h.active.prepareBatch(recipient)).toBeNull();
 });
-it("refuses passive resubscribe of a spent finite source instead of reporting a follow that cannot collect", async () => {
+it("cancels a finite wait without opting out and permits an explicit passive follow afterward", async () => {
   const h = finiteHarness();
   const wait = await h.active.register({
     recipient,
@@ -341,16 +397,16 @@ it("refuses passive resubscribe of a spent finite source instead of reporting a 
     reason: "Review tests",
   });
   await h.controls.cancel(recipient, wait.subscriptionId);
-  await expect(
-    h.controls.subscribe({
+  expect(
+    await h.controls.subscribe({
       recipient,
       source: wait.source,
       reason: wait.reason,
       mode: "passive",
     }),
-  ).rejects.toMatchObject({ code: "ACTIVE_WAIT_SPENT", status: 409 });
+  ).toMatchObject({ status: "following", mode: "passive" });
   expect((await h.repo.get(recipient, wait.subscriptionId))?.status).toBe(
-    "unfollowed",
+    "following",
   );
 });
 it("keeps one canonical reason for a retained finite wait", async () => {

@@ -27,6 +27,7 @@ import {
   createSubscriptionOverviewService,
   type SubscriptionOverviewOwner,
   type SubscriptionSourcePresentation,
+  matchesSubscriptionOwner,
 } from "./overview-service";
 import type { SubscriptionOwner } from "./controls-schemas";
 import type { SubscriptionRecipient, SubscriptionSourceRef } from "./schemas";
@@ -169,14 +170,59 @@ export function getSubscriptionOverviewService() {
       findJob: (id) => jobs.getJobRecord(id),
     });
     return createSubscriptionOverviewService({
-      listSubscriptions: () => runtime.repo.listAll(),
+      listSubscriptions: (recipient) => runtime.repo.list(recipient),
       listDeliveries: (recipient) =>
         runtime.repo.listDeliveriesForOverview(recipient),
-      listWaits: () => runtime.waitsRepo.list(),
+      listWaits: (recipient) => runtime.waitsRepo.list(recipient),
       getBatch: (id) => runtime.waitsRepo.getBatch(id),
       listReadAt: (recipient) => runtime.preferencesRepo.listReadAt(recipient),
-      async listOwners() {
+      async listOwners(scope) {
         const archivedProjects = await getArchivedProjects();
+        if (scope.conversation) {
+          const identity = runtime.readConversation(scope.conversation);
+          if (
+            !identity ||
+            !isOrdinaryConversationRole(identity.conversation.role)
+          )
+            return [];
+          const owner: SubscriptionOwner = {
+            target:
+              identity.sessionName === null
+                ? {
+                    scope: "project",
+                    projectName: projectNameFromPath(identity.projectPath),
+                    conversationId: scope.conversation,
+                  }
+                : {
+                    scope: "session",
+                    projectName: projectNameFromPath(identity.projectPath),
+                    sessionName: identity.sessionName,
+                    conversationId: scope.conversation,
+                  },
+            projectPath: identity.projectPath,
+            conversationTitle:
+              identity.conversation.name ??
+              identity.conversation.summary ??
+              scope.conversation,
+            archived:
+              identity.conversation.archived ||
+              identity.sessionArchived ||
+              archivedProjects.has(identity.projectPath),
+          };
+          return matchesSubscriptionOwner(owner, scope)
+            ? [
+                {
+                  owner,
+                  eligible:
+                    !owner.archived &&
+                    isEligibleSubscriptionRecipient(
+                      identity,
+                      identity.projectPath,
+                    ),
+                },
+              ]
+            : [];
+        }
         const sessionRows = new Map(
           sessions
             .findAllListItems()
@@ -210,6 +256,7 @@ export function getSubscriptionOverviewService() {
               session.archived ||
               archivedProjects.has(conversation.projectPath),
           };
+          if (!matchesSubscriptionOwner(owner, scope)) continue;
           owners.push({
             owner,
             eligible:
@@ -220,7 +267,7 @@ export function getSubscriptionOverviewService() {
               ),
           });
         }
-        for (const row of projectConversations.findAll()) {
+        for (const row of scope.session ? [] : projectConversations.findAll()) {
           if (!isOrdinaryConversationRole(row.conversation.role)) continue;
           const owner: SubscriptionOwner = {
             target: {
@@ -237,6 +284,7 @@ export function getSubscriptionOverviewService() {
               row.conversation.archived ||
               archivedProjects.has(row.projectPath),
           };
+          if (!matchesSubscriptionOwner(owner, scope)) continue;
           owners.push({
             owner,
             eligible:

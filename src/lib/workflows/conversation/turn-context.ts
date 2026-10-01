@@ -271,12 +271,13 @@ export async function prepareConversationTurnContext(
       void acceptedNotepadReferences.onInputAccepted().catch(() => {});
     };
     // Everything the accepted input releases, in the order the durable
-    // handoffs require: context receipts first, the queue last, because a
-    // released row is the one write nothing later could take back.
+    // handoffs require: preserve accepted user input first, then required
+    // context receipts, and release queue ownership last.
     const acknowledgeAccepted = async (
       backendRef: AgentSessionRef | null,
     ): Promise<void> => {
       observeInputAccepted();
+      await input.archiveQueuedInput();
       await notepadAcceptance;
       await memory.onInputAccepted?.();
       await passiveAcceptance;

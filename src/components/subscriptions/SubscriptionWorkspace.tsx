@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { subscriptionTurnHref } from "@/lib/subscriptions/turn-links";
 import { Button } from "@/components/ui/Button";
@@ -42,6 +42,7 @@ import {
 import {
   useMarkSubscriptionRead,
   useSetInboxHints,
+  useReviewSubscriptionDelivery,
 } from "@/lib/subscriptions/mutations";
 import {
   Choice,
@@ -49,6 +50,7 @@ import {
   SourceLink,
   PageControls,
   ownerLabel,
+  clampListOffset,
 } from "./SubscriptionPrimitives";
 import { SubscriptionDetail } from "./SubscriptionDetail";
 import { CreateSubscription } from "./CreateSubscription";
@@ -105,6 +107,7 @@ export function SubscriptionWorkspace({
     {
       ...queryScope,
       subscriptionId: inboxSubscription,
+      q: search,
       state: inboxState,
       offset: inboxOffset,
       limit: 20,
@@ -118,11 +121,25 @@ export function SubscriptionWorkspace({
   );
   const effectiveTarget = target ?? ownerQuery.data?.items[0]?.target;
   const selectedRowId = selectedRow?.subscription.id;
-  const detailRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (selectedRowId && window.matchMedia("(max-width: 1080px)").matches)
-      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [selectedRowId]);
+  const overviewOffset = overview.data
+    ? clampListOffset(offset, overview.data.total, 20)
+    : offset;
+  if (overviewOffset !== offset) setOffset(overviewOffset);
+  const currentInboxOffset = inbox.data
+    ? clampListOffset(inboxOffset, inbox.data.total, 20)
+    : inboxOffset;
+  if (currentInboxOffset !== inboxOffset) setInboxOffset(currentInboxOffset);
+  const attachDetail = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (
+        node &&
+        selectedRowId &&
+        window.matchMedia("(max-width: 1080px)").matches
+      )
+        node.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    [selectedRowId],
+  );
   const preferences = useInboxPreferences(effectiveTarget);
   const hints = useSetInboxHints();
   function changeScope(next: SubscriptionScope) {
@@ -331,6 +348,7 @@ export function SubscriptionWorkspace({
                 onChange={(event) => {
                   setSearch(event.target.value);
                   setOffset(0);
+                  setInboxOffset(0);
                 }}
               />
             </div>
@@ -420,7 +438,7 @@ export function SubscriptionWorkspace({
               ) : null}
             </div>
             {selectedRow ? (
-              <div ref={detailRef}>
+              <div ref={attachDetail}>
                 <SubscriptionDetail
                   key={selectedRow.subscription.id}
                   row={selectedRow}
@@ -443,6 +461,16 @@ export function SubscriptionWorkspace({
         </TabsContent>
         <TabsContent value="inbox">
           <div className="mb-4 mt-5 flex flex-wrap items-center justify-between gap-3">
+            <FormInput
+              aria-label="Search inbox"
+              placeholder="Search source, recipient or purpose…"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setOffset(0);
+                setInboxOffset(0);
+              }}
+            />
             <p className="m-0 max-w-[620px] text-[0.72rem] leading-relaxed text-text-tertiary">
               Reading here does not deliver an update to the agent. Marking read
               records only your own review.
@@ -473,7 +501,10 @@ export function SubscriptionWorkspace({
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => setInboxSubscription(undefined)}
+                onClick={() => {
+                  setInboxSubscription(undefined);
+                  setInboxOffset(0);
+                }}
               >
                 × Clear subscription filter
               </Button>
@@ -568,6 +599,7 @@ function InboxRow({
   onSubscription(): void;
 }) {
   const mark = useMarkSubscriptionRead();
+  const review = useReviewSubscriptionDelivery();
   const delivery = item.delivery;
   return (
     <article className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-4">
@@ -635,6 +667,62 @@ function InboxRow({
           {item.readAt ? "Mark unread" : "Mark read"}
         </Button>
       </div>
+      {(delivery.state === "failed" || delivery.state === "uncertain") &&
+      item.wakeBatchId === null ? (
+        <div className="mt-3 flex flex-col gap-3">
+          <p className="text-[0.68rem] text-text-tertiary">
+            Retry may repeat work if the agent received this update. Dismiss
+            keeps the evidence in history without recording acceptance.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              size="sm"
+              touch
+              loading={review.isPending && review.variables?.action === "retry"}
+              disabled={review.isPending}
+              onClick={() =>
+                review.mutate({
+                  target: item.owner.target,
+                  id: delivery.id,
+                  action: "retry",
+                })
+              }
+            >
+              Retry delivery
+            </Button>
+            <Button
+              size="sm"
+              touch
+              variant="danger"
+              loading={
+                review.isPending && review.variables?.action === "dismiss"
+              }
+              disabled={review.isPending}
+              onClick={() =>
+                review.mutate({
+                  target: item.owner.target,
+                  id: delivery.id,
+                  action: "dismiss",
+                })
+              }
+            >
+              Dismiss delivery
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {(delivery.state === "failed" || delivery.state === "uncertain") &&
+      item.wakeBatchId ? (
+        <p className="mt-3 text-[0.68rem] text-text-tertiary">
+          <Link
+            className="text-cyan"
+            href={subscriptionTurnHref(item.owner.target, item.wakeBatchId)}
+          >
+            Review queued wake ↗
+          </Link>{" "}
+          · Resolve the queued wake before changing its receipt.
+        </p>
+      ) : null}
       {item.wakeBatchId && delivery.state === "accepted" ? (
         <p className="text-[0.68rem] text-text-tertiary">
           Wake batch{" "}
@@ -664,6 +752,11 @@ function InboxRow({
           {mark.error.message}
         </p>
       ) : null}
+      {review.isError ? (
+        <p role="alert" className="text-red">
+          {review.error.message}
+        </p>
+      ) : null}
     </article>
   );
 }
@@ -678,6 +771,10 @@ function ScopePicker({
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
   const recipients = useSubscriptionRecipients({ q, limit: 10, offset }, open);
+  const recipientOffset = recipients.data
+    ? clampListOffset(offset, recipients.data.total, 10)
+    : offset;
+  if (recipientOffset !== offset) setOffset(recipientOffset);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>

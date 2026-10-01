@@ -1,3 +1,4 @@
+import { gitJobSourceFact } from "./git-job-source";
 import { createNotepadSourceReader } from "./notepad-source";
 import { createWorkflowSourceReader } from "./workflow-source";
 import type { NotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
@@ -50,17 +51,9 @@ const ticketCursorSchema = z
   })
   .strict();
 const eventActorSchema = z.object({
-  kind: z.enum(["human", "agent"]),
+  kind: z.enum(["human", "agent", "system"]),
   conversationId: z.string().optional(),
 });
-
-/** Baseline at a recorded link rather than at the later reconciliation time. */
-export function ticketInvolvementCursor(
-  statusId: number,
-  linkedAt: string,
-): string {
-  return JSON.stringify({ statusId, postAt: linkedAt, postId: "" });
-}
 
 function eventIdCursor(cursor: string): number {
   const value = Number(cursor);
@@ -186,7 +179,7 @@ export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
         missing: false,
         facts: [
           {
-            occurrenceId: `${run.runId}:${run.status}`,
+            occurrenceId: `one-time-terminal:validation:${run.runId}`,
             eventKind: "validation-completed",
             category: "outcome",
             sourceTitle: `${run.commandName} validation`,
@@ -213,19 +206,11 @@ export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
         cursor: job.status,
         missing: false,
         facts: [
-          {
-            occurrenceId: `${job.jobId}:${job.status}`,
-            eventKind: "git-job-outcome",
-            category: "outcome",
-            sourceTitle: `${job.jobType} ${job.sessionName}`,
-            summary: `${job.jobType} ${job.status}${job.errorMessage ? `: ${job.errorMessage.slice(0, 700)}` : "."}`,
-            occurredAt: job.completedAt ?? job.startedAt,
-            revision:
-              job.commitHash ?? job.mergeHash ?? job.preparedSha ?? null,
-            outcome: job.status,
-            retrievalHandle: `git-job:${job.jobId}`,
-            actorConversationId: null,
-          },
+          gitJobSourceFact(
+            job,
+            recipient,
+            `one-time-terminal:git_job:${job.jobId}`,
+          ),
         ],
       };
     }

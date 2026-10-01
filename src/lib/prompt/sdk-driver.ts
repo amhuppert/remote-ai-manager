@@ -1,7 +1,7 @@
 import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { z } from "zod";
 import { conversationTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
-import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
+import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 /**
  * Prompt execution facade — delegates to the conversation lifecycle module.
  *
@@ -347,9 +347,7 @@ export async function executePromptStream(
     if (!existing) {
       throw new Error(`Conversation not found: ${conversationId}`);
     }
-    if (
-      existing.pendingQueue.some((row) => queuedMessageNeedsReview(row.status))
-    ) {
+    if (existing.pendingQueue.some(queuedMessageBlocksOrdinaryAdmission)) {
       logger.warn("queue.prompt_blocked_for_review", {
         ...scopeRef,
         conversationId,

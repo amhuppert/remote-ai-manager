@@ -515,7 +515,8 @@ function makeFakeBackendActorDeps(
     getCodexToolPromptHint: () => "",
     // Durable state-store writes → the fixture, so a stray one shows in the diff.
     mutateConversation: fixture.store.mutateConversation,
-    recordAgentNotice: unusedInTaskRun("recordAgentNotice"),
+    recordRuntimeLossNotice: unusedInTaskRun("recordRuntimeLossNotice"),
+    prepareRuntimeLossNotice: unusedInTaskRun("prepareRuntimeLossNotice"),
     getConversation: fixture.store.getConversation,
     getSessionState: fixture.store.getSession,
     getActiveAlignmentInjection: async () => null,
@@ -766,6 +767,18 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
       });
       conversationActors = createTestActorImplementations({
         ...makeFakeBackendActorDeps(fixture),
+        prepareRuntimeLossNotice:
+          persistence === "durable"
+            ? async () => ({
+                block: null,
+                async onInputAccepted() {},
+                async finish() {},
+              })
+            : () => {
+                throw new Error(
+                  "Ephemeral runtime cannot claim durable recovery notices",
+                );
+              },
         getConversationBackendFactory: () => ({
           backend: "claude",
           createRuntime: async () => backendRuntime,

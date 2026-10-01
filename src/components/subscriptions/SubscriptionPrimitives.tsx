@@ -53,6 +53,16 @@ export function Choice({
     </Select>
   );
 }
+
+export function clampListOffset(
+  offset: number,
+  total: number,
+  limit: number,
+): number {
+  return offset < total
+    ? offset
+    : Math.floor(Math.max(0, total - 1) / limit) * limit;
+}
 export function ownerLabel(owner: SubscriptionOwner) {
   return `${owner.target.projectName} / ${owner.target.scope === "session" ? owner.target.sessionName : "Project conversation"}`;
 }
@@ -75,8 +85,18 @@ export function subscriptionState(row: SubscriptionView) {
     return { label: "Source missing", tone: "amber" as const };
   if (row.wait?.outcome === "expired")
     return { label: "Expired", tone: "amber" as const };
-  if (row.wait?.state === "settled")
+  if (
+    row.wait?.state === "settled" &&
+    row.batch?.state === "accepted" &&
+    row.wait.batchId === row.batch.id
+  )
     return { label: "Delivered", tone: "green" as const };
+  if (
+    row.subscription.mode === "passive" &&
+    row.subscription.expiresAt !== null &&
+    Date.parse(row.subscription.expiresAt) <= Date.now()
+  )
+    return { label: "Expired", tone: "amber" as const };
   if (row.holdReason) return { label: "Held", tone: "amber" as const };
   if (row.rateLimitUntil)
     return { label: "Rate limited", tone: "amber" as const };
@@ -208,10 +228,12 @@ export function PageControls({
   return (
     <div className="flex items-center justify-between gap-3 pt-4">
       <span className="font-mono text-[0.7rem] text-text-tertiary">
-        {total ? offset + 1 : 0}–{Math.min(offset + limit, total)} of {total}
+        {total ? Math.min(offset + 1, total) : 0}–
+        {Math.min(offset + limit, total)} of {total}
       </span>
       <div className="flex gap-2">
         <Button
+          type="button"
           size="sm"
           touch
           disabled={offset === 0}
@@ -220,6 +242,7 @@ export function PageControls({
           Previous
         </Button>
         <Button
+          type="button"
           size="sm"
           touch
           disabled={offset + limit >= total}

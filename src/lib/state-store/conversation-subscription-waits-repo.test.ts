@@ -104,6 +104,90 @@ const batch = (
   });
 
 describe("one-time wait durability and governors", () => {
+  it("loads an exact historical generation only under its owning subscription and recipient", async () => {
+    fixture = createPersistenceFixture();
+    const repo = createConversationSubscriptionWaitsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    const prior = await repo.register(wait(), subscription());
+    await repo.cancel(recipient, prior.subscriptionId, at);
+    const current = await repo.register(wait("next"), subscription());
+    expect((await repo.get(recipient, "sub"))?.id).toBe(current.id);
+    expect(await repo.get(recipient, "sub", prior.id)).toMatchObject({
+      id: prior.id,
+      state: "cancelled",
+    });
+    expect(
+      await repo.get(recipient, "different-subscription", prior.id),
+    ).toBeNull();
+    expect(
+      await repo.get(
+        { ...recipient, conversationId: "other" },
+        "sub",
+        prior.id,
+      ),
+    ).toBeNull();
+  });
+  it("reserves only an actual terminal ingestion owner and exposes its active delivery for candidate filtering", async () => {
+    fixture = createPersistenceFixture();
+    const queue = createWriteQueue();
+    const repo = createConversationSubscriptionWaitsRepo(fixture.db, queue);
+    const subscriptions = createConversationSubscriptionsRepo(
+      fixture.db,
+      queue,
+    );
+    const prior = await repo.register(wait(), subscription());
+    expect(
+      await subscriptions.listFiniteWaitSubscriptionIds(recipient),
+    ).toEqual([prior.subscriptionId]);
+    await repo.cancel(recipient, prior.subscriptionId, at);
+    expect(
+      await subscriptions.listFiniteWaitSubscriptionIds(recipient),
+    ).toEqual([]);
+    const next = await repo.register(wait("next"), subscription());
+    const expired = delivery("next");
+    expired.fact.eventKind = "subscription-wait-expired";
+    expired.fact.occurrenceId = "expired";
+    expired.fact.outcome = "expired";
+    await repo.settle(next.id, "expired", expired, at);
+    expect(
+      await subscriptions.listFiniteWaitSubscriptionIds(recipient),
+    ).toEqual([]);
+    expect(
+      await subscriptions.listDeliveriesReservedForActiveWait(recipient),
+    ).toEqual([expired.id]);
+  });
+  it("spends a withdrawn queue batch without leaving queued receipts or recording an opt-out", async () => {
+    fixture = createPersistenceFixture();
+    const queue = createWriteQueue();
+    const repo = createConversationSubscriptionWaitsRepo(fixture.db, queue);
+    const subscriptions = createConversationSubscriptionsRepo(
+      fixture.db,
+      queue,
+    );
+    await repo.register(wait(), subscription());
+    await repo.settle("wait", "source_terminal", delivery(), at);
+    await repo.reserveBatch(batch("withdrawn", ["wait"], ["delivery-wait"]));
+    await repo.settleBatch(
+      "withdrawn",
+      "cancelled",
+      at,
+      "Operator discarded pending input",
+    );
+    expect(await repo.get(recipient, "sub")).toMatchObject({
+      state: "cancelled",
+    });
+    expect(await subscriptions.get(recipient, "sub")).toMatchObject({
+      mode: "passive",
+      expiresAt: at,
+      status: "following",
+    });
+    expect(
+      await subscriptions.getDelivery(recipient, "delivery-wait"),
+    ).toMatchObject({ state: "superseded", acceptedAt: null });
+    expect(await subscriptions.pendingCount(recipient)).toBe(0);
+  });
   it.each(["pending", "accepted", "uncertain", "queued"] as const)(
     "reuses an existing %s canonical outcome without a second delivery",
     async (state) => {

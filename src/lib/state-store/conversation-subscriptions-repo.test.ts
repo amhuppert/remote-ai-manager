@@ -10,6 +10,11 @@ import {
 } from "@/lib/subscriptions/schemas";
 import { createWriteQueue } from "./write-queue";
 import { createConversationSubscriptionsRepo } from "./conversation-subscriptions-repo";
+import { isActionableSubscriptionDelivery } from "@/lib/subscriptions/delivery-state";
+import {
+  activeSubscriptionWaitSchema,
+  type ActiveSubscriptionWait,
+} from "@/lib/subscriptions/active-wait-schemas";
 
 const recipient = { projectPath: "/project", conversationId: "conv" };
 const source = { kind: "ticket", id: "ticket-1" } as const;
@@ -71,6 +76,199 @@ function delivery(id = "delivery-1", occurrenceId = "event-1") {
   });
 }
 describe("conversation subscriptions durable state", () => {
+  it("keeps SQL badges and overview actionability consistent across finite wait controls and receipt states", async () => {
+    const { repo, fixture } = setup();
+    const cases = [
+      {
+        id: "passive",
+        sourceKind: "ticket",
+        mode: "passive",
+        state: "pending",
+        actionable: true,
+      },
+      {
+        id: "paused",
+        sourceKind: "ticket",
+        mode: "passive",
+        state: "pending",
+        paused: true,
+        actionable: false,
+      },
+      {
+        id: "optout",
+        sourceKind: "ticket",
+        mode: "passive",
+        state: "pending",
+        unfollowed: true,
+        actionable: false,
+      },
+      {
+        id: "expired",
+        sourceKind: "ticket",
+        mode: "passive",
+        state: "pending",
+        expired: true,
+        actionable: false,
+      },
+      {
+        id: "unknown",
+        sourceKind: "ticket",
+        mode: "passive",
+        state: "uncertain",
+        actionable: false,
+      },
+      {
+        id: "queued",
+        sourceKind: "ticket",
+        mode: "passive",
+        state: "queued",
+        actionable: true,
+      },
+      {
+        id: "gate",
+        sourceKind: "workflow",
+        mode: "active",
+        state: "pending",
+        expired: true,
+        actionable: true,
+      },
+      {
+        id: "ready",
+        sourceKind: "workflow",
+        mode: "active",
+        state: "pending",
+        ready: true,
+        actionable: true,
+      },
+      {
+        id: "ready-failed",
+        sourceKind: "workflow",
+        mode: "active",
+        state: "failed",
+        ready: true,
+        actionable: false,
+      },
+      {
+        id: "ready-queued",
+        sourceKind: "workflow",
+        mode: "active",
+        state: "queued",
+        ready: true,
+        actionable: true,
+      },
+      {
+        id: "downgraded",
+        sourceKind: "workflow",
+        mode: "passive",
+        state: "pending",
+        ready: true,
+        expired: true,
+        actionable: true,
+      },
+    ];
+    const waits: ActiveSubscriptionWait[] = [];
+    for (const row of cases) {
+      const follow = conversationSubscriptionSchema.parse({
+        ...subscription(),
+        id: row.id,
+        source: { kind: row.sourceKind, id: row.id },
+        mode: row.mode,
+        pausedAt: row.paused ? at : null,
+        status: row.unfollowed ? "unfollowed" : "following",
+        expiresAt: row.expired ? "2000-01-01T00:00:00.000Z" : null,
+      });
+      const receipt = subscriptionDeliverySchema.parse({
+        ...delivery(row.id),
+        subscriptionId: row.id,
+        source: follow.source,
+        state: row.state,
+      });
+      await repo.createIfAbsent(follow);
+      await repo.recordDelivery(receipt);
+      if (row.ready) {
+        const wait = activeSubscriptionWaitSchema.parse({
+          id: `wait-${row.id}`,
+          subscriptionId: row.id,
+          recipient,
+          source: follow.source,
+          reason: follow.reason,
+          expiresAt: at,
+          state: "ready",
+          outcome: "source_terminal",
+          deliveryId: receipt.id,
+          batchId: null,
+          causationBatchIds: [],
+          createdAt: at,
+          updatedAt: at,
+          finishedAt: null,
+          lastError: null,
+        });
+        waits.push(wait);
+        fixture.db
+          .prepare(
+            "INSERT INTO conversation_subscription_waits VALUES (?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            wait.id,
+            row.id,
+            recipient.projectPath,
+            recipient.conversationId,
+            wait.state,
+            at,
+            receipt.id,
+            null,
+            JSON.stringify(wait),
+          );
+      }
+      expect(
+        isActionableSubscriptionDelivery(
+          receipt,
+          follow,
+          waits,
+          new Date().toISOString(),
+        ),
+        row.id,
+      ).toBe(row.actionable);
+    }
+    expect(await repo.pendingCount(recipient)).toBe(6);
+  });
+  it("counts only actionable pending work and permits explicit review without inventing acceptance", async () => {
+    const { repo } = setup();
+    await repo.createIfAbsent(subscription());
+    await repo.recordDelivery(delivery());
+    expect(await repo.pendingCount(recipient)).toBe(1);
+    await repo.claim(recipient, ["delivery-1"], "attempt", at);
+    await repo.settle(recipient, "attempt", "uncertain", at, "No receipt");
+    expect(await repo.pendingCount(recipient)).toBe(0);
+    expect(
+      await repo.reviewDelivery(recipient, "delivery-1", "retry", at),
+    ).toBe(true);
+    expect(await repo.pendingCount(recipient)).toBe(1);
+    await repo.updateControls(
+      recipient,
+      "sub-1",
+      { ...subscription(), pausedAt: at },
+      at,
+    );
+    expect(await repo.pendingCount(recipient)).toBe(0);
+    await repo.updateControls(
+      recipient,
+      "sub-1",
+      { ...subscription(), expiresAt: "2000-01-01T00:00:00Z" },
+      at,
+    );
+    expect(await repo.pendingCount(recipient)).toBe(0);
+    expect(
+      await repo.reviewDelivery(recipient, "delivery-1", "dismiss", at),
+    ).toBe(true);
+    expect(await repo.getDelivery(recipient, "delivery-1")).toMatchObject({
+      state: "superseded",
+      acceptedAt: null,
+    });
+    expect(
+      await repo.reviewDelivery(recipient, "delivery-1", "retry", at),
+    ).toBe(false);
+  });
   it("retains the explicit opt-out when automatic involvement is rediscovered", async () => {
     const { fixture, repo } = setup();
     await repo.createIfAbsent(subscription());
@@ -280,15 +478,15 @@ describe("conversation subscriptions durable state", () => {
       subscriptionId: other.id,
       recipient: other.recipient,
     });
-    expect(await repo.pendingCount(recipient)).toBe(4);
-    expect(await repo.pendingCount()).toBe(5);
+    expect(await repo.pendingCount(recipient)).toBe(2);
+    expect(await repo.pendingCount()).toBe(3);
     await repo.unfollow(recipient, "sub-1", at);
     const reloaded = createConversationSubscriptionsRepo(
       fixture.db,
       createWriteQueue(),
     );
-    expect(await reloaded.pendingCount(recipient)).toBe(1);
-    expect(await reloaded.pendingCount()).toBe(2);
+    expect(await reloaded.pendingCount(recipient)).toBe(0);
+    expect(await reloaded.pendingCount()).toBe(1);
     expect(await reloaded.readInbox(recipient, { limit: 1 })).toMatchObject({
       total: 1,
       items: [{ id: "paused-delivery" }],
@@ -383,7 +581,7 @@ describe("subscription evidence import and source withdrawal", () => {
         .map((row) => row.id)
         .sort(),
     ).toEqual(["other-source", "queued", "uncertain"]);
-    expect(await reloaded.pendingCount(recipient)).toBe(3);
+    expect(await reloaded.pendingCount(recipient)).toBe(2);
     expect(
       (await reloaded.readInbox(recipient, { includeSettled: true })).total,
     ).toBe(6);

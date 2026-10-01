@@ -12,7 +12,13 @@ export type ActiveWaitSource = z.infer<typeof activeWaitSourceSchema>;
 export const terminalSourceReadSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("missing") }).strict(),
   z.object({ kind: z.literal("pending"), status: z.string() }).strict(),
-  z.object({ kind: z.literal("terminal"), fact: sourceFactSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("terminal"),
+      fact: sourceFactSchema,
+      resumable: z.boolean().optional(),
+    })
+    .strict(),
 ]);
 export type TerminalSourceRead = z.infer<typeof terminalSourceReadSchema>;
 
@@ -33,6 +39,7 @@ export const activeSubscriptionWaitSchema = z
       .enum(["source_terminal", "source_missing", "expired"])
       .nullable(),
     deliveryId: z.string().nullable(),
+    baselineOccurrenceId: z.string().min(1).nullable().optional(),
     batchId: z.string().nullable(),
     causationBatchIds: z.array(z.string().min(1)).max(8),
     createdAt: z.string().min(1),

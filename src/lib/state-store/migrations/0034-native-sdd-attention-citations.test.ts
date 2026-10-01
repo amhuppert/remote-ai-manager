@@ -447,6 +447,10 @@ describe("0034-native-sdd-attention-citations", () => {
       "0061-conversation-notice-inbox",
       "0062-notepad-notice-context",
       "0063-workflow-result-inbox",
+      "0064-retire-automatic-validation-follows",
+      "0065-subscription-wait-generations",
+      "0066-repair-imported-notice-history",
+      "0067-retire-consumed-finite-wait-sources",
     ]);
   });
 

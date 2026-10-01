@@ -16,16 +16,39 @@ inbox remains the result and delivery evidence. A one-time wait stores its own
 terminal condition and settlement independently of the passive source cursor.
 Explicit registration can promote an existing follow, including a remembered
 opt-out; automatic involvement never promotes or rearms it. Repeating registration
-for the same exact operation returns the existing wait rather than extending its
-lifetime or creating another wake.
+while its wait is waiting or ready returns that same generation and keeps its
+deadline. A paused, passive or unfollowed live wait requires explicit control
+restoration; repeating `subscription wait` does not silently restore it.
+After settlement or cancellation, explicit active registration can create a new
+generation while preserving history. Only an accepted or explicitly dismissed
+terminal occurrence establishes its baseline. A terminal result that has never
+been delivered remains obtainable immediately, including after cancellation or
+expiry. An unresolved queued or uncertain input receipt remains held for review.
+An already consumed validation, git job, or final workflow result refuses rearm
+with `ACTIVE_WAIT_SOURCE_FINAL`; it cannot promise another outcome. A consumed
+workflow halt can be rearmed only when the canonical lifecycle classifier says
+the execution can resume. The new generation waits for a later boundary.
 
-Registration persists the wait and checks current source state. The same source
+Registration verifies source existence before writing. Its passive source
+cursor is established at registration, so workflow gates arriving before the
+first sweep remain visible. The same source
 reader reconciles pending waits periodically and after server startup. Workflow
 terminality uses the graph lifecycle classifier; paused workflows remain pending,
 while completed, halted and aborted executions settle. Validation uses its
 canonical terminal classifier. Git jobs settle once their durable status is no
 longer running, including a prepared result that still needs human landing.
 The wait reports the source outcome; it does not approve or land anything.
+Workflow follows continue collecting approval, question and later result
+boundaries during a finite wait. Only the exact ready terminal delivery is
+reserved for its active wake, and shared occurrence identity prevents a second
+passive delivery. Accepted or dismissed outcomes spend the wait. A workflow
+returns to passive following. A validation or git job follow ends its effective
+lifetime when its actual terminal result is accepted or dismissed, including
+passive delivery after cancellation or expiry. Its subscription and receipt
+history remain inspectable. Cancellation or expiry while the source is still
+running preserves passive collection of the eventual result. Historical waits
+do not reserve later passive results; only a waiting generation or its ready
+terminal outcome owns that ingestion.
 
 Terminal outcome, missing-source notice or expiry is recorded with a stable
 occurrence identity and retrieval handle. Source records remain authoritative.
@@ -67,15 +90,21 @@ requested follow-up. Missing queue rows without that evidence are uncertain.
 Explicit queue review owns retry or discard; the wake dispatcher never infers
 that an ambiguous send is safe to repeat. If an uncertain batch has no queue
 row and no acceptance receipt, explicit unfollow can discard one member at a
-time. The server proves absence and rechecks the batch state in the write
+time. `cancel` ends the selected finite wait and preserves passive following;
+`unfollow` also records the source opt-out. The server proves absence and
+rechecks the batch state in the write
 transaction. Other members remain unresolved; cancelling the last member
-releases the batch governor without replaying it.
+releases the batch governor without replaying it. Withdrawn input is superseded,
+never accepted. Unbatched proven-failed input can become pending again; queued or
+uncertain input is held for explicit review. Those holds remain inspectable but
+do not count as actionable pending delivery.
 
 ## Scope
 
 The CLI provides explicit registration and bounded wait inspection. Full UI
-controls, advisory hints, recurring watches, one-shot agent-run completion,
-mid-turn interruption and broader notice consolidation belong to later tickets.
+controls and advisory hints are covered by the follow-up subscription-controls
+work. Recurring watches, one-shot agent-run completion and mid-turn interruption
+remain outside this contract.
 Generated wake turns do not consume unrelated passive briefings; those remain
 attached to the user's next message.
 
@@ -86,7 +115,16 @@ A durable launch-and-yield validation command would need an explicit ownership
 transfer and is outside this change. Graph workflow launch is already detached.
 
 The state schema advances to version 24 because older readers cannot decode the
-new persisted queue metadata. Startup applies the compatibility barrier before
+new persisted queue metadata. Wait generations now require schema version 28:
+ordered migration 0065 preserves historical waits, allows only one live
+generation per subscription, restores spent active follows to passive, and
+supersedes proven withdrawn legacy receipts without inventing acceptance.
+Data migration 0067 retires consumed finite-source follows and restores the
+known running cursor for legacy finite waits with no saved source cursor, so
+their eventual result is not silently baselined away. Historical generations
+can be inspected with `subscription wait-get <subscription-id>
+--wait-id=<generation-id>`; the default selector remains the latest generation.
+Startup applies the compatibility barrier before
 accepting wake rows; the live managing instance is not changed by development.
 
 ## Verification

@@ -1022,7 +1022,16 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
         start_mode: input.startMode,
         linked_at: revision,
       });
+      const priorStatus = ticketById(ticketId).status;
       setTicketStartedStmt.run(revision, ticketId);
+      if (priorStatus !== "in_progress") {
+        statusChanges.appendInTransaction({
+          ticketId,
+          status: "in_progress",
+          actorConversationId: null,
+          occurredAt: revision,
+        });
+      }
     },
   );
 

@@ -121,7 +121,6 @@ describe.each(["session", "project"] as const)(
       const h = harness();
       let state = "pending";
       h.deps.subscriptions = {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => {
           state = "queued";
           return {
@@ -151,7 +150,6 @@ describe.each(["session", "project"] as const)(
       const h = harness();
       let preparations = 0;
       h.deps.subscriptions = {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => {
           preparations++;
           return {
@@ -209,7 +207,6 @@ describe.each(["session", "project"] as const)(
         throw new Error("Source deleted before watermark persistence");
       };
       h.deps.subscriptions = {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => ({
           block: null,
           onInputAccepted: async () => {},
@@ -239,13 +236,18 @@ describe.each(["session", "project"] as const)(
           error: "Source deleted before watermark persistence",
         },
       ]);
+      expect(h.archive).toHaveLength(1);
+      expect(h.archive[0]).toMatchObject({
+        id: "message-1",
+        role: "user",
+        content: [{ type: "text", text: '<notepad-ref notepad-id="notes" />' }],
+      });
     });
 
     it("holds unconfirmed live briefing delivery as uncertain", async () => {
       const h = harness();
       let disposition: string | undefined;
       h.deps.subscriptions = {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {},
@@ -275,7 +277,6 @@ describe.each(["session", "project"] as const)(
         recorded = true;
       };
       h.deps.subscriptions = {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {
@@ -328,7 +329,6 @@ describe.each(["session", "project"] as const)(
           return true;
         };
         h.deps.subscriptions = {
-          synchronizeInvolvement: async () => {},
           prepareBriefing: async () => ({
             block: "Update",
             onInputAccepted: async () => {},
@@ -383,7 +383,6 @@ describe.each(["session", "project"] as const)(
       let dispatches = 0;
       h.deps.ownSubscriptionReceipt = () => false;
       h.deps.subscriptions = {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {},

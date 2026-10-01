@@ -82,6 +82,15 @@ export interface SubscriptionControlsService {
     recipient: SubscriptionRecipient,
     id: string,
   ): Promise<string | null>;
+  getDelivery(
+    recipient: SubscriptionRecipient,
+    id: string,
+  ): ReturnType<ConversationSubscriptionsRepo["getDelivery"]>;
+  reviewDelivery(
+    recipient: SubscriptionRecipient,
+    id: string,
+    action: "retry" | "dismiss",
+  ): Promise<boolean>;
   listReadAt(recipient: SubscriptionRecipient): Promise<Map<string, string>>;
 }
 export interface SubscriptionControlsDeps {
@@ -154,8 +163,15 @@ export function createSubscriptionControlsService(
       ) {
         await deps.activeWaits.cancel(recipient, id);
         const result = await deps.repo.get(recipient, id);
+        if (result && change.status === "unfollowed")
+          await deps.repo.updateControls(
+            recipient,
+            id,
+            { ...result, status: "unfollowed" },
+            at,
+          );
         deps.onChange?.(recipient, current.source);
-        return result;
+        return deps.repo.get(recipient, id);
       }
       if (
         !deps.waits ||
@@ -200,6 +216,8 @@ export function createSubscriptionControlsService(
       const parsed = subscribeSchema.parse(input);
       await eligible(parsed.recipient);
       await deps.validateSelection?.(parsed);
+      const baseline = await deps.readSource?.(parsed.recipient, parsed.source);
+      if (baseline?.missing) return null;
       const current = await deps.repo.findBySource(
         parsed.recipient,
         parsed.source,
@@ -207,18 +225,18 @@ export function createSubscriptionControlsService(
       const retainedWait = current
         ? await deps.waits?.get(parsed.recipient, current.id)
         : null;
-      if (retainedWait) {
+      if (
+        retainedWait &&
+        (retainedWait.state === "waiting" || retainedWait.state === "ready") &&
+        parsed.mode === "active"
+      ) {
         const delivery = retainedWait.deliveryId
           ? await deps.repo.getDelivery(
               parsed.recipient,
               retainedWait.deliveryId,
             )
           : null;
-        if (
-          retainedWait.state === "settled" ||
-          retainedWait.state === "cancelled" ||
-          delivery?.state === "accepted"
-        )
+        if (delivery?.state === "accepted")
           throw new SubscriptionControlError(
             "ACTIVE_WAIT_SPENT",
             "This source's finite wait is already spent. Choose another source to subscribe again.",
@@ -251,18 +269,14 @@ export function createSubscriptionControlsService(
         const wait = current
           ? await deps.waits?.get(parsed.recipient, current.id)
           : null;
-        if (wait) {
+        if (wait && (wait.state === "waiting" || wait.state === "ready")) {
           const delivery = wait.deliveryId
             ? await deps.repo.getDelivery(parsed.recipient, wait.deliveryId)
             : null;
-          if (
-            wait.state === "settled" ||
-            wait.state === "cancelled" ||
-            delivery?.state === "accepted"
-          )
+          if (delivery?.state === "accepted")
             throw new SubscriptionControlError(
               "ACTIVE_WAIT_SPENT",
-              "This source's finite wait is already spent and cannot be rearmed.",
+              "This wait's input is already accepted. Let settlement complete before registering a new generation.",
               409,
             );
           if (parsed.expiresAt != null && parsed.expiresAt !== wait.expiresAt)
@@ -296,10 +310,16 @@ export function createSubscriptionControlsService(
           pausedAt: null,
           reason: parsed.reason,
           eventKinds: parsed.eventKinds ?? null,
-          expiresAt: retainedWait?.expiresAt ?? parsed.expiresAt ?? null,
+          expiresAt:
+            retainedWait &&
+            (retainedWait.state === "waiting" || retainedWait.state === "ready")
+              ? retainedWait.expiresAt
+              : (parsed.expiresAt ?? null),
+          ...(current.status === "unfollowed" && baseline
+            ? { cursor: baseline.cursor, missingAt: null, lastError: null }
+            : {}),
         });
       const at = now();
-      const baseline = await deps.readSource?.(parsed.recipient, parsed.source);
       const result = await deps.repo.createIfAbsent(
         conversationSubscriptionSchema.parse({
           id: (deps.newId ?? randomUUID)(),
@@ -363,18 +383,14 @@ export function createSubscriptionControlsService(
           400,
         );
       const wait = await deps.waits?.get(recipient, id);
-      if (wait) {
+      if (wait && (wait.state === "waiting" || wait.state === "ready")) {
         const delivery = wait.deliveryId
           ? await deps.repo.getDelivery(recipient, wait.deliveryId)
           : null;
-        if (
-          wait.state === "cancelled" ||
-          wait.state === "settled" ||
-          delivery?.state === "accepted"
-        )
+        if (delivery?.state === "accepted")
           throw new SubscriptionControlError(
             "ACTIVE_WAIT_SPENT",
-            "This source's finite wait is already spent and cannot be rearmed.",
+            "This wait's input is already accepted. Let settlement complete before registering a new generation.",
             409,
           );
         if (expiresAt !== undefined && expiresAt !== wait.expiresAt)
@@ -408,7 +424,11 @@ export function createSubscriptionControlsService(
           400,
         );
       }
-      return apply(recipient, id, { status: "unfollowed", cancelWait: true });
+      return apply(recipient, id, {
+        mode: "passive",
+        expiresAt: null,
+        cancelWait: true,
+      });
     },
     unfollow: (recipient, id) =>
       apply(recipient, id, { status: "unfollowed", cancelWait: true }),
@@ -432,5 +452,18 @@ export function createSubscriptionControlsService(
     },
     getReadAt: (recipient, id) => preferences().getReadAt(recipient, id),
     listReadAt: (recipient) => preferences().listReadAt(recipient),
+    getDelivery: (recipient, id) => deps.repo.getDelivery(recipient, id),
+    async reviewDelivery(recipient, id, action) {
+      await eligible(recipient);
+      if (!(await deps.repo.getDelivery(recipient, id))) return false;
+      if (!(await deps.repo.reviewDelivery(recipient, id, action, now())))
+        throw new SubscriptionControlError(
+          "SUBSCRIPTION_DELIVERY_REVIEW_REQUIRED",
+          "This receipt is accepted, in flight, already dismissed, or owned by an unresolved wake. Review the wake's queued message when present.",
+          409,
+        );
+      deps.onChange?.(recipient);
+      return true;
+    },
   };
 }

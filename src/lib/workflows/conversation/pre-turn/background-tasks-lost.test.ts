@@ -26,7 +26,7 @@ function makeHandler(isProjectConversation = false) {
   const appended: TranscriptEntry[] = [];
   const log = createCapturingLogger();
   const deps = {
-    async recordAgentNotice(input: RecordSubscriptionNoticeInput) {
+    async recordRuntimeLossNotice(input: RecordSubscriptionNoticeInput) {
       records.push(input);
       return true;
     },
@@ -60,7 +60,8 @@ describe("createBackgroundTasksLostHandler", () => {
         const transcript: TranscriptEntry[] = [];
         const handler = createBackgroundTasksLostHandler(
           {
-            recordAgentNotice: (input) => service.recordNotice(input),
+            recordRuntimeLossNotice: (input) =>
+              service.recordRuntimeLossNotice(input),
             log: createCapturingLogger(),
           },
           {
@@ -85,7 +86,7 @@ describe("createBackgroundTasksLostHandler", () => {
         };
         await handler(loss);
         const recipient = { projectPath: "/p", conversationId: "conv-1" };
-        const briefing = await service.prepareBriefing({
+        const briefing = await service.prepareRuntimeLossNotice({
           recipient,
           attemptId: scenario,
         });
@@ -167,7 +168,7 @@ describe("createBackgroundTasksLostHandler", () => {
 
   it("preserves the human notice and logs only failure metadata when inbox persistence rejects", async () => {
     const { deps, appended, log } = makeHandler(true);
-    deps.recordAgentNotice = vi.fn(async () => {
+    deps.recordRuntimeLossNotice = vi.fn(async () => {
       throw new Error("Inbox unavailable");
     });
     const handler = createBackgroundTasksLostHandler(deps, {

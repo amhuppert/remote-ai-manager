@@ -408,6 +408,7 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--reason` / `--reason-file` (required), `--reason-file`, `--expires-in`.
 - `cctl subscription wait-get` — Inspect one terminal wait and wake batch
   - `cctl subscription wait-get <subscription-id> [options]`
+  - Flags: `--wait-id`.
 - `cctl subscription waits` — Inspect this conversation's terminal waits
   - `cctl subscription waits [options]`
   - Flags: `--limit`, `--offset`.

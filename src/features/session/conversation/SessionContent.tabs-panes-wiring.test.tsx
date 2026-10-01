@@ -14,10 +14,11 @@ import {
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 
-// The tab strip's context menu navigates via the app router, which jsdom
-// tests don't mount.
+// The tab strip navigates through the app router and real pane transcripts
+// observe its search parameters; jsdom tests do not mount that router.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
 // Stub only the genuinely-heavy non-strip children that need full app context

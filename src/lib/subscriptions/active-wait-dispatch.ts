@@ -127,8 +127,20 @@ export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
   }
 
   async function run(): Promise<void> {
-    await deps.service.reconcile();
-    await deps.reconcilePassive?.();
+    try {
+      await deps.service.reconcile();
+    } catch (error) {
+      logger.error("subscription.wake_reconcile_failed", {
+        error: getErrorMessage(error),
+      });
+    }
+    try {
+      await deps.reconcilePassive?.();
+    } catch (error) {
+      logger.error("subscription.passive_reconcile_failed", {
+        error: getErrorMessage(error),
+      });
+    }
     if (stopped) return;
     const visited = new Set<string>();
     for (const batch of await deps.service.listPendingBatches()) {

@@ -3,6 +3,10 @@ import type { Db } from "./schemas";
 import type { WriteQueue } from "./write-queue";
 import { importSubscriptionDelivery } from "./subscription-delivery-import";
 import {
+  ensureFiniteWaitSourceCursor,
+  retireConsumedFiniteWaitSources,
+} from "./subscription-wait-lifecycle";
+import {
   conversationSubscriptionSchema,
   inboxQuerySchema,
   sourceFactSchema,
@@ -44,6 +48,14 @@ export interface ConversationSubscriptionsRepo {
   listFiniteWaitSubscriptionIds(
     recipient: SubscriptionRecipient,
   ): Promise<string[]>;
+  listDeliveriesReservedForActiveWait(
+    recipient: SubscriptionRecipient,
+  ): Promise<string[]>;
+  findDeliveryByOccurrence(
+    recipient: SubscriptionRecipient,
+    source: SubscriptionSourceRef,
+    occurrenceId: string,
+  ): Promise<SubscriptionDelivery | null>;
   listDeliveriesForOverview(
     recipient?: SubscriptionRecipient,
   ): Promise<SubscriptionDelivery[]>;
@@ -54,7 +66,10 @@ export interface ConversationSubscriptionsRepo {
     input: Pick<
       ConversationSubscription,
       "status" | "mode" | "pausedAt" | "eventKinds" | "expiresAt" | "reason"
-    >,
+    > &
+      Partial<
+        Pick<ConversationSubscription, "cursor" | "missingAt" | "lastError">
+      >,
     at: string,
   ): Promise<ConversationSubscription | null>;
   unfollow(
@@ -87,6 +102,18 @@ export interface ConversationSubscriptionsRepo {
     occurrenceIds: readonly string[],
     at: string,
   ): Promise<number>;
+  supersedeNotepadRevisions(
+    recipient: SubscriptionRecipient,
+    subscriptionId: string,
+    revision: number,
+    at: string,
+  ): Promise<number>;
+  reviewDelivery(
+    recipient: SubscriptionRecipient,
+    id: string,
+    action: "retry" | "dismiss",
+    at: string,
+  ): Promise<boolean>;
   readInbox(
     recipient: SubscriptionRecipient,
     query: InboxQuery,
@@ -96,6 +123,15 @@ export interface ConversationSubscriptionsRepo {
     id: string,
   ): Promise<SubscriptionDelivery | null>;
   claim(
+    recipient: SubscriptionRecipient,
+    ids: string[],
+    attemptId: string,
+    at: string,
+  ): Promise<SubscriptionDelivery[]>;
+  listRuntimeLossNotices(
+    recipient: SubscriptionRecipient,
+  ): Promise<SubscriptionDelivery[]>;
+  claimRuntimeLossNotices(
     recipient: SubscriptionRecipient,
     ids: string[],
     attemptId: string,
@@ -221,6 +257,18 @@ export function createConversationSubscriptionsRepo(
       AND s.conversation_id=conversation_subscription_deliveries.conversation_id
       AND s.status='following'
   )`;
+  const actionableDeliveryWhere = `state IN ('pending','failed','queued') AND EXISTS (
+    SELECT 1 FROM conversation_subscriptions s WHERE s.id=conversation_subscription_deliveries.subscription_id
+      AND s.project_path=conversation_subscription_deliveries.project_path AND s.conversation_id=conversation_subscription_deliveries.conversation_id
+      AND s.status='following' AND s.paused_at IS NULL AND (
+        state='queued' OR (
+          (s.mode='passive' OR s.source_kind='workflow')
+          AND (s.expires_at IS NULL OR s.expires_at>@at OR (s.source_kind='workflow' AND s.mode='active')
+            OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL))
+          AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND s.mode='active')
+        ) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL AND s.mode='active' AND conversation_subscription_deliveries.state='pending')
+      )
+  )`;
   const find = db.prepare(
     `SELECT * FROM conversation_subscriptions WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id`,
   );
@@ -243,15 +291,54 @@ export function createConversationSubscriptionsRepo(
   );
   const advance =
     db.prepare(`UPDATE conversation_subscriptions SET cursor=@next_cursor,missing_at=@missing_at,updated_at=@at,last_error=NULL
-    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND mode='passive' AND missing_at IS NULL AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=conversation_subscriptions.id)`);
+    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND (mode='passive' OR source_kind='workflow') AND missing_at IS NULL AND (source_kind='workflow' OR NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=conversation_subscriptions.id AND (w.state='waiting' OR (w.state='ready' AND json_extract(w.payload_json,'$.outcome')='source_terminal'))))`);
   const claim =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state='queued',attempt_id=@attempt_id,attempt_count=attempt_count+1,queued_at=@at,accepted_at=NULL,finished_at=NULL,last_error=NULL
     WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND state IN ('pending','failed')
-    AND EXISTS (SELECT 1 FROM conversation_subscriptions s WHERE s.id=subscription_id AND s.project_path=@project_path AND s.conversation_id=@conversation_id AND s.status='following' AND s.mode='passive' AND s.paused_at IS NULL AND ((s.expires_at IS NULL OR s.expires_at>@at) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL)))`);
+    AND EXISTS (SELECT 1 FROM conversation_subscriptions s WHERE s.id=subscription_id AND s.project_path=@project_path AND s.conversation_id=@conversation_id AND s.status='following' AND (s.mode='passive' OR s.source_kind='workflow') AND s.paused_at IS NULL AND ((s.expires_at IS NULL OR s.expires_at>@at OR (s.source_kind='workflow' AND s.mode='active')) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL))
+      AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND s.mode='active'))`);
   const settle =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state=@state,accepted_at=CASE WHEN @state='accepted' THEN @at ELSE NULL END,finished_at=@at,last_error=@error
     WHERE project_path=@project_path AND conversation_id=@conversation_id AND attempt_id=@attempt_id
       AND (state IN ('queued','uncertain') OR (@state='accepted' AND state='failed'))`);
+  // Task loss is internal recovery context, independent of feedback follow controls.
+  // Restrict this path to the owning conversation and the one operational event.
+  const runtimeLossWhere = `project_path=@project_path AND conversation_id=@conversation_id
+    AND source_kind='conversation' AND source_id=@conversation_id
+    AND json_extract(fact_json,'$.eventKind')='background-tasks-lost'
+    AND json_extract(fact_json,'$.category')='outcome'
+    AND json_extract(fact_json,'$.outcome')='terminated' AND state IN ('pending','failed')`;
+  const listRuntimeLoss = db.prepare(
+    `SELECT * FROM conversation_subscription_deliveries WHERE ${runtimeLossWhere} ORDER BY recorded_at,id`,
+  );
+  const claimRuntimeLoss =
+    db.prepare(`UPDATE conversation_subscription_deliveries
+    SET state='queued',attempt_id=@attempt_id,attempt_count=attempt_count+1,queued_at=@at,accepted_at=NULL,finished_at=NULL,last_error=NULL
+    WHERE ${runtimeLossWhere} AND id=@id`);
+  const claimRuntimeLossTx = db.transaction(
+    (
+      recipient: SubscriptionRecipient,
+      ids: string[],
+      attemptId: string,
+      at: string,
+    ) => {
+      const result: SubscriptionDelivery[] = [];
+      for (const id of ids) {
+        if (
+          claimRuntimeLoss.run({
+            ...scope(recipient),
+            id,
+            attempt_id: attemptId,
+            at,
+          }).changes === 0
+        )
+          continue;
+        const delivery = readDelivery(recipient, id);
+        if (delivery) result.push(delivery);
+      }
+      return result;
+    },
+  );
   function insert(value: SubscriptionDelivery): boolean {
     return (
       insertDelivery.run({
@@ -410,13 +497,39 @@ export function createConversationSubscriptionsRepo(
       return (
         db
           .prepare(
-            "SELECT subscription_id FROM conversation_subscription_waits WHERE project_path=@project_path AND conversation_id=@conversation_id",
+            "SELECT DISTINCT w.subscription_id FROM conversation_subscription_waits w JOIN conversation_subscriptions s ON s.id=w.subscription_id WHERE w.project_path=@project_path AND w.conversation_id=@conversation_id AND s.source_kind<>'workflow' AND (w.state='waiting' OR (w.state='ready' AND json_extract(w.payload_json,'$.outcome')='source_terminal'))",
           )
           .all(scope(recipient)) as unknown[]
       ).map(
         (raw) =>
           z.object({ subscription_id: z.string() }).parse(raw).subscription_id,
       );
+    },
+    async listDeliveriesReservedForActiveWait(recipient) {
+      return z
+        .array(z.object({ id: z.string() }))
+        .parse(
+          db
+            .prepare(
+              `SELECT DISTINCT w.delivery_id AS id FROM conversation_subscription_waits w JOIN conversation_subscriptions s ON s.id=w.subscription_id
+        WHERE w.project_path=@project_path AND w.conversation_id=@conversation_id AND w.state='ready' AND w.delivery_id IS NOT NULL AND s.mode='active' AND s.status='following'`,
+            )
+            .all(scope(recipient)),
+        )
+        .map((row) => row.id);
+    },
+    async findDeliveryByOccurrence(recipient, source, occurrenceId) {
+      const row: unknown = db
+        .prepare(
+          `SELECT * FROM conversation_subscription_deliveries WHERE project_path=@project_path AND conversation_id=@conversation_id AND source_kind=@source_kind AND source_id=@source_id AND occurrence_id=@occurrence_id`,
+        )
+        .get({
+          ...scope(recipient),
+          source_kind: source.kind,
+          source_id: source.id,
+          occurrence_id: occurrenceId,
+        });
+      return row === undefined ? null : deliveryFromRow(row);
     },
     async listAll() {
       return (
@@ -442,38 +555,56 @@ export function createConversationSubscriptionsRepo(
       return rows.map(deliveryFromRow);
     },
     async pendingCount(recipient) {
+      const params = {
+        ...(recipient ? scope(recipient) : {}),
+        at: new Date().toISOString(),
+      };
       const row: unknown = recipient
         ? db
             .prepare(
-              `SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE ${pendingDeliveryWhere} AND project_path=@project_path AND conversation_id=@conversation_id`,
+              `SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE ${actionableDeliveryWhere} AND project_path=@project_path AND conversation_id=@conversation_id`,
             )
-            .get(scope(recipient))
+            .get(params)
         : db
             .prepare(
-              `SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE ${pendingDeliveryWhere}`,
+              `SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE ${actionableDeliveryWhere}`,
             )
-            .get();
+            .get(params);
       return z.object({ total: z.number() }).parse(row).total;
     },
     async updateControls(recipient, id, input, at) {
-      return writeQueue.withWriteQueueSync("subscriptions.controls", () => {
-        db.prepare(
-          "UPDATE conversation_subscriptions SET status=@status,mode=@mode,paused_at=@paused_at,event_kinds_json=@event_kinds_json,expires_at=@expires_at,reason=@reason,updated_at=@at,unfollowed_at=CASE WHEN @status='following' THEN NULL ELSE COALESCE(unfollowed_at,@at) END WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id",
-        ).run({
-          ...scope(recipient),
-          id,
-          status: input.status,
-          mode: input.mode,
-          paused_at: input.pausedAt,
-          event_kinds_json:
-            input.eventKinds === null ? null : JSON.stringify(input.eventKinds),
-          expires_at: input.expiresAt,
-          reason: input.reason,
-          at,
-        });
-        const raw: unknown = find.get({ ...scope(recipient), id });
-        return raw === undefined ? null : subscriptionFromRow(raw);
-      });
+      return writeQueue.withWriteQueueSync("subscriptions.controls", () =>
+        db
+          .transaction(() => {
+            db.prepare(
+              "UPDATE conversation_subscriptions SET status=@status,mode=@mode,paused_at=@paused_at,event_kinds_json=@event_kinds_json,expires_at=@expires_at,reason=@reason,updated_at=@at,cursor=CASE WHEN @reset_cursor THEN @cursor ELSE cursor END,missing_at=CASE WHEN @reset_missing THEN @missing_at ELSE missing_at END,last_error=CASE WHEN @reset_error THEN @last_error ELSE last_error END,unfollowed_at=CASE WHEN @status='following' THEN NULL ELSE COALESCE(unfollowed_at,@at) END WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id",
+            ).run({
+              ...scope(recipient),
+              id,
+              status: input.status,
+              mode: input.mode,
+              paused_at: input.pausedAt,
+              event_kinds_json:
+                input.eventKinds === null
+                  ? null
+                  : JSON.stringify(input.eventKinds),
+              expires_at: input.expiresAt,
+              reason: input.reason,
+              reset_cursor: Number(Object.hasOwn(input, "cursor")),
+              cursor: input.cursor ?? null,
+              reset_missing: Number(Object.hasOwn(input, "missingAt")),
+              missing_at: input.missingAt ?? null,
+              reset_error: Number(Object.hasOwn(input, "lastError")),
+              last_error: input.lastError ?? null,
+              at,
+            });
+            ensureFiniteWaitSourceCursor(db, recipient);
+            retireConsumedFiniteWaitSources(db, recipient);
+            const raw: unknown = find.get({ ...scope(recipient), id });
+            return raw === undefined ? null : subscriptionFromRow(raw);
+          })
+          .immediate(),
+      );
     },
     async unfollow(recipient, id, at) {
       return writeQueue.withWriteQueueSync(
@@ -557,6 +688,52 @@ export function createConversationSubscriptionsRepo(
             .immediate(),
       );
     },
+    async supersedeNotepadRevisions(recipient, subscriptionId, revision, at) {
+      return writeQueue.withWriteQueueSync(
+        "subscriptions.supersedeNotepadRevisions",
+        () =>
+          db
+            .prepare(
+              `UPDATE conversation_subscription_deliveries SET state='superseded',finished_at=@at,accepted_at=NULL,last_error='Source revision was covered by accepted context'
+        WHERE project_path=@project_path AND conversation_id=@conversation_id AND subscription_id=@subscription_id AND source_kind='notepad' AND json_extract(fact_json,'$.eventKind')='notepad-content-revised' AND CAST(json_extract(fact_json,'$.revision') AS INTEGER)<=@revision AND state IN ('pending','failed')`,
+            )
+            .run({
+              ...scope(recipient),
+              subscription_id: subscriptionId,
+              revision,
+              at,
+            }).changes,
+      );
+    },
+    async reviewDelivery(recipient, id, action, at) {
+      return writeQueue.withWriteQueueSync("subscriptions.reviewDelivery", () =>
+        db
+          .transaction(() => {
+            const changed =
+              db
+                .prepare(
+                  `UPDATE conversation_subscription_deliveries
+        SET state=@state,attempt_id=NULL,queued_at=NULL,accepted_at=NULL,finished_at=@finished_at,last_error=@error
+        WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND state IN ('pending','failed','uncertain')
+          AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w JOIN conversation_subscription_wake_batches b ON b.id=w.batch_id WHERE w.delivery_id=conversation_subscription_deliveries.id AND b.state NOT IN ('accepted','cancelled'))`,
+                )
+                .run({
+                  ...scope(recipient),
+                  id,
+                  state: action === "retry" ? "pending" : "superseded",
+                  finished_at: action === "retry" ? null : at,
+                  error:
+                    action === "retry"
+                      ? null
+                      : "Delivery explicitly dismissed after inspection",
+                }).changes > 0;
+            if (changed && action === "dismiss")
+              retireConsumedFiniteWaitSources(db, recipient);
+            return changed;
+          })
+          .immediate(),
+      );
+    },
     async readInbox(recipient, query) {
       const parsed = inboxQuerySchema.parse(query);
       const params = {
@@ -593,6 +770,19 @@ export function createConversationSubscriptionsRepo(
     async getDelivery(recipient, id) {
       return readDelivery(recipient, id);
     },
+    async listRuntimeLossNotices(recipient) {
+      return (listRuntimeLoss.all(scope(recipient)) as unknown[]).map(
+        deliveryFromRow,
+      );
+    },
+    async claimRuntimeLossNotices(recipient, ids, attemptId, at) {
+      if (!attemptId)
+        throw new Error("A runtime recovery claim requires an attempt ID");
+      return writeQueue.withWriteQueueSync(
+        "subscriptions.claimRuntimeLoss",
+        () => claimRuntimeLossTx.immediate(recipient, ids, attemptId, at),
+      );
+    },
     async claim(recipient, ids, attemptId, at) {
       if (!attemptId)
         throw new Error("A briefing claim requires an attempt ID");
@@ -601,16 +791,21 @@ export function createConversationSubscriptionsRepo(
       );
     },
     async settle(recipient, attemptId, state, at, error) {
-      return writeQueue.withWriteQueueSync(
-        "subscriptions.settle",
-        () =>
-          settle.run({
-            ...scope(recipient),
-            attempt_id: attemptId,
-            state,
-            at,
-            error,
-          }).changes,
+      return writeQueue.withWriteQueueSync("subscriptions.settle", () =>
+        db
+          .transaction(() => {
+            const changed = settle.run({
+              ...scope(recipient),
+              attempt_id: attemptId,
+              state,
+              at,
+              error,
+            }).changes;
+            if (state === "accepted")
+              retireConsumedFiniteWaitSources(db, recipient);
+            return changed;
+          })
+          .immediate(),
       );
     },
     async recoverOrphanedClaims(at) {

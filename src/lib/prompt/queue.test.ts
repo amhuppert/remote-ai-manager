@@ -1136,7 +1136,6 @@ describe("queueMessage notepad injection", () => {
       return {
         ...deps,
         subscriptions: {
-          synchronizeInvolvement: async () => {},
           prepareBriefing: async () => ({
             block: NOTICE_BLOCK,
             onInputAccepted: accept,

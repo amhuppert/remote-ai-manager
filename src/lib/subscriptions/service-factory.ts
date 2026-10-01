@@ -59,7 +59,6 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     readConversation,
     notepads,
     queries,
-    ticketChanges,
     watermarks: createNotepadDeliveryWatermarksRepo(db, writeQueue),
   });
   const sourceDeps = {
@@ -101,6 +100,15 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     },
     isRecipientEligible,
     readTerminalSource: createTerminalSourceReader(sourceDeps),
+    async readSourceCursor(recipient, source) {
+      return (
+        await createSubscriptionSourceReader(sourceDeps)(
+          recipient,
+          source,
+          null,
+        )
+      ).cursor;
+    },
     async canDiscardMissingBatch(batch) {
       const identity = readConversation(batch.recipient.conversationId);
       if (!identity || identity.projectPath !== batch.recipient.projectPath)
@@ -125,7 +133,7 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
       const sessionFlag = identity?.sessionName
         ? ` --session=${quote(identity.sessionName)}`
         : "";
-      return `cctl subscription wait-get --project=${quote(projectNameFromPath(wait.recipient.projectPath))}${sessionFlag} --conversation=${quote(wait.recipient.conversationId)} -- ${quote(wait.subscriptionId)}`;
+      return `cctl subscription wait-get --project=${quote(projectNameFromPath(wait.recipient.projectPath))}${sessionFlag} --conversation=${quote(wait.recipient.conversationId)} --wait-id=${quote(wait.id)} -- ${quote(wait.subscriptionId)}`;
     },
   });
   const service = createSubscriptionService({

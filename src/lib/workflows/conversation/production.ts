@@ -197,10 +197,15 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         });
       },
       mutateConversation: stateMod.mutateConversation,
-      async recordAgentNotice(input) {
+      async recordRuntimeLossNotice(input) {
         const { getSubscriptionService } =
           await import("@/lib/subscriptions/service-factory");
-        return getSubscriptionService().recordNotice(input);
+        return getSubscriptionService().recordRuntimeLossNotice(input);
+      },
+      async prepareRuntimeLossNotice(input) {
+        const { getSubscriptionService } =
+          await import("@/lib/subscriptions/service-factory");
+        return getSubscriptionService().prepareRuntimeLossNotice(input);
       },
       recordNotepadDeliveries: (input) =>
         notepadServiceFactoryMod

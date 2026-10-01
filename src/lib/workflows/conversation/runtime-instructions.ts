@@ -16,6 +16,67 @@ import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import { registerFocusMemoryIfPresent } from "./pre-turn/focus-memory";
 import { resolveAlignmentInstructionForNewRuntime } from "./pre-turn/alignment-gate";
 import { resolveConversationProfileInjection } from "./pre-turn/profile-injection";
+import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
+import type { PreparedSubscriptionBriefing } from "@/lib/subscriptions/service";
+
+export type RuntimeRecoveryInstructions = Awaited<
+  ReturnType<typeof prepareRuntimeRecoveryInstructions>
+>;
+
+/** Only operational loss context belongs in the new runtime's instructions. */
+export async function prepareRuntimeRecoveryInstructions(
+  deps: Pick<
+    ConversationActorDependencies["effects"],
+    "prepareRuntimeLossNotice"
+  >,
+  input: {
+    recipient: Parameters<typeof deps.prepareRuntimeLossNotice>[0]["recipient"];
+    attemptId: string;
+  },
+  closeUnacceptedRuntime: () => Promise<void>,
+  ownReceipt: (finish: () => Promise<void>) => void,
+) {
+  const briefing: PreparedSubscriptionBriefing =
+    await deps.prepareRuntimeLossNotice(input);
+  let accepted = false;
+  let dispatched = false;
+  let provenUndelivered = false;
+  let finalized = false;
+  const finish = async () => {
+    finalized = true;
+    try {
+      await briefing.finish({
+        disposition:
+          !dispatched || provenUndelivered ? "not_sent" : "uncertain",
+      });
+    } finally {
+      // A warmed runtime must never later carry context whose delivery was
+      // finalized without acceptance. The receipt preserves whether input
+      // was proven unsent or requires inspection as uncertain.
+      if (briefing.block && !accepted) await closeUnacceptedRuntime();
+    }
+  };
+  if (briefing.block) ownReceipt(finish);
+  return {
+    get block() {
+      return accepted ? null : briefing.block;
+    },
+    async onInputAccepted() {
+      accepted = true;
+      await briefing.onInputAccepted();
+    },
+    markDispatched() {
+      if (finalized && briefing.block)
+        throw new Error("Runtime recovery input already finalized");
+      dispatched = true;
+      provenUndelivered = false;
+    },
+    markDispatchFailure(error: unknown) {
+      provenUndelivered = isPromptNotDeliveredFailure(error);
+    },
+    finish,
+  };
+}
 
 type RuntimeInstructionDependencies = {
   execution: Pick<

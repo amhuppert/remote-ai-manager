@@ -15,6 +15,8 @@ import os from "node:os";
 import {
   KNOWN_SCHEMA_VERSION,
   CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL,
+  CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL,
+  migrateSubscriptionWaitGenerationsSchema,
   GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL,
   NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL,
   SPEC_EXECUTIONS_SCHEMA_DDL,
@@ -30,6 +32,9 @@ import {
   schemaCompatibilityBarrierPath,
 } from "./schema-compatibility";
 import { NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION } from "./migrations/0034-native-sdd-attention-citations";
+import { conversationNoticeInbox } from "./migrations/0061-conversation-notice-inbox";
+import { notepadNoticeContext } from "./migrations/0062-notepad-notice-context";
+import { workflowResultInbox } from "./migrations/0063-workflow-result-inbox";
 
 afterEach(() => {
   _setStateDbBeforeLockedInitializationHookForTesting(null);
@@ -1209,7 +1214,150 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("widens prior workflow evidence at open time while preserving receipts, indexes, and session cascades", () => {
+  it("retains wait history and linked receipts while the ordered rebuild permits one new live generation", () => {
+    const db = _createTestDb({ inMemory: true });
+    try {
+      db.exec("DROP TABLE conversation_subscription_waits");
+      db.exec(
+        CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL.replace(
+          /subscription_id TEXT NOT NULL(?: UNIQUE)?/,
+          "subscription_id TEXT NOT NULL UNIQUE",
+        ),
+      );
+      db.exec(`INSERT INTO conversation_subscription_waits VALUES ('settled','follow','/project','conversation','settled','expiry','delivery','batch','{"historical":true}');
+        CREATE INDEX wait_history_custom ON conversation_subscription_waits(delivery_id);`);
+      const original = db
+        .prepare("SELECT * FROM conversation_subscription_waits")
+        .get();
+      db.transaction(() =>
+        migrateSubscriptionWaitGenerationsSchema(db),
+      ).immediate();
+      db.transaction(() =>
+        migrateSubscriptionWaitGenerationsSchema(db),
+      ).immediate();
+      expect(
+        db
+          .prepare(
+            "SELECT * FROM conversation_subscription_waits WHERE id='settled'",
+          )
+          .get(),
+      ).toEqual(original);
+      expect(() =>
+        db.exec(
+          "INSERT INTO conversation_subscription_waits VALUES ('new','follow','/project','conversation','waiting','expiry',NULL,NULL,'{}')",
+        ),
+      ).not.toThrow();
+      expect(() =>
+        db.exec(
+          "INSERT INTO conversation_subscription_waits VALUES ('duplicate','follow','/project','conversation','ready','expiry',NULL,NULL,'{}')",
+        ),
+      ).toThrow(/UNIQUE constraint/);
+      expect(
+        db
+          .prepare(
+            "SELECT tbl_name FROM sqlite_master WHERE name='wait_history_custom'",
+          )
+          .get(),
+      ).toEqual({ tbl_name: "conversation_subscription_waits" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([23, 25])(
+    "keeps an ordinary open of schema %s compatible until ordered startup migration",
+    async (version) => {
+      const dir = mkdtempSync(
+        path.join(os.tmpdir(), "cc-ordered-evidence-cutover-"),
+      );
+      const dbPath = path.join(dir, "command-center.db");
+      const previous = _createTestDbAtPath(dbPath);
+      previous.exec(`DELETE FROM schema_migrations;
+      INSERT INTO schema_migrations(version,description) VALUES (${version},'Previous build');
+      DROP TABLE conversation_subscription_deliveries;
+      DROP TABLE conversation_subscriptions;
+      DROP TABLE graph_workflow_result_deliveries;`);
+      previous.exec(
+        CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replaceAll(
+          ",'conversation'",
+          "",
+        ).replace(",'superseded'", ""),
+      );
+      previous.exec(
+        GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL.replace(
+          /origin_conversation_id TEXT(?: NOT NULL)?/,
+          "origin_conversation_id TEXT NOT NULL",
+        ),
+      );
+      previous.exec(`INSERT INTO conversation_subscriptions VALUES ('preserved','/project','conversation','spec','spec','Purpose','passive',NULL,NULL,'following','9','created','updated',NULL,'paused',NULL,NULL);
+      INSERT INTO conversation_subscription_deliveries VALUES ('evidence','preserved','/project','conversation','spec','spec','10','{}','recorded','uncertain','attempt',2,'queued',NULL,'finished','Unknown');`);
+      const original = previous
+        .prepare(
+          "SELECT name,sql FROM sqlite_master WHERE type='table' AND name IN ('conversation_subscriptions','conversation_subscription_deliveries','graph_workflow_result_deliveries') ORDER BY name",
+        )
+        .all();
+      previous.close();
+      const reopened = _createTestDbAtPath(dbPath);
+      try {
+        expect(
+          reopened
+            .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+            .get(),
+        ).toEqual({ version });
+        expect(existsSync(schemaCompatibilityBarrierPath(dir, 26))).toBe(false);
+        expect(existsSync(schemaCompatibilityBarrierPath(dir, 27))).toBe(false);
+        expect(
+          reopened
+            .prepare(
+              "SELECT name,sql FROM sqlite_master WHERE type='table' AND name IN ('conversation_subscriptions','conversation_subscription_deliveries','graph_workflow_result_deliveries') ORDER BY name",
+            )
+            .all(),
+        ).toEqual(original);
+        expect(() =>
+          enforceCurrentSchemaCompatibility(reopened, dbPath, version),
+        ).not.toThrow();
+        for (const migration of [
+          conversationNoticeInbox,
+          notepadNoticeContext,
+          workflowResultInbox,
+        ]) {
+          await migration.up({
+            name: migration.name,
+            context: { db: reopened, configDir: dir },
+          });
+        }
+        expect(
+          reopened
+            .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+            .get(),
+        ).toEqual({ version: 27 });
+        expect(existsSync(schemaCompatibilityBarrierPath(dir, 27))).toBe(true);
+        expect(
+          reopened
+            .prepare(
+              "SELECT cursor,paused_at FROM conversation_subscriptions WHERE id='preserved'",
+            )
+            .get(),
+        ).toEqual({ cursor: "9", paused_at: "paused" });
+        expect(
+          reopened
+            .prepare(
+              "SELECT state,attempt_id,attempt_count FROM conversation_subscription_deliveries WHERE id='evidence'",
+            )
+            .get(),
+        ).toEqual({
+          state: "uncertain",
+          attempt_id: "attempt",
+          attempt_count: 2,
+        });
+      } finally {
+        reopened.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("widens prior workflow evidence during ordered migration while preserving receipts, indexes, and session cascades", async () => {
     const dir = mkdtempSync(
       path.join(os.tmpdir(), "cc-workflow-evidence-floor-"),
     );
@@ -1250,6 +1398,10 @@ describe("state-db breaking-cutover versions", () => {
     previous.close();
     const reopened = _createTestDbAtPath(dbPath);
     try {
+      await workflowResultInbox.up({
+        name: workflowResultInbox.name,
+        context: { db: reopened, configDir: dir },
+      });
       expect(
         reopened
           .prepare("SELECT * FROM graph_workflow_result_deliveries")
@@ -1347,7 +1499,7 @@ describe("state-db breaking-cutover versions", () => {
     }
   });
 
-  it("widens prior subscription receipts for superseded evidence without changing existing receipts", () => {
+  it("widens prior subscription receipts for superseded evidence without changing existing receipts", async () => {
     const dir = mkdtempSync(
       path.join(os.tmpdir(), "cc-subscription-receipt-floor-"),
     );
@@ -1361,6 +1513,10 @@ describe("state-db breaking-cutover versions", () => {
     previous.close();
     const reopened = _createTestDbAtPath(dbPath);
     try {
+      await notepadNoticeContext.up({
+        name: notepadNoticeContext.name,
+        context: { db: reopened, configDir: dir },
+      });
       expect(
         reopened
           .prepare(
@@ -1388,11 +1544,11 @@ describe("state-db breaking-cutover versions", () => {
     }
   });
 
-  it("this build fences complete subscription and workflow evidence at schema version 27", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(27);
+  it("this build fences explicit wait generations at schema version 28", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(28);
   });
 
-  it("rebuilds prior subscription source constraints at open time without losing paused evidence", () => {
+  it("rebuilds prior subscription source constraints during ordered migration without losing paused evidence", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "cc-notice-floor-"));
     const dbPath = path.join(dir, "command-center.db");
     const previous = new Database(dbPath);
@@ -1404,6 +1560,10 @@ describe("state-db breaking-cutover versions", () => {
     previous.close();
     const reopened = _createTestDbAtPath(dbPath);
     try {
+      await conversationNoticeInbox.up({
+        name: conversationNoticeInbox.name,
+        context: { db: reopened, configDir: dir },
+      });
       expect(
         reopened
           .prepare("SELECT cursor,paused_at FROM conversation_subscriptions")

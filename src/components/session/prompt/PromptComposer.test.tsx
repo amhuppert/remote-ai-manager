@@ -9,6 +9,7 @@ import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { CollabConfigRowConfig } from "@/components/session/CollabConfigRow";
+import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 
 // ---------------------------------------------------------------------------
 // Shared infrastructure mocks (next/navigation + voice + hotkey) — same set
@@ -141,6 +142,42 @@ describe("PromptComposer composer-focus wiring", () => {
   beforeEach(() => {
     useSessionDetailStore.getState().resetStore();
   });
+
+  it.each(["pending", "failed", "uncertain"] as const)(
+    "shows a %s automatic wake as a receipt without blocking Send or exposing machine XML",
+    (status) => {
+      const props = makeProps();
+      props.promptText = "Continue";
+      props.queueTurnState = {
+        running: false,
+        pendingQueue: [
+          {
+            ...createPendingEntry({
+              id: "wake",
+              content: [
+                {
+                  type: "text",
+                  text: "<subscription_update>private-machine-payload</subscription_update>",
+                },
+              ],
+              now: "now",
+            }),
+            status,
+            metadata: { kind: "subscription_update", batchId: "wake" },
+          },
+        ],
+      };
+      const { container } = renderWithQuery(<PromptComposer {...props} />);
+      expect(screen.getByTestId("prompt-send")).toBeEnabled();
+      expect(
+        screen.getByRole("complementary", { name: "Why the agent woke" }),
+      ).toBeInTheDocument();
+      expect(container).not.toHaveTextContent("private-machine-payload");
+      expect(screen.queryByLabelText("Cancel queued message")).toBeNull();
+      fireEvent.click(screen.getByTestId("prompt-send"));
+      expect(props.onSendPrompt).toHaveBeenCalledOnce();
+    },
+  );
 
   it("routes the visible send action through active dictation", () => {
     const props = makeProps();

@@ -29,7 +29,7 @@ export const subscriptionWaitSpec = {
   path: "subscription wait",
   summary: "Register a terminal wait and return immediately",
   description:
-    "Wait for the exact workflow execution, validation run or git job to reach a terminal state. Registration returns the durable wait id and state immediately; it does not block or poll. The server schedules an ordinary conversation turn with the result. The lifetime defaults to 24 hours and is limited to 7 days. A validation wait does not detach the run or renew its private submitter lease; lease interruption is a terminal result. Workflow lanes cannot register waits.",
+    "Wait for the exact workflow execution, validation run or git job to reach a terminal state. Registration returns the durable wait id and state immediately; it does not block or poll. The server schedules an ordinary conversation turn with the result. The lifetime defaults to 24 hours and is limited to 7 days. A live wait retains its deadline; paused, passive or unfollowed controls require explicit restoration. After settlement or cancellation, an undelivered terminal result remains obtainable. A consumed resumable halt can be re-armed for a later workflow boundary; a consumed final result is refused instead of creating an ineffective wait. A validation wait does not detach the run or renew its private submitter lease; lease interruption is a terminal result. Workflow lanes cannot register waits.",
   requires: "cc",
   effects: "write",
   args: [
@@ -99,11 +99,17 @@ export const subscriptionWaitGetSpec = {
   path: "subscription wait-get",
   summary: "Inspect one terminal wait and wake batch",
   description:
-    "Read the wait, reason, expiry, source result, causal history and wake batch by its subscription id. Batch state records queue and runtime acceptance evidence; failed or uncertain delivery needs inspection. This read does not start or acknowledge a turn.",
+    "Read the latest wait by subscription id, or select an exact historical generation with --wait-id from subscription waits. Includes reason, expiry, source result, causal history and wake batch. Batch state records queue and runtime acceptance evidence; failed or uncertain delivery needs inspection. This read does not start or acknowledge a turn.",
   requires: "cc",
   effects: "read",
   args: [subscriptionId],
-  flags: {},
+  flags: {
+    "wait-id": {
+      value: subscriptionId.value,
+      description:
+        "Exact wait generation id; omit to inspect the latest generation",
+    },
+  },
   related: [
     { path: "subscription waits", description: "Find wait subscription ids" },
     { path: "inbox get", description: "Inspect the saved source delivery" },

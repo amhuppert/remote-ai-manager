@@ -693,10 +693,9 @@ async function queueMessageInOrder(
       void notepadInvolvement.catch(() => {});
       const contextAcceptance = acceptedNotepadContext.onInputAccepted();
       void contextAcceptance.catch(() => {});
-      await contextAcceptance;
-      await passiveAcceptance;
-      await notepadInvolvement;
-
+      // Acceptance is already proven. Preserve the user input before a
+      // required context receipt can fail; keep queue ownership until all
+      // receipts are durable.
       // Append exactly one delivered user transcript entry (the sole JSONL
       // writer), then mark the row delivered.
       const transcriptBlocks = await buildDeliveredTranscriptBlocks(
@@ -723,6 +722,10 @@ async function queueMessageInOrder(
           storeSessionName: sessionName,
         },
       );
+
+      await contextAcceptance;
+      await passiveAcceptance;
+      await notepadInvolvement;
 
       try {
         await deps.markDelivered({

@@ -158,7 +158,12 @@ export function createActorDependenciesFixture(
     resolvePluginPaths: vi.fn(async () => []),
     getCodexToolPromptHint: vi.fn(() => ""),
     mutateConversation: vi.fn(async () => {}),
-    recordAgentNotice: vi.fn(async () => false),
+    recordRuntimeLossNotice: vi.fn(async () => false),
+    prepareRuntimeLossNotice: vi.fn(async () => ({
+      block: null,
+      async onInputAccepted() {},
+      async finish() {},
+    })),
     getConversation: vi.fn(async () => null),
     getSessionState: vi.fn(async () => null),
     getActiveAlignmentInjection: vi.fn(async () => null),
@@ -281,7 +286,8 @@ export function groupActorFixtureDependencies(
     effects: {
       notifyRuntimeCleanup: deps.notifyRuntimeCleanup,
       mutateConversation: deps.mutateConversation,
-      recordAgentNotice: deps.recordAgentNotice,
+      recordRuntimeLossNotice: deps.recordRuntimeLossNotice,
+      prepareRuntimeLossNotice: deps.prepareRuntimeLossNotice,
       recordMemoryIndexDeliveries: deps.recordMemoryIndexDeliveries,
       resetMemoryIndexDelivery: deps.resetMemoryIndexDelivery,
       recordNotepadDeliveries: deps.recordNotepadDeliveries,

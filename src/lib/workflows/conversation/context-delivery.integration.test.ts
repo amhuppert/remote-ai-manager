@@ -222,7 +222,6 @@ it("repairs a required subscription receipt without dispatching workflow evidenc
         validateModelSelection() {},
       }),
       subscriptions: {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: (input) => notice.service.prepareBriefing(input),
       },
     },
@@ -278,7 +277,6 @@ it("releases prepared subscription evidence when a later preparation step fails"
         validateModelSelection() {},
       }),
       subscriptions: {
-        synchronizeInvolvement: async () => {},
         prepareBriefing: (input) => notice.service.prepareBriefing(input),
       },
       getDebugLogUrl: () => {

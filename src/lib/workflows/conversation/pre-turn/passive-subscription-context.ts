@@ -5,7 +5,6 @@ import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
 import { createRequiredInputReceipt } from "./required-input-receipt";
 
 export interface PassiveSubscriptionContextDependencies {
-  synchronizeInvolvement(recipient: SubscriptionRecipient): Promise<void>;
   prepareBriefing(input: {
     recipient: SubscriptionRecipient;
     attemptId: string;
@@ -19,11 +18,6 @@ export interface PassiveSubscriptionContextDependencies {
 
 export const productionPassiveSubscriptionDependencies: PassiveSubscriptionContextDependencies =
   {
-    async synchronizeInvolvement(recipient) {
-      const { synchronizeSubscriptionInvolvement } =
-        await import("@/lib/subscriptions/involvement");
-      await synchronizeSubscriptionInvolvement(recipient);
-    },
     async prepareBriefing(input) {
       const { getSubscriptionService } =
         await import("@/lib/subscriptions/service-factory");
@@ -91,7 +85,6 @@ export async function preparePassiveSubscriptionContext(
     finish: async () => {},
   };
   if (!deps || !input.eligible) return inert;
-  await deps.synchronizeInvolvement(input.recipient);
   const briefing = await deps.prepareBriefing({
     recipient: input.recipient,
     attemptId: input.attemptId,

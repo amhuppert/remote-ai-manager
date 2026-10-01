@@ -60,7 +60,6 @@ it.each(["preparation", "readiness", "transcript", "receipt"] as const)(
             transcript.push(entry);
         },
         subscriptions: {
-          synchronizeInvolvement: async () => {},
           async prepareBriefing() {
             let accepted = false;
             return {
@@ -114,12 +113,16 @@ it.each(["preparation", "readiness", "transcript", "receipt"] as const)(
       expect(row?.pendingQueue).toMatchObject([
         { id: entry.id, status: "uncertain" },
       ]);
-      expect(transcript).toEqual([]);
+      expect(
+        transcript.filter((stored) => stored.role === "user"),
+      ).toHaveLength(1);
       expect(dispatches).toBe(1);
       failing = false;
       await fixture.manager.ensureConversationLifecycle(fixture.binding);
       expect(dispatches).toBe(1);
-      expect(transcript).toEqual([]);
+      expect(
+        transcript.filter((stored) => stored.role === "user"),
+      ).toHaveLength(1);
       expect(
         (
           await fixture.persistence.store.getConversation(

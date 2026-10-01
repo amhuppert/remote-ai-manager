@@ -72,7 +72,7 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       "pendingQueue.**":
         "pruned: terminal entries evicted in message-queue-service (active-only working set); per-entry content/input bounded by one message.",
       pendingAgentNotices:
-        "pruned: capped to the most recent entries at append (background-tasks-lost handler in actor-implementations); drained into the next runtime's session instructions and cleared.",
+        "pruned: migration-only legacy storage; ordered migration 0061 imports these entries into durable inbox receipts and clears the array. Production has no append path.",
       "pendingQueue[].content[].input.**":
         "tracked: opaque tool-call input (z.unknown map values), validated at the message-content boundary but unschema'd in the blob; size bounded only by one queued message's tool calls, not by this schema.",
       "pendingQueue[].content[].payload":

@@ -108,7 +108,6 @@ describe.each(["session", "project"] as const)(
               await fixture?.persistence.store.mutateConversation(...args);
             },
             subscriptions: {
-              synchronizeInvolvement: async () => {},
               async prepareBriefing(input) {
                 return service.prepareBriefing(input);
               },
@@ -240,7 +239,6 @@ describe.each(["session", "project"] as const)(
               throw new Error("Notepad receipt temporarily unavailable");
           },
           subscriptions: {
-            synchronizeInvolvement: async () => {},
             prepareBriefing: async () => ({
               block: null,
               onInputAccepted: async () => {},
@@ -328,7 +326,6 @@ describe.each(["session", "project"] as const)(
             validateModelSelection() {},
           }),
           subscriptions: {
-            synchronizeInvolvement: async () => {},
             prepareBriefing: async () => {
               preparations++;
               return {
@@ -401,7 +398,6 @@ describe.each(["session", "project"] as const)(
             validateModelSelection() {},
           }),
           subscriptions: {
-            synchronizeInvolvement: async () => {},
             prepareBriefing: async () => ({
               block: "Passive update",
               onInputAccepted: async () => {

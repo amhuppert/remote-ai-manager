@@ -76,6 +76,32 @@ describe("committed ticket status provenance", () => {
     ).toMatchObject([{ status: "done", actorConversationId: null }]);
   });
 
+  it("records the automatic started transition atomically with the session link", async () => {
+    const createdAt = "2026-09-30T10:01:00.000Z";
+    fixture.seedSession(projectPath, "started", { createdAt });
+    const tickets = createTicketsRepo(fixture.db, createWriteQueue());
+    const detail = await tickets.linkStartedSession({
+      id: "started-link",
+      projectPath,
+      number: 1,
+      sessionName: "started",
+      sessionCreatedAt: createdAt,
+      linkedAt: "2026-09-30T10:02:00.000Z",
+      startMode: "agent",
+    });
+    expect(detail.status).toBe("in_progress");
+    expect(
+      createTicketStatusChangesRepo(fixture.db).listAfter("ticket", 0),
+    ).toMatchObject([
+      {
+        ticketId: "ticket",
+        status: "in_progress",
+        actorConversationId: null,
+        occurredAt: detail.updatedAt,
+      },
+    ]);
+  });
+
   it("preserves every ledger field through a fresh repository", async () => {
     await assertRoundTripDurability({
       label: "ticket-status-change",

@@ -57,7 +57,7 @@ The shared contract uses these service operations:
   passive batch and return a block, `onInputAccepted`, and `finish` receipt.
 
 Source adapters return a cursor, normalized facts, and a missing-source outcome.
-A null cursor means establish a baseline, not replay the entire source history.
+A null cursor means establish a baseline, not replay the entire source history. Newly discovered ticket and spec involvement uses the current source head. Workflow discovery starts at the current head unless an outstanding launcher result still requires delivery; canonical accepted or superseded results do not create that obligation. Accepted notepad context remains an exact source baseline.
 Normalized facts retain occurrence identity, event kind, source title, summary,
 time, revision/outcome and retrieval handle. Actor provenance controls edit-echo
 suppression; completion of launched work remains deliverable to its launcher.
@@ -74,7 +74,7 @@ Reconcile before user-message briefing and explicit inbox inspection. Source
 adapters read durable revision/event logs where available, and terminal state
 records where that is the domain contract. No browser connection or captured SSE
 frame is required. State snapshots do not promise every intermediate transition.
-Errors leave cursors unchanged and expose a diagnosable failure.
+Errors leave cursors unchanged and expose a diagnosable failure. Advisory reconciliation isolates failed sources and recipients so unrelated wakes and ordinary user input can proceed. The background sweep reconciles recorded follows without rediscovering historical involvement on every tick.
 
 Initial adapters cover notepad revisions, ticket status/posts, spec events,
 workflow events/results, registered validation outcomes and git-job outcomes.
@@ -114,10 +114,10 @@ identities. An `eventKinds` selection filters semantic facts before insertion;
 `null` selects all applicable facts. Source disappearance always has its own
 inspectable disposition.
 
-Repeated content revisions may share a brief summary; distinct decisions,
+Notepad reconciliation reads the latest revision metadata when the head changes and stores no document content in its revision facts. Unseen content history coalesces to the current revision. Repeated content revisions may share a brief summary; distinct decisions,
 validation runs and failure/success outcomes retain their own identities. The
 inbox keeps inspectable facts even when the prompt is bounded. Overflow names an
-actual CLI retrieval command. Source text is context, not privileged instructions.
+actual CLI retrieval command. A single oversized escaped fact becomes a compact exact inbox-detail handle rather than starving the inbox forever; its full evidence remains saved. Source text is context, not privileged instructions.
 
 Only backend input acceptance settles delivery. Claims are tied to an attempt;
 unaccepted attempts and interrupted claims have a visible disposition. Acceptance

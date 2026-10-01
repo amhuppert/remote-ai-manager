@@ -36,20 +36,40 @@ function harness() {
   let state: TerminalSourceRead = terminal;
   let eligible = true;
   let sourceError: Error | null = null;
+  let occurrenceId: string | null = null;
   let at = "2026-09-30T12:00:00.000Z";
   let nextId = 0;
+  let brokenDeliveryId: string | null = null;
+  let failureWriteBroken = false;
+  let sourceCursor = "0";
   let discardProof = async (_batch: SubscriptionWakeBatch) => false;
   const build = () =>
     createActiveWaitService({
-      repo: createConversationSubscriptionWaitsRepo(db, createWriteQueue()),
-      subscriptions: createConversationSubscriptionsRepo(
-        db,
-        createWriteQueue(),
-      ),
+      repo: {
+        ...createConversationSubscriptionWaitsRepo(db, createWriteQueue()),
+        async recordFailure(...args) {
+          if (failureWriteBroken) throw Error("Failed wait error write");
+          return createConversationSubscriptionWaitsRepo(
+            db,
+            createWriteQueue(),
+          ).recordFailure(...args);
+        },
+      },
+      subscriptions: {
+        ...createConversationSubscriptionsRepo(db, createWriteQueue()),
+        async getDelivery(target, id) {
+          if (id === brokenDeliveryId) throw Error("Failed receipt read");
+          return createConversationSubscriptionsRepo(
+            db,
+            createWriteQueue(),
+          ).getDelivery(target, id);
+        },
+      },
       async isRecipientEligible() {
         return eligible;
       },
       canDiscardMissingBatch: (batch) => discardProof(batch),
+      readSourceCursor: async () => sourceCursor,
       async readTerminalSource(_recipient, source) {
         if (sourceError) throw sourceError;
         return state.kind === "terminal"
@@ -57,7 +77,9 @@ function harness() {
               ...state,
               fact: {
                 ...state.fact,
-                occurrenceId: `one-time-terminal:${source.kind}:${source.id}`,
+                occurrenceId:
+                  occurrenceId ??
+                  `one-time-terminal:${source.kind}:${source.id}`,
               },
             }
           : state;
@@ -76,6 +98,16 @@ function harness() {
     setSource(value: TerminalSourceRead) {
       state = value;
     },
+    setOccurrenceId(value: string) {
+      occurrenceId = value;
+    },
+    setSourceCursor(value: string) {
+      sourceCursor = value;
+    },
+    breakReceiptRead(id: string) {
+      brokenDeliveryId = id;
+      failureWriteBroken = true;
+    },
     setTime(value: string) {
       at = value;
     },
@@ -91,6 +123,396 @@ function harness() {
   };
 }
 describe("explicit finite terminal waits", () => {
+  it.each(["completed", "aborted", "halted"] as const)(
+    "refuses a consumed final %s workflow when the source classifier says it cannot resume",
+    async (outcome) => {
+      const h = harness();
+      const service = h.build();
+      h.setSource({
+        ...terminal,
+        resumable: false,
+        fact: {
+          ...terminal.fact,
+          outcome,
+          eventKind: "graph-workflow-terminal",
+        },
+      });
+      const input = {
+        recipient,
+        source: { kind: "workflow", id: "workflow" } as const,
+        reason: "Continue",
+      };
+      await service.register(input);
+      const batch = await service.prepareBatch(recipient);
+      if (!batch) throw Error("Expected wake");
+      await service.settleBatch(batch.id, "accepted");
+      await expect(service.register(input)).rejects.toMatchObject({
+        code: "ACTIVE_WAIT_SOURCE_FINAL",
+      });
+      expect(await service.list(recipient)).toHaveLength(1);
+    },
+  );
+  it.each(["failed", "queued", "uncertain"] as const)(
+    "reuses a prior %s terminal receipt without blindly replaying an unresolved input",
+    async (state) => {
+      const h = harness();
+      const service = h.build();
+      const input = {
+        recipient,
+        source: { kind: "validation", id: "run" } as const,
+        reason: "Inspect",
+      };
+      const first = await service.register(input);
+      if (!fixture || !first.deliveryId) throw Error("Expected receipt");
+      const subscriptions = createConversationSubscriptionsRepo(
+        fixture.db,
+        createWriteQueue(),
+      );
+      const follow = await subscriptions.get(recipient, first.subscriptionId);
+      if (!follow) throw Error("Expected follow");
+      await subscriptions.updateControls(
+        recipient,
+        follow.id,
+        { ...follow, mode: "passive" },
+        first.createdAt,
+      );
+      await subscriptions.claim(
+        recipient,
+        [first.deliveryId],
+        "prior-passive",
+        first.createdAt,
+      );
+      if (state !== "queued")
+        await subscriptions.settle(
+          recipient,
+          "prior-passive",
+          state,
+          first.createdAt,
+          "Known receipt state",
+        );
+      await service.cancel(recipient, first.subscriptionId);
+      const next = await service.register(input);
+      expect(next).toMatchObject({
+        state: "ready",
+        deliveryId: first.deliveryId,
+      });
+      expect(await h.getDelivery(first.deliveryId)).toMatchObject({
+        state: state === "failed" ? "pending" : state,
+        acceptedAt: null,
+      });
+      expect(await service.prepareBatch(recipient)).toEqual(
+        state === "failed" ? expect.any(Object) : null,
+      );
+    },
+  );
+  it.each(["validation", "workflow"] as const)(
+    "does not treat an undelivered historical %s baseline as consumed",
+    async (kind) => {
+      const h = harness();
+      const service = h.build();
+      h.setSource({ kind: "pending", status: "running" });
+      const first = await service.register({
+        recipient,
+        source: { kind, id: "run" },
+        reason: "Inspect",
+      });
+      await service.cancel(recipient, first.subscriptionId);
+      if (!fixture) throw Error("Expected fixture");
+      const subscriptions = createConversationSubscriptionsRepo(
+        fixture.db,
+        createWriteQueue(),
+      );
+      const follow = await subscriptions.get(recipient, first.subscriptionId);
+      if (!follow) throw Error("Expected follow");
+      const waits = createConversationSubscriptionWaitsRepo(
+        fixture.db,
+        createWriteQueue(),
+      );
+      await waits.register(
+        {
+          ...first,
+          id: "old-unreceived",
+          baselineOccurrenceId: `one-time-terminal:${kind}:run`,
+        },
+        follow,
+      );
+      h.setSource({ ...terminal, resumable: true });
+      h.setTime("2026-10-02T12:00:00.000Z");
+      await service.reconcile(recipient);
+      expect(await service.get(recipient, first.subscriptionId)).toMatchObject({
+        id: "old-unreceived",
+        state: "ready",
+        outcome: "source_terminal",
+      });
+      const inbox = await subscriptions.readInbox(recipient, {
+        includeSettled: true,
+      });
+      expect(inbox.items).toHaveLength(1);
+      expect(inbox.items[0]).toMatchObject({
+        state: "pending",
+        fact: {
+          occurrenceId: `one-time-terminal:${kind}:run`,
+          outcome: "passed",
+        },
+      });
+    },
+  );
+  it("settles an old inert final-source generation from positive existing proof instead of inventing expiry", async () => {
+    const h = harness();
+    const service = h.build();
+    const first = await service.register({
+      recipient,
+      source: { kind: "validation", id: "run" },
+      reason: "Inspect",
+    });
+    const batch = await service.prepareBatch(recipient);
+    if (!batch || !fixture || !first.deliveryId)
+      throw Error("Expected persisted wait");
+    await service.settleBatch(batch.id, "accepted");
+    const subscriptions = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    const follow = await subscriptions.get(recipient, first.subscriptionId);
+    if (!follow) throw Error("Expected follow");
+    const old = await createConversationSubscriptionWaitsRepo(
+      fixture.db,
+      createWriteQueue(),
+    ).register(
+      {
+        ...first,
+        id: "old-inert",
+        state: "waiting",
+        outcome: null,
+        deliveryId: null,
+        batchId: null,
+        baselineOccurrenceId: "one-time-terminal:validation:run",
+        finishedAt: null,
+      },
+      follow,
+    );
+    await service.reconcile(recipient);
+    expect(await service.get(recipient, old.subscriptionId)).toMatchObject({
+      id: old.id,
+      state: "settled",
+      outcome: "source_terminal",
+      deliveryId: first.deliveryId,
+    });
+    expect(
+      (await subscriptions.readInbox(recipient, { includeSettled: true }))
+        .items,
+    ).toHaveLength(1);
+  });
+  it("fresh-baselines passive workflow awareness when explicitly rearming an unfollowed source", async () => {
+    const h = harness();
+    const service = h.build();
+    h.setSource({ kind: "pending", status: "running" });
+    const input = {
+      recipient,
+      source: { kind: "workflow", id: "workflow" } as const,
+      reason: "Continue",
+    };
+    const first = await service.register(input);
+    await service.cancel(recipient, first.subscriptionId);
+    if (!fixture) throw Error("Expected fixture");
+    const subscriptions = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    await subscriptions.unfollow(
+      recipient,
+      first.subscriptionId,
+      first.createdAt,
+    );
+    h.setSourceCursor("9");
+    await service.register(input);
+    expect(
+      await subscriptions.get(recipient, first.subscriptionId),
+    ).toMatchObject({ cursor: "9", status: "following", mode: "active" });
+  });
+  it("retries a proven failed unbatched receipt and spends a dismissed receipt without a wake", async () => {
+    const h = harness();
+    const service = h.build();
+    const wait = await service.register({
+      recipient,
+      source: { kind: "workflow", id: "workflow" },
+      reason: "Continue",
+    });
+    if (!fixture || !wait.deliveryId) throw Error("Expected receipt");
+    const subscriptions = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    const follow = await subscriptions.get(recipient, wait.subscriptionId);
+    if (!follow) throw Error("Expected follow");
+    await subscriptions.updateControls(
+      recipient,
+      follow.id,
+      { ...follow, mode: "passive" },
+      follow.updatedAt,
+    );
+    await subscriptions.claim(
+      recipient,
+      [wait.deliveryId],
+      "failed-input",
+      follow.createdAt,
+    );
+    await subscriptions.settle(
+      recipient,
+      "failed-input",
+      "failed",
+      follow.createdAt,
+      "Input rejected before acceptance",
+    );
+    await subscriptions.updateControls(
+      recipient,
+      follow.id,
+      follow,
+      follow.updatedAt,
+    );
+    await service.reconcile(recipient);
+    expect(await h.getDelivery(wait.deliveryId)).toMatchObject({
+      state: "pending",
+      acceptedAt: null,
+    });
+    await subscriptions.reviewDelivery(
+      recipient,
+      wait.deliveryId,
+      "dismiss",
+      follow.createdAt,
+    );
+    await service.reconcile(recipient);
+    expect(await service.get(recipient, wait.subscriptionId)).toMatchObject({
+      state: "settled",
+    });
+    expect(
+      await subscriptions.get(recipient, wait.subscriptionId),
+    ).toMatchObject({ mode: "passive", expiresAt: null, status: "following" });
+    expect(await service.prepareBatch(recipient)).toBeNull();
+  });
+  it("continues other ready waits when one receipt read and its diagnostic write fail", async () => {
+    const h = harness();
+    const service = h.build();
+    const broken = await service.register({
+      recipient,
+      source: { kind: "workflow", id: "broken" },
+      reason: "Continue",
+    });
+    const healthy = await service.register({
+      recipient,
+      source: { kind: "workflow", id: "healthy" },
+      reason: "Continue",
+    });
+    const ready = await service.register({
+      recipient,
+      source: { kind: "workflow", id: "ready" },
+      reason: "Continue",
+    });
+    if (!fixture || !broken.deliveryId || !healthy.deliveryId)
+      throw Error("Expected receipts");
+    await createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    ).reviewDelivery(
+      recipient,
+      healthy.deliveryId,
+      "dismiss",
+      healthy.createdAt,
+    );
+    h.breakReceiptRead(broken.deliveryId);
+    const report = await service.reconcile(recipient);
+    expect(report.failures).toEqual([
+      { waitId: broken.id, error: "Failed receipt read" },
+    ]);
+    expect(await service.get(recipient, healthy.subscriptionId)).toMatchObject({
+      state: "settled",
+    });
+    expect(await service.prepareBatch(recipient)).toMatchObject({
+      waitIds: [ready.id],
+    });
+  });
+  it("rejects a missing source before writing a subscription or wait", async () => {
+    const h = harness();
+    h.setSource({ kind: "missing" });
+    await expect(
+      h.build().register({
+        recipient,
+        source: { kind: "workflow", id: "missing" },
+        reason: "Wait",
+      }),
+    ).rejects.toMatchObject({
+      code: "ACTIVE_WAIT_SOURCE_MISSING",
+      status: 404,
+    });
+    expect(await h.build().list(recipient)).toEqual([]);
+  });
+  it("refuses to report active success for an existing paused or downgraded wait", async () => {
+    const h = harness();
+    const service = h.build();
+    h.setSource({ kind: "pending", status: "running" });
+    const input = {
+      recipient,
+      source: { kind: "workflow", id: "workflow" } as const,
+      reason: "Wait",
+    };
+    const wait = await service.register(input);
+    if (!fixture) throw Error("Expected fixture");
+    const subscriptions = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    const follow = await subscriptions.get(recipient, wait.subscriptionId);
+    if (!follow) throw Error("Expected follow");
+    for (const control of [
+      { pausedAt: "paused", mode: "active" as const },
+      { pausedAt: null, mode: "passive" as const },
+    ]) {
+      await subscriptions.updateControls(
+        recipient,
+        follow.id,
+        { ...follow, ...control },
+        follow.updatedAt,
+      );
+      await expect(service.register(input)).rejects.toMatchObject({
+        code: "ACTIVE_WAIT_NOT_ACTIVE",
+        status: 409,
+      });
+    }
+  });
+  it("retains spent history while an explicit rearm awaits the next terminal boundary", async () => {
+    const h = harness();
+    h.setSource({
+      ...terminal,
+      resumable: true,
+      fact: {
+        ...terminal.fact,
+        outcome: "halted",
+        eventKind: "graph-workflow-boundary:halt",
+      },
+    });
+    h.setOccurrenceId("boundary-1");
+    const input = {
+      recipient,
+      source: { kind: "workflow", id: "workflow" } as const,
+      reason: "Continue",
+    };
+    const first = await h.build().register(input);
+    const batch = await h.build().prepareBatch(recipient);
+    if (!batch) throw Error("Expected batch");
+    await h.build().settleBatch(batch.id, "accepted");
+    const next = await h.build().register(input);
+    expect(next).toMatchObject({
+      state: "waiting",
+      baselineOccurrenceId: "boundary-1",
+      deliveryId: null,
+    });
+    expect(next.id).not.toBe(first.id);
+    expect(await h.build().list(recipient)).toHaveLength(2);
+    expect(await h.build().prepareBatch(recipient)).toBeNull();
+    h.setOccurrenceId("boundary-2");
+    await h.build().reconcile(recipient);
+    expect(await h.build().prepareBatch(recipient)).not.toBeNull();
+  });
   it("closes a shared wait after passive input acceptance without queuing another turn", async () => {
     const h = harness();
     const wait = await h.build().register({
@@ -165,7 +587,7 @@ describe("explicit finite terminal waits", () => {
     );
     if (!first.deliveryId) throw new Error("Missing first delivery");
     const discarded = await h.getDelivery(first.deliveryId);
-    expect(discarded).toMatchObject({ state: "failed" });
+    expect(discarded).toMatchObject({ state: "superseded", acceptedAt: null });
     await h.build().settleBatch(batch.id, "uncertain", "Still no handoff row");
     expect(await h.getDelivery(first.deliveryId)).toEqual(discarded);
     await h.build().cancel(recipient, second.subscriptionId);

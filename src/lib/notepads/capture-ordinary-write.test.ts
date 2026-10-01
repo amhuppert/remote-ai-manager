@@ -177,10 +177,17 @@ describe("a capture is an ordinary user write (R23.3)", () => {
         sourceTitle: "Inbox",
         revision: "2",
         actorConversationId: null,
+        retrievalHandle: `cctl notepad get -- '${notepadId}'`,
       },
     ]);
-    expect(notice.facts[0]?.sourceText).toContain(
-      FRAGMENT.replaceAll("\n", "\\n"),
+    const evidence: unknown = JSON.parse(notice.facts[0]?.sourceText ?? "null");
+    expect(evidence).toMatchObject({
+      notepadId,
+      revision: { revision: 2, origin: "append", authorKind: "user" },
+    });
+    expect(evidence).not.toHaveProperty("revision.content");
+    expect((await repo.findRevision(notepadId, 2))?.content).toBe(
+      `Existing content.\n\n${FRAGMENT}`,
     );
   });
 

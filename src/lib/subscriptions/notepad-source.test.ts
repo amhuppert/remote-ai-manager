@@ -84,7 +84,7 @@ describe("notepad inbox source", () => {
         occurrenceId: "notepad-comment:comment-new",
         eventKind: "notepad-comment-added",
         category: "activity",
-        retrievalHandle: "cctl notepad comment list --open -- 'pad'",
+        retrievalHandle: "cctl notepad comment list --status=open -- 'pad'",
       },
     ]);
     expect(first.facts[0]?.sourceText).toContain("Review comment-new");
@@ -152,6 +152,22 @@ describe("notepad inbox source", () => {
     await stores().comments.delete("comment");
     expect((await read(recipient, source, reopened.cursor)).facts).toEqual([]);
   });
+  it("does not reannounce the legacy watermark comment when a newer comment arrives", async () => {
+    await addComment("seen", "2026-10-01T10:01:00Z");
+    await addComment("new", "2026-10-01T10:02:00Z");
+    const result = await createNotepadSourceReader(stores())(
+      recipient,
+      source,
+      notepadInvolvementCursor({
+        notepadId: "pad",
+        revision: 1,
+        openComments: { count: 1, latestCreatedAt: "2026-10-01T10:01:00Z" },
+      }),
+    );
+    expect(result.facts.map((fact) => fact.occurrenceId)).toEqual([
+      "notepad-comment:new",
+    ]);
+  });
   it("baselines legacy markers without treating resolved older comments as new", async () => {
     await addComment("older", "2026-10-01T09:00:00Z");
     await stores().comments.updateStatus({
@@ -200,6 +216,31 @@ describe("notepad inbox source", () => {
     expect(stored?.fact.sourceText).toContain(name);
     expect(stored?.fact.sourceText).toContain("Review bounded-comment");
     await briefing.finish({ disposition: "not_sent" });
+  });
+  it("coalesces unseen revision history into metadata without copying content into the inbox", async () => {
+    const read = createNotepadSourceReader(stores());
+    const baseline = await read(recipient, source, null);
+    for (let revision = 2; revision <= 4; revision++) {
+      await stores().notepads.writeContent({
+        notepadId: "pad",
+        revisionId: `r${revision}`,
+        operation: "update",
+        content: "large-document-content".repeat(10000),
+        authorKind: "user",
+        authorConversationId: null,
+        baseRevision: null,
+        enforceBaseRevision: false,
+        permittedWriteModes: null,
+        restoredFromRevision: null,
+        writtenAt: `2026-10-01T10:00:0${revision}Z`,
+        coalesceWindowMs: null,
+      });
+    }
+    const result = await read(recipient, source, baseline.cursor);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0]).toMatchObject({ revision: "4" });
+    expect(JSON.stringify(result)).not.toContain("large-document-content");
+    expect(JSON.stringify(result).length).toBeLessThan(2000);
   });
   it("supersedes earlier ingested changes covered by a later accepted reference without forging delivery acceptance", async () => {
     const queue = createWriteQueue();

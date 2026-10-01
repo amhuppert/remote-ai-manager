@@ -79,7 +79,7 @@ describe("MessageRow", () => {
       }
     });
 
-    it.each(["accepted", "queued"] as const)(
+    it.each(["accepted", "queued", "failed", "uncertain"] as const)(
       "shows the receipt without exposing the %s machine payload",
       (state) => {
         const { container } = renderWithQuery(
@@ -95,13 +95,13 @@ describe("MessageRow", () => {
                   }
                 : {}),
             })}
-            {...(state === "queued"
+            {...(state !== "accepted"
               ? {
                   queuedMetadata: {
                     kind: "subscription_update",
                     batchId: "batch",
                   },
-                  queuedStatus: "pending",
+                  queuedStatus: state === "queued" ? "pending" : state,
                 }
               : {})}
             messageIndex={0}
@@ -114,6 +114,10 @@ describe("MessageRow", () => {
         expect(screen.getByText("Subscription wake")).toBeInTheDocument();
         expect(container).not.toHaveTextContent("machine-event-body");
         expect(container).not.toHaveTextContent("subscription_update");
+        if (state === "failed")
+          expect(container).toHaveTextContent("Wake delivery failed.");
+        if (state === "uncertain")
+          expect(container).toHaveTextContent("Wake acceptance is uncertain.");
         expect(
           screen.queryByTitle("Copy message as Markdown"),
         ).not.toBeInTheDocument();

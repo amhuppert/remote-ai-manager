@@ -29,6 +29,7 @@ import type {
 } from "./active-wait-schemas";
 import type { PendingQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 import { validateSubscriptionSelection } from "./catalog";
+import { isActionableSubscriptionDelivery } from "./delivery-state";
 
 export interface SubscriptionSourcePresentation {
   title: string;
@@ -44,14 +45,18 @@ export type SubscriptionRecipientsQuery = SubscriptionScope & {
   offset?: number;
 };
 export interface SubscriptionOverviewDeps {
-  listSubscriptions(): Promise<ConversationSubscription[]>;
+  listSubscriptions(
+    recipient: SubscriptionRecipient,
+  ): Promise<ConversationSubscription[]>;
   listDeliveries(
-    recipient?: SubscriptionRecipient,
+    recipient: SubscriptionRecipient,
   ): Promise<SubscriptionDelivery[]>;
-  listWaits(): Promise<ActiveSubscriptionWait[]>;
+  listWaits(
+    recipient: SubscriptionRecipient,
+  ): Promise<ActiveSubscriptionWait[]>;
   getBatch(id: string): Promise<SubscriptionWakeBatch | null>;
   listReadAt(recipient: SubscriptionRecipient): Promise<Map<string, string>>;
-  listOwners(): Promise<SubscriptionOverviewOwner[]>;
+  listOwners(scope: SubscriptionScope): Promise<SubscriptionOverviewOwner[]>;
   readSource(
     recipient: SubscriptionRecipient,
     source: SubscriptionSourceRef,
@@ -96,7 +101,7 @@ function ownerRecipient(owner: SubscriptionOwner): SubscriptionRecipient {
     conversationId: owner.target.conversationId,
   };
 }
-function matchesOwner(
+export function matchesSubscriptionOwner(
   owner: SubscriptionOwner,
   scope: SubscriptionScope,
 ): boolean {
@@ -123,21 +128,29 @@ function matchesSource(
   );
 }
 function needsAttention(view: SubscriptionView): boolean {
+  if (view.subscription.status !== "following") return false;
+  const liveWait =
+    view.wait?.state === "waiting" || view.wait?.state === "ready";
   return (
     view.subscription.missingAt !== null ||
     view.subscription.lastError !== null ||
-    view.wait?.lastError != null ||
-    view.wait?.outcome === "expired" ||
-    view.wait?.outcome === "source_missing" ||
+    (liveWait && view.wait?.lastError != null) ||
     view.batch?.state === "failed" ||
     view.batch?.state === "uncertain" ||
-    view.batch?.lastError != null ||
+    (liveWait &&
+      view.batch?.state !== "cancelled" &&
+      view.batch?.state !== "accepted" &&
+      view.batch?.lastError != null) ||
     view.rateLimitUntil !== null
   );
 }
-function isOutstanding(view: SubscriptionView): boolean {
+function isOutstanding(view: SubscriptionView, at: string): boolean {
   if (view.subscription.status !== "following") return false;
-  if (view.wait === null) return view.subscription.mode === "passive";
+  if (view.subscription.mode === "passive")
+    return (
+      view.subscription.expiresAt === null || view.subscription.expiresAt > at
+    );
+  if (view.wait === null) return false;
   return (
     (view.wait.state === "waiting" || view.wait.state === "ready") &&
     view.batch?.state !== "accepted" &&
@@ -163,6 +176,7 @@ function availableActions(input: {
     queueStatus,
   } = input;
   if (!eligible || owner.archived) return [];
+  const liveWait = wait?.state === "waiting" || wait?.state === "ready";
   if (subscription.status !== "following")
     return subscription.source.kind === "conversation" &&
       subscription.source.id === subscription.recipient.conversationId
@@ -170,13 +184,18 @@ function availableActions(input: {
       : [];
   if (
     wait &&
-    (wait.state === "settled" ||
-      wait.state === "cancelled" ||
-      waitDelivery?.state === "accepted" ||
-      batch?.state === "accepted")
+    ((subscription.mode === "active" &&
+      (wait.state === "settled" || wait.state === "cancelled")) ||
+      (liveWait &&
+        (waitDelivery?.state === "accepted" || batch?.state === "accepted")))
   )
     return [];
-  if (batch && batch.state !== "accepted" && batch.state !== "cancelled") {
+  if (
+    liveWait &&
+    batch &&
+    batch.state !== "accepted" &&
+    batch.state !== "cancelled"
+  ) {
     if (wait && batch.state === "uncertain" && queueStatus === null)
       return ["cancel"];
     if (
@@ -188,7 +207,9 @@ function availableActions(input: {
     if (queueStatus === null && batch.state !== "planned") return [];
     if (batch.state === "uncertain" || batch.state === "failed") return [];
   }
-  const actions: SubscriptionView["actions"] = [wait ? "cancel" : "unfollow"];
+  const actions: SubscriptionView["actions"] = [
+    liveWait ? "cancel" : "unfollow",
+  ];
   actions.unshift(subscription.pausedAt === null ? "pause" : "resume");
   if (subscription.mode === "active") actions.push("passive");
   else if (
@@ -197,7 +218,7 @@ function availableActions(input: {
       "active",
       subscription.eventKinds,
     ) === null &&
-    (wait === null ||
+    (!liveWait ||
       ((wait.state === "waiting" || wait.state === "ready") &&
         waitDelivery?.state !== "accepted" &&
         batch?.state !== "accepted"))
@@ -211,15 +232,26 @@ export function createSubscriptionOverviewService(
   deps: SubscriptionOverviewDeps,
 ): SubscriptionOverviewService {
   async function snapshot(scope: SubscriptionScope) {
-    const [subscriptions, deliveries, waits, ownerRows] = await Promise.all([
-      deps.listSubscriptions(),
-      deps.listDeliveries(),
-      deps.listWaits(),
-      deps.listOwners(),
-    ]);
+    const ownerRows = (await deps.listOwners(scope)).filter((row) =>
+      matchesSubscriptionOwner(row.owner, scope),
+    );
+    const rows = await Promise.all(
+      ownerRows.map(async ({ owner }) => {
+        const recipient = ownerRecipient(owner);
+        const [subscriptions, deliveries, waits] = await Promise.all([
+          deps.listSubscriptions(recipient),
+          deps.listDeliveries(recipient),
+          deps.listWaits(recipient),
+        ]);
+        return { subscriptions, deliveries, waits };
+      }),
+    );
+    const subscriptions = rows.flatMap((row) => row.subscriptions);
+    const deliveries = rows.flatMap((row) => row.deliveries);
+    const waits = rows.flatMap((row) => row.waits);
     const owners = new Map(
       ownerRows
-        .filter((row) => matchesOwner(row.owner, scope))
+        .filter((row) => matchesSubscriptionOwner(row.owner, scope))
         .map((row) => [recipientKey(ownerRecipient(row.owner)), row.owner]),
     );
     const eligible = new Set(
@@ -364,14 +396,16 @@ export function createSubscriptionOverviewService(
                 lastError: batch.lastError,
               }
             : null,
-          pendingCount:
-            subscription.status === "following"
-              ? related.filter(
-                  (delivery) =>
-                    delivery.state !== "accepted" &&
-                    delivery.state !== "superseded",
-                ).length
-              : 0,
+          pendingCount: related.filter((delivery) =>
+            isActionableSubscriptionDelivery(
+              delivery,
+              subscription,
+              state.waits.filter(
+                (item) => recipientKey(item.recipient) === key,
+              ),
+              deps.now(),
+            ),
+          ).length,
           unreadCount: related.filter(
             (delivery) => !state.reads.get(key)?.has(delivery.id),
           ).length,
@@ -413,20 +447,28 @@ export function createSubscriptionOverviewService(
           (delivery) =>
             delivery.state === "failed" || delivery.state === "uncertain",
         )
-        .map((delivery) => delivery.subscriptionId),
+        .map((delivery) =>
+          subscriptionKey(delivery.recipient, delivery.subscriptionId),
+        ),
     );
     const hasAttention = (view: SubscriptionView) =>
-      needsAttention(view) || issueSubscriptions.has(view.subscription.id);
+      needsAttention(view) ||
+      issueSubscriptions.has(
+        subscriptionKey(view.subscription.recipient, view.subscription.id),
+      );
     const counts = {
-      following: searched.filter(isOutstanding).length,
+      following: searched.filter((view) => isOutstanding(view, deps.now()))
+        .length,
       active: searched.filter(
         (view) =>
-          isOutstanding(view) &&
+          isOutstanding(view, deps.now()) &&
           view.subscription.mode === "active" &&
           view.wait !== null,
       ).length,
       paused: searched.filter(
-        (view) => isOutstanding(view) && view.subscription.pausedAt !== null,
+        (view) =>
+          isOutstanding(view, deps.now()) &&
+          view.subscription.pausedAt !== null,
       ).length,
       pending: searched.reduce((total, view) => total + view.pendingCount, 0),
       attention: searched.filter(hasAttention).length,
@@ -441,9 +483,12 @@ export function createSubscriptionOverviewService(
           case "attention":
             return hasAttention(view);
           case "paused":
-            return isOutstanding(view) && view.subscription.pausedAt !== null;
+            return (
+              isOutstanding(view, deps.now()) &&
+              view.subscription.pausedAt !== null
+            );
           case "following":
-            return isOutstanding(view);
+            return isOutstanding(view, deps.now());
           default:
             return view.subscription.status === parsed.status;
         }
@@ -463,8 +508,25 @@ export function createSubscriptionOverviewService(
   }
   async function inbox(query: InboxOverviewQuery): Promise<InboxOverview> {
     const parsed = inboxOverviewQuerySchema.parse(query);
-    const state = await snapshot(parsed);
+    const batch = parsed.batchId ? await deps.getBatch(parsed.batchId) : null;
+    if (parsed.batchId && !batch)
+      return inboxOverviewSchema.parse({
+        items: [],
+        total: 0,
+        limit: parsed.limit,
+        offset: 0,
+        counts: { pending: 0, accepted: 0, issues: 0, unread: 0 },
+      });
+    const state = await snapshot(
+      batch
+        ? {
+            ...parsed,
+            conversation: parsed.conversation ?? batch.recipient.conversationId,
+          }
+        : parsed,
+    );
     const sources = new Map<string, Promise<SubscriptionSourcePresentation>>();
+    const searchText = new Map<string, string>();
     const views: InboxView[] = [];
     for (const delivery of state.deliveries) {
       const key = recipientKey(delivery.recipient);
@@ -483,31 +545,67 @@ export function createSubscriptionOverviewService(
           recipientKey(item.recipient) === key &&
           item.deliveryIds.includes(delivery.id),
       );
+      const presentation = await sourceRead;
+      const subscription = state.subscriptions.find(
+        (item) =>
+          item.id === delivery.subscriptionId &&
+          recipientKey(item.recipient) === key,
+      );
+      searchText.set(
+        delivery.id,
+        [
+          presentation.title,
+          delivery.source.id,
+          subscription?.reason ?? "",
+          owner.conversationTitle,
+          owner.target.projectName,
+        ]
+          .join(" ")
+          .toLocaleLowerCase(),
+      );
       views.push({
         delivery,
         owner,
-        sourceHref: (await sourceRead).href,
+        sourceHref: presentation.href,
         readAt: state.reads.get(key)?.get(delivery.id) ?? null,
         wakeBatchId: batch?.id ?? null,
       });
     }
     const scopedViews = views.filter(
       (view) =>
-        parsed.batchId === undefined || view.wakeBatchId === parsed.batchId,
+        (parsed.batchId === undefined || view.wakeBatchId === parsed.batchId) &&
+        (!parsed.q ||
+          searchText
+            .get(view.delivery.id)
+            ?.includes(parsed.q.toLocaleLowerCase())),
     );
-    const following = new Set(
-      state.subscriptions
-        .filter((subscription) => subscription.status === "following")
-        .map((subscription) =>
-          subscriptionKey(subscription.recipient, subscription.id),
-        ),
+    const subscriptionsById = new Map(
+      state.subscriptions.map(
+        (subscription) =>
+          [
+            subscriptionKey(subscription.recipient, subscription.id),
+            subscription,
+          ] as const,
+      ),
     );
-    const isPending = (view: InboxView) =>
-      view.delivery.state !== "accepted" &&
-      view.delivery.state !== "superseded" &&
-      following.has(
+    const isPending = (view: InboxView) => {
+      const subscription = subscriptionsById.get(
         subscriptionKey(view.delivery.recipient, view.delivery.subscriptionId),
       );
+      return (
+        subscription !== undefined &&
+        isActionableSubscriptionDelivery(
+          view.delivery,
+          subscription,
+          state.waits.filter(
+            (item) =>
+              recipientKey(item.recipient) ===
+              recipientKey(view.delivery.recipient),
+          ),
+          deps.now(),
+        )
+      );
+    };
     const counts = {
       pending: scopedViews.filter(isPending).length,
       accepted: scopedViews.filter((view) => view.delivery.state === "accepted")
@@ -551,12 +649,12 @@ export function createSubscriptionOverviewService(
     inbox,
     async recipients(query = {}) {
       const parsed = recipientsQuerySchema.parse(query);
-      const items = (await deps.listOwners())
+      const items = (await deps.listOwners(parsed))
         .filter(
           (row) =>
             row.eligible &&
             !row.owner.archived &&
-            matchesOwner(row.owner, parsed),
+            matchesSubscriptionOwner(row.owner, parsed),
         )
         .map((row) => row.owner)
         .filter(
@@ -585,14 +683,14 @@ export function createSubscriptionOverviewService(
       });
     },
     async detail(recipient, id) {
-      const subscription = (await deps.listSubscriptions()).find(
+      const subscription = (await deps.listSubscriptions(recipient)).find(
         (item) =>
           item.id === id &&
           recipientKey(item.recipient) === recipientKey(recipient),
       );
       if (!subscription) return null;
       const wait =
-        (await deps.listWaits()).find(
+        (await deps.listWaits(recipient)).find(
           (item) =>
             item.subscriptionId === id &&
             recipientKey(item.recipient) === recipientKey(recipient),

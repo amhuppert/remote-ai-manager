@@ -48,13 +48,40 @@ const savedDeliverySchema = subscriptionDeliverySchema
 function identity(prefix: string, parts: readonly (string | number)[]) {
   return `${prefix}:${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
 }
-function subscriptionFor(delivery: SubscriptionDelivery) {
+export function workflowResultMigrationFollowId(
+  recipient: SubscriptionDelivery["recipient"],
+  executionId: string,
+): string {
+  return identity("workflow-result-follow", [
+    recipient.projectPath,
+    recipient.conversationId,
+    executionId,
+  ]);
+}
+export function workflowResultMigrationDeliveryId(
+  recipient: SubscriptionDelivery["recipient"],
+  executionId: string,
+  boundarySeq: number,
+): string {
+  return identity("workflow-result-import", [
+    recipient.projectPath,
+    recipient.conversationId,
+    executionId,
+    boundarySeq,
+  ]);
+}
+function subscriptionFor(db: Db, delivery: SubscriptionDelivery) {
+  const head = z
+    .object({ head: z.number().int().nonnegative() })
+    .parse(
+      db
+        .prepare(
+          "SELECT COALESCE(MAX(id),0) AS head FROM graph_workflow_events WHERE project_path=? AND execution_id=?",
+        )
+        .get(delivery.recipient.projectPath, delivery.source.id),
+    ).head;
   return conversationSubscriptionSchema.parse({
-    id: identity("workflow-result-follow", [
-      delivery.recipient.projectPath,
-      delivery.recipient.conversationId,
-      delivery.source.id,
-    ]),
+    id: workflowResultMigrationFollowId(delivery.recipient, delivery.source.id),
     recipient: delivery.recipient,
     source: delivery.source,
     reason: "Workflow result evidence",
@@ -62,7 +89,9 @@ function subscriptionFor(delivery: SubscriptionDelivery) {
     eventKinds: null,
     expiresAt: null,
     status: "following",
-    cursor: "0",
+    // Outstanding ledger rows are imported directly; an automatic follow
+    // must not reinterpret unrelated pre-cutover boundaries as new feedback.
+    cursor: String(head),
     createdAt: delivery.recordedAt,
     updatedAt: delivery.recordedAt,
     unfollowedAt: null,
@@ -71,7 +100,7 @@ function subscriptionFor(delivery: SubscriptionDelivery) {
     lastError: null,
   });
 }
-function readSavedDeliveries(db: Db): SubscriptionDelivery[] {
+export function readSavedWorkflowDeliveries(db: Db): SubscriptionDelivery[] {
   const rows = db
     .prepare(
       `SELECT id,subscription_id AS subscriptionId,
@@ -83,14 +112,22 @@ function readSavedDeliveries(db: Db): SubscriptionDelivery[] {
     )
     .all();
   return rows.map((raw) => {
-    const { projectPath, conversationId, sourceId, factJson, ...receipt } =
-      savedDeliverySchema.parse(raw);
-    return subscriptionDeliverySchema.parse({
-      ...receipt,
-      recipient: { projectPath, conversationId },
-      source: { kind: "workflow", id: sourceId },
-      fact: JSON.parse(factJson) as unknown,
-    });
+    try {
+      const { projectPath, conversationId, sourceId, factJson, ...receipt } =
+        savedDeliverySchema.parse(raw);
+      return subscriptionDeliverySchema.parse({
+        ...receipt,
+        recipient: { projectPath, conversationId },
+        source: { kind: "workflow", id: sourceId },
+        fact: JSON.parse(factJson) as unknown,
+      });
+    } catch (error) {
+      const identity = z.object({ id: z.string() }).safeParse(raw);
+      throw new Error(
+        `Cannot migrate historical workflow inbox delivery ${identity.success ? identity.data.id : "unknown"}: invalid saved fact or receipt`,
+        { cause: error },
+      );
+    }
   });
 }
 interface RecordedBoundary {
@@ -240,7 +277,7 @@ function normalizeLegacyTerminalDeliveries(
   db: Db,
   boundaries: readonly RecordedBoundary[],
 ) {
-  for (const saved of readSavedDeliveries(db)) {
+  for (const saved of readSavedWorkflowDeliveries(db)) {
     if (
       saved.fact.eventKind !== "graph-workflow-terminal" ||
       saved.fact.occurrenceId !==
@@ -288,7 +325,7 @@ function normalizeLegacyTerminalDeliveries(
           saved.id,
         );
       const merged = importSubscriptionDelivery(db, {
-        subscription: subscriptionFor(saved),
+        subscription: subscriptionFor(db, saved),
         delivery: { ...saved, fact: normalizedFact },
       });
       if (merged.id !== saved.id) {
@@ -300,7 +337,7 @@ function normalizeLegacyTerminalDeliveries(
       continue;
     }
     importSubscriptionDelivery(db, {
-      subscription: subscriptionFor(saved),
+      subscription: subscriptionFor(db, saved),
       delivery: {
         ...saved,
         fact: {
@@ -332,7 +369,7 @@ function normalizeLegacyTerminalDeliveries(
           "Legacy workflow terminal receipt has ambiguous boundary identity; inspect before replay.",
       };
       importSubscriptionDelivery(db, {
-        subscription: subscriptionFor(delivery),
+        subscription: subscriptionFor(db, delivery),
         delivery,
       });
     }
@@ -360,20 +397,38 @@ export const workflowResultInbox: StateMigration = {
           .all()
           .map((raw) => {
             const row = resultIdentitySchema.parse(raw);
-            const result = repo.findByBoundary(
-              row.project_path,
-              row.session_name,
-              row.execution_id,
-              row.boundary_seq,
-            );
-            if (!result)
-              throw Error(
-                "A recorded workflow boundary disappeared during migration",
+            try {
+              const result = repo.findByBoundary(
+                row.project_path,
+                row.session_name,
+                row.execution_id,
+                row.boundary_seq,
               );
-            return result;
+              if (!result)
+                throw Error(
+                  "A recorded workflow boundary disappeared during migration",
+                );
+              return result;
+            } catch (error) {
+              throw new Error(
+                `Cannot migrate historical workflow boundary ${row.execution_id}:${row.boundary_seq} (${row.project_path}/${row.session_name}): invalid saved evidence`,
+                { cause: error },
+              );
+            }
           });
         const byIdentity = readBoundaries(db, results);
         normalizeLegacyTerminalDeliveries(db, [...byIdentity.values()]);
+        const savedReceipts = new Map(
+          readSavedWorkflowDeliveries(db).map((saved) => [
+            JSON.stringify([
+              saved.recipient.projectPath,
+              saved.recipient.conversationId,
+              saved.source.id,
+              saved.fact.occurrenceId,
+            ]),
+            saved,
+          ]),
+        );
         for (const result of results) {
           if (result.originConversationId === null) continue;
           const exists = db
@@ -391,12 +446,14 @@ export const workflowResultInbox: StateMigration = {
           const fallback =
             result.state === "delivered" && result.attemptId === null;
           const delivery = subscriptionDeliverySchema.parse({
-            id: identity("workflow-result-import", [
-              result.projectPath,
-              result.originConversationId,
+            id: workflowResultMigrationDeliveryId(
+              {
+                projectPath: result.projectPath,
+                conversationId: result.originConversationId,
+              },
               result.executionId,
               result.boundarySeq,
-            ]),
+            ),
             subscriptionId: identity("workflow-result-follow", [
               result.projectPath,
               result.originConversationId,
@@ -429,14 +486,28 @@ export const workflowResultInbox: StateMigration = {
                 ? "Legacy workflow result claim has no durable backend acceptance receipt."
                 : null,
           });
+          const incumbent = fallback
+            ? savedReceipts.get(
+                JSON.stringify([
+                  delivery.recipient.projectPath,
+                  delivery.recipient.conversationId,
+                  delivery.source.id,
+                  delivery.fact.occurrenceId,
+                ]),
+              )
+            : undefined;
+          // A missing-origin fallback contains no runtime admission attempt.
+          // It can enrich recorded evidence, but cannot outrank an inbox receipt.
           importSubscriptionDelivery(db, {
-            subscription: subscriptionFor(delivery),
-            delivery,
+            subscription: subscriptionFor(db, delivery),
+            delivery: incumbent
+              ? { ...incumbent, fact: delivery.fact }
+              : delivery,
           });
         }
         // Other subscribers already use the canonical boundary id. Upgrade their
         // saved summary while retaining their independent acceptance/read receipt.
-        for (const saved of readSavedDeliveries(db)) {
+        for (const saved of readSavedWorkflowDeliveries(db)) {
           const boundary = byIdentity.get(
             JSON.stringify([
               saved.recipient.projectPath,
@@ -446,7 +517,7 @@ export const workflowResultInbox: StateMigration = {
           );
           if (!boundary) continue;
           importSubscriptionDelivery(db, {
-            subscription: subscriptionFor(saved),
+            subscription: subscriptionFor(db, saved),
             delivery: { ...saved, fact: boundary.fact },
           });
         }

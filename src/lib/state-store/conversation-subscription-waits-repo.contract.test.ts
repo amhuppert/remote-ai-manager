@@ -30,6 +30,7 @@ const maximalWait = () =>
     state: "settled",
     outcome: "source_terminal",
     deliveryId: "max-delivery",
+    baselineOccurrenceId: "prior-terminal-boundary",
     batchId: "max-batch",
     causationBatchIds: ["parent-batch"],
     createdAt: at,

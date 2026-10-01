@@ -1,3 +1,4 @@
+import { gitJobSourceFact } from "./git-job-source";
 import { isTerminalValidationRunStatus } from "@/lib/validation/schemas";
 import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
 import type { SubscriptionSourceDeps } from "./source-adapters";
@@ -19,13 +20,6 @@ type TerminalSourceDeps = Pick<
     now?(): string;
   };
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-// Job persistence uses SQLite datetime('now'), whose unmarked clock is UTC.
-function jobFinishTime(value: string): string {
-  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
-    ? `${value.replace(" ", "T")}Z`
-    : value;
-}
-
 /** Explicit waits inspect the durable verdict, independently of passive event cursors. */
 export function createTerminalSourceReader(deps: TerminalSourceDeps) {
   const now = deps.now ?? (() => new Date().toISOString());
@@ -68,18 +62,7 @@ export function createTerminalSourceReader(deps: TerminalSourceDeps) {
         return { kind: "pending", status: job.status };
       return {
         kind: "terminal",
-        fact: {
-          occurrenceId,
-          eventKind: "git-job-outcome",
-          category: "outcome",
-          sourceTitle: `${job.jobType} ${job.sessionName}`,
-          summary: `${job.jobType} ${job.status}${job.errorMessage ? `: ${job.errorMessage.slice(0, 700)}` : "."}`,
-          occurredAt: job.completedAt ? jobFinishTime(job.completedAt) : now(),
-          revision: job.commitHash ?? job.mergeHash ?? job.preparedSha ?? null,
-          outcome: job.status,
-          retrievalHandle: `git-job:${job.jobId}`,
-          actorConversationId: null,
-        },
+        fact: gitJobSourceFact(job, recipient, occurrenceId),
       };
     }
     return readWorkflowTerminal(recipient, source);

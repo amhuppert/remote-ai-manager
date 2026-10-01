@@ -203,3 +203,127 @@ it("delivers a delimiter-heavy legacy preview within the next-user briefing budg
     fact: { sourceText: original },
   });
 });
+
+const legacyLossText =
+  "Your previous agent session ended (runtime_closed) while 1 background task(s) were still running: watcher (Watch validation). Those processes were terminated with the session — their completion notifications will never arrive. Do not wait for them; check any output files on disk and re-run whatever is still needed.";
+it.each(["ordinary-generated", "iteration", "validator"] as const)(
+  "preserves operational recovery of imported task loss for %s",
+  async (recipientKind) => {
+    const db = legacyDb();
+    db.prepare(
+      "INSERT INTO conversations VALUES ('legacy-c','/project','session',?)",
+    ).run(
+      JSON.stringify([
+        legacyLossText,
+        "Ordinary feedback mentioning background tasks",
+      ]),
+    );
+    await migrate(db);
+    const recipient = { projectPath: "/project", conversationId: "legacy-c" };
+    const repo = createConversationSubscriptionsRepo(db, createWriteQueue());
+    const before = (await repo.listDeliveriesForOverview(recipient)).find(
+      (delivery) => delivery.fact.sourceText === legacyLossText,
+    );
+    if (!before) throw Error("Expected imported task loss evidence");
+    const service = createSubscriptionService({
+      repo,
+      isRecipientEligible: async () => false,
+      readSource: async (_recipient, _source, cursor) => ({
+        cursor,
+        facts: [],
+        missing: false,
+      }),
+    });
+    const recovery = await service.prepareRuntimeLossNotice({
+      recipient,
+      attemptId: recipientKind,
+    });
+    expect(recovery.block).toContain("watcher");
+    expect(
+      (
+        await service.prepareBriefing({
+          recipient,
+          attemptId: "generated-turn",
+        })
+      ).block,
+    ).toBeNull();
+    await recovery.onInputAccepted();
+    await recovery.finish();
+    await migrate(db);
+    const reloaded = await createConversationSubscriptionsRepo(
+      db,
+      createWriteQueue(),
+    ).listDeliveriesForOverview(recipient);
+    expect(
+      reloaded.find((delivery) => delivery.id === before.id),
+    ).toMatchObject({
+      id: before.id,
+      fact: {
+        occurrenceId: before.fact.occurrenceId,
+        eventKind: "background-tasks-lost",
+        category: "outcome",
+        outcome: "terminated",
+        sourceText: legacyLossText,
+      },
+      state: "accepted",
+      attemptCount: 1,
+    });
+    expect(before.id).toMatch(/^legacy-pending-agent-notice:/);
+    expect(
+      reloaded.find((delivery) => delivery.fact.sourceText !== legacyLossText),
+    ).toMatchObject({
+      fact: {
+        eventKind: "legacy-pending-agent-notice",
+        category: "activity",
+        outcome: null,
+      },
+      state: "pending",
+    });
+  },
+);
+
+it.each([
+  `Reviewer quoted: ${legacyLossText}`,
+  legacyLossText.slice(0, -30),
+  "A user says the background task was terminated; please check it",
+])(
+  "keeps non-producer legacy feedback passive without guessing operational provenance",
+  async (text) => {
+    const db = legacyDb();
+    db.prepare(
+      "INSERT INTO conversations VALUES ('legacy-feedback','/project','session',?)",
+    ).run(JSON.stringify([text]));
+    await migrate(db);
+    const recipient = {
+      projectPath: "/project",
+      conversationId: "legacy-feedback",
+    };
+    const repo = createConversationSubscriptionsRepo(db, createWriteQueue());
+    expect((await repo.listDeliveriesForOverview(recipient))[0]).toMatchObject({
+      fact: {
+        sourceText: text,
+        eventKind: "legacy-pending-agent-notice",
+        category: "activity",
+        outcome: null,
+      },
+      state: "pending",
+    });
+    const service = createSubscriptionService({
+      repo,
+      isRecipientEligible: async () => false,
+      readSource: async (_recipient, _source, cursor) => ({
+        cursor,
+        facts: [],
+        missing: false,
+      }),
+    });
+    expect(
+      (
+        await service.prepareRuntimeLossNotice({
+          recipient,
+          attemptId: "runtime",
+        })
+      ).block,
+    ).toBeNull();
+  },
+);

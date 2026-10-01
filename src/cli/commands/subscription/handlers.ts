@@ -158,6 +158,7 @@ export const subscriptionWaitHandler: Write<typeof subscriptionWaitSpec> = {
         invocation(subscriptionWaitGetCommand, {
           args: { "subscription-id": wait.subscriptionId },
           flags: {
+            "wait-id": wait.id,
             ...explicitScopeFlags(app),
             project: target.projectName,
             conversation: target.conversationId,
@@ -242,7 +243,7 @@ export const subscriptionWaitsHandler: Read<typeof subscriptionWaitsSpec> = {
         getCommand: renderInvocation(
           invocation(subscriptionWaitGetCommand, {
             args: { "subscription-id": wait.subscriptionId },
-            flags,
+            flags: { ...flags, "wait-id": wait.id },
           }),
           "cctl",
         ),
@@ -295,11 +296,14 @@ export const subscriptionWaitGetHandler: Read<typeof subscriptionWaitGetSpec> =
         const resolved = await resolveCcConversationTarget(app);
         if (!resolved.ok) return resolved;
         const { target, ...connection } = resolved.value;
+        const waitId = ctx.flags["wait-id"];
+        const query =
+          waitId === undefined ? "" : `?${new URLSearchParams({ waitId })}`;
         const response = await cliRequest(app.host, {
           ...connection,
           headers: { "x-cc-conversation-id": target.conversationId },
           method: "GET",
-          path: `${conversationTargetApiBase(target)}/subscriptions/waits/${encodePathSegment(ctx.args["subscription-id"])}`,
+          path: `${conversationTargetApiBase(target)}/subscriptions/waits/${encodePathSegment(ctx.args["subscription-id"])}${query}`,
         });
         if (response.kind !== "ok") return ccRequestFailure(response);
         const parsed = waitDetailResponse.safeParse(response.body);
@@ -332,7 +336,7 @@ export const subscriptionWaitGetHandler: Read<typeof subscriptionWaitGetSpec> =
 
 type SubscriptionOutline = Pick<
   ConversationSubscription,
-  "id" | "source" | "mode" | "status" | "pausedAt" | "missingAt"
+  "id" | "source" | "mode" | "status" | "pausedAt" | "missingAt" | "expiresAt"
 > & {
   reasonSummary: string;
   reasonCharacters: number;
@@ -380,6 +384,7 @@ export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
           source: subscription.source,
           mode: subscription.mode,
           status: subscription.status,
+          expiresAt: subscription.expiresAt,
           pausedAt: subscription.pausedAt,
           missingAt: subscription.missingAt,
           reasonSummary: summary(subscription.reason),
@@ -431,7 +436,7 @@ export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
     },
     text: ({ subscriptions, omission, next }) =>
       quoteLiteralText(
-        `${omissionText("subscriptions", omission, next)}\n${subscriptions.map((s) => `${s.id}  ${s.status}  ${s.mode}${s.pausedAt ? "  paused" : ""}  ${s.source.kind}:${s.source.id}\n  reason (${s.reasonCharacters} chars): ${s.reasonSummary}${s.lastErrorSummary ? `\n  problem: ${s.lastErrorSummary}` : ""}${s.missingAt ? `\n  source missing: ${s.missingAt}` : ""}\n  get: ${s.getCommand}`).join("\n")}\n`,
+        `${omissionText("subscriptions", omission, next)}\n${subscriptions.map((s) => `${s.id}  ${s.status}  ${s.mode}${s.pausedAt ? "  paused" : ""}  ${s.source.kind}:${s.source.id}\n  reason (${s.reasonCharacters} chars): ${s.reasonSummary}\n  expires: ${s.expiresAt ?? "none"}${s.lastErrorSummary ? `\n  problem: ${s.lastErrorSummary}` : ""}${s.missingAt ? `\n  source missing: ${s.missingAt}` : ""}\n  get: ${s.getCommand}`).join("\n")}\n`,
       ),
   }),
 };

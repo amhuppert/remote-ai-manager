@@ -311,7 +311,12 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",
-    recordAgentNotice: async () => false,
+    recordRuntimeLossNotice: async () => false,
+    prepareRuntimeLossNotice: async () => ({
+      block: null,
+      async onInputAccepted() {},
+      async finish() {},
+    }),
     mutateConversation: async (_pp, _sn, _id, _label, mutate) => {
       mutate(conversation);
     },

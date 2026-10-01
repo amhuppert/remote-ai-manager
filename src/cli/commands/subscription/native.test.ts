@@ -311,6 +311,24 @@ describe("conversation subscription commands", () => {
     expect(row.reason).toBeUndefined();
   });
 
+  it("discloses finite follow lifetimes in both subscription outlines", async () => {
+    const expiresAt = "2026-09-30T01:00:00.000Z";
+    const test = fixture({
+      subscriptions: [{ ...subscription, expiresAt }],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    });
+    const json = await test.run(["subscription", "list"]);
+    expect(json.exitCode, json.stdout).toBe(0);
+    expect(
+      JSON.parse(json.stdout).payload.data.subscriptions[0].expiresAt,
+    ).toBe(expiresAt);
+    const text = await test.run(["subscription", "list"], "text");
+    expect(text.exitCode, text.stdout).toBe(0);
+    expect(text.stdout).toContain(`expires: ${expiresAt}`);
+  });
+
   it("reveals full preserved notice evidence in detail without expanding the inbox outline", async () => {
     const fullText =
       "Preserved notice detail beyond the bounded briefing summary.";
@@ -438,6 +456,24 @@ describe("conversation subscription commands", () => {
     expect(data.waits[0].getCommand).toContain("subscription wait-get");
     expect(data.waits[0].getCommand).toContain("subscription-one");
     expect(data.waits[0].getCommand).toContain("--project=project-one");
+    expect(data.waits[0].getCommand).toContain(`--wait-id=${activeWait.id}`);
+  });
+
+  it("requests the exact historical wait generation named by its detail handle", async () => {
+    const historical = { ...activeWait, id: "wait-old", state: "cancelled" };
+    const test = fixture({ wait: historical, batch: null });
+    const result = await test.run([
+      "subscription",
+      "wait-get",
+      "subscription-one",
+      "--wait-id",
+      "wait-old",
+    ]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(test.requests[0]?.url).toBe(
+      "http://cc.test/api/projects/project-one/conversations/conversation-one/subscriptions/waits/subscription-one?waitId=wait-old",
+    );
+    expect(JSON.parse(result.stdout).payload.data.wait.id).toBe("wait-old");
   });
 
   it("uses the session wait detail route when session scope is explicit", async () => {

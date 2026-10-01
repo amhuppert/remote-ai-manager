@@ -7,9 +7,11 @@ Validation runs require an explicit subscription or finite wait; submitting a
 validation command does not create a follow, even while it is queued or running.
 A read or search alone does not create a follow.
 
-Spec review feedback and lost-background-task notices use the same passive inbox
-for ordinary session and project conversations. They arrive with the next user
-message even when the runtime already exists. Internal `conversation` sources
+Spec review feedback uses the passive inbox for ordinary session and project
+conversations. It arrives with the next user message even when the runtime
+already exists. Lost-background-task reminders use the same durable receipts
+but reach the next replacement runtime, including generated turns and workflow
+roles. Internal `conversation` sources
 contain notices for their own recipient; they are not peer-turn subscriptions
 and cannot be created through the catalog. `inbox get` exposes the full preserved
 text when a notice's briefing contains only a preview.
@@ -30,6 +32,7 @@ cctl subscription wait validation <run-id> --reason "Inspect the verdict" --expi
 cctl subscription wait git_job <job-id> --reason "Inspect the git result"
 cctl subscription waits
 cctl subscription wait-get <subscription-id>
+cctl subscription wait-get <subscription-id> --wait-id <generation-id>
 cctl inbox list
 cctl inbox list --all --limit 20 --offset 20
 cctl inbox get <delivery-id>
@@ -53,10 +56,14 @@ Active mode registers a finite terminal wait and returns immediately, with the
 same lifetime and lease constraints as `subscription wait` below.
 An existing finite wait retains its exact reason and expiry. A changed reason
 returns `ACTIVE_WAIT_REASON_LOCKED`; a changed expiry returns
-`ACTIVE_WAIT_EXPIRY_LOCKED`. A spent finite source returns `ACTIVE_WAIT_SPENT`
-in either mode; register a different operation's exact source instead.
+`ACTIVE_WAIT_EXPIRY_LOCKED`. Explicit active registration after cancellation or
+settlement creates a new generation when another outcome can be delivered.
+An already consumed final outcome returns `ACTIVE_WAIT_SOURCE_FINAL`; register
+a different operation's exact source instead. An undelivered terminal outcome
+remains eligible, and a consumed resumable workflow halt can wait for the next
+boundary after the workflow resumes.
 
-`subscription list` returns bounded reason excerpts, pause state, remembered
+`subscription list` returns bounded reason excerpts, expiry, pause state, remembered
 opt-outs and source-read problems. Text and JSON contain the same selected data.
 Each row includes a stable id and scoped `subscription get` command. Detail
 shows the full reason, cursor, finite wait and wake batch. `pause` holds delivery
@@ -78,6 +85,13 @@ downgrade; an unsafe delivery needs queue review. `cancel` cancels a finite wait
 evidence checks as `unfollow`; `unfollow` remembers a general source opt-out so
 later involvement cannot silently reactivate it. Existing delivery evidence
 remains available.
+
+Cancelling a running validation or git-job wait restores passive collection of
+its eventual result. Once that source's terminal result is accepted or dismissed,
+its follow expires and leaves the active Following count. The follow, wait
+generations and delivery evidence remain inspectable as history. Workflow
+following continues because a halted workflow can resume and produce more
+boundaries.
 
 `inbox list` reconciles durable source changes and returns a bounded page.
 Omission metadata names the next read. Outline excerpts include their original
@@ -129,12 +143,14 @@ registration, and queues a bounded result turn for this ordinary conversation.
 Several ready waits may share one turn. A missing source or expired wait settles
 with that outcome. Paused conversations retain their queued wake for later.
 Runtime replacement does not erase the wait. The server records wake-turn
-provenance for inspection; it cannot be supplied by a caller. Each exact source
-wakes at most once, and durable batching and rate limits bound generated turns.
+provenance for inspection; it cannot be supplied by a caller. Each generation
+reserves one outcome, and durable batching and rate limits bound generated turns.
 
 `subscription waits` returns a bounded outline and scoped pagination/detail
-commands. `wait-get` uses the subscription id to show the reason, source outcome,
-expiry and wake batch. A settled source wait alone does not prove runtime
+commands. `wait-get` uses the subscription id for the latest generation, or
+`--wait-id` for the exact historical generation printed by `waits`. Both show
+the reason, source outcome, expiry and wake batch. Historical handles keep
+identifying that generation after another is registered. A settled source wait alone does not prove runtime
 acceptance: inspect the batch state and the returned `inbox get` command for
 delivery evidence. Failed or uncertain wake delivery requires inspection and is
 not blindly replayed. Runtime acceptance does not prove agent action.

@@ -12,7 +12,6 @@ function fixture() {
   let accepted = false;
   const finishes: (() => Promise<void>)[] = [];
   const deps: PassiveSubscriptionContextDependencies = {
-    synchronizeInvolvement: async () => {},
     prepareBriefing: async () => {
       preparations++;
       state = "queued";

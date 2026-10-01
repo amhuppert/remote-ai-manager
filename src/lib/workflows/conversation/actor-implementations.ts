@@ -7,7 +7,11 @@ import {
   prepareTaskPrompt,
   type PreparedConversationTurnContext,
 } from "./turn-context";
-import { prepareRuntimeInstructions } from "./runtime-instructions";
+import {
+  prepareRuntimeInstructions,
+  prepareRuntimeRecoveryInstructions,
+  type RuntimeRecoveryInstructions,
+} from "./runtime-instructions";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationActorDependencies } from "./actor-dependencies";
@@ -1039,9 +1043,9 @@ async function executePromptForMachine(
     backendRuntime = undefined;
   }
   const isNewRuntime = !backendRuntime || backendRuntime.status === "dead";
+  let runtimeRecovery: RuntimeRecoveryInstructions | undefined;
 
   async function createManagedBackendRuntime(): Promise<ConversationBackendRuntime> {
-    const sessionInstructions = instructions.sessionInstructions;
     const portableMcp = await deps.policy.composePortableMcpForConversation({
       backend: input.agentBackend,
       projectPath: input.projectPath,
@@ -1099,6 +1103,26 @@ async function executePromptForMachine(
       input.agentBackend,
     );
     if (runtimeState.managed.backend) await runtimeState.managed.close();
+    // Retirement drains loss callbacks before the replacement takes its snapshot.
+    if (input.persistence === "durable") {
+      runtimeRecovery ??= await prepareRuntimeRecoveryInstructions(
+        deps.effects,
+        {
+          recipient: {
+            projectPath: input.projectPath,
+            conversationId: input.target.conversationId,
+          },
+          attemptId: `runtime-loss:${randomUUID()}`,
+        },
+        closeAttemptedRuntime,
+        (finish) => attempt?.ownReceipt(finish),
+      );
+    }
+    // Recovery context is transient; the configuration snapshot contains only
+    // repeatable instructions so receiving it does not force another runtime.
+    const sessionInstructions = runtimeRecovery?.block
+      ? [...instructions.sessionInstructions, runtimeRecovery.block]
+      : instructions.sessionInstructions;
     const incarnation = runtimeState.managed.beginCreation();
     const externalTurnHandler = conversationCapabilities?.externalTurns
       ? createExternalTurnHandler(
@@ -1132,7 +1156,10 @@ async function executePromptForMachine(
     };
 
     const surfaceBackgroundTasksLost = createBackgroundTasksLostHandler(
-      { recordAgentNotice: deps.effects.recordAgentNotice, log: deps.log },
+      {
+        recordRuntimeLossNotice: deps.effects.recordRuntimeLossNotice,
+        log: deps.log,
+      },
       {
         projectPath: input.projectPath,
         sessionName: conversationTargetStoreSessionName(input.target),
@@ -1318,6 +1345,8 @@ async function executePromptForMachine(
     switch (event.type) {
       case "input_accepted": {
         preparedContext?.observeInputAccepted();
+        const recoveryAcceptance = runtimeRecovery?.onInputAccepted();
+        void recoveryAcceptance?.catch(() => {});
         if (event.mcpConfigHash)
           await recordMcpConfigReceipt(
             deps.policy.state.mcp,
@@ -1338,6 +1367,7 @@ async function executePromptForMachine(
           );
         }
         await preparedContext?.onInputAccepted(seedBackendRef);
+        await recoveryAcceptance;
         break;
       }
 
@@ -1600,10 +1630,12 @@ async function executePromptForMachine(
         sending: () => {
           preparedContext?.markDispatched();
           checkpoint?.markDispatched();
+          runtimeRecovery?.markDispatched();
         },
         failed: (error) => {
           preparedContext?.markDispatchFailure(error);
           checkpoint?.markDispatchFailure(error);
+          runtimeRecovery?.markDispatchFailure(error);
         },
         completed: (result) => {
           completedBackendRef = result.backendRef;
@@ -1769,6 +1801,7 @@ async function executePromptForMachine(
     if (!attempt) {
       await preparedContext?.finish();
       await checkpoint?.finish();
+      await runtimeRecovery?.finish();
     }
   }
 

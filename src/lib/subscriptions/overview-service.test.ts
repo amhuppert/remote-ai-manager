@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   conversationSubscriptionSchema,
   subscriptionDeliverySchema,
@@ -98,7 +98,11 @@ function harness() {
     subscription("second", { mode: "passive", pausedAt: at }),
   ];
   const deliveries = [
-    delivery("unread", "first"),
+    delivery("unread", "first", {
+      state: "queued",
+      attemptId: "batch",
+      queuedAt: at,
+    }),
     delivery("read", "first", { state: "accepted", acceptedAt: at }),
     delivery("problem", "second", {
       state: "uncertain",
@@ -142,14 +146,20 @@ function harness() {
     owner("archived", "old", true),
   ];
   const deps: SubscriptionOverviewDeps = {
-    async listSubscriptions() {
-      return subscriptions;
+    async listSubscriptions(recipient) {
+      return subscriptions.filter(
+        (item) => item.recipient.conversationId === recipient.conversationId,
+      );
     },
-    async listDeliveries() {
-      return deliveries;
+    async listDeliveries(recipient) {
+      return deliveries.filter(
+        (item) => item.recipient.conversationId === recipient.conversationId,
+      );
     },
-    async listWaits() {
-      return [wait];
+    async listWaits(recipient) {
+      return wait.recipient.conversationId === recipient.conversationId
+        ? [wait]
+        : [];
     },
     async getBatch(id) {
       return id === batch.id ? batch : null;
@@ -187,6 +197,79 @@ function harness() {
   };
 }
 describe("subscription overview projections", () => {
+  it("keeps expired passive wait sources inspectable but excludes them from following and paused counts", async () => {
+    const h = harness();
+    h.subscriptions[0] = subscription("first", {
+      mode: "passive",
+      expiresAt: at,
+      pausedAt: at,
+    });
+    const all = await h.service.overview({ status: "all" });
+    expect(all.items).toHaveLength(2);
+    expect(all.counts).toMatchObject({ following: 1, paused: 1, active: 0 });
+    const following = await h.service.overview({ status: "following" });
+    expect(following.items.map((view) => view.subscription.id)).toEqual([
+      "second",
+    ]);
+  });
+  it("keeps inactive historical wait errors out of attention and preserves passive follow controls after a spent wake", async () => {
+    const h = harness();
+    h.wait.state = "settled";
+    h.wait.outcome = "expired";
+    h.wait.finishedAt = at;
+    h.wait.lastError = "Wait expired";
+    h.batch.state = "cancelled";
+    h.batch.lastError = "Wake withdrawn";
+    const subscription = h.subscriptions[0];
+    const delivery = h.deliveries[0];
+    if (!subscription || !delivery)
+      throw new Error("Expected receipt fixtures");
+    subscription.mode = "passive";
+    delivery.state = "superseded";
+    const page = await h.service.overview({
+      subscriptionId: "first",
+      status: "all",
+    });
+    expect(page.counts.attention).toBe(0);
+    expect(page.counts.following).toBe(1);
+    expect(page.items[0]?.actions).toEqual(["pause", "unfollow", "active"]);
+    subscription.status = "unfollowed";
+    subscription.missingAt = at;
+    expect(
+      (await h.service.overview({ subscriptionId: "first", status: "all" }))
+        .counts.attention,
+    ).toBe(0);
+  });
+  it("uses the same source, purpose and recipient search for counts and the inbox opened from them", async () => {
+    const h = harness();
+    expect(
+      (await h.service.inbox({ q: "run-first", state: "all" })).items.map(
+        (item) => item.delivery.id,
+      ),
+    ).toEqual(["read", "unread"]);
+    expect(
+      (await h.service.inbox({ q: "not present", state: "all" })).total,
+    ).toBe(0);
+  });
+  it("reads evidence only for scoped owners, including batch receipt queries", async () => {
+    const h = harness();
+    const subscriptions = vi.spyOn(h.deps, "listSubscriptions");
+    const deliveries = vi.spyOn(h.deps, "listDeliveries");
+    const waits = vi.spyOn(h.deps, "listWaits");
+    const reads = vi.spyOn(h.deps, "listReadAt");
+    await h.service.overview({ conversation: "conversation", limit: 1 });
+    expect(subscriptions).toHaveBeenCalledExactlyOnceWith(recipient);
+    expect(deliveries).toHaveBeenCalledExactlyOnceWith(recipient);
+    expect(waits).toHaveBeenCalledExactlyOnceWith(recipient);
+    expect(reads).toHaveBeenCalledExactlyOnceWith(recipient);
+    subscriptions.mockClear();
+    deliveries.mockClear();
+    waits.mockClear();
+    reads.mockClear();
+    await h.service.inbox({ batchId: "batch", state: "all", limit: 6 });
+    expect(deliveries).toHaveBeenCalledExactlyOnceWith(recipient);
+    expect(reads).toHaveBeenCalledExactlyOnceWith(recipient);
+  });
   it("filters by recipient scope and returns counts independently of the selected status page", async () => {
     const h = harness();
     h.subscriptions.push(
@@ -203,12 +286,12 @@ describe("subscription overview projections", () => {
     expect(page).toMatchObject({
       total: 1,
       limit: 1,
-      counts: { following: 2, active: 1, paused: 1, pending: 2, attention: 1 },
+      counts: { following: 2, active: 1, paused: 1, pending: 1, attention: 1 },
     });
     expect(page.items[0]).toMatchObject({
       subscription: { id: "second" },
       owner: { target: { scope: "session" } },
-      pendingCount: 1,
+      pendingCount: 0,
       unreadCount: 1,
     });
   });
@@ -223,7 +306,7 @@ describe("subscription overview projections", () => {
     });
     expect(page).toMatchObject({
       total: 2,
-      counts: { pending: 2, accepted: 1, issues: 1, unread: 2 },
+      counts: { pending: 1, accepted: 1, issues: 1, unread: 2 },
       offset: 1,
       limit: 1,
     });
@@ -238,7 +321,7 @@ describe("subscription overview projections", () => {
       all.items.find((item) => item.delivery.id === "unread"),
     ).toMatchObject({ readAt: null, wakeBatchId: "batch" });
     expect(h.deliveries.map((item) => item.state)).toEqual([
-      "pending",
+      "queued",
       "accepted",
       "uncertain",
     ]);
@@ -250,13 +333,16 @@ describe("subscription overview projections", () => {
       unfollowedAt: at,
     });
     const pending = await h.service.inbox({ conversation: "conversation" });
-    expect(pending).toMatchObject({ total: 1, counts: { pending: 1 } });
-    expect(pending.items.map((item) => item.delivery.id)).toEqual(["problem"]);
+    expect(pending).toMatchObject({
+      total: 0,
+      counts: { pending: 0, issues: 1 },
+    });
+    expect(pending.items).toEqual([]);
     const overview = await h.service.overview({
       conversation: "conversation",
       status: "all",
     });
-    expect(overview.counts.pending).toBe(1);
+    expect(overview.counts.pending).toBe(0);
     expect(
       overview.items.find((item) => item.subscription.id === "first"),
     ).toMatchObject({ pendingCount: 0 });
@@ -266,19 +352,19 @@ describe("subscription overview projections", () => {
     });
     expect(history).toMatchObject({
       total: 3,
-      counts: { pending: 1, accepted: 1, unread: 2 },
+      counts: { pending: 0, accepted: 1, unread: 2 },
     });
     expect(
       history.items.find((item) => item.delivery.id === "unread"),
     ).toMatchObject({
-      delivery: { state: "pending", acceptedAt: null },
+      delivery: { state: "queued", acceptedAt: null },
       readAt: null,
     });
     expect(
       (await h.service.detail(recipient, "first"))?.subscription.status,
     ).toBe("unfollowed");
     expect(h.deliveries.map((item) => item.state)).toEqual([
-      "pending",
+      "queued",
       "accepted",
       "uncertain",
     ]);
@@ -404,7 +490,7 @@ describe("subscription overview projections", () => {
       actions: [],
     });
   });
-  it("withholds active mode for a spent finite wait or a selected passive event filter", async () => {
+  it("offers a fresh wait after a spent generation but respects a selected passive event filter", async () => {
     const h = harness();
     h.subscriptions[0] = subscription("first", { mode: "passive" });
     h.wait.batchId = null;
@@ -413,7 +499,7 @@ describe("subscription overview projections", () => {
         .items[0]?.actions;
     for (const state of ["settled", "cancelled"] as const) {
       h.wait.state = state;
-      expect(await actions()).not.toContain("active");
+      expect(await actions()).toContain("active");
     }
     h.wait.state = "ready";
     const outcome = h.deliveries.find((item) => item.id === h.wait.deliveryId);

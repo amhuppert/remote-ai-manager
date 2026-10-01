@@ -188,6 +188,7 @@ export type SubscriptionOverview = z.infer<typeof subscriptionOverviewSchema>;
 
 export const inboxOverviewQuerySchema = subscriptionScopeSchema
   .extend({
+    q: z.string().max(200).default(""),
     batchId: z.string().min(1).optional(),
     state: z.enum(["all", "pending", "accepted", "issues"]).default("pending"),
     read: z.enum(["all", "unread", "read"]).default("all"),

@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/Button";
+import { SubscriptionWakeReceipt } from "@/components/subscriptions/SubscriptionWakeReceipt";
 import {
   queuedMessageNeedsReview,
   type PendingQueuedMessage,
@@ -31,11 +32,21 @@ export function QueueDeliveryReview({
       aria-label="Queued deliveries needing review"
       className="mb-sm flex flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-surface p-sm font-mono text-[0.78rem] text-text-primary"
     >
-      <p className="text-amber">Queue paused for delivery review</p>
+      <p className="text-amber">
+        {retained.some(
+          (entry) => entry.metadata?.kind !== "subscription_update",
+        )
+          ? "Queue paused for delivery review"
+          : "Automatic wake needs review"}
+      </p>
       <p className="text-text-secondary">
-        Review every retained message to resume delivery. Retry may repeat work
-        if the agent already received it. Discard removes the queued copy; it
-        does not undo work.
+        {retained.some(
+          (entry) => entry.metadata?.kind !== "subscription_update",
+        )
+          ? "Review every retained message to resume delivery."
+          : "You can still send a prompt."}{" "}
+        Retry may repeat work if the agent already received it. Discard removes
+        the queued copy; it does not undo work.
       </p>
       {retained.map((entry) => (
         <div
@@ -43,12 +54,19 @@ export function QueueDeliveryReview({
           className="flex flex-col gap-xs"
           data-status={entry.status}
         >
-          <p className="whitespace-pre-wrap break-words">
-            {entry.content
-              .filter((block) => block.type === "text")
-              .map((block) => block.text)
-              .join("\n") || "Queued attachment or feedback"}
-          </p>
+          {entry.metadata?.kind === "subscription_update" ? (
+            <SubscriptionWakeReceipt
+              batchId={entry.metadata.batchId}
+              status={entry.status}
+            />
+          ) : (
+            <p className="whitespace-pre-wrap break-words">
+              {entry.content
+                .filter((block) => block.type === "text")
+                .map((block) => block.text)
+                .join("\n") || "Queued attachment or feedback"}
+            </p>
+          )}
           {entry.content.some((block) => block.type === "image") ? (
             <p className="text-text-secondary">
               Images retained with this message

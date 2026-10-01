@@ -8,7 +8,7 @@ import type { ConversationDurableEffects } from "../effects";
 
 interface BackgroundTasksLostDependencies extends Pick<
   ConversationDurableEffects,
-  "recordAgentNotice"
+  "recordRuntimeLossNotice"
 > {
   log: Logger;
 }
@@ -81,7 +81,7 @@ export function createBackgroundTasksLostHandler(
         ? " Details omitted; read the full notice in the conversation."
         : "");
     const notice = deps
-      .recordAgentNotice({
+      .recordRuntimeLossNotice({
         recipient: {
           projectPath: input.projectPath,
           conversationId: input.conversationId,

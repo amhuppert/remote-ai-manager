@@ -1,3 +1,7 @@
+import { retireConsumedFiniteWaitSourcesMigration } from "./0067-retire-consumed-finite-wait-sources";
+import { repairImportedNoticeHistory } from "./0066-repair-imported-notice-history";
+import { subscriptionWaitGenerations } from "./0065-subscription-wait-generations";
+import { retireAutomaticValidationFollows } from "./0064-retire-automatic-validation-follows";
 import { notepadNoticeContext } from "./0062-notepad-notice-context";
 import { workflowResultInbox } from "./0063-workflow-result-inbox";
 import { conversationNoticeInbox } from "./0061-conversation-notice-inbox";
@@ -163,6 +167,10 @@ export const migrations: readonly StateMigration[] = [
   conversationNoticeInbox,
   notepadNoticeContext,
   workflowResultInbox,
+  retireAutomaticValidationFollows,
+  subscriptionWaitGenerations,
+  repairImportedNoticeHistory,
+  retireConsumedFiniteWaitSourcesMigration,
 ];
 
 export type { StateMigration } from "./types";

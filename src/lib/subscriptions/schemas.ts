@@ -60,6 +60,7 @@ export const sourceReadResultSchema = z
     facts: z.array(sourceFactSchema),
     missing: z.boolean(),
     withdrawnOccurrenceIds: z.array(z.string().min(1)).optional(),
+    coveredNotepadRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type SourceReadResult = z.infer<typeof sourceReadResultSchema>;

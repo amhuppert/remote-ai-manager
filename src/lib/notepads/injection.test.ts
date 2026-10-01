@@ -412,7 +412,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
       createNotepadInjectionReader(service, comments),
     );
     expect(text).toContain(
-      `read-comments: cctl notepad comment list --open -- '${id}'`,
+      `read-comments: cctl notepad comment list --status=open -- '${id}'`,
     );
     expect(text).not.toContain("Private review evidence retrieved separately");
     await comments.updateStatus({

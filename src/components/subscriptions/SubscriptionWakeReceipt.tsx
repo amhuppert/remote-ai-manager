@@ -5,12 +5,13 @@ import {
   subscriptionQueryString,
 } from "@/lib/subscriptions/queries";
 import { SourceLink } from "./SubscriptionPrimitives";
+import type { PendingQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 export function SubscriptionWakeReceipt({
   batchId,
-  accepted = true,
+  status = "accepted",
 }: {
   batchId: string;
-  accepted?: boolean;
+  status?: PendingQueuedMessageStatus | "accepted";
 }) {
   const query = useSubscriptionInbox({ batchId, state: "all", limit: 6 });
   return (
@@ -40,9 +41,17 @@ export function SubscriptionWakeReceipt({
         </div>
       ))}
       <p className="m-0 font-mono text-[0.68rem] leading-relaxed text-text-secondary">
-        {accepted
+        {status === "accepted" || status === "delivered"
           ? "This event started an agent turn."
-          : "This update is awaiting delivery."}{" "}
+          : status === "failed"
+            ? "Wake delivery failed. Review the retained receipt before retrying."
+            : status === "uncertain"
+              ? "Wake acceptance is uncertain. Retry may repeat work."
+              : status === "cancelled"
+                ? "This wake was cancelled."
+                : status === "delivering"
+                  ? "This wake is being delivered."
+                  : "This update is awaiting delivery."}{" "}
         Runtime acceptance is recorded separately from the agent&apos;s response
         and your read status.
       </p>

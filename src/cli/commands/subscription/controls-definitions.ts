@@ -42,7 +42,7 @@ export const subscriptionSubscribeSpec = {
   path: "subscription subscribe",
   summary: "Explicitly subscribe this conversation to an exact source",
   description:
-    "Create or update a durable subscription for the addressed ordinary conversation. Passive mode waits for the next user message. Active mode registers a finite terminal wait for workflow executions, validation runs or git jobs and returns immediately; it does not poll or transfer a validation submitter lease. Active lifetime defaults to 24 hours and is limited to 7 days. This explicit request restores a general passive opt-out and resumes delivery. A retained finite wait keeps its reason and expiry; a spent finite source cannot be rearmed.",
+    "Create or update a durable subscription for the addressed ordinary conversation. Passive mode waits for the next user message. Active mode registers a finite terminal wait for workflow executions, validation runs or git jobs and returns immediately; it does not poll or transfer a validation submitter lease. Active lifetime defaults to 24 hours and is limited to 7 days. This explicit request restores a general opt-out with a current source baseline and resumes delivery. A live finite wait keeps its reason and expiry. After settlement or cancellation, an undelivered terminal result remains obtainable. A consumed halt can be re-armed for a later workflow boundary; a consumed final result is refused instead of creating an ineffective wait.",
   requires: "cc",
   effects: "write",
   args: [
@@ -148,7 +148,7 @@ export const subscriptionResumeSpec = {
   path: "subscription resume",
   summary: "Resume one paused subscription",
   description:
-    "Resume delivery and active dispatch of retained source outcomes. Source collection and finite expiry continue during a pause. Resuming does not recreate a cancelled finite wait or clear a remembered opt-out.",
+    "Resume delivery and active dispatch of retained source outcomes. Source collection and finite expiry continue during a pause. Resuming does not recreate a cancelled finite wait or clear a public source's remembered opt-out. Internal own-conversation notice sources resume passive following after an opt-out.",
   requires: "cc",
   effects: "write",
   args: [subscriptionId],
@@ -165,7 +165,7 @@ export const subscriptionModeSpec = {
   path: "subscription mode",
   summary: "Change one subscription's passive or active mode",
   description:
-    "Change delivery mode for an existing subscription. Active mode is limited to finite terminal waits for exact workflow executions, validation runs and git jobs; a new wait defaults to 24 hours. Mode changes preserve pause state and a retained wait's reason, expiry and outcome. Passive mode safely withdraws pending or unsent planned wakes; delivering or ambiguous wakes require queue review. A spent finite source cannot be rearmed.",
+    "Change delivery mode for an existing subscription. Active mode is limited to finite terminal waits for exact workflow executions, validation runs and git jobs; a new wait defaults to 24 hours. Mode changes preserve pause state and a live wait's reason, expiry and outcome. Passive mode safely withdraws pending or unsent planned wakes; delivering or ambiguous wakes require queue review. After settlement or cancellation, active mode can create a new wait generation for an undelivered outcome or a resumed workflow. A consumed final result is refused with ACTIVE_WAIT_SOURCE_FINAL.",
   requires: "cc",
   effects: "write",
   args: [
@@ -185,7 +185,7 @@ export const subscriptionCancelSpec = {
   path: "subscription cancel",
   summary: "Cancel one finite active wait",
   description:
-    "Cancel one finite wait. Pending wakes or unsent planned batches can be safely withdrawn; delivering, failed or ambiguous wakes require queue review. An uncertain wake permits cancellation when the server proves no queue row or accepted transcript receipt exists. Other pending batch members remain ready to batch again. Accepted turns cannot be recalled. Use unfollow for a general remembered opt-out.",
+    "Cancel one finite wait and restore passive following without recording an opt-out. Pending wakes or unsent planned batches can be safely withdrawn; delivering, failed or ambiguous wakes require queue review. An uncertain wake permits cancellation when the server proves no queue row or accepted transcript receipt exists. Other pending batch members remain ready to batch again. Accepted turns cannot be recalled. Use unfollow for a general remembered opt-out.",
   requires: "cc",
   effects: "write",
   args: [subscriptionId],

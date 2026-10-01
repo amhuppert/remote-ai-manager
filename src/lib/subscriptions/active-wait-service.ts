@@ -16,6 +16,7 @@ import {
 } from "./active-wait-schemas";
 import type {
   SourceFact,
+  SourceCursor,
   SubscriptionDelivery,
   SubscriptionRecipient,
 } from "./schemas";
@@ -39,6 +40,10 @@ export interface ActiveWaitServiceDeps {
     recipient: SubscriptionRecipient,
     source: ActiveWaitSource,
   ): Promise<TerminalSourceRead>;
+  readSourceCursor?(
+    recipient: SubscriptionRecipient,
+    source: ActiveWaitSource,
+  ): Promise<SourceCursor>;
   onChange?(recipient: SubscriptionRecipient): void;
   cancelPendingWait?(
     recipient: SubscriptionRecipient,
@@ -63,6 +68,7 @@ export interface ActiveWaitService {
   get(
     recipient: SubscriptionRecipient,
     subscriptionId: string,
+    waitId?: string,
   ): Promise<ActiveSubscriptionWait | null>;
   cancel(
     recipient: SubscriptionRecipient,
@@ -130,28 +136,37 @@ export function createActiveWaitService(
     };
     const at = now();
     for (const wait of await deps.repo.list(recipient)) {
-      if (
-        wait.state === "ready" &&
-        wait.batchId === null &&
-        wait.deliveryId &&
-        wait.outcome
-      ) {
-        const receipt = await deps.subscriptions.getDelivery(
-          wait.recipient,
-          wait.deliveryId,
-        );
-        if (
-          receipt?.state === "accepted" &&
-          (await deps.repo.settle(wait.id, wait.outcome, receipt, at))
-        ) {
-          report.settled++;
-          deps.onChange?.(wait.recipient);
-        }
-        continue;
-      }
-      if (wait.state !== "waiting") continue;
-      report.checked++;
       try {
+        if (
+          wait.state === "ready" &&
+          wait.batchId === null &&
+          wait.deliveryId &&
+          wait.outcome
+        ) {
+          const receipt = await deps.subscriptions.getDelivery(
+            wait.recipient,
+            wait.deliveryId,
+          );
+          if (
+            receipt &&
+            ["accepted", "superseded", "failed"].includes(receipt.state) &&
+            (await deps.repo.settle(wait.id, wait.outcome, receipt, at))
+          ) {
+            report.settled++;
+            deps.onChange?.(wait.recipient);
+          } else if (
+            receipt?.state === "uncertain" ||
+            receipt?.state === "queued"
+          ) {
+            const message =
+              "This terminal result has an unresolved input receipt. Inspect or cancel the delivery before retrying.";
+            if (wait.lastError !== message)
+              await deps.repo.recordFailure(wait.id, message, at);
+          }
+          continue;
+        }
+        if (wait.state !== "waiting") continue;
+        report.checked++;
         const expired = Date.parse(wait.expiresAt) <= Date.parse(at);
         let read: TerminalSourceRead;
         try {
@@ -162,10 +177,36 @@ export function createActiveWaitService(
           if (!expired) throw error;
           read = { kind: "pending", status: "unavailable" };
         }
+        let baselineConsumed = false;
+        if (
+          read.kind === "terminal" &&
+          wait.baselineOccurrenceId === read.fact.occurrenceId
+        ) {
+          const prior = await deps.subscriptions.findDeliveryByOccurrence(
+            wait.recipient,
+            wait.source,
+            read.fact.occurrenceId,
+          );
+          baselineConsumed =
+            prior !== null && ["accepted", "superseded"].includes(prior.state);
+          if (
+            baselineConsumed &&
+            prior &&
+            !(wait.source.kind === "workflow" && read.resumable === true)
+          ) {
+            if (await deps.repo.settle(wait.id, "source_terminal", prior, at)) {
+              report.settled++;
+              deps.onChange?.(wait.recipient);
+            }
+            continue;
+          }
+        }
         let outcome: NonNullable<ActiveSubscriptionWait["outcome"]>;
         let fact: SourceFact;
         if (
           read.kind === "terminal" &&
+          (!baselineConsumed ||
+            read.fact.occurrenceId !== wait.baselineOccurrenceId) &&
           (!expired ||
             Date.parse(read.fact.occurredAt) <= Date.parse(wait.expiresAt))
         ) {
@@ -174,7 +215,7 @@ export function createActiveWaitService(
         } else if (read.kind === "missing" || expired) {
           outcome = read.kind === "missing" ? "source_missing" : "expired";
           fact = {
-            occurrenceId: `one-time-terminal:${wait.source.kind}:${wait.source.id}`,
+            occurrenceId: `wait-outcome:${wait.id}:${outcome}`,
             eventKind:
               outcome === "expired"
                 ? "subscription-wait-expired"
@@ -183,7 +224,7 @@ export function createActiveWaitService(
             sourceTitle: `${wait.source.kind} ${wait.source.id}`,
             summary:
               outcome === "expired"
-                ? "The one-time wait expired before its source reached a terminal outcome."
+                ? "The one-time wait expired without a new terminal outcome."
                 : "The source for this one-time wait is no longer available.",
             occurredAt: at,
             revision: null,
@@ -221,7 +262,15 @@ export function createActiveWaitService(
         }
       } catch (error) {
         const message = getErrorMessage(error);
-        await deps.repo.recordFailure(wait.id, message, at);
+        try {
+          await deps.repo.recordFailure(wait.id, message, at);
+        } catch (recordError) {
+          logger.warn("subscription.wait.failure_record_failed", {
+            conversationId: wait.recipient.conversationId,
+            waitId: wait.id,
+            error: getErrorMessage(recordError),
+          });
+        }
         report.failures.push({ waitId: wait.id, error: message });
         logger.warn("subscription.wait.reconcile_failed", {
           conversationId: wait.recipient.conversationId,
@@ -269,14 +318,24 @@ export function createActiveWaitService(
         wait.deliveryId === null
       )
         continue;
-      const delivery = await deps.subscriptions.getDelivery(
-        recipient,
-        wait.deliveryId,
-      );
+      let delivery: SubscriptionDelivery | null;
+      try {
+        delivery = await deps.subscriptions.getDelivery(
+          recipient,
+          wait.deliveryId,
+        );
+      } catch (error) {
+        logger.warn("subscription.wait.batch_member_failed", {
+          conversationId: recipient.conversationId,
+          waitId: wait.id,
+          error: getErrorMessage(error),
+        });
+        continue;
+      }
       if (!delivery || delivery.state !== "pending") continue;
       const details =
         deps.waitGetCommand?.(wait) ??
-        `cctl subscription wait-get -- ${wait.subscriptionId}`;
+        `cctl subscription wait-get --wait-id=${wait.id} -- ${wait.subscriptionId}`;
       const line = renderWakeFact(wait, delivery, details);
       if (header.length + body.length + line.length + 1 + closing.length > 8000)
         continue;
@@ -331,7 +390,45 @@ export function createActiveWaitService(
       const existingWait = existingSubscription
         ? await deps.repo.get(parsed.recipient, existingSubscription.id)
         : null;
-      if (existingWait) {
+      const at = now();
+      const id = newId();
+      const expiresAt = new Date(
+        parsed.expiresAt ?? Date.parse(at) + DEFAULT_LIFETIME_MS,
+      ).toISOString();
+      const lifetime = Date.parse(expiresAt) - Date.parse(at);
+      if (
+        (!existingWait ||
+          ["settled", "cancelled"].includes(existingWait.state)) &&
+        (lifetime <= 0 || lifetime > MAX_LIFETIME_MS)
+      )
+        throw new ActiveWaitRegistrationError(
+          "ACTIVE_WAIT_INVALID_EXPIRY",
+          "Wait expiry must be in the future and no more than seven days away.",
+          400,
+        );
+      const baseline = terminalSourceReadSchema.parse(
+        await deps.readTerminalSource(parsed.recipient, parsed.source),
+      );
+      if (baseline.kind === "missing")
+        throw new ActiveWaitRegistrationError(
+          "ACTIVE_WAIT_SOURCE_MISSING",
+          "The requested wait source does not exist or is not visible in this project.",
+          404,
+        );
+      if (
+        existingWait &&
+        (existingWait.state === "waiting" || existingWait.state === "ready")
+      ) {
+        if (
+          existingSubscription?.mode !== "active" ||
+          existingSubscription.pausedAt !== null ||
+          existingSubscription.status !== "following"
+        )
+          throw new ActiveWaitRegistrationError(
+            "ACTIVE_WAIT_NOT_ACTIVE",
+            "This wait is paused, passive, or unfollowed. Restore its controls explicitly before waiting.",
+            409,
+          );
         await reconcile(parsed.recipient);
         return (
           (await deps.repo.get(
@@ -340,18 +437,47 @@ export function createActiveWaitService(
           )) ?? existingWait
         );
       }
-      const at = now();
-      const id = newId();
-      const expiresAt = new Date(
-        parsed.expiresAt ?? Date.parse(at) + DEFAULT_LIFETIME_MS,
-      ).toISOString();
-      const lifetime = Date.parse(expiresAt) - Date.parse(at);
-      if (lifetime <= 0 || lifetime > MAX_LIFETIME_MS)
-        throw new ActiveWaitRegistrationError(
-          "ACTIVE_WAIT_INVALID_EXPIRY",
-          "Wait expiry must be in the future and no more than seven days away.",
-          400,
+      let terminalReceipt: SubscriptionDelivery | null = null;
+      if (baseline.kind === "terminal") {
+        terminalReceipt = await deps.subscriptions.findDeliveryByOccurrence(
+          parsed.recipient,
+          parsed.source,
+          baseline.fact.occurrenceId,
         );
+        if (
+          parsed.source.kind !== "workflow" &&
+          baseline.fact.outcome !== null &&
+          !["accepted", "superseded"].includes(terminalReceipt?.state ?? "")
+        ) {
+          const legacy = await deps.subscriptions.findDeliveryByOccurrence(
+            parsed.recipient,
+            parsed.source,
+            `${parsed.source.id}:${baseline.fact.outcome}`,
+          );
+          if (
+            legacy &&
+            (!terminalReceipt ||
+              ["accepted", "superseded"].includes(legacy.state))
+          )
+            terminalReceipt = legacy;
+        }
+        const consumed =
+          terminalReceipt !== null &&
+          ["accepted", "superseded"].includes(terminalReceipt.state);
+        const resumable =
+          parsed.source.kind === "workflow" && baseline.resumable === true;
+        if (consumed && !resumable)
+          throw new ActiveWaitRegistrationError(
+            "ACTIVE_WAIT_SOURCE_FINAL",
+            "This source's terminal result was already consumed and it cannot produce another result. Inspect its inbox evidence or register a different operation.",
+            409,
+          );
+      }
+      const cursor =
+        existingSubscription && existingSubscription.status !== "unfollowed"
+          ? existingSubscription.cursor
+          : ((await deps.readSourceCursor?.(parsed.recipient, parsed.source)) ??
+            null);
       const wait = activeSubscriptionWaitSchema.parse({
         id: newId(),
         subscriptionId: id,
@@ -360,6 +486,12 @@ export function createActiveWaitService(
         state: "waiting",
         outcome: null,
         deliveryId: null,
+        baselineOccurrenceId:
+          baseline.kind === "terminal" &&
+          terminalReceipt !== null &&
+          ["accepted", "superseded"].includes(terminalReceipt.state)
+            ? baseline.fact.occurrenceId
+            : null,
         batchId: null,
         createdAt: at,
         updatedAt: at,
@@ -375,7 +507,7 @@ export function createActiveWaitService(
         eventKinds: null,
         expiresAt,
         status: "following",
-        cursor: null,
+        cursor,
         createdAt: at,
         updatedAt: at,
         unfollowedAt: null,
@@ -384,6 +516,17 @@ export function createActiveWaitService(
         lastError: null,
       });
       deps.onChange?.(parsed.recipient);
+      if (
+        baseline.kind === "terminal" &&
+        terminalReceipt !== null &&
+        !["accepted", "superseded"].includes(terminalReceipt.state)
+      )
+        await deps.repo.settle(
+          registered.id,
+          "source_terminal",
+          terminalReceipt,
+          at,
+        );
       await reconcile(parsed.recipient);
       logger.info("subscription.wait.registered", {
         conversationId: parsed.recipient.conversationId,
@@ -399,8 +542,8 @@ export function createActiveWaitService(
     },
     reconcile,
     list: (recipient) => deps.repo.list(recipient),
-    get: (recipient, subscriptionId) =>
-      deps.repo.get(recipient, subscriptionId),
+    get: (recipient, subscriptionId, waitId) =>
+      deps.repo.get(recipient, subscriptionId, waitId),
     async cancel(recipient, subscriptionId) {
       const wait = await deps.repo.get(recipient, subscriptionId);
       const batch = wait?.batchId

@@ -3,10 +3,8 @@ import { isEligibleSubscriptionRecipient } from "@/lib/conversations/provenance"
 import type { NotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
 import type { NotepadsRepo } from "@/lib/state-store/notepads-repo";
 import type { SubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
-import type { TicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
 import type { SubscriptionRecipient } from "./schemas";
 import type { SubscriptionInvolvement, SubscriptionService } from "./service";
-import { ticketInvolvementCursor } from "./source-adapters";
 import { notepadInvolvementCursor } from "./notepad-source";
 import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 
@@ -15,7 +13,6 @@ export interface SubscriptionInvolvementDeps {
   watermarks: NotepadDeliveryWatermarksRepo;
   notepads: NotepadsRepo;
   queries: SubscriptionSourceQueriesRepo;
-  ticketChanges: TicketStatusChangesRepo;
 }
 
 export function createSubscriptionInvolvementReader(
@@ -54,24 +51,27 @@ export function createSubscriptionInvolvementReader(
       involvement.push({
         source: { kind: "ticket", id: ticket.id },
         reason: "Ticket linked to this conversation or its session",
-        initialCursor: ticketInvolvementCursor(
-          deps.ticketChanges.latestId(ticket.id, ticket.occurredAt),
-          ticket.occurredAt,
-        ),
       });
     }
     for (const spec of deps.queries.findSpecInvolvement(recipient)) {
       involvement.push({
         source: { kind: "spec", id: spec.id },
         reason: "Spec authored or reviewed by this conversation",
-        initialCursor: String(spec.eventId),
       });
     }
     for (const id of deps.queries.findWorkflowInvolvement(recipient)) {
+      // Discovery must not replay completed history, but a launcher result
+      // recorded before its first follow is still an owed delivery.
+      const outstanding = deps.queries.firstOutstandingWorkflowBoundary(
+        recipient,
+        id,
+      );
       involvement.push({
         source: { kind: "workflow", id },
         reason: "Workflow launched by this conversation",
-        initialCursor: "0",
+        ...(outstanding === null
+          ? {}
+          : { initialCursor: String(Math.max(0, outstanding - 1)) }),
       });
     }
     return involvement;

@@ -17,7 +17,10 @@ import type {
   SubscriptionRecipient,
 } from "./schemas";
 import type { TerminalSourceRead } from "./active-wait-schemas";
-import { isTerminalStatus } from "@/lib/workflow-graph/lifecycle-classifier";
+import {
+  holdsExecutionLease,
+  isTerminalStatus,
+} from "@/lib/workflow-graph/lifecycle-classifier";
 import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
 import { stableStringify } from "@/lib/shared/stable-stringify";
 
@@ -197,6 +200,11 @@ export function createWorkflowTerminalSourceReader(deps: WorkflowSourceDeps) {
       if (record)
         return {
           kind: "terminal",
+          resumable: holdsExecutionLease(
+            execution.status,
+            execution.haltReason,
+            execution.abandonment,
+          ),
           fact: projectWorkflowSourceFact({
             execution,
             record,
@@ -213,6 +221,11 @@ export function createWorkflowTerminalSourceReader(deps: WorkflowSourceDeps) {
     }
     return {
       kind: "terminal",
+      resumable: holdsExecutionLease(
+        execution.status,
+        execution.haltReason,
+        execution.abandonment,
+      ),
       fact: {
         occurrenceId: `one-time-terminal:workflow:${source.id}`,
         eventKind: "graph-workflow-terminal",

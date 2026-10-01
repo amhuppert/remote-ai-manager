@@ -663,20 +663,12 @@ export function createStateStore(deps: StateStoreDeps = {}) {
 
     mutateSessionWorkflowLanes: setters.mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
-    claimGraphWorkflowResultDeliveries:
-      setters.claimGraphWorkflowResultDeliveries,
-    settleGraphWorkflowResultDeliveries:
-      setters.settleGraphWorkflowResultDeliveries,
-    releaseGraphWorkflowResultDeliveries:
-      setters.releaseGraphWorkflowResultDeliveries,
     settleGraphWorkflowResultDeliveryFallback:
       setters.settleGraphWorkflowResultDeliveryFallback,
     commitGraphWorkflowMissingOriginFallback:
       setters.commitGraphWorkflowMissingOriginFallback,
     markGraphWorkflowResultEffectDelivered:
       setters.markGraphWorkflowResultEffectDelivered,
-    recoverGraphWorkflowResultDeliveries:
-      setters.recoverGraphWorkflowResultDeliveries,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
     upsertSessionMarkdownDocuments: setters.upsertSessionMarkdownDocuments,

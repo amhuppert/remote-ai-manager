@@ -1587,14 +1587,21 @@ export function createConversationManager(
       sessionName,
       conversationId,
     );
-    if (!existing) {
+    {
       const row = await deps.checkpoint.readConversation({
         projectPath,
         sessionName,
         conversationId,
       });
-      if (row?.pendingQuestionId != null && hasOnlySubscriptionWakeQueue(row))
-        return;
+      if (row && hasOnlySubscriptionWakeQueue(row)) {
+        if (row.pendingQuestionId != null) return;
+        const hold = await deps.readSubscriptionWakeHold?.({
+          projectPath,
+          sessionName,
+          conversationId,
+        });
+        if (hold) return;
+      }
     }
     const actor = await ensureConversationActor(
       projectPath,

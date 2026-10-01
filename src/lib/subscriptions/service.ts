@@ -1,3 +1,7 @@
+import {
+  createRuntimeLossNotices,
+  isRuntimeLossNotice,
+} from "./runtime-loss-notices";
 import { randomUUID } from "node:crypto";
 import { notepadAcceptedContextSchema } from "@/lib/notepads/schemas";
 import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
@@ -83,6 +87,13 @@ export interface PreparedSubscriptionBriefing {
 }
 export interface SubscriptionService {
   recordNotice(input: RecordSubscriptionNoticeInput): Promise<boolean>;
+  recordRuntimeLossNotice(
+    input: RecordSubscriptionNoticeInput,
+  ): Promise<boolean>;
+  prepareRuntimeLossNotice(input: {
+    recipient: SubscriptionRecipient;
+    attemptId: string;
+  }): Promise<PreparedSubscriptionBriefing>;
   autoFollow(
     input: AutomaticFollowInput,
   ): Promise<ConversationSubscription | null>;
@@ -141,6 +152,18 @@ function isLive(subscription: ConversationSubscription, at: string): boolean {
     (subscription.expiresAt === null || subscription.expiresAt > at)
   );
 }
+function canReconcile(
+  subscription: ConversationSubscription,
+  at: string,
+): boolean {
+  const workflowWait =
+    subscription.source.kind === "workflow" && subscription.mode === "active";
+  return (
+    subscription.status === "following" &&
+    (workflowWait ||
+      (isLive(subscription, at) && subscription.mode === "passive"))
+  );
+}
 /** Source strings cannot manufacture a delimiter or a new privileged prompt block. */
 function quote(value: unknown): string {
   return JSON.stringify(value)
@@ -191,16 +214,36 @@ export function createSubscriptionService(
   const inboxCommand = (recipient: SubscriptionRecipient) =>
     deps.inboxCommand?.(recipient) ??
     `cctl inbox list --conversation=${recipient.conversationId}`;
-  const render = (group: BriefingGroup) => {
+  const render = (group: BriefingGroup, budget: number) => {
     const delivery = group.latest;
     const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     const details =
-      delivery.fact.sourceText === undefined
-        ? null
-        : (deps.inboxGetCommand?.(delivery.recipient, delivery.id) ??
-          `cctl inbox get --conversation=${shellQuote(delivery.recipient.conversationId)} -- ${shellQuote(delivery.id)}`);
-    return renderGroup(group, details);
+      deps.inboxGetCommand?.(delivery.recipient, delivery.id) ??
+      `cctl inbox get --conversation=${shellQuote(delivery.recipient.conversationId)} -- ${shellQuote(delivery.id)}`;
+    const full = renderGroup(
+      group,
+      delivery.fact.sourceText === undefined ? null : details,
+    );
+    if (full.length <= budget) return full;
+    // Quoting expands delimiters. Bound the rendered line, not the source text,
+    // and deliver an exact evidence handle rather than starving this fact forever.
+    return `- ${quote({ summary: "Update details omitted to fit the briefing. Read before acting.", details })}`;
   };
+  async function advisory(
+    recipient: SubscriptionRecipient,
+    stage: string,
+    action: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await action();
+    } catch (error) {
+      logger.warn("subscription.advisory_failed", {
+        conversationId: recipient.conversationId,
+        stage,
+        error: getErrorMessage(error),
+      });
+    }
+  }
   async function sync(recipient: SubscriptionRecipient): Promise<void> {
     if (
       !deps.discoverInvolvement ||
@@ -208,7 +251,9 @@ export function createSubscriptionService(
     )
       return;
     for (const involvement of await deps.discoverInvolvement(recipient))
-      await autoFollow({ recipient, ...involvement });
+      await advisory(recipient, "follow_involvement", () =>
+        autoFollow({ recipient, ...involvement }),
+      );
   }
   async function autoFollow(
     input: AutomaticFollowInput,
@@ -282,7 +327,7 @@ export function createSubscriptionService(
       lastError: null,
     };
   }
-  async function reconcile(recipient: SubscriptionRecipient) {
+  async function reconcile(recipient: SubscriptionRecipient, discover = true) {
     subscriptionRecipientSchema.parse(recipient);
     const report: {
       subscriptions: number;
@@ -290,7 +335,8 @@ export function createSubscriptionService(
       failures: Array<{ subscriptionId: string; error: string }>;
     } = { subscriptions: 0, inserted: 0, failures: [] };
     if (!(await deps.isRecipientEligible(recipient))) return report;
-    await sync(recipient);
+    if (discover)
+      await advisory(recipient, "discover_involvement", () => sync(recipient));
     const at = now();
     const finiteWaitIds = new Set(
       await deps.repo.listFiniteWaitSubscriptionIds(recipient),
@@ -298,8 +344,7 @@ export function createSubscriptionService(
     for (const subscription of await deps.repo.list(recipient)) {
       if (
         finiteWaitIds.has(subscription.id) ||
-        !isLive(subscription, at) ||
-        subscription.mode !== "passive" ||
+        !canReconcile(subscription, at) ||
         subscription.missingAt !== null
       )
         continue;
@@ -312,6 +357,18 @@ export function createSubscriptionService(
             subscription.cursor,
           ),
         );
+        if (
+          read.coveredNotepadRevision !== undefined &&
+          subscription.source.kind === "notepad"
+        ) {
+          const superseded = await deps.repo.supersedeNotepadRevisions(
+            recipient,
+            subscription.id,
+            read.coveredNotepadRevision,
+            at,
+          );
+          if (superseded > 0) deps.onChange?.(recipient, subscription.source);
+        }
         if (read.withdrawnOccurrenceIds?.length) {
           const superseded = await deps.repo.supersedePending(
             recipient,
@@ -366,12 +423,14 @@ export function createSubscriptionService(
       } catch (error) {
         const message = getErrorMessage(error);
         if (subscription.lastError !== message) {
-          await deps.repo.recordFailure(
-            recipient,
-            subscription.id,
-            subscription.cursor,
-            message,
-            at,
+          await advisory(recipient, "record_source_failure", () =>
+            deps.repo.recordFailure(
+              recipient,
+              subscription.id,
+              subscription.cursor,
+              message,
+              at,
+            ),
           );
           deps.onChange?.(recipient, subscription.source);
         }
@@ -392,10 +451,37 @@ export function createSubscriptionService(
     input: Parameters<SubscriptionService["prepareBriefing"]>[0],
   ): Promise<PreparedSubscriptionBriefing> {
     const parsed = briefingInputSchema.parse(input);
+    try {
+      return await prepareBriefingInput(parsed);
+    } catch (error) {
+      logger.warn("subscription.advisory_failed", {
+        conversationId: parsed.recipient.conversationId,
+        stage: "prepare_briefing",
+        error: getErrorMessage(error),
+      });
+      // Preparation has not returned any input to the runtime. A committed
+      // claim from this attempt can therefore be released as proven unsent.
+      await advisory(parsed.recipient, "release_unsent_briefing", () =>
+        deps.repo.settle(
+          parsed.recipient,
+          parsed.attemptId,
+          "failed",
+          now(),
+          "Briefing preparation failed before source facts were sent",
+        ),
+      );
+      return emptyBriefing();
+    }
+  }
+  async function prepareBriefingInput(
+    parsed: z.infer<typeof briefingInputSchema>,
+  ): Promise<PreparedSubscriptionBriefing> {
     const { recipient, attemptId, maxItems, maxChars } = parsed;
     if (!(await deps.isRecipientEligible(recipient))) return emptyBriefing();
-    await deps.reconcileFiniteWaits?.(recipient);
-    await reconcile(recipient);
+    await advisory(recipient, "reconcile_waits", async () =>
+      deps.reconcileFiniteWaits?.(recipient),
+    );
+    await advisory(recipient, "reconcile_sources", () => reconcile(recipient));
     const at = now();
     const finiteWaitIds = new Set(
       await deps.repo.listFiniteWaitSubscriptionIds(recipient),
@@ -406,10 +492,14 @@ export function createSubscriptionService(
           (subscription) =>
             subscription.status === "following" &&
             subscription.pausedAt === null &&
-            (isLive(subscription, at) || finiteWaitIds.has(subscription.id)) &&
-            subscription.mode === "passive",
+            (canReconcile(subscription, at) ||
+              (finiteWaitIds.has(subscription.id) &&
+                subscription.mode === "passive")),
         )
         .map((subscription) => subscription.id),
+    );
+    const reserved = new Set(
+      await deps.repo.listDeliveriesReservedForActiveWait(recipient),
     );
     const candidates: SubscriptionDelivery[] = [];
     let unresolved = 0;
@@ -418,7 +508,12 @@ export function createSubscriptionService(
     while (true) {
       const page = await deps.repo.readInbox(recipient, { limit: 200, offset });
       for (const delivery of page.items) {
-        if (!live.has(delivery.subscriptionId)) continue;
+        if (
+          !live.has(delivery.subscriptionId) ||
+          isRuntimeLossNotice(delivery) ||
+          reserved.has(delivery.id)
+        )
+          continue;
         if (delivery.state === "pending" || delivery.state === "failed")
           candidates.push(delivery);
         else if (delivery.state === "uncertain") unresolved++;
@@ -453,7 +548,15 @@ export function createSubscriptionService(
     let body = "";
     for (const group of groups) {
       if (selected.length >= maxItems) break;
-      const line = render(group);
+      const line = render(
+        group,
+        maxChars -
+          header.length -
+          body.length -
+          1 -
+          reservedFooter.length -
+          closing.length,
+      );
       if (
         header.length +
           body.length +
@@ -500,10 +603,23 @@ export function createSubscriptionService(
       remaining > 0 || unresolved > 0
         ? `\n${remaining} further updates remain in the inbox.${unresolved > 0 ? ` ${unresolved} uncertain input receipts need inspection.` : ""}${retrieval}`
         : "";
+    let claimedBody = "";
+    for (const group of claimedGroups) {
+      const line = render(
+        group,
+        maxChars -
+          header.length -
+          claimedBody.length -
+          1 -
+          footer.length -
+          closing.length,
+      );
+      claimedBody += `${claimedBody ? "\n" : ""}${line}`;
+    }
     const block =
       claimedGroups.length === 0 && !footer
         ? null
-        : header + claimedGroups.map(render).join("\n") + footer + closing;
+        : header + claimedBody + footer + closing;
     if (block !== null && block.length > maxChars) {
       // A competing claim can remove the short latest revision and expose a
       // longer predecessor. None of this batch has reached backend input yet.
@@ -564,6 +680,7 @@ export function createSubscriptionService(
     };
   }
   return {
+    ...createRuntimeLossNotices(deps, { now, newId }),
     async recordNotice(input) {
       const recipient = subscriptionRecipientSchema.parse(input.recipient);
       const source = subscriptionSourceRefSchema.parse(input.source);
@@ -616,8 +733,7 @@ export function createSubscriptionService(
     async reconcileRecordedRecipients() {
       const recipients = new Map<string, SubscriptionRecipient>();
       for (const subscription of await deps.repo.listAll()) {
-        if (!isLive(subscription, now()) || subscription.mode !== "passive")
-          continue;
+        if (!canReconcile(subscription, now())) continue;
         recipients.set(
           JSON.stringify([
             subscription.recipient.projectPath,
@@ -626,7 +742,10 @@ export function createSubscriptionService(
           subscription.recipient,
         );
       }
-      for (const recipient of recipients.values()) await reconcile(recipient);
+      for (const recipient of recipients.values())
+        await advisory(recipient, "background_recipient", () =>
+          reconcile(recipient, false),
+        );
     },
     async list(recipient) {
       await sync(recipient);

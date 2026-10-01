@@ -140,11 +140,14 @@ export function createSpecReviewFeedbackNotifier(
         });
       }
     }
-    logger.info("notifications.spec_review_feedback.delivered", {
+    logger.info("notifications.spec_review_feedback.recorded", {
       specId: notice.specId,
       revisionId: notice.revisionId,
       kind: notice.kind,
       conversationId,
+      transcriptRecorded: results[0]?.status === "fulfilled",
+      inboxRecorded:
+        results[1]?.status === "fulfilled" && results[1].value === true,
     });
   }
 

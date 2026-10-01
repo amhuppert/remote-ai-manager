@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import {
   QueryClient,
   QueryClientProvider,
   type QueryKey,
 } from "@tanstack/react-query";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, act } from "@testing-library/react";
 import ConversationTranscript, {
   type TranscriptNav,
 } from "./ConversationTranscript";
@@ -15,6 +15,10 @@ import { projectConversationKeys } from "@/lib/project-conversations-client/quer
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+const navigation = vi.hoisted(() => ({ search: "" }));
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(navigation.search),
+}));
 
 const SESSION_SCOPE = {
   kind: "session",
@@ -28,6 +32,45 @@ const PROJECT_SCOPE = {
   projectName: "proj",
   conversationId: "pc-1",
 } as const;
+
+it("navigates immediately when a resulting-turn link changes only the URL on the same conversation", () => {
+  navigation.search = "c=conv-1";
+  const request = vi.fn();
+  const unsubscribe = useSessionDetailStore.subscribe((state) => {
+    if (state.messageNavRequest) request(state.messageNavRequest);
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity } },
+  });
+  client.setQueryData(conversationKeys.messages("proj", "sess", "conv-1"), [
+    ...messages,
+    {
+      role: "user",
+      id: "wake",
+      content: [{ type: "text", text: "Wake" }],
+      timestamp: null,
+    },
+  ]);
+  function Host() {
+    return (
+      <QueryClientProvider client={client}>
+        <ConversationTranscript scope={SESSION_SCOPE} backend="claude" />
+      </QueryClientProvider>
+    );
+  }
+  const view = render(<Host />);
+  expect(request).not.toHaveBeenCalled();
+  act(() => {
+    navigation.search = "c=conv-1&m=wake";
+    view.rerender(<Host />);
+  });
+  expect(request).toHaveBeenCalledWith({
+    conversationId: "conv-1",
+    messageIndex: 1,
+  });
+  unsubscribe();
+  navigation.search = "";
+});
 
 function renderSeeded(
   ui: React.ReactElement,

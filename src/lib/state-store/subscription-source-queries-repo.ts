@@ -23,6 +23,10 @@ export interface SubscriptionSourceQueriesRepo {
     recipient: SubscriptionRecipient,
   ): z.infer<typeof specLinkSchema>[];
   findWorkflowInvolvement(recipient: SubscriptionRecipient): string[];
+  firstOutstandingWorkflowBoundary(
+    recipient: SubscriptionRecipient,
+    executionId: string,
+  ): number | null;
 }
 
 /** Reverse lookups over canonical domain records; this repository owns no source state. */
@@ -55,7 +59,23 @@ export function createSubscriptionSourceQueriesRepo(
     SELECT execution_id AS id FROM graph_workflow_executions WHERE project_path = @projectPath AND json_extract(definition_json, '$.ownerConversationId') = @conversationId
     UNION
     SELECT execution_id AS id FROM graph_workflow_archived_executions WHERE project_path = @projectPath AND json_extract(execution_json, '$.ownerConversationId') = @conversationId`);
+  const firstOutstanding = db.prepare(`
+    SELECT MIN(r.boundary_seq) AS boundary FROM graph_workflow_result_deliveries r
+    WHERE r.project_path = @projectPath AND r.origin_conversation_id = @conversationId
+      AND r.execution_id = @executionId AND r.delivery_state = 'pending'
+      AND NOT EXISTS (
+        SELECT 1 FROM conversation_subscription_deliveries d
+        WHERE d.project_path = r.project_path AND d.conversation_id = r.origin_conversation_id
+          AND d.source_kind = 'workflow' AND d.source_id = r.execution_id
+          AND d.occurrence_id = CAST(r.boundary_seq AS TEXT)
+          AND d.state IN ('accepted', 'superseded')
+      )`);
   return {
+    firstOutstandingWorkflowBoundary(recipient, executionId) {
+      return z
+        .object({ boundary: z.number().int().nullable() })
+        .parse(firstOutstanding.get({ ...recipient, executionId })).boundary;
+    },
     findWorkflowAddress(executionId) {
       const row: unknown = workflowAddress.get(executionId, executionId);
       return row === undefined ? null : workflowAddressSchema.parse(row);

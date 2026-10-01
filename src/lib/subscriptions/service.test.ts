@@ -65,6 +65,7 @@ function setup(overrides: Partial<SubscriptionServiceDeps> = {}) {
   };
   const service = createSubscriptionService(deps);
   return {
+    db,
     service,
     repo,
     deps,
@@ -82,6 +83,116 @@ function setup(overrides: Partial<SubscriptionServiceDeps> = {}) {
   };
 }
 describe("passive subscription policy", () => {
+  it("does not spend passive briefing slots or omission counts on facts reserved for a wake", async () => {
+    const s = setup();
+    await s.follow();
+    s.setResult({
+      cursor: "8",
+      missing: false,
+      facts: [
+        fact("reserved", "Reserved terminal result", { category: "outcome" }),
+        ...Array.from({ length: 6 }, (_, i) =>
+          fact(`ordinary-${i}`, `Ordinary update ${i}`, {
+            category: "activity",
+          }),
+        ),
+      ],
+    });
+    await s.service.reconcile(recipient);
+    const reserved = (await s.repo.readInbox(recipient, {})).items.find(
+      (row) => row.fact.occurrenceId === "reserved",
+    );
+    if (!reserved) throw new Error("Expected reserved fact");
+    const service = createSubscriptionService({
+      ...s.deps,
+      repo: {
+        ...s.repo,
+        async listDeliveriesReservedForActiveWait() {
+          return [reserved.id];
+        },
+      },
+    });
+    const briefing = await service.prepareBriefing({
+      recipient,
+      attemptId: "ordinary-turn",
+      maxItems: 6,
+    });
+    for (let i = 0; i < 6; i++)
+      expect(briefing.block).toContain(`Ordinary update ${i}`);
+    expect(briefing.block).not.toContain("Reserved terminal result");
+    expect(briefing.block).not.toContain("further updates remain");
+    await briefing.onInputAccepted();
+    const receipts = (
+      await s.reload().readInbox(recipient, { includeSettled: true })
+    ).items;
+    expect(receipts.find((row) => row.id === reserved.id)?.state).toBe(
+      "pending",
+    );
+    expect(receipts.filter((row) => row.state === "accepted")).toHaveLength(6);
+  });
+
+  it("does not block a user turn on corrupt advisory inbox evidence", async () => {
+    const s = setup();
+    await s.follow();
+    await s.service.reconcile(recipient);
+    s.db
+      .prepare(
+        "UPDATE conversation_subscription_deliveries SET fact_json = '{broken'",
+      )
+      .run();
+    const briefing = await s.service.prepareBriefing({
+      recipient,
+      attemptId: "corrupt-evidence",
+    });
+    expect(briefing.block).toBeNull();
+    await briefing.onInputAccepted();
+    await briefing.finish();
+    expect(
+      s.db
+        .prepare(
+          "SELECT state, accepted_at, fact_json FROM conversation_subscription_deliveries",
+        )
+        .all(),
+    ).toEqual([{ state: "pending", accepted_at: null, fact_json: "{broken" }]);
+  });
+
+  it("releases an unsent briefing claim when preparation fails after the claim commits", async () => {
+    const s = setup();
+    await s.follow();
+    const service = createSubscriptionService({
+      ...s.deps,
+      repo: {
+        ...s.repo,
+        async claim(...args) {
+          await s.repo.claim(...args);
+          throw new Error("Claim response failed");
+        },
+      },
+    });
+    const briefing = await service.prepareBriefing({
+      recipient,
+      attemptId: "unsent-claim",
+    });
+    expect(briefing.block).toBeNull();
+    await briefing.onInputAccepted();
+    await briefing.finish();
+    expect((await s.reload().readInbox(recipient, {})).items[0]).toMatchObject({
+      state: "failed",
+      acceptedAt: null,
+      attemptCount: 1,
+    });
+    const retry = await s.service.prepareBriefing({
+      recipient,
+      attemptId: "retry",
+    });
+    expect(retry.block).toContain("New release notes");
+    await retry.onInputAccepted();
+    expect(
+      (await s.reload().readInbox(recipient, { includeSettled: true })).items[0]
+        ?.state,
+    ).toBe("accepted");
+  });
+
   it("settles only notepad facts covered by accepted supplied context", async () => {
     const s = setup();
     await s.follow();
@@ -517,14 +628,16 @@ describe("passive subscription policy", () => {
       attemptId: "overflow",
       maxChars: 400,
     });
-    expect(overflow.block).toContain(
-      "cctl inbox list --conversation=conversation",
-    );
+    expect(overflow.block).toContain("cctl inbox get");
     expect(overflow.block?.length).toBeLessThanOrEqual(400);
     await overflow.onInputAccepted();
-    expect((await s.reload().readInbox(recipient, {})).items[0]).toMatchObject({
-      state: "pending",
-      fact: { occurrenceId: "large" },
+    expect(
+      (
+        await s.reload().readInbox(recipient, { includeSettled: true })
+      ).items.find((item) => item.fact.occurrenceId === "large"),
+    ).toMatchObject({
+      state: "accepted",
+      fact: { occurrenceId: "large", summary: "x".repeat(3000) },
     });
   });
   it("allows one concurrent preparation to claim an occurrence", async () => {
@@ -579,7 +692,7 @@ describe("passive subscription policy", () => {
     ).items;
     expect(
       reloaded.find((delivery) => delivery.fact.occurrenceId === "older"),
-    ).toMatchObject({ state: "failed", fact: { summary: olderSummary } });
+    ).toMatchObject({ state: "accepted", fact: { summary: olderSummary } });
     expect(
       reloaded.find((delivery) => delivery.fact.occurrenceId === "newer"),
     ).toMatchObject({ state: "queued", attemptId: "competing-attempt" });
@@ -738,4 +851,172 @@ it("publishes source changes once and does not invalidate clients for repeated i
   await h.service.reconcile(recipient);
   expect((await h.repo.readInbox(recipient, {})).total).toBe(1);
   expect(changes).toHaveLength(afterChange);
+});
+
+it("does not rediscover historical involvement on each background sweep and isolates recipient failures", async () => {
+  let scans = 0;
+  const h = setup({
+    discoverInvolvement: async () => {
+      scans++;
+      throw new Error("involvement unavailable");
+    },
+    isRecipientEligible: async (target) => {
+      if (target.conversationId === "broken")
+        throw new Error("broken conversation");
+      return true;
+    },
+  });
+  const subscription = await h.follow();
+  if (!subscription) throw new Error("Expected subscription");
+  await h.repo.createIfAbsent({
+    ...subscription,
+    id: "broken-follow",
+    recipient: { ...recipient, conversationId: "broken" },
+  });
+  await h.service.reconcileRecordedRecipients();
+  expect(scans).toBe(0);
+  expect((await h.repo.readInbox(recipient, {})).items).toHaveLength(1);
+  const briefing = await h.service.prepareBriefing({
+    recipient,
+    attemptId: "despite-advisory-failure",
+  });
+  expect(briefing.block).toContain("New release notes");
+  await briefing.onInputAccepted();
+});
+
+describe("runtime loss operational notices", () => {
+  const ownSource = {
+    kind: "conversation",
+    id: recipient.conversationId,
+  } as const;
+  const lossFact = () =>
+    fact("lost-runtime", "Processes terminated; do not wait for completion", {
+      eventKind: "background-tasks-lost",
+      category: "outcome",
+      revision: null,
+      outcome: "terminated",
+      sourceText: "Full lost-task evidence",
+    });
+  it.each(["following", "paused", "unfollowed"] as const)(
+    "delivers recovery context despite ordinary eligibility and %s controls",
+    async (control) => {
+      const h = setup({ isRecipientEligible: async () => false });
+      expect(
+        await h.service.recordRuntimeLossNotice({
+          recipient,
+          source: ownSource,
+          fact: lossFact(),
+          reason: "Background tasks lost",
+        }),
+      ).toBe(true);
+      const subscription = (await h.repo.list(recipient))[0];
+      if (!subscription) throw new Error("Missing recovery subscription");
+      if (control !== "following")
+        await h.repo.updateControls(
+          recipient,
+          subscription.id,
+          {
+            ...subscription,
+            status: control === "unfollowed" ? "unfollowed" : "following",
+            pausedAt: control === "paused" ? at : null,
+          },
+          at,
+        );
+      const controls = await h.repo.get(recipient, subscription.id);
+      const prepared = await h.service.prepareRuntimeLossNotice({
+        recipient,
+        attemptId: "runtime-recovery",
+      });
+      expect(prepared.block).toContain("Processes terminated");
+      expect(await h.reload().getDelivery(recipient, "id-2")).toMatchObject({
+        state: "queued",
+        acceptedAt: null,
+      });
+      expect(
+        (
+          await h.service.prepareRuntimeLossNotice({
+            recipient,
+            attemptId: "competing-runtime",
+          })
+        ).block,
+      ).toBeNull();
+      await prepared.onInputAccepted();
+      await prepared.finish();
+      expect(await h.reload().getDelivery(recipient, "id-2")).toMatchObject({
+        state: "accepted",
+        attemptCount: 1,
+        acceptedAt: at,
+      });
+      expect(await h.repo.get(recipient, subscription.id)).toEqual(controls);
+      expect(
+        (
+          await h.service.prepareRuntimeLossNotice({
+            recipient,
+            attemptId: "next-runtime",
+          })
+        ).block,
+      ).toBeNull();
+      expect(
+        await h.service.recordRuntimeLossNotice({
+          recipient,
+          source: ownSource,
+          fact: lossFact(),
+          reason: "Background tasks lost",
+        }),
+      ).toBe(false);
+    },
+  );
+  it("rejects generic or foreign conversation notices through the operational port", async () => {
+    const h = setup({ isRecipientEligible: async () => false });
+    for (const input of [
+      {
+        recipient,
+        source: { kind: "conversation", id: "foreign" } as const,
+        fact: lossFact(),
+        reason: "Loss",
+      },
+      {
+        recipient,
+        source: ownSource,
+        fact: fact("feedback", "Generic feedback"),
+        reason: "Feedback",
+      },
+    ])
+      await expect(h.service.recordRuntimeLossNotice(input)).rejects.toThrow(
+        "own-conversation background task loss",
+      );
+    expect(await h.repo.list(recipient)).toEqual([]);
+  });
+  it("reserves recovery notices for runtime creation and retains ambiguous admission for review", async () => {
+    const h = setup({
+      readSource: async () => ({ cursor: "0", facts: [], missing: false }),
+    });
+    await h.service.recordRuntimeLossNotice({
+      recipient,
+      source: ownSource,
+      fact: lossFact(),
+      reason: "Background tasks lost",
+    });
+    expect(
+      (await h.service.prepareBriefing({ recipient, attemptId: "warm-user" }))
+        .block,
+    ).toBeNull();
+    const prepared = await h.service.prepareRuntimeLossNotice({
+      recipient,
+      attemptId: "new-runtime",
+    });
+    await prepared.finish({ disposition: "uncertain" });
+    expect(await h.reload().getDelivery(recipient, "id-2")).toMatchObject({
+      state: "uncertain",
+      acceptedAt: null,
+    });
+    expect(
+      (
+        await h.service.prepareRuntimeLossNotice({
+          recipient,
+          attemptId: "next-runtime",
+        })
+      ).block,
+    ).toBeNull();
+  });
 });

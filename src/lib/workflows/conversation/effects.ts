@@ -1,5 +1,8 @@
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { RecordSubscriptionNoticeInput } from "@/lib/subscriptions/service";
+import type {
+  PreparedSubscriptionBriefing,
+  RecordSubscriptionNoticeInput,
+} from "@/lib/subscriptions/service";
 
 import type { MemoryIndexDeliveryKind } from "@/lib/memory/schemas";
 import type { MemoryDeliveredNote } from "@/lib/memory/telemetry";
@@ -7,7 +10,13 @@ import type { MemoryDeliveredNote } from "@/lib/memory/telemetry";
 import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 
 export interface ConversationDurableEffects {
-  recordAgentNotice(input: RecordSubscriptionNoticeInput): Promise<boolean>;
+  recordRuntimeLossNotice(
+    input: RecordSubscriptionNoticeInput,
+  ): Promise<boolean>;
+  prepareRuntimeLossNotice(input: {
+    recipient: RecordSubscriptionNoticeInput["recipient"];
+    attemptId: string;
+  }): Promise<PreparedSubscriptionBriefing>;
   notifyRuntimeCleanup(
     input: import("./runtime-cleanup-notification").RuntimeCleanupNotificationInput,
   ): Promise<void>;
@@ -105,7 +114,12 @@ export interface ConversationDurableEffects {
 }
 
 export const ephemeralConversationEffects = {
-  recordAgentNotice: async () => false,
+  recordRuntimeLossNotice: async () => false,
+  prepareRuntimeLossNotice: async () => ({
+    block: null,
+    async onInputAccepted() {},
+    async finish() {},
+  }),
   notifyRuntimeCleanup: async () => {},
   mutateConversation: async () => {},
   createReferenceDocument: async () => ({}),

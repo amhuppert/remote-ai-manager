@@ -147,6 +147,10 @@ export interface NotepadsRepo {
     input: WriteNotepadContentInput,
   ): Promise<WriteNotepadContentResult>;
   listRevisions(notepadId: string, limit?: number): Promise<NotepadRevision[]>;
+  /** Current revision identity and authorship, without loading document snapshots. */
+  latestRevisionMetadata(
+    notepadId: string,
+  ): Promise<Omit<NotepadRevision, "content"> | null>;
   findRevision(
     notepadId: string,
     revision: number,
@@ -426,6 +430,14 @@ export function createNotepadsRepo(
         ORDER BY revision DESC LIMIT ?
      ) ORDER BY revision ASC`,
   );
+  const latestRevisionMetadataStmt = db.prepare(
+    `SELECT id, notepad_id AS notepadId, revision, author_kind AS authorKind,
+       author_conversation_id AS authorConversationId, origin,
+       base_revision AS baseRevision, restored_from_revision AS restoredFromRevision,
+       created_at AS createdAt
+       FROM notepad_revisions WHERE notepad_id = ? ORDER BY revision DESC LIMIT 1`,
+  );
+  const revisionMetadataSchema = notepadRevisionSchema.omit({ content: true });
   const findRevisionStmt = db.prepare(
     `SELECT * FROM notepad_revisions WHERE notepad_id = ? AND revision = ?
       LIMIT 1`,
@@ -796,6 +808,11 @@ export function createNotepadsRepo(
         ) as unknown[];
         return rows.map(rowToRevision);
       });
+    },
+
+    async latestRevisionMetadata(notepadId) {
+      const row: unknown = latestRevisionMetadataStmt.get(notepadId);
+      return row === undefined ? null : revisionMetadataSchema.parse(row);
     },
 
     async findRevision(notepadId, revision) {

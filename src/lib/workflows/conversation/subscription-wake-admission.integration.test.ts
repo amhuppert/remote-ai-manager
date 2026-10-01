@@ -75,6 +75,39 @@ it("keeps an unhosted pending question parked when only subscription wakes are n
     )?.pendingQuestionId,
   ).toBe("question");
 });
+it.each(["question", "approval"] as const)(
+  "does not enter the queue's mutation path when an already hosted wake is held for %s",
+  async (hold) => {
+    let held = false;
+    let claims = 0;
+    fixture = await createLifecycleFixture({
+      subscriptionWakeHold: async () => (held ? `Waiting for ${hold}` : null),
+      queue: {
+        claimNextTurnBatch: async () => {
+          claims++;
+          return null;
+        },
+      },
+    });
+    await fixture.manager.ensureConversationLifecycle(fixture.binding);
+    await fixture.queue.enqueue({
+      ...fixture.identity,
+      id: "held-wake",
+      inputOrigin: "generated",
+      metadata: { kind: "subscription_update", batchId: "held-wake" },
+      content: [{ type: "text", text: "Result" }],
+    });
+    held = true;
+    const before = claims;
+    await fixture.manager.ensureConversationActorAndDrain(
+      fixture.identity.projectPath,
+      fixture.identity.sessionName,
+      fixture.identity.conversationId,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(claims).toBe(before);
+  },
+);
 
 it("rechecks archival that occurs during profile admission before dispatching a wake", async () => {
   fixture = await createLifecycleFixture({

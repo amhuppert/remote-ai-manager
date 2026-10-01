@@ -28,7 +28,12 @@ import {
   useSubscriptionRecipients,
 } from "@/lib/subscriptions/queries";
 import { useCreateSubscription } from "@/lib/subscriptions/mutations";
-import { Choice, PageControls, ownerLabel } from "./SubscriptionPrimitives";
+import {
+  Choice,
+  PageControls,
+  ownerLabel,
+  clampListOffset,
+} from "./SubscriptionPrimitives";
 
 export function CreateSubscription({
   scope = {},
@@ -102,6 +107,10 @@ function SubscriptionForm({
   const [kind, setKind] = useState<PublicSubscriptionSourceRef["kind"]>(
     initialSource?.kind ?? "notepad",
   );
+  const recipientOffset = recipients.data
+    ? clampListOffset(offset, recipients.data.total, 10)
+    : offset;
+  if (recipientOffset !== offset) setOffset(recipientOffset);
   const [id, setId] = useState(initialSource?.id ?? "");
   const [mode, setMode] = useState<"passive" | "active">("passive");
   const [reason, setReason] = useState("");
@@ -206,7 +215,7 @@ function SubscriptionForm({
                 setKind(next.kind);
                 setMode("passive");
                 setSelectedEvents([]);
-                if (!source || next.kind !== source.kind) setId("");
+                setId("");
               }
             }}
           />

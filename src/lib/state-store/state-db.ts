@@ -181,8 +181,11 @@ const DB_FILE_NAME = "command-center.db";
  * Version 27 records complete notepad context, withdrawn feedback receipts,
  * and workflow boundaries whose origin conversation may be absent. Older
  * strict readers cannot read these evidence shapes.
+ *
+ * Version 28 admits explicit wait generations with a terminal baseline.
+ * Migration 0065 fences older strict wait readers before storing that field.
  */
-export const KNOWN_SCHEMA_VERSION = 27;
+export const KNOWN_SCHEMA_VERSION = 28;
 
 export const WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION = 27;
 
@@ -1886,24 +1889,6 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
 
 export const CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION = 26;
 
-function conversationNoticeSourcesNeedRebuild(db: Db): boolean {
-  const rows = db
-    .prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('conversation_subscriptions','conversation_subscription_deliveries')",
-    )
-    .all() as Array<{ sql: string }>;
-  return rows.some((row) => !row.sql.includes("'conversation'"));
-}
-
-function subscriptionReceiptEvidenceNeedsRebuild(db: Db): boolean {
-  const row = db
-    .prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_subscription_deliveries'",
-    )
-    .get() as { sql: string } | undefined;
-  return row !== undefined && !row.sql.includes("'superseded'");
-}
-
 /** Widen source and receipt constraints while retaining all existing evidence. */
 export function migrateConversationNoticeSourceSchema(db: Db): void {
   for (const table of [
@@ -1948,10 +1933,42 @@ export const CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL = `
   );
 `;
 
+export const SUBSCRIPTION_WAIT_GENERATIONS_SCHEMA_VERSION = 28;
+
+/** Called only by the ordered startup migration. */
+export function migrateSubscriptionWaitGenerationsSchema(db: Db): void {
+  const table = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_subscription_waits'",
+    )
+    .get() as { sql: string } | undefined;
+  if (
+    table &&
+    /subscription_id\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(table.sql)
+  ) {
+    const objects = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE tbl_name='conversation_subscription_waits' AND type IN ('index','trigger') AND sql IS NOT NULL",
+      )
+      .all() as Array<{ sql: string }>;
+    const columns = getTableColumns(db, "conversation_subscription_waits")
+      .map((column) => `"${column.name.replaceAll('"', '""')}"`)
+      .join(",");
+    db.exec(
+      "ALTER TABLE conversation_subscription_waits RENAME TO conversation_subscription_waits_prior_generations",
+    );
+    db.exec(CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL);
+    db.exec(`INSERT INTO conversation_subscription_waits (${columns}) SELECT ${columns} FROM conversation_subscription_waits_prior_generations;
+      DROP TABLE conversation_subscription_waits_prior_generations;`);
+    for (const object of objects) db.exec(object.sql);
+  }
+  db.exec(CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL);
+}
+
 export const CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS conversation_subscription_waits (
     id TEXT PRIMARY KEY,
-    subscription_id TEXT NOT NULL UNIQUE,
+    subscription_id TEXT NOT NULL,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('waiting','ready','settled','cancelled')),
@@ -1960,6 +1977,8 @@ export const CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL = `
     batch_id TEXT,
     payload_json TEXT NOT NULL
   );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_waits_one_live
+    ON conversation_subscription_waits(subscription_id) WHERE state IN ('waiting','ready');
   CREATE INDEX IF NOT EXISTS idx_subscription_waits_recipient
     ON conversation_subscription_waits (project_path,conversation_id,state);
   CREATE TABLE IF NOT EXISTS conversation_subscription_wake_batches (
@@ -3906,44 +3925,7 @@ function initializeSchema(db: Db, dbPath: string): void {
   // the additive columns, so it must run before ensureAdditiveColumns restores
   // them; the direct-launch rebuild runs after, against the settled shape.
   migrateGraphWorkflowExecutionsSeedProjection(db);
-  const evidenceNeedsUpgrade =
-    workflowResultEvidenceNeedsRebuild(db) ||
-    subscriptionReceiptEvidenceNeedsRebuild(db) ||
-    !columnExists(
-      db,
-      "notepad_delivery_watermarks",
-      "observed_comment_ids_json",
-    );
-  if (evidenceNeedsUpgrade && dbPath !== ":memory:")
-    publishSchemaCompatibilityBarrierSync(
-      path.dirname(dbPath),
-      WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION,
-    );
   ensureAdditiveColumns(db);
-  if (evidenceNeedsUpgrade) {
-    migrateWorkflowResultEvidenceSchema(db);
-    migrateConversationNoticeSourceSchema(db);
-    db.prepare(
-      "INSERT OR IGNORE INTO schema_migrations(version,description) VALUES (?,?)",
-    ).run(
-      WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION,
-      "complete subscription and workflow result evidence",
-    );
-  }
-  if (conversationNoticeSourcesNeedRebuild(db)) {
-    if (dbPath !== ":memory:")
-      publishSchemaCompatibilityBarrierSync(
-        path.dirname(dbPath),
-        CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION,
-      );
-    migrateConversationNoticeSourceSchema(db);
-    db.prepare(
-      "INSERT OR IGNORE INTO schema_migrations(version,description) VALUES (?,?)",
-    ).run(
-      CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION,
-      "durable own-conversation notice sources",
-    );
-  }
   // Names an additive column, so it cannot sit in SCHEMA_DDL above.
   db.exec(MEMORY_LINKS_IDENTITY_INDEX_DDL);
   migrateSpecDirectLaunchStorage(db);

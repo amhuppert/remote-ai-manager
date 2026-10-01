@@ -19,7 +19,7 @@ afterEach(() => fixture?.close());
 describe.each(["session", "project"] as const)(
   "workflow inbox consolidation (%s)",
   (scope) => {
-    it("shares frozen evidence, retains uncertain receipts after restart and avoids a second wake", async () => {
+    it("retains outstanding launcher results on first discovery, shares frozen evidence and avoids a second wake", async () => {
       fixture = createPersistenceFixture();
       fixture.seedProject(projectPath);
       fixture.seedSession(projectPath, sessionName);
@@ -149,15 +149,17 @@ describe.each(["session", "project"] as const)(
       expect((await build().repo.readInbox(peer, {})).items[0]?.state).toBe(
         "uncertain",
       );
-      const wait = await build().activeWaitService.register({
-        recipient: origin,
-        source,
-        reason: "Use terminal boundary",
+      await expect(
+        build().activeWaitService.register({
+          recipient: origin,
+          source,
+          reason: "Use terminal boundary",
+        }),
+      ).rejects.toMatchObject({
+        code: "ACTIVE_WAIT_SOURCE_FINAL",
+        status: 409,
       });
-      expect(wait).toMatchObject({
-        state: "settled",
-        deliveryId: originRows[0]?.id,
-      });
+      expect(await build().activeWaitService.list(origin)).toHaveLength(0);
       expect(await build().activeWaitService.prepareBatch(origin)).toBeNull();
       expect(
         (await build().repo.readInbox(origin, { includeSettled: true })).items,

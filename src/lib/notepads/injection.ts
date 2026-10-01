@@ -112,7 +112,7 @@ function renderNotepadBlock(notepad: NotepadInjectionSource): string {
     `read: ${buildNotepadReadCommand(notepad.id)}`,
     ...(notepad.openComments.count > 0
       ? [
-          `read-comments: cctl notepad comment list --open -- ${quoteAgentCommandArgument(notepad.id)}`,
+          `read-comments: cctl notepad comment list --status=open -- ${quoteAgentCommandArgument(notepad.id)}`,
           "Open-comment metadata does not include review bodies. Read open comments before acting.",
         ]
       : []),

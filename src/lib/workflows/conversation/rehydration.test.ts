@@ -1081,19 +1081,12 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         originConversationId: CONV_ID,
         payload: { status: "completed" },
         recordedAt: "2026-08-14T12:00:00.000Z",
-        state: "pending",
-        attemptId: null,
-        attemptCount: 0,
+        state: "delivering",
+        attemptId: "abandoned-attempt",
+        attemptCount: 1,
         deliveredAt: null,
         effectsDeliveredAt: null,
       });
-      deliveries.markDelivering(
-        "/repo",
-        "feat",
-        "exec-restart",
-        7,
-        "abandoned-attempt",
-      );
       await runRehydration({
         ...rehydrationInfrastructure(),
         readAllForStartup: () => stateWith([conv({ id: CONV_ID })]),

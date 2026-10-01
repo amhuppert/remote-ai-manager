@@ -99,8 +99,20 @@ export function SubscriptionDetail({
         </dd>
         <dt className="text-text-tertiary">Lifetime</dt>
         <dd className="m-0 text-text-secondary">
-          {date(row.wait?.expiresAt ?? row.subscription.expiresAt)}
+          {date(row.subscription.expiresAt)}
         </dd>
+        {row.wait && row.wait.expiresAt !== row.subscription.expiresAt ? (
+          <>
+            <dt className="text-text-tertiary">
+              {row.wait.state === "waiting" || row.wait.state === "ready"
+                ? "Wait deadline"
+                : "Prior wait deadline"}
+            </dt>
+            <dd className="m-0 text-text-secondary">
+              {date(row.wait.expiresAt)}
+            </dd>
+          </>
+        ) : null}
       </dl>
       {row.holdReason || row.rateLimitUntil || row.subscription.pausedAt ? (
         <div className="rounded-md bg-amber-glow p-3 font-mono text-[0.72rem] leading-relaxed text-amber">

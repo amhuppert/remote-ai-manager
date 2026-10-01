@@ -53,9 +53,10 @@ import type {
 } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
-  queuedMessageNeedsReview,
+  queuedMessageBlocksOrdinaryAdmission,
   type PendingQueuedMessage,
 } from "@/lib/conversations/message-queue-schemas";
+import { SubscriptionWakeReceipt } from "@/components/subscriptions/SubscriptionWakeReceipt";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
@@ -175,7 +176,11 @@ export function selectCancellableQueueEntries(
   pendingQueue: readonly PendingQueuedMessage[],
 ): CancellableQueueEntry[] {
   return pendingQueue
-    .filter((entry) => entry.status === "pending")
+    .filter(
+      (entry) =>
+        entry.status === "pending" &&
+        entry.metadata?.kind !== "subscription_update",
+    )
     .map((entry) => ({
       id: entry.id,
       preview: queueEntryPreview(entry.content),
@@ -383,8 +388,8 @@ export default function PromptComposer({
   );
   const queueEntries =
     queueTurnState?.pendingQueue ?? activeConversation?.pendingQueue ?? [];
-  const reviewRequired = queueEntries.some((entry) =>
-    queuedMessageNeedsReview(entry.status),
+  const reviewRequired = queueEntries.some(
+    queuedMessageBlocksOrdinaryAdmission,
   );
   const composerTarget = conversationId
     ? targetFromStoreSessionName(projectName, sessionName, conversationId)
@@ -574,6 +579,23 @@ export default function PromptComposer({
             error={queueReview.error?.message}
             onResolve={(id, action) => queueReview.mutate({ id, action })}
           />
+          {queueEntries
+            .filter(
+              (entry) =>
+                entry.status === "pending" &&
+                entry.metadata?.kind === "subscription_update",
+            )
+            .map((entry) => (
+              <SubscriptionWakeReceipt
+                key={entry.id}
+                batchId={
+                  entry.metadata?.kind === "subscription_update"
+                    ? entry.metadata.batchId
+                    : entry.id
+                }
+                status={entry.status}
+              />
+            ))}
           {cancellableEntries.length > 0 ? (
             <div
               className="mb-sm flex flex-wrap gap-xs"

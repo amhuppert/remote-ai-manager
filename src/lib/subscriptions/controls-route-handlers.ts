@@ -114,11 +114,9 @@ export function createSubscriptionControlsHandlers(deps: ControlsRouteDeps) {
         reason: body.reason,
         mode: body.mode,
         eventKinds: body.eventKinds,
-        ...(body.mode === "active"
-          ? { expiresAt: expiry(body.expiresIn ?? 86400) }
-          : body.expiresIn === undefined
-            ? {}
-            : { expiresAt: expiry(body.expiresIn) }),
+        ...(body.expiresIn === undefined
+          ? {}
+          : { expiresAt: expiry(body.expiresIn) }),
       });
       if (!subscription)
         return notFound("Subscription source or recipient not found");
@@ -163,10 +161,22 @@ export function createSubscriptionControlsHandlers(deps: ControlsRouteDeps) {
       );
     }),
     readPATCH: route(async (recipient, id, request) => {
-      const { read } = z
-        .object({ read: z.boolean() })
-        .strict()
+      const body = z
+        .union([
+          z.object({ read: z.boolean() }).strict(),
+          z.object({ action: z.enum(["retry", "dismiss"]) }).strict(),
+        ])
         .parse(await request.json());
+      if ("action" in body) {
+        if (
+          !(await deps.getControls().reviewDelivery(recipient, id, body.action))
+        )
+          return notFound("Subscription delivery not found");
+        return Response.json({
+          delivery: await deps.getControls().getDelivery(recipient, id),
+        });
+      }
+      const { read } = body;
       if (!(await deps.getControls().markDeliveryRead(recipient, id, read)))
         return notFound("Subscription delivery not found");
       return Response.json({

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { importSubscriptionDelivery } from "./subscription-delivery-import";
+import {
+  ensureFiniteWaitSourceCursor,
+  retireConsumedFiniteWaitSources,
+} from "./subscription-wait-lifecycle";
 import type { Db } from "./schemas";
 import type { WriteQueue } from "./write-queue";
 import {
@@ -21,7 +25,15 @@ import {
 export type SubscriptionControlChange = Partial<
   Pick<
     ConversationSubscription,
-    "status" | "mode" | "pausedAt" | "expiresAt" | "reason" | "eventKinds"
+    | "status"
+    | "mode"
+    | "pausedAt"
+    | "expiresAt"
+    | "reason"
+    | "eventKinds"
+    | "cursor"
+    | "missingAt"
+    | "lastError"
   >
 > & { cancelWait?: boolean };
 export interface ConversationSubscriptionWaitsRepo {
@@ -52,7 +64,9 @@ export interface ConversationSubscriptionWaitsRepo {
   get(
     recipient: SubscriptionRecipient,
     subscriptionId: string,
+    waitId?: string,
   ): Promise<ActiveSubscriptionWait | null>;
+  /** Most recently registered generation first, including historical generations. */
   list(recipient?: SubscriptionRecipient): Promise<ActiveSubscriptionWait[]>;
   settle(
     waitId: string,
@@ -196,12 +210,17 @@ export function createConversationSubscriptionWaitsRepo(
   function readRecipientWait(
     recipient: SubscriptionRecipient,
     subscriptionId: string,
+    waitId?: string,
   ) {
     const raw: unknown = db
       .prepare(
-        "SELECT * FROM conversation_subscription_waits WHERE project_path=@project_path AND conversation_id=@conversation_id AND subscription_id=@subscription_id",
+        "SELECT * FROM conversation_subscription_waits WHERE project_path=@project_path AND conversation_id=@conversation_id AND subscription_id=@subscription_id AND (@wait_id IS NULL OR id=@wait_id) ORDER BY rowid DESC LIMIT 1",
       )
-      .get({ ...scope(recipient), subscription_id: subscriptionId });
+      .get({
+        ...scope(recipient),
+        subscription_id: subscriptionId,
+        wait_id: waitId ?? null,
+      });
     return raw === undefined ? null : waitFromRow(raw);
   }
   function following(wait: ActiveSubscriptionWait): boolean {
@@ -261,21 +280,33 @@ export function createConversationSubscriptionWaitsRepo(
           }),
       );
       const existing = readRecipientWait(input.recipient, row.id);
-      if (existing) return existing;
+      if (
+        existing &&
+        (existing.state === "waiting" || existing.state === "ready")
+      )
+        return existing;
       const value = { ...input, subscriptionId: row.id };
       db.prepare(
-        "UPDATE conversation_subscriptions SET mode='active',status='following',reason=@reason,expires_at=@expires_at,updated_at=@at,unfollowed_at=NULL,paused_at=@paused_at,missing_at=NULL,last_error=NULL WHERE id=@id",
+        "UPDATE conversation_subscriptions SET mode='active',status='following',reason=@reason,expires_at=@expires_at,updated_at=@at,unfollowed_at=NULL,paused_at=@paused_at,missing_at=NULL,last_error=NULL,cursor=CASE WHEN status='unfollowed' THEN @cursor ELSE cursor END WHERE id=@id",
       ).run({
         id: row.id,
         reason: input.reason,
         expires_at: input.expiresAt,
         at: input.updatedAt,
         paused_at: subscription.pausedAt,
+        cursor: subscription.cursor,
       });
       writeWait(value);
       return value;
     },
   );
+  function restorePassive(wait: ActiveSubscriptionWait, at: string) {
+    db.prepare(
+      "UPDATE conversation_subscriptions SET mode='passive',expires_at=NULL,updated_at=@at WHERE id=@id AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits WHERE subscription_id=@id AND id<>@wait_id AND state IN ('waiting','ready'))",
+    ).run({ id: wait.subscriptionId, wait_id: wait.id, at });
+    ensureFiniteWaitSourceCursor(db, wait.recipient);
+    retireConsumedFiniteWaitSources(db, wait.recipient);
+  }
   const settleTx = db.transaction(
     (
       waitId: string,
@@ -291,7 +322,7 @@ export function createConversationSubscriptionWaitsRepo(
             wait.state === "ready" &&
             wait.batchId === null &&
             wait.deliveryId === input.id &&
-            input.state === "accepted"
+            ["accepted", "superseded", "failed"].includes(input.state)
           ))
       )
         return false;
@@ -340,14 +371,19 @@ export function createConversationSubscriptionWaitsRepo(
         ).run(canonical.id);
       writeWait({
         ...wait,
-        state: canonical.state === "accepted" ? "settled" : "ready",
+        state: ["accepted", "superseded"].includes(canonical.state)
+          ? "settled"
+          : "ready",
         outcome,
         deliveryId: canonical.id,
-        finishedAt:
-          canonical.state === "accepted" ? (canonical.acceptedAt ?? at) : null,
+        finishedAt: ["accepted", "superseded"].includes(canonical.state)
+          ? (canonical.acceptedAt ?? at)
+          : null,
         updatedAt: at,
         lastError: null,
       });
+      if (["accepted", "superseded"].includes(canonical.state))
+        restorePassive(wait, at);
       return true;
     },
   );
@@ -384,7 +420,7 @@ export function createConversationSubscriptionWaitsRepo(
         const error =
           "This wait's unresolved wake was explicitly discarded after confirming its queue row and acceptance receipt were absent";
         db.prepare(
-          "UPDATE conversation_subscription_deliveries SET state='failed',finished_at=@at,last_error=@error WHERE id=@id AND attempt_id=@batch_id AND project_path=@project_path AND conversation_id=@conversation_id AND state IN ('queued','uncertain','failed')",
+          "UPDATE conversation_subscription_deliveries SET state='superseded',finished_at=@at,last_error=@error WHERE id=@id AND attempt_id=@batch_id AND project_path=@project_path AND conversation_id=@conversation_id AND state IN ('queued','uncertain','failed')",
         ).run({
           id: wait.deliveryId,
           batch_id: batch.id,
@@ -408,9 +444,7 @@ export function createConversationSubscriptionWaitsRepo(
             lastError: error,
           });
       }
-      db.prepare(
-        "UPDATE conversation_subscriptions SET status='unfollowed',unfollowed_at=COALESCE(unfollowed_at,@at),updated_at=@at WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id",
-      ).run({ id: subscriptionId, ...scope(recipient), at });
+      restorePassive(next, at);
       return next;
     },
   );
@@ -483,6 +517,7 @@ export function createConversationSubscriptionWaitsRepo(
           updatedAt: at,
           finishedAt: at,
         });
+      if (change.cancelWait && current) restorePassive(current, at);
       const entries: object = change;
       const assignments: string[] = ["updated_at=@at"];
       const params: Record<string, string | number | null> = {
@@ -499,6 +534,9 @@ export function createConversationSubscriptionWaitsRepo(
             expiresAt: "expires_at",
             reason: "reason",
             eventKinds: "event_kinds_json",
+            cursor: "cursor",
+            missingAt: "missing_at",
+            lastError: "last_error",
           } as Record<string, string>
         )[field];
         if (!column) continue;
@@ -517,6 +555,8 @@ export function createConversationSubscriptionWaitsRepo(
       db.prepare(
         `UPDATE conversation_subscriptions SET ${assignments.join(",")} WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id`,
       ).run(params);
+      ensureFiniteWaitSourceCursor(db, recipient);
+      retireConsumedFiniteWaitSources(db, recipient);
     },
   );
   const reserveTx = db.transaction((batch: SubscriptionWakeBatch) => {
@@ -593,26 +633,29 @@ export function createConversationSubscriptionWaitsRepo(
         )
           writeWait({
             ...wait,
-            state: "settled",
+            state: state === "cancelled" ? "cancelled" : "settled",
             updatedAt: at,
             finishedAt: at,
             lastError: error,
           });
+        if (state === "accepted" || state === "cancelled")
+          restorePassive(wait, at);
       }
       db.prepare(
         `UPDATE conversation_subscription_deliveries SET state=@state,accepted_at=CASE WHEN @state='accepted' THEN @at ELSE NULL END,finished_at=@at,last_error=@error
-      WHERE project_path=@project_path AND conversation_id=@conversation_id AND attempt_id=@batch_id AND state IN ('queued','failed','uncertain')
-      AND (@state='accepted' OR NOT EXISTS (SELECT 1 FROM conversation_subscription_waits AS wait WHERE wait.delivery_id=conversation_subscription_deliveries.id AND wait.state='cancelled'))`,
+      WHERE project_path=@project_path AND conversation_id=@conversation_id AND attempt_id=@batch_id AND state IN ('queued','failed','uncertain')`,
       ).run({
         ...scope(batch.recipient),
         batch_id: batch.id,
-        state: state === "cancelled" ? "failed" : state,
+        state: state === "cancelled" ? "superseded" : state,
         at,
         error:
           state === "cancelled"
             ? (error ?? "Wake message cancelled before input acceptance")
             : error,
       });
+      if (state === "accepted" || state === "cancelled")
+        retireConsumedFiniteWaitSources(db, batch.recipient);
     },
   );
   return {
@@ -668,19 +711,19 @@ export function createConversationSubscriptionWaitsRepo(
         registerTx.immediate(parsed, parent),
       );
     },
-    async get(recipient, subscriptionId) {
-      return readRecipientWait(recipient, subscriptionId);
+    async get(recipient, subscriptionId, waitId) {
+      return readRecipientWait(recipient, subscriptionId, waitId);
     },
     async list(recipient) {
       const raw: unknown[] = recipient
         ? db
             .prepare(
-              "SELECT * FROM conversation_subscription_waits WHERE project_path=@project_path AND conversation_id=@conversation_id ORDER BY rowid",
+              "SELECT * FROM conversation_subscription_waits WHERE project_path=@project_path AND conversation_id=@conversation_id ORDER BY rowid DESC",
             )
             .all(scope(recipient))
         : db
             .prepare(
-              "SELECT * FROM conversation_subscription_waits ORDER BY rowid",
+              "SELECT * FROM conversation_subscription_waits ORDER BY rowid DESC",
             )
             .all();
       return raw.map(waitFromRow);
@@ -693,7 +736,7 @@ export function createConversationSubscriptionWaitsRepo(
     async recordFailure(waitId, error, at) {
       await writeQueue.withWriteQueueSync("subscriptions.wait.failure", () => {
         const wait = readWait(waitId);
-        if (wait?.state === "waiting")
+        if (wait?.state === "waiting" || wait?.state === "ready")
           writeWait({ ...wait, updatedAt: at, lastError: error });
       });
     },

@@ -27,6 +27,13 @@ function legacyIdentity(
   return `${prefix}:${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
 }
 
+/** Exact persisted producer template; arbitrary feedback mentioning task loss stays passive. */
+export function isLegacyBackgroundTaskLoss(text: string): boolean {
+  return /^Your previous agent session ended \([\s\S]*\) while [1-9]\d* background task\(s\) were still running: [\s\S]+\. Those processes were terminated with the session — their completion notifications will never arrive\. Do not wait for them; check any output files on disk and re-run whatever is still needed\.$/.test(
+    text,
+  );
+}
+
 export const conversationNoticeInbox: StateMigration = {
   name: "0061-conversation-notice-inbox",
   up: async ({ context }) => {
@@ -102,11 +109,16 @@ export const conversationNoticeInbox: StateMigration = {
               );
               const omission =
                 "\nSource text shortened; inspect the full original with the retrieval command.";
+              const taskLoss = isLegacyBackgroundTaskLoss(text);
               const fact = sourceFactSchema.parse({
                 occurrenceId,
-                eventKind: "legacy-pending-agent-notice",
-                category: "activity",
-                sourceTitle: "Pending agent notice",
+                eventKind: taskLoss
+                  ? "background-tasks-lost"
+                  : "legacy-pending-agent-notice",
+                category: taskLoss ? "outcome" : "activity",
+                sourceTitle: taskLoss
+                  ? "Imported background task loss"
+                  : "Pending agent notice",
                 summary:
                   text.length > 200
                     ? text.slice(0, 200 - omission.length) + omission
@@ -114,7 +126,7 @@ export const conversationNoticeInbox: StateMigration = {
                 sourceText: text,
                 occurredAt: recordedAt,
                 revision: null,
-                outcome: null,
+                outcome: taskLoss ? "terminated" : null,
                 retrievalHandle: `cctl inbox get --json --project=${quote(path.basename(row.project_path))}${row.session_name === null ? "" : ` --session=${quote(row.session_name)}`} --conversation=${quote(row.id)} -- ${quote(occurrenceId)}`,
                 actorConversationId: null,
               });

@@ -65,7 +65,7 @@ function instrumentedWriteQueue(): WriteQueue {
   };
 }
 
-function seedDelivery(attemptId?: string): void {
+function seedDelivery(): void {
   const repo = createGraphWorkflowResultDeliveriesRepo(fixture.db);
   repo.record({
     ...buildMaximalResultDelivery(),
@@ -82,15 +82,6 @@ function seedDelivery(attemptId?: string): void {
     deliveredAt: null,
     effectsDeliveredAt: null,
   });
-  if (attemptId !== undefined) {
-    repo.markDelivering(
-      PROJECT_PATH,
-      SESSION_NAME,
-      EXECUTION_ID,
-      BOUNDARY_SEQ,
-      attemptId,
-    );
-  }
 }
 
 function corruptDelivery(): void {
@@ -142,44 +133,6 @@ afterEach(() => {
 });
 
 describe("graph workflow result delivery critical sections", () => {
-  it("defers claim validation logs until the write queue is released", async () => {
-    seedDelivery();
-    corruptDelivery();
-
-    await expect(
-      fixture.store.claimGraphWorkflowResultDeliveries(
-        PROJECT_PATH,
-        SESSION_NAME,
-        CONVERSATION_ID,
-        "attempt-claim",
-      ),
-    ).rejects.toThrow();
-
-    expect(bytesLoggedInsideSection).toBe(0);
-    expect(loggedMessages()).toContain(
-      "state-store.graph-workflow-result-deliveries.schema_validation_failure",
-    );
-  });
-
-  it("defers settlement validation logs until the write queue is released", async () => {
-    seedDelivery("attempt-settle");
-    corruptDelivery();
-
-    await expect(
-      fixture.store.settleGraphWorkflowResultDeliveries(
-        PROJECT_PATH,
-        SESSION_NAME,
-        CONVERSATION_ID,
-        "attempt-settle",
-      ),
-    ).rejects.toThrow();
-
-    expect(bytesLoggedInsideSection).toBe(0);
-    expect(loggedMessages()).toContain(
-      "state-store.graph-workflow-result-deliveries.schema_validation_failure",
-    );
-  });
-
   it("defers fallback delivery validation logs until the write queue is released", async () => {
     seedDelivery();
     corruptDelivery();

@@ -67,7 +67,6 @@ describe.each(["session", "project"] as const)(
             validateModelSelection() {},
           }),
           subscriptions: {
-            synchronizeInvolvement: async () => {},
             prepareBriefing: (input) => service.prepareBriefing(input),
           },
         },

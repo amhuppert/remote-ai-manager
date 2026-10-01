@@ -127,7 +127,7 @@ export function createNotepadSourceReader(deps: {
   ): Promise<SourceReadResult> => {
     if (source.kind !== "notepad")
       throw new Error("Notepad reader requires a notepad source");
-    const notepad = await deps.notepads.find(source.id);
+    const notepad = await deps.notepads.findListItem(source.id);
     if (
       !notepad ||
       (notepad.scope === "project" &&
@@ -163,31 +163,20 @@ export function createNotepadSourceReader(deps: {
       return (
         legacyHasNewComments(legacy, marker) &&
         (legacy.latestCreatedAt === null ||
-          comment.createdAt >= legacy.latestCreatedAt)
+          comment.createdAt > legacy.latestCreatedAt)
       );
     });
-    const history = (await deps.notepads.listRevisions(source.id)).sort(
-      (a, b) => a.revision - b.revision,
+    const seenRevision = Math.max(
+      previous.revision,
+      acceptedContext?.revision ?? 0,
     );
-    const revisions = history.filter(
-      (revision) =>
-        revision.revision >
-        Math.max(previous.revision, acceptedContext?.revision ?? 0),
-    );
-    const coveredRevisions: string[] = [];
-    let priorRevision = 0;
-    for (const revision of history) {
-      // Browser save bursts reuse a revision row ID while advancing its counter.
-      // Every counter in that row's span can therefore have an earlier inbox fact.
-      for (
-        let presented = priorRevision + 1;
-        presented <=
-        Math.min(revision.revision, acceptedContext?.revision ?? 0);
-        presented++
-      )
-        coveredRevisions.push(`${revision.id}:${presented}`);
-      priorRevision = revision.revision;
-    }
+    const latest =
+      notepad.revision > seenRevision
+        ? await deps.notepads.latestRevisionMetadata(source.id)
+        : null;
+    // Revision notices describe the current head. Historical content stays in
+    // the notepad revision store rather than being copied for every follower.
+    const revisions = latest && latest.revision > seenRevision ? [latest] : [];
     const title = boundedTitle(notepad.name);
     const facts: SourceFact[] = revisions.map((revision) => ({
       occurrenceId: `${revision.id}:${revision.revision}`,
@@ -231,7 +220,7 @@ export function createNotepadSourceReader(deps: {
         occurredAt: comment.createdAt,
         revision: String(comment.anchor.notepadRevision),
         outcome: null,
-        retrievalHandle: `cctl notepad comment list --open -- ${quoteArgument(source.id)}`,
+        retrievalHandle: `cctl notepad comment list --status=open -- ${quoteArgument(source.id)}`,
         actorConversationId: comment.authorConversationId,
       });
     const openIds = new Set(
@@ -250,9 +239,11 @@ export function createNotepadSourceReader(deps: {
       }),
       facts,
       missing: false,
+      ...(acceptedContext
+        ? { coveredNotepadRevision: acceptedContext.revision }
+        : {}),
       withdrawnOccurrenceIds: [
         ...new Set([
-          ...coveredRevisions,
           ...(acceptedContext?.commentIds ?? []).map(
             (id) => `notepad-comment:${id}`,
           ),

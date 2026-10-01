@@ -112,20 +112,12 @@ export const mutateSessionWorkflowLanes =
   defaultStore.mutateSessionWorkflowLanes;
 export const mutateSessionWorkflowEnvelopes =
   defaultStore.mutateSessionWorkflowEnvelopes;
-export const claimGraphWorkflowResultDeliveries =
-  defaultStore.claimGraphWorkflowResultDeliveries;
-export const settleGraphWorkflowResultDeliveries =
-  defaultStore.settleGraphWorkflowResultDeliveries;
-export const releaseGraphWorkflowResultDeliveries =
-  defaultStore.releaseGraphWorkflowResultDeliveries;
 export const settleGraphWorkflowResultDeliveryFallback =
   defaultStore.settleGraphWorkflowResultDeliveryFallback;
 export const commitGraphWorkflowMissingOriginFallback =
   defaultStore.commitGraphWorkflowMissingOriginFallback;
 export const markGraphWorkflowResultEffectDelivered =
   defaultStore.markGraphWorkflowResultEffectDelivered;
-export const recoverGraphWorkflowResultDeliveries =
-  defaultStore.recoverGraphWorkflowResultDeliveries;
 export const getGraphWorkflowResultDelivery =
   defaultStore.getGraphWorkflowResultDelivery;
 export const listPendingGraphWorkflowResultEffects =

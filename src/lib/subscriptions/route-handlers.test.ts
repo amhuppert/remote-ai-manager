@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createConversationSubscriptionsRepo } from "@/lib/state-store/conversation-subscriptions-repo";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { createSubscriptionService } from "./service";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -135,6 +138,7 @@ async function fixture(
     }),
   };
   return {
+    persistence,
     context,
     recipients,
     registrations,
@@ -241,6 +245,52 @@ describe("subscription HTTP boundary", () => {
     expect(refused.status).toBe(409);
     expect(lane.registrations).toHaveLength(0);
   });
+
+  it.each(["project", "session"] as const)(
+    "selects a historical wait generation in %s scope",
+    async (scope) => {
+      const test = await fixture(scope);
+      const latest = { ...wait, id: "wait-new" };
+      const service = test.deps.getWaitService();
+      test.deps.getWaitService = () => ({
+        ...service,
+        async get(_recipient, subscriptionId, waitId?: string) {
+          if (subscriptionId !== wait.subscriptionId) return null;
+          return waitId === undefined
+            ? latest
+            : waitId === wait.id
+              ? wait
+              : null;
+        },
+      });
+      const context = {
+        params: Promise.resolve({
+          ...(await test.context.params),
+          subscriptionId: wait.subscriptionId,
+        }),
+      };
+      const detail = await test.handlers.waitGET(
+        new Request(
+          `http://test/subscriptions/waits/subscription-one?waitId=${wait.id}`,
+        ),
+        context,
+      );
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toEqual({ wait, batch: null });
+      const missing = await test.handlers.waitGET(
+        new Request(
+          "http://test/subscriptions/waits/subscription-one?waitId=unknown",
+        ),
+        context,
+      );
+      expect(missing.status).toBe(404);
+      const invalid = await test.handlers.waitGET(
+        new Request("http://test/subscriptions/waits/subscription-one?waitId="),
+        context,
+      );
+      expect(invalid.status).toBe(400);
+    },
+  );
 
   it("pages waits and resolves the detail by subscription id within the recipient", async () => {
     const test = await fixture("project");
@@ -415,6 +465,38 @@ describe("subscription HTTP boundary", () => {
   });
 
   it.each(["session", "project"] as const)(
+    "preserves an actionable refusal from a retained service instance in %s scope",
+    async (scope) => {
+      const test = await fixture(scope);
+      const waits = test.deps.getWaitService();
+      class RetainedRegistrationError extends Error {
+        readonly code = "ACTIVE_WAIT_SOURCE_FINAL";
+        readonly status = 409;
+      }
+      test.deps.getWaitService = () => ({
+        ...waits,
+        async register() {
+          throw new RetainedRegistrationError(
+            "Inspect the consumed result or register another source.",
+          );
+        },
+      });
+      const response = await test.handlers.waitPOST(
+        new Request("http://test/subscriptions/waits", {
+          method: "POST",
+          body: JSON.stringify({ source: wait.source, reason: wait.reason }),
+        }),
+        test.context,
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: "ACTIVE_WAIT_SOURCE_FINAL",
+        error: "Inspect the consumed result or register another source.",
+      });
+    },
+  );
+
+  it.each(["session", "project"] as const)(
     "serves the %s conversation without starting or acknowledging a turn",
     async (scope) => {
       const test = await fixture(scope);
@@ -489,3 +571,129 @@ describe("subscription HTTP boundary", () => {
     expect(test.recipients).toHaveLength(0);
   });
 });
+
+it.each(["session", "project"] as const)(
+  "allows a %s lane to retrieve only its authenticated operational loss evidence",
+  async (scope) => {
+    const test = await fixture(scope, "iteration");
+    const repo = createConversationSubscriptionsRepo(
+      test.persistence.db,
+      createWriteQueue(),
+    );
+    const service = createSubscriptionService({
+      repo,
+      isRecipientEligible: async () => true,
+      readSource: async () => ({ cursor: "0", facts: [], missing: false }),
+    });
+    test.deps.getService = () => service;
+    const recipient = { projectPath, conversationId: "conversation-one" };
+    const source = {
+      kind: "conversation",
+      id: recipient.conversationId,
+    } as const;
+    const fact = {
+      occurrenceId: "lost-task",
+      eventKind: "background-tasks-lost",
+      category: "outcome" as const,
+      sourceTitle: "Background tasks",
+      summary: "Details omitted; read before acting",
+      sourceText: "Full task recovery details <untrusted>",
+      occurredAt: "2026-10-01T00:00:00Z",
+      revision: null,
+      outcome: "terminated",
+      retrievalHandle: "cctl conversation read conversation-one",
+      actorConversationId: null,
+    };
+    await service.recordRuntimeLossNotice({
+      recipient,
+      source,
+      fact,
+      reason: "Background tasks lost",
+    });
+    await service.recordNotice({
+      recipient,
+      source,
+      fact: {
+        ...fact,
+        occurrenceId: "generic",
+        eventKind: "legacy-text-notice",
+      },
+      reason: "Generic notice",
+    });
+    const deliveries = await repo.listDeliveriesForOverview(recipient);
+    const operational = deliveries.find(
+      (delivery) => delivery.fact.eventKind === "background-tasks-lost",
+    );
+    const generic = deliveries.find(
+      (delivery) => delivery.fact.eventKind === "legacy-text-notice",
+    );
+    if (!operational || !generic) throw new Error("Missing stored evidence");
+    const context = (deliveryId: string) => ({
+      params: test.context.params.then((params) => ({ ...params, deliveryId })),
+    });
+    const authenticated = () =>
+      new Request("http://test/inbox/details", {
+        headers: {
+          authorization: "Bearer token",
+          "x-cc-conversation-id": recipient.conversationId,
+        },
+      });
+    const response = await test.handlers.deliveryGET(
+      authenticated(),
+      context(operational.id),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      delivery: {
+        id: operational.id,
+        fact: { sourceText: fact.sourceText },
+        state: "pending",
+        acceptedAt: null,
+      },
+    });
+    expect(
+      (await test.handlers.deliveryGET(authenticated(), context(generic.id)))
+        .status,
+    ).toBe(409);
+    expect(
+      (
+        await test.handlers.deliveryGET(
+          new Request("http://test/inbox/details"),
+          context(operational.id),
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await test.handlers.deliveryGET(
+          new Request("http://test/inbox/details", {
+            headers: {
+              authorization: "Bearer token",
+              "x-cc-conversation-id": "another-conversation",
+            },
+          }),
+          context(operational.id),
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (await test.handlers.inboxGET(authenticated(), test.context)).status,
+    ).toBe(409);
+    expect(
+      (await test.handlers.listGET(authenticated(), test.context)).status,
+    ).toBe(409);
+    expect(
+      (
+        await test.handlers.unfollowDELETE(authenticated(), {
+          params: test.context.params.then((params) => ({
+            ...params,
+            subscriptionId: operational.subscriptionId,
+          })),
+        })
+      ).status,
+    ).toBe(409);
+    expect((await repo.getDelivery(recipient, operational.id))?.state).toBe(
+      "pending",
+    );
+  },
+);

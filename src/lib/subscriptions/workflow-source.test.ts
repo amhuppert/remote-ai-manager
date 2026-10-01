@@ -42,6 +42,12 @@ function boundary(recordResult: boolean) {
     id: source.id,
     ownerConversationId: "origin",
     status: "halted",
+    haltReason: {
+      type: "max_iterations",
+      contextId: "planning",
+      iterationCount: 3,
+      summary: null,
+    },
   });
   fixture.graphWorkflowExecutions.setActive(
     projectPath,
@@ -147,11 +153,62 @@ it("gives a terminal finite wait the same boundary occurrence and full evidence 
     recipient,
     source,
   );
-  expect(terminal).toEqual({ kind: "terminal", fact: passive.facts[0] });
+  expect(terminal).toEqual({
+    kind: "terminal",
+    resumable: true,
+    fact: passive.facts[0],
+  });
   expect(terminal).toMatchObject({
     fact: { occurrenceId: String(h.record.id) },
   });
 });
+it("marks completed outcomes final even without a recorded boundary", async () => {
+  const h = boundary(false);
+  fixture.graphWorkflowExecutions.setActive(
+    projectPath,
+    sessionName,
+    {
+      ...h.execution,
+      status: "completed",
+    },
+    at,
+  );
+  expect(
+    await createWorkflowTerminalSourceReader(deps())(recipient, source),
+  ).toMatchObject({
+    kind: "terminal",
+    resumable: false,
+    fact: { outcome: "completed" },
+  });
+});
+it.each([true, false])(
+  "does not offer a new boundary after a non-resumable halt (recorded=%s)",
+  async (recorded) => {
+    const h = boundary(false);
+    const execution = {
+      ...h.execution,
+      haltReason: {
+        type: "recovery_error" as const,
+        message: "Execution cannot recover",
+      },
+    };
+    fixture.graphWorkflowExecutions.setActive(
+      projectPath,
+      sessionName,
+      execution,
+      at,
+    );
+    if (!recorded)
+      fixture.db.prepare("DELETE FROM graph_workflow_events").run();
+    expect(
+      await createWorkflowTerminalSourceReader(deps())(recipient, source),
+    ).toMatchObject({
+      kind: "terminal",
+      resumable: false,
+      fact: { outcome: "halted" },
+    });
+  },
+);
 it("preserves accepted inbox evidence for a surviving project recipient after source-session deletion and blocks a deleted recipient", async () => {
   const h = boundary(true);
   const projectRecipient = { projectPath, conversationId: "project-recipient" };

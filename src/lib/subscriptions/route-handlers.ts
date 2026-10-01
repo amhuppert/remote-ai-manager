@@ -10,16 +10,13 @@ import {
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { isRuntimeLossNotice } from "./runtime-loss-notices";
 import type {
   ActiveSubscriptionWait,
   RegisterActiveWaitInput,
   SubscriptionWakeBatch,
 } from "./active-wait-schemas";
 import { registerActiveWaitSchema } from "./active-wait-schemas";
-import {
-  ActiveWaitConflictError,
-  ActiveWaitRegistrationError,
-} from "./active-wait-service";
 import type {
   ConversationSubscription,
   SubscriptionRecipient,
@@ -69,6 +66,7 @@ export interface SubscriptionWaitRouteService {
   get(
     recipient: SubscriptionRecipient,
     subscriptionId: string,
+    waitId?: string,
   ): Promise<ActiveSubscriptionWait | null>;
   getBatch(batchId: string): Promise<SubscriptionWakeBatch | null>;
   cancel(
@@ -87,6 +85,9 @@ const paginationSchema = z
   })
   .strict();
 const waitPaginationSchema = paginationSchema.omit({ all: true });
+const waitDetailQuerySchema = z
+  .object({ waitId: z.string().min(1).optional() })
+  .strict();
 const waitRequestSchema = registerActiveWaitSchema
   .pick({ source: true, reason: true })
   .extend({ expiresIn: z.number().int().min(1).max(604800).default(86400) })
@@ -103,10 +104,17 @@ function pagination(request: Request) {
   return paginationSchema.safeParse(paginationParams(request));
 }
 function waitErrorResponse(error: unknown): Response | null {
-  return error instanceof ActiveWaitConflictError ||
-    error instanceof ActiveWaitRegistrationError
-    ? jsonError(error.message, error.status, error.code)
-    : null;
+  // The retained runtime can outlive a module reload; constructor identity
+  // cannot decide whether its domain refusal is an actionable HTTP response.
+  if (
+    error instanceof Error &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    "code" in error &&
+    typeof error.code === "string"
+  )
+    return jsonError(error.message, error.status, error.code);
+  return null;
 }
 
 export function createSubscriptionRouteHandlers(
@@ -116,6 +124,9 @@ export function createSubscriptionRouteHandlers(
   async function resolve(
     request: Request,
     context: SubscriptionRouteContext,
+    canReadOperationalLoss?: (
+      recipient: SubscriptionRecipient,
+    ) => Promise<boolean>,
   ): Promise<RouteResolution<SubscriptionRecipient>> {
     const token = await deps.auth.validateOptionalToken(request);
     if (token.kind === "invalid")
@@ -152,6 +163,11 @@ export function createSubscriptionRouteHandlers(
     if (!resolved.ok) return resolved;
     const { conversation, projectPath, conversationId } = resolved.value;
     if (!isOrdinaryConversationRole(conversation.role)) {
+      if (
+        token.kind === "valid" &&
+        (await canReadOperationalLoss?.({ projectPath, conversationId }))
+      )
+        return { ok: true, value: { projectPath, conversationId } };
       return {
         ok: false,
         response: jsonError(
@@ -219,11 +235,24 @@ export function createSubscriptionRouteHandlers(
     request: Request,
     context: SubscriptionRouteContext,
   ): Promise<Response> {
-    const recipient = await resolve(request, context);
+    const deliveryId = (await context.params)["deliveryId"] ?? "";
+    let operationalDelivery: SubscriptionDelivery | null = null;
+    const recipient = await resolve(request, context, async (target) => {
+      const candidate = await deps.getService().getDelivery(target, deliveryId);
+      if (
+        !candidate ||
+        candidate.recipient.projectPath !== target.projectPath ||
+        candidate.recipient.conversationId !== target.conversationId ||
+        !isRuntimeLossNotice(candidate)
+      )
+        return false;
+      operationalDelivery = candidate;
+      return true;
+    });
     if (!recipient.ok) return recipient.response;
-    const delivery = await deps
-      .getService()
-      .getDelivery(recipient.value, (await context.params)["deliveryId"] ?? "");
+    const delivery =
+      operationalDelivery ??
+      (await deps.getService().getDelivery(recipient.value, deliveryId));
     return delivery
       ? Response.json({ delivery })
       : notFound("Subscription delivery not found");
@@ -320,12 +349,23 @@ export function createSubscriptionRouteHandlers(
     request: Request,
     context: SubscriptionRouteContext,
   ): Promise<Response> {
+    const query = waitDetailQuerySchema.safeParse(
+      Object.fromEntries(new URL(request.url).searchParams),
+    );
+    if (!query.success)
+      return jsonError(
+        "Invalid wait detail query",
+        400,
+        "INVALID_SUBSCRIPTION_QUERY",
+        { issues: query.error.issues },
+      );
     const recipient = await resolve(request, context);
     if (!recipient.ok) return recipient.response;
     const service = deps.getWaitService();
     const wait = await service.get(
       recipient.value,
       (await context.params)["subscriptionId"] ?? "",
+      query.data.waitId,
     );
     if (!wait) return notFound("Active subscription wait not found");
     const batch = wait.batchId ? await service.getBatch(wait.batchId) : null;

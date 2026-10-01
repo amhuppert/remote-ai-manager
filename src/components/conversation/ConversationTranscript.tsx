@@ -1,4 +1,5 @@
 "use client";
+import { useSearchParams } from "next/navigation";
 
 import {
   useCallback,
@@ -251,9 +252,16 @@ function TranscriptCore({
   );
 
   const requestLinkedMessage = useRequestMessageNav();
+  const searchParams = useSearchParams();
+  const linkedConversation =
+    searchParams?.get("c") ?? searchParams?.get("focus");
+  const linkedMessage = searchParams?.get("m");
   const visitedMessageLink = useRef<string | null>(null);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams();
+    if (linkedConversation) params.set("c", linkedConversation);
+    if (linkedMessage) params.set("m", linkedMessage);
+    else visitedMessageLink.current = null;
     const index = subscriptionMessageIndex(
       params,
       conversationId,
@@ -263,7 +271,13 @@ function TranscriptCore({
     if (index === null || visitedMessageLink.current === key) return;
     visitedMessageLink.current = key;
     requestLinkedMessage(conversationId, index);
-  }, [conversationId, displayMessages, requestLinkedMessage]);
+  }, [
+    conversationId,
+    displayMessages,
+    linkedConversation,
+    linkedMessage,
+    requestLinkedMessage,
+  ]);
 
   const collabEnvelope = collab?.envelope;
   const hiddenMessageIndex = collab?.hiddenMessageIndex ?? null;

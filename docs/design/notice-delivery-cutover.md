@@ -8,7 +8,9 @@ Accepted source context records rendered revisions, open-comment markers and obs
 
 New comment UUIDs produce distinct comment-added facts; resolving, deleting, renaming, pinning or archiving does not manufacture feedback. Existing comment identities do not become new additions when reopened. Own edits remain suppressed. Newly rendered references cover only their exact content/comment snapshot: facts covered by that snapshot can share its input receipt, but later changes remain pending. A prepared or rejected input never advances accepted source context.
 
-Legacy aggregate comment markers cannot recover original UUID membership. The migration preserves their accepted revision/marker, seeds history conservatively, and uses exact identities for subsequent reads. It must not replay all historical comments as newly submitted feedback.
+Legacy aggregate comment markers cannot recover original UUID membership. The migration preserves their accepted revision/marker, seeds history conservatively, and uses exact identities for subsequent reads. It must not replay all historical comments as newly submitted feedback. The legacy timestamp itself is already observed, so only strictly later timestamps count as new during that first reconciliation. Subsequent reconciliations use exact comment IDs.
+
+Revision notices retain the latest revision metadata and a retrieval handle, without copying document content into each follower’s inbox. Reconciliation coalesces unseen content history; it preserves distinct comment and decision evidence. Accepted reference revisions supersede only redundant pending or proven-unsent revision facts, leaving uncertain receipts inspectable.
 
 ## Workflow results
 
@@ -24,7 +26,7 @@ Use durable repository tests for migrations, canonical identity/receipt merging,
 
 ## Implementation and verification
 
-Migration 0062 preserves existing accepted notepad baselines and adds optional observed-comment identities without inventing historical membership. Migration 0063 transfers workflow delivery receipts and normalizes proven terminal-wait identities to canonical boundary IDs, keeping delivery/read/wait links and immutable full evidence. Ambiguous old wait identities remain uncertain. Both migrations run transactionally and can be rerun. The schema compatibility floor advances to 27 before structural changes; older binaries cannot open the upgraded datastore.
+Migration 0062 preserves existing accepted notepad baselines and adds optional observed-comment identities without inventing historical membership. Migration 0063 transfers workflow delivery receipts and normalizes proven terminal-wait identities to canonical boundary IDs, keeping delivery/read/wait links and immutable full evidence. Ambiguous old wait identities remain uncertain. Both migrations run transactionally and can be rerun. The ordered startup migrations publish the schema-27 compatibility barrier before structural changes; older binaries cannot open the upgraded datastore. A plain database open, including one during a build, does not perform this cutover or publish the barrier. Migration 0064 retires legacy automatic validation follows, and 0065 introduces wait generations under schema 28, also only at ordered startup.
 
 Focused durable checks cover migration rollback, idempotence, receipt precedence, retained evidence, ownerless workflows, source/recipient deletion, accepted versus uncertain results, explicit-wait reuse, comment withdrawal, coalesced revision coverage and source context accepted independently of unrelated policy-write failures. Review found and fixed two recovery races: identity normalization overwriting existing full evidence, and an older accepted-reference retry overwriting newer notepad awareness.
 

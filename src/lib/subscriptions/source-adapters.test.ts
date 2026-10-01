@@ -185,6 +185,13 @@ describe("durable subscription sources", () => {
     expect(baseline.missing).toBe(false);
     events.append({
       spec_id: "spec",
+      occurred_at: "2026-09-30T10:00:30.000Z",
+      event_type: "spec-revision-changed",
+      actor_json: JSON.stringify({ kind: "system" }),
+      payload_json: JSON.stringify({ kind: "execution-changed" }),
+    });
+    events.append({
+      spec_id: "spec",
       occurred_at: "2026-09-30T10:01:00.000Z",
       event_type: "spec-review-changes-requested",
       actor_json: JSON.stringify({ kind: "human" }),
@@ -204,14 +211,19 @@ describe("durable subscription sources", () => {
       }),
     });
     const updated = await reader()(recipient, source, baseline.cursor);
+    expect(updated.facts[0]).toMatchObject({ actorConversationId: null });
     expect(updated.facts.map((fact) => fact.category)).toEqual([
+      "revision",
       "decision",
       "decision",
     ]);
-    expect(new Set(updated.facts.map((fact) => fact.occurrenceId)).size).toBe(
-      2,
+    expect((await reader()(recipient, source, updated.cursor)).facts).toEqual(
+      [],
     );
-    expect(updated.facts[0]?.summary).toContain("Add rollback behavior");
+    expect(new Set(updated.facts.map((fact) => fact.occurrenceId)).size).toBe(
+      3,
+    );
+    expect(updated.facts[1]?.summary).toContain("Add rollback behavior");
   });
 
   it("reads validation terminal snapshots once without suppressing the submitter's result", async () => {
@@ -257,7 +269,7 @@ describe("durable subscription sources", () => {
     const updated = await reader()(recipient, source, baseline.cursor);
     expect(updated.facts).toMatchObject([
       {
-        occurrenceId: "validation:failed",
+        occurrenceId: "one-time-terminal:validation:validation",
         category: "outcome",
         outcome: "failed",
         actorConversationId: recipient.conversationId,
@@ -289,8 +301,18 @@ describe("durable subscription sources", () => {
     expect(
       (await reader()(recipient, source, baseline.cursor)).facts,
     ).toMatchObject([
-      { category: "outcome", outcome: "failed", actorConversationId: null },
+      {
+        occurrenceId: "one-time-terminal:git_job:git-job",
+        category: "outcome",
+        outcome: "failed",
+        actorConversationId: null,
+      },
     ]);
+    const jobFact = (await reader()(recipient, source, baseline.cursor))
+      .facts[0];
+    expect(jobFact?.occurredAt).toMatch(/T.*Z$/);
+    expect(jobFact?.retrievalHandle).toContain("cctl inbox list");
+    expect(jobFact?.sourceText).toContain('"jobId":"git-job"');
     expect(
       (
         await reader()(

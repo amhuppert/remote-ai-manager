@@ -1,3 +1,4 @@
+import { createSubscriptionRuntime } from "@/lib/subscriptions/service-factory";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   createPersistenceFixture,
@@ -493,5 +494,198 @@ it.each(["absent", "summary", "frozen"] as const)(
       attemptId: h.delivery.attemptId,
       fact: incumbent === "frozen" ? canonicalFact : normalizedFact,
     });
+  },
+);
+
+it("keeps real pending inbox evidence retryable when a legacy fallback has no runtime admission attempt", async () => {
+  const fallback = result(101, {
+    state: "delivered",
+    attemptId: null,
+    attemptCount: 0,
+    deliveredAt: acceptedAt,
+  });
+  const repo = createConversationSubscriptionsRepo(
+    fixture.db,
+    createWriteQueue(),
+  );
+  const follow = subscription();
+  await repo.createIfAbsent(follow);
+  const canonical = subscriptionDeliverySchema.parse({
+    id: "real-pending",
+    subscriptionId: follow.id,
+    recipient,
+    source,
+    fact: projectRecordedWorkflowSourceFact(fallback),
+    recordedAt: at,
+    state: "pending",
+    attemptId: null,
+    attemptCount: 0,
+    queuedAt: null,
+    acceptedAt: null,
+    finishedAt: null,
+    lastError: null,
+  });
+  await repo.recordDelivery(canonical);
+  await migrate();
+  await migrate();
+  expect(
+    await createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    ).getDelivery(recipient, canonical.id),
+  ).toEqual(canonical);
+});
+
+it.each(["inbox", "boundary"] as const)(
+  "identifies an unreadable historical %s row and preserves it on failed import",
+  async (kind) => {
+    const boundary = result(101);
+    const repo = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    const follow = subscription();
+    await repo.createIfAbsent(follow);
+    await repo.recordDelivery(
+      subscriptionDeliverySchema.parse({
+        id: "corrupt-delivery",
+        subscriptionId: follow.id,
+        recipient,
+        source,
+        fact: projectRecordedWorkflowSourceFact(boundary),
+        recordedAt: at,
+        state: "pending",
+        attemptId: null,
+        attemptCount: 0,
+        queuedAt: null,
+        acceptedAt: null,
+        finishedAt: null,
+        lastError: null,
+      }),
+    );
+    const corrupt = '{"bad":true}';
+    if (kind === "inbox")
+      fixture.db
+        .prepare(
+          "UPDATE conversation_subscription_deliveries SET fact_json=? WHERE id='corrupt-delivery'",
+        )
+        .run(corrupt);
+    else
+      fixture.db
+        .prepare(
+          "UPDATE graph_workflow_result_deliveries SET payload_json=? WHERE execution_id=? AND boundary_seq=101",
+        )
+        .run("[", source.id);
+    await expect(migrate()).rejects.toThrow(
+      kind === "inbox"
+        ? "historical workflow inbox delivery corrupt-delivery"
+        : "historical workflow boundary execution:101",
+    );
+    expect(
+      fixture.db
+        .prepare(
+          "SELECT state,attempt_id FROM conversation_subscription_deliveries WHERE id='corrupt-delivery'",
+        )
+        .get(),
+    ).toEqual({ state: "pending", attempt_id: null });
+    expect(
+      fixture.db
+        .prepare("SELECT version FROM schema_migrations WHERE version=27")
+        .get(),
+    ).toBeUndefined();
+    expect(
+      fixture.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM conversation_subscription_deliveries",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+  },
+);
+
+it.each([false, true])(
+  "baselines a new migration follow at the known event head while directly importing outstanding=%s obligations",
+  async (outstanding) => {
+    const old = createWorkflowExecution({
+      id: source.id,
+      ownerConversationId: recipient.conversationId,
+      status: "halted",
+    });
+    const oldAt = "2026-09-01T04:00:00.000Z";
+    const oldBoundary = fixture.graphWorkflowEvents.append(
+      projectPath,
+      sessionName,
+      source.id,
+      oldAt,
+      {
+        event: createGraphWorkflowBoundaryEvent({
+          projectPath,
+          sessionName,
+          execution: old,
+          boundaryKind: "halt",
+        }),
+        occurredAt: oldAt,
+        preReset: false,
+      },
+    );
+    const current = createWorkflowExecution({
+      id: source.id,
+      ownerConversationId: recipient.conversationId,
+      status: "completed",
+    });
+    fixture.graphWorkflowExecutions.setActive(
+      projectPath,
+      sessionName,
+      current,
+      at,
+    );
+    const completed = fixture.graphWorkflowEvents.append(
+      projectPath,
+      sessionName,
+      source.id,
+      at,
+      {
+        event: createGraphWorkflowBoundaryEvent({
+          projectPath,
+          sessionName,
+          execution: current,
+          boundaryKind: "completion",
+        }),
+        occurredAt: at,
+        preReset: false,
+      },
+    );
+    if (outstanding) result(oldBoundary.id, { recordedAt: oldAt });
+    result(completed.id, {
+      state: "delivered",
+      attemptId: "accepted-runtime",
+      attemptCount: 1,
+      deliveredAt: acceptedAt,
+      payload: {
+        boundaryKind: "completion",
+        status: "completed",
+        name: "Already accepted",
+      },
+    });
+    await migrate();
+    await migrate();
+    const runtime = createSubscriptionRuntime(fixture.db, createWriteQueue());
+    expect((await runtime.repo.findBySource(recipient, source))?.cursor).toBe(
+      String(completed.id),
+    );
+    await runtime.service.reconcile(recipient);
+    expect(
+      (await runtime.repo.listDeliveriesForOverview(recipient))
+        .map((delivery) => ({
+          id: delivery.fact.occurrenceId,
+          state: delivery.state,
+        }))
+        .sort((left, right) => Number(left.id) - Number(right.id)),
+    ).toEqual([
+      ...(outstanding
+        ? [{ id: String(oldBoundary.id), state: "pending" }]
+        : []),
+      { id: String(completed.id), state: "accepted" },
+    ]);
   },
 );

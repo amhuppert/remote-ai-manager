@@ -565,6 +565,39 @@ describe("waitForTurnCompletion — turn ends parked on a user question", () => 
 });
 
 describe("executePromptStream (facade)", () => {
+  it.each(["failed", "uncertain"] as const)(
+    "allows a human prompt while an automatic wake is %s",
+    async (status) => {
+      const existing = makeConversation({
+        pendingQueue: [
+          {
+            ...createPendingEntry({
+              id: "wake",
+              content: [
+                {
+                  type: "text",
+                  text: "<subscription_update>machine</subscription_update>",
+                },
+              ],
+              now: "now",
+            }),
+            status,
+            metadata: { kind: "subscription_update", batchId: "wake" },
+          },
+        ],
+      });
+      deps = createTestDeps({ getConversation: async () => existing });
+      const result = await createPromptExecutor(deps).executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Continue",
+        vi.fn(),
+        existing.id,
+      );
+      expect(result.conversationId).toBe(existing.id);
+      expect(deps.submitConversationTurn).toHaveBeenCalledOnce();
+    },
+  );
   it.each(["hello", "/commit", "/collab examine this"])(
     "blocks %s while a delivery needs review",
     async (prompt) => {

@@ -12,7 +12,10 @@ import {
   type SubscriptionControlRequest,
   type SubscribeRequest,
 } from "./controls-schemas";
-import { conversationSubscriptionSchema } from "./schemas";
+import {
+  conversationSubscriptionSchema,
+  subscriptionDeliverySchema,
+} from "./schemas";
 import { subscriptionKeys } from "./query-keys";
 export function useSubscriptionControl() {
   const client = useQueryClient();
@@ -83,6 +86,28 @@ export function useMarkSubscriptionRead() {
           body: JSON.stringify({ read: input.read }),
         },
         z.object({ readAt: z.string().nullable() }),
+      ),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: subscriptionKeys.all }),
+  });
+}
+export function useReviewSubscriptionDelivery() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      target: ConversationTarget;
+      id: string;
+      action: "retry" | "dismiss";
+    }) =>
+      mutationFetch(
+        `${conversationTargetApiBase(input.target)}/inbox/${encodeURIComponent(input.id)}/read`,
+        "subscriptions.review",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: input.action }),
+        },
+        z.object({ delivery: subscriptionDeliverySchema }),
       ),
     onSuccess: () =>
       client.invalidateQueries({ queryKey: subscriptionKeys.all }),

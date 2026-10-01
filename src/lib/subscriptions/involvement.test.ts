@@ -11,7 +11,7 @@ import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
 import { createNotepadsRepo } from "@/lib/state-store/notepads-repo";
 import { createSubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
-import { createTicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
+import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { validationRunRecordSchema } from "@/lib/validation/schemas";
@@ -37,7 +37,6 @@ function discover() {
     watermarks: createNotepadDeliveryWatermarksRepo(fixture.db, queue),
     notepads: createNotepadsRepo(fixture.db, queue),
     queries: createSubscriptionSourceQueriesRepo(fixture.db),
-    ticketChanges: createTicketStatusChangesRepo(fixture.db),
   });
 }
 
@@ -289,6 +288,58 @@ describe("recorded subscription involvement", () => {
       ).toEqual([]);
     });
   }
+
+  it("starts discovered spec follows at the current head instead of replaying historical events", async () => {
+    await fixture.seedProjectConversation(
+      projectPath,
+      conversationStateSchema.parse({
+        id: conversationId,
+        scope: "project",
+        status: "idle",
+        transcriptPath: null,
+        promptCount: 0,
+        createdAt: "2026-09-30T10:00:00.000Z",
+        lastActivityAt: "2026-09-30T10:00:00.000Z",
+      }),
+    );
+    await fixture.specs.create({
+      spec: {
+        id: "spec",
+        projectPath,
+        slug: "shipping",
+        name: "Shipping",
+        gatePolicy: { preset: "contract-bearing" },
+        createdAt: "2026-09-30T10:00:00.000Z",
+        updatedAt: "2026-09-30T10:00:00.000Z",
+      },
+      initialRevision: {
+        id: "r1",
+        authoringStage: "requirements",
+        createdAt: "2026-09-30T10:00:00.000Z",
+      },
+    });
+    const events = createSpecEventsRepo(fixture.db);
+    const append = (actor: object) =>
+      events.append({
+        spec_id: "spec",
+        event_type: "spec-revision-changed",
+        occurred_at: "2026-09-30T10:01:00.000Z",
+        actor_json: JSON.stringify(actor),
+        payload_json: JSON.stringify({
+          kind: "element-upserted",
+          revisionId: "r1",
+        }),
+      });
+    append({ kind: "agent", conversationId });
+    append({ kind: "human" });
+    const runtime = createSubscriptionRuntime(fixture.db, createWriteQueue());
+    const recipient = { projectPath, conversationId };
+    expect((await runtime.service.readInbox(recipient, {})).items).toEqual([]);
+    append({ kind: "human" });
+    expect((await runtime.service.readInbox(recipient, {})).items).toHaveLength(
+      1,
+    );
+  });
 
   it("keeps accepted context involvement when the notepad is deleted before the next read", async () => {
     await fixture.seedProjectConversation(
