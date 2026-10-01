@@ -132,6 +132,21 @@ describe("compactionEnvelopeToMarkdown", () => {
     expect(md).not.toContain("## Open questions");
   });
 
+  it("reports transcript bytes cut by the model budget only when some were", () => {
+    expect(compactionEnvelopeToMarkdown(envelope, freshMeta)).not.toContain(
+      "transcript bytes cut",
+    );
+
+    const cut = compactionEnvelopeToMarkdown(
+      {
+        ...envelope,
+        omissions: { ...envelope.omissions, transcriptBytesTruncated: 51_200 },
+      },
+      freshMeta,
+    );
+    expect(cut).toContain("transcript bytes cut by the model budget: 51200");
+  });
+
   it("renders omissions and extras, omitting extras when empty", () => {
     const md = compactionEnvelopeToMarkdown(envelope, freshMeta);
     expect(md).toContain("large tool outputs elided: 18");

@@ -84,6 +84,12 @@ export const compactionEnvelopeSchema = z.object({
   omissions: z.object({
     reasoningOmitted: z.boolean(),
     largeToolOutputsElided: z.number().int(),
+    /**
+     * Rendered transcript bytes the model never saw because one message alone
+     * exceeded the render budget. Generation owns it — the model is never
+     * asked for it — and it is absent when nothing was cut.
+     */
+    transcriptBytesTruncated: z.number().int().positive().optional(),
   }),
   extras: z.record(z.string(), z.unknown()).default({}),
 });

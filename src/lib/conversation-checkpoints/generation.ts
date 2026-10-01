@@ -245,7 +245,6 @@ interface GenerationDiagnostic {
     | "model_error"
     | "schema_invalid"
     | "guard_violations"
-    | "oversize_render"
     | "no_segments"
     | "working_state_invalid";
   at?: string[];

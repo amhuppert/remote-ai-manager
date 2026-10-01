@@ -81,6 +81,9 @@ export const compactionStructuredOutputSchema = compactionEnvelopeSchema.extend(
     commands: z.array(compactionOutputCommandSchema),
     openQuestions: z.array(compactionOutputAnchoredNoteSchema),
     blockers: z.array(compactionOutputAnchoredNoteSchema),
+    omissions: compactionEnvelopeSchema.shape.omissions.omit({
+      transcriptBytesTruncated: true,
+    }),
     extras: z.object({}),
   },
 );

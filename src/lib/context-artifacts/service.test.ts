@@ -649,24 +649,6 @@ describe("createCompactionService — retries and failures", () => {
     expect(row.status).toBe("failed");
     expect(row.error).toBe("backend exploded");
   });
-
-  it("fails with transcript_too_large_for_single_pass on oversize renders", async () => {
-    const oversize: TranscriptEntriesResult = {
-      entries: [
-        makeEntry(0, "user", "x".repeat(COMPACTION_MODEL_BUDGET_BYTES + 100)),
-      ],
-      maxSeq: 0,
-    };
-    const service = echoService(oversize);
-
-    const result = await service.trigger(makeTriggerInput());
-    if (result.outcome !== "started") throw new Error("expected started");
-    const row = await result.completion;
-
-    expect(prompts).toHaveLength(0);
-    expect(row.status).toBe("failed");
-    expect(row.error).toBe("transcript_too_large_for_single_pass");
-  });
 });
 
 describe("createCompactionService — coalescing and freshness", () => {
@@ -1162,20 +1144,25 @@ describe("createCompactionService — delta-fold (large conversations)", () => {
     );
   });
 
-  it("still fails a lone message larger than the budget — folding cannot help", async () => {
+  it("completes a lone message larger than the budget and persists how much was cut", async () => {
+    const body = Array.from(
+      { length: Math.ceil(COMPACTION_MODEL_BUDGET_BYTES / 1_000) + 50 },
+      (_, index) => `line ${index} ${"x".repeat(990)}`,
+    ).join("\n");
     const service = echoService({
-      entries: [
-        makeEntry(0, "user", "x".repeat(COMPACTION_MODEL_BUDGET_BYTES + 100)),
-      ],
+      entries: [makeEntry(0, "user", body)],
       maxSeq: 0,
     });
     const result = await service.trigger(makeTriggerInput());
     if (result.outcome !== "started") throw new Error("expected started");
     const row = await result.completion;
 
-    expect(prompts).toHaveLength(0);
-    expect(row.status).toBe("failed");
-    expect(row.error).toBe("transcript_too_large_for_single_pass");
+    expect(prompts).toHaveLength(1);
+    expect(row.status).toBe("complete");
+    const reloaded = repo.findById(result.artifactId);
+    expect(
+      reloaded?.payload?.omissions.transcriptBytesTruncated,
+    ).toBeGreaterThan(40_000);
   });
 });
 

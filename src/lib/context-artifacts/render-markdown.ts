@@ -113,7 +113,11 @@ export function compactionEnvelopeToMarkdown(
         (note) => `${note.text}${refsSuffix(note.sourceRefs)}`,
       ),
     ),
-    `## Omissions\nreasoning omitted: ${envelope.omissions.reasoningOmitted ? "yes" : "no"} · large tool outputs elided: ${envelope.omissions.largeToolOutputsElided}`,
+    `## Omissions\nreasoning omitted: ${envelope.omissions.reasoningOmitted ? "yes" : "no"} · large tool outputs elided: ${envelope.omissions.largeToolOutputsElided}${
+      envelope.omissions.transcriptBytesTruncated === undefined
+        ? ""
+        : ` · transcript bytes cut by the model budget: ${envelope.omissions.transcriptBytesTruncated}`
+    }`,
     Object.keys(envelope.extras).length === 0
       ? null
       : `## Extras\n\`\`\`json\n${JSON.stringify(envelope.extras, null, 2)}\n\`\`\``,

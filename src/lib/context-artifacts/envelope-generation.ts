@@ -66,8 +66,9 @@ const genLogger = createLogger("context-artifacts.generation");
  * sequential delta-fold path (docs/design/conversation-compaction/README.md
  * §7.3): the transcript is split into `SEGMENT_WINDOW_BUDGET_BYTES` windows
  * folded through the existing delta-merge contract. A single message that
- * alone exceeds this budget still fails with `OVERSIZE_RENDER_ERROR` —
- * folding a lone unit cannot help.
+ * alone exceeds this budget cannot be split, so the model sees the lines that
+ * fit and the envelope records the rest in
+ * `omissions.transcriptBytesTruncated`.
  */
 export const COMPACTION_MODEL_BUDGET_BYTES = 600_000;
 
@@ -86,7 +87,6 @@ const CARRIED_ENVELOPE_RESERVE_BYTES = 120_000;
 export const SEGMENT_WINDOW_BUDGET_BYTES =
   COMPACTION_MODEL_BUDGET_BYTES - CARRIED_ENVELOPE_RESERVE_BYTES;
 
-export const OVERSIZE_RENDER_ERROR = "transcript_too_large_for_single_pass";
 export const CANCELLED_GENERATION_ERROR = "generation_cancelled";
 
 /**
@@ -172,7 +172,6 @@ export interface EnvelopeGenerationDeps {
 export interface EnvelopeGenerationFailure {
   code:
     | "cancelled"
-    | "oversize_render"
     | "model_error"
     | "schema_invalid"
     | "guard_violations"
@@ -238,7 +237,6 @@ interface PassPrep {
   /** Explicit seq window; null renders the whole snapshot (or the message). */
   window: { seqStart: number; seqEnd: number } | null;
   expected: { startSeq: number; endSeq: number };
-  allowTruncation: boolean;
 }
 
 interface PreparedRun {
@@ -246,8 +244,8 @@ interface PreparedRun {
   expected: { startSeq: number; endSeq: number };
   sourceHash: string;
   inputBytes: number;
-  /** True when the render hit maxBytes; only tolerated on fold segments. */
-  truncated: boolean;
+  /** Rendered bytes of an oversize message that `maxBytes` kept from the model. */
+  truncatedBytes: number;
 }
 
 type ModelPassResult =
@@ -282,12 +280,6 @@ function guardCoordinate(violation: CompactionGuardViolation): string {
   return `${violation.code}@${violation.at}`;
 }
 
-class OversizeRenderError extends Error {
-  constructor() {
-    super(OVERSIZE_RENDER_ERROR);
-  }
-}
-
 class CancelledGenerationError extends Error {
   constructor() {
     super(CANCELLED_GENERATION_ERROR);
@@ -297,6 +289,7 @@ class CancelledGenerationError extends Error {
 function renderForSpec(
   request: EnvelopeGenerationRequest,
   spec: PassPrep,
+  maxBytes = COMPACTION_MODEL_BUDGET_BYTES,
 ): RenderedTranscript {
   const { source } = request;
   const windowOptions: Record<string, unknown> = {};
@@ -308,7 +301,7 @@ function renderForSpec(
   const options: RenderOptions = renderOptionsSchema.parse({
     includeTools: "summary",
     includeThinking: false,
-    maxBytes: COMPACTION_MODEL_BUDGET_BYTES,
+    maxBytes,
     ...windowOptions,
   });
   return renderCompactTranscript(
@@ -322,14 +315,30 @@ function renderForSpec(
   );
 }
 
+/** Transcript bytes in a render, leaving out the renderer's own cut marker. */
+function transcriptLineBytes(rendered: RenderedTranscript): number {
+  let bytes = 0;
+  for (const unit of rendered.units) {
+    for (const line of unit.lines) {
+      if (line.startsWith("… [unit truncated: ")) continue;
+      bytes += Buffer.byteLength(line, "utf-8") + 1;
+    }
+  }
+  return bytes;
+}
+
 function prepareRun(
   request: EnvelopeGenerationRequest,
   spec: PassPrep,
 ): PreparedRun {
   const rendered = renderForSpec(request, spec);
-  if (rendered.truncated && !spec.allowTruncation) {
-    throw new OversizeRenderError();
-  }
+  // Every pass that reaches here is unit-aligned by the fold planner, so a
+  // truncated render means one message alone is larger than the budget.
+  const truncatedBytes = rendered.truncated
+    ? transcriptLineBytes(
+        renderForSpec(request, spec, Number.MAX_SAFE_INTEGER),
+      ) - transcriptLineBytes(rendered)
+    : 0;
 
   const redactedRendered = redactEnvelopeStrings(rendered);
   const markdown = renderedTranscriptToMarkdown(redactedRendered);
@@ -366,7 +375,7 @@ function prepareRun(
     expected: spec.expected,
     sourceHash,
     inputBytes: Buffer.byteLength(prompt, "utf-8"),
-    truncated: rendered.truncated,
+    truncatedBytes,
   };
 }
 
@@ -382,7 +391,6 @@ function specFor(
       previousEnvelope: null,
       window: null,
       expected: plan.expected,
-      allowTruncation: false,
     };
   }
   if (mode === "delta" && plan.previousEnvelope !== null) {
@@ -394,7 +402,6 @@ function specFor(
         seqEnd: source.maxSeq,
       },
       expected: plan.expected,
-      allowTruncation: false,
     };
   }
   return {
@@ -405,7 +412,6 @@ function specFor(
       startSeq: source.entries[0]?.seq ?? 0,
       endSeq: lastRenderedSeq(source.entries, source.maxSeq),
     },
-    allowTruncation: false,
   };
 }
 
@@ -624,16 +630,34 @@ export async function generateCompactionEnvelope(
         },
       };
     }
+    // A delta's model output cannot carry the previous envelope's count, so
+    // the running total is re-applied here on every pass.
+    const truncatedBytes =
+      (previousEnvelope?.omissions.transcriptBytesTruncated ?? 0) +
+      prepared.truncatedBytes;
     return {
       ok: true,
-      envelope: attempt.envelope,
+      envelope:
+        truncatedBytes > 0
+          ? {
+              ...attempt.envelope,
+              omissions: {
+                ...attempt.envelope.omissions,
+                transcriptBytesTruncated: truncatedBytes,
+              },
+            }
+          : attempt.envelope,
       sourceHash: prepared.sourceHash,
       inputBytes: prepared.inputBytes,
       mode,
     };
   }
 
-  /** A delta guard refusal may start one independent full-mode call. */
+  /**
+   * A delta guard refusal may start one independent full-mode run. The delta
+   * fit one pass because it rendered only the new lines; the whole
+   * conversation may not, so the fallback is planned like any other full run.
+   */
   async function runSinglePass(): Promise<PassOutcome> {
     const mode = request.plan.mode;
     const outcome = await runPass(
@@ -647,26 +671,29 @@ export async function generateCompactionEnvelope(
       outcome.failure.code === "guard_violations" &&
       mode === "delta"
     ) {
-      return runPass(
-        prepareRun(request, specFor(request, "full")),
-        "full",
-        null,
-        null,
-        "full_fallback",
-      );
+      const segments = planFold("full");
+      return segments
+        ? runFold(segments, "full", "full_fallback")
+        : runPass(
+            prepareRun(request, specFor(request, "full")),
+            "full",
+            null,
+            null,
+            "full_fallback",
+          );
     }
     return outcome;
   }
 
   /**
-   * Decide whether a conversation compaction must be folded. Returns the
-   * segments when the planned single-pass render is oversize AND splits into
-   * ≥2 unit-aligned windows; null otherwise (single pass, or a lone oversize
+   * Decide whether a conversation compaction in `mode` must be folded. Returns
+   * the segments when its single-pass render is oversize AND splits into ≥2
+   * unit-aligned windows; null otherwise (single pass, or a lone oversize
    * message that folding cannot help).
    */
-  function planFold(): TranscriptSegment[] | null {
+  function planFold(mode: CompactionRunMode): TranscriptSegment[] | null {
     if (request.kind !== "conversation_compaction") return null;
-    const spec = specFor(request, request.plan.mode);
+    const spec = specFor(request, mode);
     const probe = renderForSpec(request, spec);
     if (!probe.truncated) return null;
 
@@ -699,9 +726,13 @@ export async function generateCompactionEnvelope(
    * anchored at the conversation start and extends monotonically to each
    * segment's end; the last step's envelope covers the whole snapshot.
    */
-  async function runFold(segments: TranscriptSegment[]): Promise<PassOutcome> {
+  async function runFold(
+    segments: TranscriptSegment[],
+    mode: CompactionRunMode,
+    kind: EnvelopePassKind = "initial",
+  ): Promise<PassOutcome> {
     const seededPrevious =
-      request.plan.mode === "delta" ? request.plan.previousEnvelope : null;
+      mode === "delta" ? request.plan.previousEnvelope : null;
     const coverageStart =
       seededPrevious !== null
         ? seededPrevious.source.coveredStartSeq
@@ -710,7 +741,7 @@ export async function generateCompactionEnvelope(
     log.info("artifact.fold.started", {
       runId: request.runId,
       conversationId: request.source.conversationId,
-      mode: request.plan.mode,
+      mode,
       segments: segments.length,
       coverageStart,
     });
@@ -718,8 +749,7 @@ export async function generateCompactionEnvelope(
     let previous: CompactionEnvelope | null = seededPrevious;
     let sourceHash = "";
     let inputBytes = 0;
-    const finalCoverageEnd = specFor(request, request.plan.mode).expected
-      .endSeq;
+    const finalCoverageEnd = specFor(request, mode).expected.endSeq;
 
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]!;
@@ -734,12 +764,14 @@ export async function generateCompactionEnvelope(
         previousEnvelope: previous,
         window: { seqStart: windowStart, seqEnd: endSeq },
         expected: { startSeq: coverageStart, endSeq },
-        allowTruncation: true,
       });
-      const step = await runPass(prepared, stepMode, previous, {
-        index: i + 1,
-        total: segments.length,
-      });
+      const step = await runPass(
+        prepared,
+        stepMode,
+        previous,
+        { index: i + 1, total: segments.length },
+        kind,
+      );
       if (!step.ok) {
         return {
           ok: false,
@@ -771,14 +803,16 @@ export async function generateCompactionEnvelope(
       envelope: previous,
       sourceHash,
       inputBytes,
-      mode: request.plan.mode,
+      mode,
     };
   }
 
   try {
     throwIfCancelled();
-    const segments = planFold();
-    const outcome = segments ? await runFold(segments) : await runSinglePass();
+    const segments = planFold(request.plan.mode);
+    const outcome = segments
+      ? await runFold(segments, request.plan.mode)
+      : await runSinglePass();
     return outcome.ok
       ? { ...outcome, passCount: state.passCount }
       : {
@@ -788,14 +822,6 @@ export async function generateCompactionEnvelope(
           passCount: state.passCount,
         };
   } catch (err) {
-    if (err instanceof OversizeRenderError) {
-      return {
-        ok: false,
-        error: OVERSIZE_RENDER_ERROR,
-        failure: plainFailure("oversize_render"),
-        passCount: state.passCount,
-      };
-    }
     if (err instanceof CancelledGenerationError) {
       return {
         ok: false,

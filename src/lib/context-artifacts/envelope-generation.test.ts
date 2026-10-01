@@ -17,7 +17,6 @@ import {
   generateCompactionEnvelope,
   CANCELLED_GENERATION_ERROR,
   COMPACTION_MODEL_BUDGET_BYTES,
-  OVERSIZE_RENDER_ERROR,
   type CapturedTranscriptSource,
   type EnvelopeGenerationPass,
   type EnvelopeGenerationRequest,
@@ -201,7 +200,6 @@ const CANCELLED_FAILURE = {
   at: [],
   failureKind: null,
 };
-const OVERSIZE_FAILURE = { ...CANCELLED_FAILURE, code: "oversize_render" };
 
 describe("generateCompactionEnvelope — captured source", () => {
   it("generates from the supplied snapshot and reports the single pass with its usage", async () => {
@@ -448,22 +446,80 @@ describe("generateCompactionEnvelope — pass accounting", () => {
     },
   );
 
-  it("fails with the oversize error when one message alone exceeds the budget", async () => {
+  /** Multi-line, so the byte budget cuts between lines rather than dropping all of it. */
+  const oversizeBody = Array.from(
+    { length: Math.ceil(COMPACTION_MODEL_BUDGET_BYTES / 1_000) + 50 },
+    (_, index) => `line ${index} ${"x".repeat(990)}`,
+  ).join("\n");
+
+  it.each(["conversation_compaction", "message_compaction"] as const)(
+    "builds a %s from the part of a lone oversize message that fits, recording the cut",
+    async (kind) => {
+      const source = capturedSource([makeEntry(0, "user", oversizeBody)]);
+      const outcome = await generateCompactionEnvelope(
+        makeRequest({
+          source,
+          kind,
+          messageIndex: kind === "message_compaction" ? 0 : null,
+        }),
+        deps(echo),
+      );
+
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.prompt).toContain("line 0 ");
+      expect(calls[0]?.prompt).not.toContain(
+        oversizeBody.slice(oversizeBody.lastIndexOf("line ")),
+      );
+      const cut = outcome.envelope.omissions.transcriptBytesTruncated;
+      expect(cut).toBeGreaterThan(40_000);
+      expect(cut).toBeLessThan(60_000);
+    },
+  );
+
+  it("leaves the truncation count off an envelope whose transcript fit", async () => {
+    const outcome = await generateCompactionEnvelope(makeRequest(), deps(echo));
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.envelope.omissions).not.toHaveProperty(
+      "transcriptBytesTruncated",
+    );
+  });
+
+  it("carries an earlier cut through a delta the model cannot report it in", async () => {
+    const seed = await generateCompactionEnvelope(
+      makeRequest({ source: capturedSource([makeEntry(0, "user", "first")]) }),
+      deps(echo),
+    );
+    if (!seed.ok) throw new Error("seed generation failed");
     const source = capturedSource([
-      makeEntry(0, "user", "x".repeat(COMPACTION_MODEL_BUDGET_BYTES + 100)),
+      makeEntry(0, "user", "first"),
+      makeEntry(1, "assistant", "later answer"),
     ]);
+
     const outcome = await generateCompactionEnvelope(
-      makeRequest({ source }),
+      makeRequest({
+        source,
+        plan: {
+          mode: "delta",
+          previousEnvelope: {
+            ...seed.envelope,
+            omissions: {
+              ...seed.envelope.omissions,
+              transcriptBytesTruncated: 4_096,
+            },
+          },
+          expected: { startSeq: 0, endSeq: 1 },
+        },
+      }),
       deps(echo),
     );
 
-    expect(outcome).toEqual({
-      ok: false,
-      error: OVERSIZE_RENDER_ERROR,
-      failure: OVERSIZE_FAILURE,
-      passCount: 0,
-    });
-    expect(calls).toHaveLength(0);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.envelope.omissions.transcriptBytesTruncated).toBe(4_096);
   });
 });
 
@@ -624,6 +680,48 @@ describe("generateCompactionEnvelope — failure diagnostics", () => {
       "guard_repair",
       "full_fallback",
       "guard_repair",
+    ]);
+  });
+
+  /**
+   * A small delta fits one pass even when the conversation behind it does not,
+   * so the full fallback is the first point the whole transcript is rendered.
+   */
+  it("folds the full fallback when the whole transcript exceeds one pass", async () => {
+    const previous = await previousEnvelopeWithDecision();
+    calls = [];
+    passes = [];
+    const body = "a".repeat(200_000);
+    const source = capturedSource([
+      makeEntry(0, "user", body),
+      makeEntry(1, "assistant", body),
+      makeEntry(2, "user", body),
+      makeEntry(3, "assistant", body),
+      makeEntry(4, "user", "a short follow-up"),
+      makeEntry(5, "assistant", "a short reply"),
+    ]);
+
+    const outcome = await generateCompactionEnvelope(
+      makeRequest({
+        source,
+        plan: {
+          mode: "delta",
+          previousEnvelope: previous,
+          expected: { startSeq: 0, endSeq: source.maxSeq },
+        },
+      }),
+      deps(echo),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, mode: "full" });
+    if (!outcome.ok) return;
+    expect(outcome.envelope.source.coveredStartSeq).toBe(0);
+    expect(outcome.envelope.source.coveredEndSeq).toBe(5);
+    expect(passes.map((pass) => [pass.kind, pass.segment])).toEqual([
+      ["initial", null],
+      ["guard_repair", null],
+      ["full_fallback", { index: 1, total: 2 }],
+      ["full_fallback", { index: 2, total: 2 }],
     ]);
   });
 

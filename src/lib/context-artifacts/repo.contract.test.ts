@@ -121,7 +121,11 @@ function buildMaximalEnvelope(): CompactionEnvelope {
         sourceRefs: [buildSourceRef(10)],
       },
     ],
-    omissions: { reasoningOmitted: true, largeToolOutputsElided: 3 },
+    omissions: {
+      reasoningOmitted: true,
+      largeToolOutputsElided: 3,
+      transcriptBytesTruncated: 51_200,
+    },
     extras: { timeline: ["scaffolded", "tested"], assumptionCount: 2 },
   };
 }

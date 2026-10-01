@@ -374,6 +374,9 @@ export default function CompactionEnvelopeView({
     omissions.largeToolOutputsElided > 0
       ? `${omissions.largeToolOutputsElided} tool outputs`
       : null,
+    omissions.transcriptBytesTruncated !== undefined
+      ? `${Math.ceil(omissions.transcriptBytesTruncated / 1024)} KB of an oversize message`
+      : null,
   ]
     .filter((part) => part !== null)
     .join(" · ");
