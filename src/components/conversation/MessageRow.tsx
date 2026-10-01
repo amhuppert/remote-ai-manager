@@ -26,6 +26,7 @@ import type {
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { MessagePartRange } from "@/lib/conversations/group-content-blocks";
+import { subscriptionMessagePresentation } from "@/lib/conversations/subscription-message-presentation";
 
 // `message`, the role modifier, `message-content`, and `message-iteration-badge`
 // are retained as structural / test hooks — external slices and tooling still
@@ -190,16 +191,15 @@ const MessageRow = memo(function MessageRow({
     );
   }
   const isUserMsg = msg.role === "user";
-  const subscriptionBatch =
-    msg.origin?.source === "subscription_update"
-      ? msg.origin.subscriptionUpdate?.batchId
-      : undefined;
+  const presentation = subscriptionMessagePresentation(msg, queuedMetadata);
+  const hasSubscription = presentation.subscriptionBatchIds.length > 0;
+  const subscriptionOnly = hasSubscription && presentation.content.length === 0;
   // The copy-reference gate: only rows whose display index is their durable
   // transcript position can produce a message reference. Queued rows render at
   // a provisional index, and in-flight optimistic rows are not durable at all,
   // so neither gets the Copy-reference action nor the clip-source stamp below.
   const messageRef =
-    queuedMetadata === undefined && !provisional
+    queuedMetadata === undefined && !provisional && !subscriptionOnly
       ? {
           conversationName: conversationName ?? null,
           timestamp: msg.timestamp,
@@ -251,7 +251,7 @@ const MessageRow = memo(function MessageRow({
         <div className={cn(messageRoleClass, roleColor)}>
           {capture
             ? `Checkpoint handoff · ${capture.part}`
-            : subscriptionBatch
+            : subscriptionOnly
               ? "Subscription"
               : isUserMsg
                 ? "You"
@@ -302,12 +302,17 @@ const MessageRow = memo(function MessageRow({
           </p>
         </div>
       )}
-      {isFirstPart && subscriptionBatch ? (
-        <SubscriptionWakeReceipt batchId={subscriptionBatch} />
-      ) : null}
+      {isFirstPart &&
+        presentation.subscriptionBatchIds.map((batchId) => (
+          <SubscriptionWakeReceipt
+            key={batchId}
+            batchId={batchId}
+            accepted={queuedMetadata?.kind !== "subscription_update"}
+          />
+        ))}
       <div className="message-content" {...clipSourceAttrs}>
         <MessageContent
-          content={msg.content}
+          content={presentation.content}
           worktreePath={worktreePath}
           queuedMetadata={queuedMetadata}
           thinkingExpansionCommand={thinkingExpansionCommand}
@@ -323,10 +328,10 @@ const MessageRow = memo(function MessageRow({
           isBusy={lastMessageExtras.isBusy}
         />
       )}
-      {isLastPart && msg.role !== "notice" && (
+      {isLastPart && msg.role !== "notice" && !subscriptionOnly && (
         <MessageActions
           messageIndex={messageIndex}
-          content={msg.content}
+          content={presentation.content}
           role={msg.role}
           onFork={onFork}
           forkProjectName={forkProjectName}

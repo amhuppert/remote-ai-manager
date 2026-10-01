@@ -5,7 +5,13 @@ import {
   subscriptionQueryString,
 } from "@/lib/subscriptions/queries";
 import { SourceLink } from "./SubscriptionPrimitives";
-export function SubscriptionWakeReceipt({ batchId }: { batchId: string }) {
+export function SubscriptionWakeReceipt({
+  batchId,
+  accepted = true,
+}: {
+  batchId: string;
+  accepted?: boolean;
+}) {
   const query = useSubscriptionInbox({ batchId, state: "all", limit: 6 });
   return (
     <aside
@@ -34,12 +40,24 @@ export function SubscriptionWakeReceipt({ batchId }: { batchId: string }) {
         </div>
       ))}
       <p className="m-0 font-mono text-[0.68rem] leading-relaxed text-text-secondary">
-        This event started an agent turn. Runtime acceptance is recorded
-        separately from the agent&apos;s response and your read status.
+        {accepted
+          ? "This event started an agent turn."
+          : "This update is awaiting delivery."}{" "}
+        Runtime acceptance is recorded separately from the agent&apos;s response
+        and your read status.
       </p>
+      {!query.data?.items.length ? (
+        <Link
+          href="/subscriptions"
+          className="mt-2 inline-block font-mono text-[0.7rem] text-cyan"
+        >
+          View subscriptions
+        </Link>
+      ) : null}
       {query.isError ? (
         <p role="status" className="text-[0.7rem] text-amber">
-          Receipt details are unavailable. The delivered update remains below.
+          Receipt details are unavailable. Review subscriptions for delivery
+          evidence.
         </p>
       ) : null}
     </aside>

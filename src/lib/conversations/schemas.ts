@@ -139,6 +139,14 @@ export type SourceRef = z.infer<typeof sourceRefSchema>;
 export const transcriptSourcePartSchema = z.object({
   seq: z.number().int().nonnegative(),
   origin: transcriptMessageOriginSchema.optional(),
+  /** Derived block coordinates in the merged message; never written to JSONL. */
+  contentRange: z
+    .object({
+      start: z.number().int().nonnegative(),
+      end: z.number().int().nonnegative(),
+    })
+    .refine((range) => range.end >= range.start)
+    .optional(),
 });
 
 export const transcriptMessageSchema = z.object({

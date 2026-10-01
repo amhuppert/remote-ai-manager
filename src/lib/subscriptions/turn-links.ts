@@ -1,4 +1,5 @@
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
+import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 export function subscriptionTurnHref(
   target: ConversationTarget,
@@ -14,11 +15,21 @@ export function subscriptionTurnHref(
 export function subscriptionMessageIndex(
   params: URLSearchParams,
   conversationId: string,
-  messages: readonly { id?: string }[],
+  messages: readonly Pick<TranscriptMessage, "id" | "origin" | "sourceParts">[],
 ): number | null {
   if ((params.get("c") ?? params.get("focus")) !== conversationId) return null;
   const messageId = params.get("m");
   if (!messageId) return null;
-  const index = messages.findIndex((message) => message.id === messageId);
+  const index = messages.findIndex(
+    (message) =>
+      message.id === messageId ||
+      (message.origin?.source === "subscription_update" &&
+        message.origin.subscriptionUpdate?.batchId === messageId) ||
+      message.sourceParts?.some(
+        (part) =>
+          part.origin?.source === "subscription_update" &&
+          part.origin.subscriptionUpdate?.batchId === messageId,
+      ),
+  );
   return index < 0 ? null : index;
 }

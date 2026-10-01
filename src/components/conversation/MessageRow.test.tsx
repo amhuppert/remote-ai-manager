@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import MessageRow from "@/components/conversation/MessageRow";
 import type {
@@ -8,6 +8,10 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import { buildConversationRows } from "./conversation-rows";
+import { stripProposalFencesFromContent } from "@/features/project-detail/spawn-card/derive-spawn-cards";
+import { stripWorkflowReceiptToolResults } from "@/features/session/conversation/WorkflowReceiptCard";
 
 function makeMessage(
   overrides: Partial<TranscriptMessage> = {},
@@ -47,6 +51,351 @@ function makeConversation(
 }
 
 describe("MessageRow", () => {
+  describe("subscription notification presentation", () => {
+    let api: FetchFixture;
+    let clipboardDescriptor: PropertyDescriptor | undefined;
+    const writeText = vi.fn<(text: string) => Promise<void>>();
+    const payload =
+      '<subscription_update>\n{"privatePayload":"machine-event-body"}\n</subscription_update>';
+    beforeEach(() => {
+      api = installFetchFixture();
+      api.pending("GET", "/api/subscriptions/inbox");
+      clipboardDescriptor = Object.getOwnPropertyDescriptor(
+        navigator,
+        "clipboard",
+      );
+      writeText.mockReset().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+    });
+    afterEach(() => {
+      api.restore();
+      if (clipboardDescriptor) {
+        Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    });
+
+    it.each(["accepted", "queued"] as const)(
+      "shows the receipt without exposing the %s machine payload",
+      (state) => {
+        const { container } = renderWithQuery(
+          <MessageRow
+            msg={makeMessage({
+              content: [{ type: "text", text: payload }],
+              ...(state === "accepted"
+                ? {
+                    origin: {
+                      source: "subscription_update",
+                      subscriptionUpdate: { batchId: "batch" },
+                    },
+                  }
+                : {}),
+            })}
+            {...(state === "queued"
+              ? {
+                  queuedMetadata: {
+                    kind: "subscription_update",
+                    batchId: "batch",
+                  },
+                  queuedStatus: "pending",
+                }
+              : {})}
+            messageIndex={0}
+            isLast={false}
+            selectedBackend="claude"
+            worktreePath="/tmp/proj"
+            lastMessageExtras={null}
+          />,
+        );
+        expect(screen.getByText("Subscription wake")).toBeInTheDocument();
+        expect(container).not.toHaveTextContent("machine-event-body");
+        expect(container).not.toHaveTextContent("subscription_update");
+        expect(
+          screen.queryByTitle("Copy message as Markdown"),
+        ).not.toBeInTheDocument();
+      },
+    );
+
+    it("preserves user-authored subscription XML without machine provenance", () => {
+      const authored = `${payload}\n<subscription_briefing>User-authored example</subscription_briefing>`;
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({ content: [{ type: "text", text: authored }] })}
+          messageIndex={0}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(container).toHaveTextContent("machine-event-body");
+      expect(container).toHaveTextContent("User-authored example");
+      expect(screen.queryByText("Subscription wake")).not.toBeInTheDocument();
+    });
+
+    it("retains and copies only ordinary text when merged with notification parts", async () => {
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            content: [
+              { type: "text", text: "Ordinary user input" },
+              { type: "text", text: payload },
+              {
+                type: "text",
+                text: "My <subscription_briefing>example</subscription_briefing>",
+              },
+            ],
+            sourceParts: [
+              { seq: 0, contentRange: { start: 0, end: 1 } },
+              {
+                seq: 1,
+                origin: {
+                  source: "subscription_update",
+                  subscriptionUpdate: { batchId: "batch" },
+                },
+                contentRange: { start: 1, end: 2 },
+              },
+              { seq: 2, contentRange: { start: 2, end: 3 } },
+            ],
+          })}
+          messageIndex={0}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.getByText("Subscription wake")).toBeInTheDocument();
+      expect(container).toHaveTextContent("Ordinary user input");
+      expect(container).toHaveTextContent(
+        "My <subscription_briefing>example</subscription_briefing>",
+      );
+      expect(container).not.toHaveTextContent("machine-event-body");
+      expect(screen.getByTitle("Copy message as Markdown")).toBeInTheDocument();
+      fireEvent.click(screen.getByTitle("Copy message as Markdown"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+      expect(writeText.mock.calls[0]?.[0]).toBe(
+        "Ordinary user input\n\nMy <subscription_briefing>example</subscription_briefing>",
+      );
+    });
+
+    it("keeps human text and safe copying after the project proposal transform drops an earlier block", async () => {
+      const msg = makeMessage({
+        content: [
+          { type: "text", text: '```spawn-proposal\n{"sessions":[]}\n```' },
+          { type: "text", text: payload },
+          { type: "text", text: "Human text after event" },
+        ],
+        sourceParts: [
+          { seq: 0, contentRange: { start: 0, end: 1 } },
+          {
+            seq: 1,
+            origin: {
+              source: "subscription_update",
+              subscriptionUpdate: { batchId: "batch" },
+            },
+            contentRange: { start: 1, end: 2 },
+          },
+          { seq: 2, contentRange: { start: 2, end: 3 } },
+        ],
+      });
+      const rows = buildConversationRows(
+        [msg],
+        undefined,
+        null,
+        [],
+        stripProposalFencesFromContent,
+      );
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      if (row?.kind !== "message") throw Error("Expected message row");
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={row.msg}
+          part={row.part}
+          messageIndex={row.messageIndex}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.getByText("Subscription wake")).toBeInTheDocument();
+      expect(container).toHaveTextContent("Human text after event");
+      expect(container).not.toHaveTextContent("machine-event-body");
+      expect(container).not.toHaveTextContent("spawn-proposal");
+      fireEvent.click(screen.getByTitle("Copy message as Markdown"));
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith("Human text after event"),
+      );
+      expect(msg.content).toHaveLength(3);
+    });
+
+    it("preserves workflow extension block coordinates while hiding notification content", () => {
+      const messages: TranscriptMessage[] = [
+        makeMessage({
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-launch",
+              name: "mcp__command_center__start_graph_workflow",
+              input: { plan: { name: "Repair release" } },
+            },
+          ],
+        }),
+        makeMessage({
+          content: [
+            { type: "text", text: payload },
+            {
+              type: "tool_result",
+              tool_use_id: "tool-launch",
+              content: JSON.stringify({
+                receipt: {
+                  executionId: "execution",
+                  status: "running",
+                  origin: { kind: "one_off", planName: "Repair release" },
+                  originConversationId: "conversation",
+                  deepLink:
+                    "/projects/project/session/workflow?execution=execution",
+                  startedAt: "2026-09-30T12:00:00Z",
+                },
+              }),
+            },
+            { type: "text", text: "Human input after workflow receipt" },
+          ],
+          sourceParts: [
+            {
+              seq: 1,
+              origin: {
+                source: "subscription_update",
+                subscriptionUpdate: { batchId: "batch" },
+              },
+              contentRange: { start: 0, end: 1 },
+            },
+            { seq: 2, contentRange: { start: 1, end: 3 } },
+          ],
+        }),
+      ];
+      const rows = buildConversationRows(
+        messages,
+        undefined,
+        null,
+        [],
+        (content, index) =>
+          stripWorkflowReceiptToolResults(
+            content,
+            index,
+            messages,
+            "conversation",
+          ),
+      );
+      const row = rows.find(
+        (candidate) =>
+          candidate.kind === "message" && candidate.messageIndex === 1,
+      );
+      if (row?.kind !== "message") throw Error("Expected user row");
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={row.msg}
+          part={row.part}
+          messageIndex={row.messageIndex}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.getByText("Subscription wake")).toBeInTheDocument();
+      expect(container).toHaveTextContent("Human input after workflow receipt");
+      expect(container).not.toHaveTextContent("machine-event-body");
+      expect(row.msg.content).toEqual([
+        { type: "text", text: "Human input after workflow receipt" },
+      ]);
+    });
+
+    it("keeps the receipt when an extension removes all ordinary content", () => {
+      const msg = makeMessage({
+        content: [
+          { type: "text", text: payload },
+          { type: "text", text: '```spawn-proposal\n{"sessions":[]}\n```' },
+        ],
+        sourceParts: [
+          {
+            seq: 0,
+            origin: {
+              source: "subscription_update",
+              subscriptionUpdate: { batchId: "batch" },
+            },
+            contentRange: { start: 0, end: 1 },
+          },
+          { seq: 1, contentRange: { start: 1, end: 2 } },
+        ],
+      });
+      const rows = buildConversationRows(
+        [msg],
+        undefined,
+        null,
+        [],
+        stripProposalFencesFromContent,
+      );
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      if (row?.kind !== "message") throw Error("Expected receipt row");
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={row.msg}
+          part={row.part}
+          messageIndex={row.messageIndex}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.getByText("Subscription wake")).toBeInTheDocument();
+      expect(container).not.toHaveTextContent("machine-event-body");
+      expect(
+        screen.queryByTitle("Copy message as Markdown"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps a usable receipt link when receipt details cannot load", async () => {
+      api.reply("GET", "/api/subscriptions/inbox", {
+        status: 503,
+        json: { error: "Unavailable" },
+      });
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            content: [{ type: "text", text: payload }],
+            origin: {
+              source: "subscription_update",
+              subscriptionUpdate: { batchId: "batch" },
+            },
+          })}
+          messageIndex={0}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          lastMessageExtras={null}
+        />,
+      );
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Receipt details are unavailable",
+      );
+      expect(
+        screen.getByRole("link", { name: "View subscriptions" }),
+      ).toHaveAttribute("href", "/subscriptions");
+      expect(container).not.toHaveTextContent("machine-event-body");
+      expect(container).not.toHaveTextContent("remains below");
+    });
+  });
+
   it.each([
     ["control", "user"],
     ["output", "assistant"],

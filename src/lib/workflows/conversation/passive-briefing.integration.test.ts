@@ -12,6 +12,7 @@ import {
   type SubscriptionService,
 } from "@/lib/subscriptions/service";
 import { followAcceptedNotepadContext } from "@/lib/subscriptions/involvement";
+import type { TranscriptEntry } from "@/lib/prompt/transcript";
 
 const result: ConversationBackendTurnResult = {
   backendRef: { backend: "claude", ref: "passive-test" },
@@ -228,10 +229,11 @@ describe.each(["session", "project"] as const)(
       let pending = true;
       let preparations = 0;
       const prompts: ConversationBackendTurnInput[] = [];
+      const transcriptEntries: TranscriptEntry[] = [];
       const backend = createMockBackendRuntime({
         sendTurn: async (input) => {
           prompts.push(input);
-          if (input.promptText.includes("<passive-test>"))
+          if (input.promptText.includes("<subscription_briefing>"))
             expect(pending).toBe(true);
           await input.onEvent({ type: "input_accepted" });
           return result;
@@ -251,6 +253,9 @@ describe.each(["session", "project"] as const)(
                 },
         },
         actorDeps: {
+          safeAppendTranscriptEntry: async (_conversationId, entry) => {
+            transcriptEntries.push(entry);
+          },
           getConversationBackendFactory: () => ({
             backend: "claude",
             createRuntime: async () => backend,
@@ -263,7 +268,7 @@ describe.each(["session", "project"] as const)(
               preparations++;
               return {
                 block: pending
-                  ? "<passive-test>Latest update</passive-test>"
+                  ? "<subscription_briefing>Latest update</subscription_briefing>"
                   : null,
                 onInputAccepted: async () => {
                   pending = false;
@@ -289,8 +294,20 @@ describe.each(["session", "project"] as const)(
       }
       expect(preparations).toBe(1);
       expect(
-        prompts.map(({ promptText }) => promptText.includes("<passive-test>")),
+        prompts.map(({ promptText }) =>
+          promptText.includes("<subscription_briefing>"),
+        ),
       ).toEqual([false, false, true]);
+      expect(prompts[2]?.userPromptText).toBe("Continue");
+      const userEntries = transcriptEntries.filter(
+        (entry) => entry.role === "user",
+      );
+      expect(userEntries).toHaveLength(3);
+      expect(userEntries.map((entry) => entry.content)).toEqual([
+        [{ type: "text", text: "Continue" }],
+        [{ type: "text", text: "Continue" }],
+        [{ type: "text", text: "Continue" }],
+      ]);
       expect(pending).toBe(false);
     });
 

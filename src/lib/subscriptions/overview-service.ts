@@ -87,6 +87,9 @@ const recipientsQuerySchema = subscriptionScopeSchema.extend({
 function recipientKey(recipient: SubscriptionRecipient): string {
   return JSON.stringify([recipient.projectPath, recipient.conversationId]);
 }
+function subscriptionKey(recipient: SubscriptionRecipient, id: string): string {
+  return JSON.stringify([recipient.projectPath, recipient.conversationId, id]);
+}
 function ownerRecipient(owner: SubscriptionOwner): SubscriptionRecipient {
   return {
     projectPath: owner.projectPath,
@@ -357,9 +360,11 @@ export function createSubscriptionOverviewService(
                 lastError: batch.lastError,
               }
             : null,
-          pendingCount: related.filter(
-            (delivery) => delivery.state !== "accepted",
-          ).length,
+          pendingCount:
+            subscription.status === "following"
+              ? related.filter((delivery) => delivery.state !== "accepted")
+                  .length
+              : 0,
           unreadCount: related.filter(
             (delivery) => !state.reads.get(key)?.has(delivery.id),
           ).length,
@@ -483,9 +488,20 @@ export function createSubscriptionOverviewService(
       (view) =>
         parsed.batchId === undefined || view.wakeBatchId === parsed.batchId,
     );
+    const following = new Set(
+      state.subscriptions
+        .filter((subscription) => subscription.status === "following")
+        .map((subscription) =>
+          subscriptionKey(subscription.recipient, subscription.id),
+        ),
+    );
+    const isPending = (view: InboxView) =>
+      view.delivery.state !== "accepted" &&
+      following.has(
+        subscriptionKey(view.delivery.recipient, view.delivery.subscriptionId),
+      );
     const counts = {
-      pending: scopedViews.filter((view) => view.delivery.state !== "accepted")
-        .length,
+      pending: scopedViews.filter(isPending).length,
       accepted: scopedViews.filter((view) => view.delivery.state === "accepted")
         .length,
       issues: scopedViews.filter(
@@ -507,7 +523,7 @@ export function createSubscriptionOverviewService(
           );
         return parsed.state === "accepted"
           ? view.delivery.state === "accepted"
-          : view.delivery.state !== "accepted";
+          : isPending(view);
       })
       .sort(
         (a, b) =>

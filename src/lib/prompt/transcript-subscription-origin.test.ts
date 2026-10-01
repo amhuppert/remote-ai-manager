@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -26,6 +26,8 @@ afterEach(async () => {
   _resetTranscriptReadCacheForTesting();
 });
 const at = "2026-09-30T12:00:00.000Z";
+const payload =
+  '<subscription_update>\n{"summary":"Quoted finite wait outcome"}\n</subscription_update>';
 const origin = {
   source: "subscription_update",
   subscriptionUpdate: { batchId: "batch" },
@@ -40,7 +42,7 @@ async function seed() {
       timestamp: at,
       type: "user",
       role: "user",
-      content: [{ type: "text", text: "Quoted finite wait outcome" }],
+      content: [{ type: "text", text: payload }],
       origin,
     },
     directory,
@@ -49,6 +51,7 @@ async function seed() {
 }
 it("preserves an accepted wake receipt through durable JSONL normalization and the messages API", async () => {
   const transcriptPath = await seed();
+  const durableBytes = await readFile(transcriptPath, "utf-8");
   fixture = createPersistenceFixture();
   fixture.seedProject("/project");
   fixture.seedSession("/project", "session");
@@ -90,12 +93,15 @@ it("preserves an accepted wake receipt through durable JSONL normalization and t
   expect(messages[0]).toMatchObject({
     id: "batch",
     origin,
-    sourceParts: [{ seq: 0, origin }],
+    content: [{ type: "text", text: payload }],
+    sourceParts: [{ seq: 0, origin, contentRange: { start: 0, end: 1 } }],
   });
   _resetTranscriptReadCacheForTesting();
   expect(
     (await readConversationMessagesWithSeq(transcriptPath))[0]?.origin,
   ).toEqual(origin);
+  expect(await readFile(transcriptPath, "utf-8")).toBe(durableBytes);
+  expect(durableBytes).not.toContain("contentRange");
 });
 it("keeps mixed-origin parts separate rather than assigning the wake origin to ordinary input", async () => {
   const transcriptPath = await seed();
@@ -114,5 +120,12 @@ it("keeps mixed-origin parts separate rather than assigning the wake origin to o
   const messages = await readConversationMessagesWithSeq(transcriptPath);
   expect(messages).toHaveLength(1);
   expect(messages[0]?.origin).toBeUndefined();
-  expect(messages[0]?.sourceParts).toEqual([{ seq: 0, origin }, { seq: 1 }]);
+  expect(messages[0]?.content).toEqual([
+    { type: "text", text: payload },
+    { type: "text", text: "Ordinary user input" },
+  ]);
+  expect(messages[0]?.sourceParts).toEqual([
+    { seq: 0, origin, contentRange: { start: 0, end: 1 } },
+    { seq: 1, contentRange: { start: 1, end: 2 } },
+  ]);
 });

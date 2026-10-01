@@ -91,8 +91,14 @@ The initial semantic catalog has these recovery contracts:
 | Ticket | Status transition and authored status post | Durable status-change IDs and post timestamp/ID cursor | Recorded conversation or current-session link |
 | Spec | Revision, submitted review, approval/attention decision and execution change | Durable spec-event ID and actor | Recorded authorship/review event |
 | Graph workflow | Named boundary such as approval, question, halt or completion | Durable graph-event ID, including archived executions | Execution's recorded launching conversation; existing CLI launch authority requires an ordinary session principal |
-| Validation | Terminal outcome for one run | Durable run ID plus terminal state; no claim of intermediate event history | Run's recorded ordinary conversation |
+| Validation | Terminal outcome for one run | Durable run ID plus terminal state; no claim of intermediate event history | Explicit opt-in only |
 | Git job | Terminal outcome for one job | Durable job ID plus terminal state | No inferred follow where launcher identity is absent |
+
+Validation commands already return their results to the submitting caller, so
+neither historical nor queued or running commands establish automatic follows.
+An explicit passive subscription can collect the selected run's later outcome;
+an explicit finite wait can observe its terminal result, including a run that
+finished before registration.
 
 Workflow launch authority remains owned by its existing principal checks. A
 project conversation cannot use these subscription endpoints to acquire session
@@ -149,9 +155,10 @@ on their next user message. SQLite receipts moved from pending to accepted once;
 CLI inbox inspection alone left them pending.
 
 A generated direct turn and generated input delivered during a running Codex turn
-left unrelated passive changes pending with zero delivery attempts. A registered
-validation launched by the session conversation remained visible to its launcher
-and appeared alongside the next notepad briefing. Project-attributed edits were
+left unrelated passive changes pending with zero delivery attempts. At that time,
+a registered validation launched by the session conversation was automatically
+followed and appeared alongside the next notepad briefing; validation following
+now requires the explicit opt-in described above. Project-attributed edits were
 suppressed, and an explicit unfollow prevented both subscription and legacy
 notepad content notices on the next user message.
 

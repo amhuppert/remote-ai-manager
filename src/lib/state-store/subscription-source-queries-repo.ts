@@ -23,7 +23,6 @@ export interface SubscriptionSourceQueriesRepo {
     recipient: SubscriptionRecipient,
   ): z.infer<typeof specLinkSchema>[];
   findWorkflowInvolvement(recipient: SubscriptionRecipient): string[];
-  findValidationInvolvement(recipient: SubscriptionRecipient): string[];
 }
 
 /** Reverse lookups over canonical domain records; this repository owns no source state. */
@@ -56,9 +55,6 @@ export function createSubscriptionSourceQueriesRepo(
     SELECT execution_id AS id FROM graph_workflow_executions WHERE project_path = @projectPath AND json_extract(definition_json, '$.ownerConversationId') = @conversationId
     UNION
     SELECT execution_id AS id FROM graph_workflow_archived_executions WHERE project_path = @projectPath AND json_extract(execution_json, '$.ownerConversationId') = @conversationId`);
-  const validationLinks = db.prepare(
-    `SELECT run_id AS id FROM validation_runs WHERE project_path = @projectPath AND conversation_id = @conversationId AND workflow_role IS NULL ORDER BY queue_order`,
-  );
   return {
     findWorkflowAddress(executionId) {
       const row: unknown = workflowAddress.get(executionId, executionId);
@@ -76,12 +72,6 @@ export function createSubscriptionSourceQueriesRepo(
       return z
         .array(sourceIdSchema)
         .parse(workflowLinks.all(recipient))
-        .map((row) => row.id);
-    },
-    findValidationInvolvement(recipient) {
-      return z
-        .array(sourceIdSchema)
-        .parse(validationLinks.all(recipient))
         .map((row) => row.id);
     },
   };

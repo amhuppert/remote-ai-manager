@@ -10,6 +10,7 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { addSseListener, type SseEventTarget } from "@/lib/api/sse";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { selectLatestExplicitTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
+import { mergedSubscriptionMessageProvenance } from "./subscription-message-presentation";
 import {
   askQuestionEventSchema,
   conversationArchivedEventSchema,
@@ -135,6 +136,7 @@ function appendMessageToQuery(
       const merged = {
         ...previous,
         ...(agentSettings ?? {}),
+        ...mergedSubscriptionMessageProvenance(previous, entry),
         content,
         seq: entry.seq,
       };

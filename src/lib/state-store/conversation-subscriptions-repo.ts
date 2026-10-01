@@ -199,6 +199,13 @@ export function createConversationSubscriptionsRepo(
   db: Db,
   writeQueue: WriteQueue,
 ): ConversationSubscriptionsRepo {
+  const pendingDeliveryWhere = `state<>'accepted' AND EXISTS (
+    SELECT 1 FROM conversation_subscriptions s
+    WHERE s.id=conversation_subscription_deliveries.subscription_id
+      AND s.project_path=conversation_subscription_deliveries.project_path
+      AND s.conversation_id=conversation_subscription_deliveries.conversation_id
+      AND s.status='following'
+  )`;
   const find = db.prepare(
     `SELECT * FROM conversation_subscriptions WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id`,
   );
@@ -395,12 +402,12 @@ export function createConversationSubscriptionsRepo(
       const row: unknown = recipient
         ? db
             .prepare(
-              "SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE state<>'accepted' AND project_path=@project_path AND conversation_id=@conversation_id",
+              `SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE ${pendingDeliveryWhere} AND project_path=@project_path AND conversation_id=@conversation_id`,
             )
             .get(scope(recipient))
         : db
             .prepare(
-              "SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE state<>'accepted'",
+              `SELECT COUNT(*) AS total FROM conversation_subscription_deliveries WHERE ${pendingDeliveryWhere}`,
             )
             .get();
       return z.object({ total: z.number() }).parse(row).total;
@@ -470,7 +477,7 @@ export function createConversationSubscriptionsRepo(
         limit: parsed.limit,
         offset: parsed.offset,
       };
-      const where = `project_path=@project_path AND conversation_id=@conversation_id AND (@include_settled=1 OR state<>'accepted')`;
+      const where = `project_path=@project_path AND conversation_id=@conversation_id AND (@include_settled=1 OR (${pendingDeliveryWhere}))`;
       const count = z.object({ total: z.number().int().nonnegative() }).parse(
         db
           .prepare(

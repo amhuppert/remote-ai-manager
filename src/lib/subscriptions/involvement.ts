@@ -72,13 +72,6 @@ export function createSubscriptionInvolvementReader(
         initialCursor: "0",
       });
     }
-    for (const id of deps.queries.findValidationInvolvement(recipient)) {
-      involvement.push({
-        source: { kind: "validation", id },
-        reason: "Validation submitted by this conversation",
-        initialCursor: "queued",
-      });
-    }
     return involvement;
   };
 }

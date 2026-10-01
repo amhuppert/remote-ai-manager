@@ -243,6 +243,46 @@ describe("subscription overview projections", () => {
       "uncertain",
     ]);
   });
+  it("excludes unfollowed evidence from pending views and counts while retaining it in history", async () => {
+    const h = harness();
+    h.subscriptions[0] = subscription("first", {
+      status: "unfollowed",
+      unfollowedAt: at,
+    });
+    const pending = await h.service.inbox({ conversation: "conversation" });
+    expect(pending).toMatchObject({ total: 1, counts: { pending: 1 } });
+    expect(pending.items.map((item) => item.delivery.id)).toEqual(["problem"]);
+    const overview = await h.service.overview({
+      conversation: "conversation",
+      status: "all",
+    });
+    expect(overview.counts.pending).toBe(1);
+    expect(
+      overview.items.find((item) => item.subscription.id === "first"),
+    ).toMatchObject({ pendingCount: 0 });
+    const history = await h.service.inbox({
+      conversation: "conversation",
+      state: "all",
+    });
+    expect(history).toMatchObject({
+      total: 3,
+      counts: { pending: 1, accepted: 1, unread: 2 },
+    });
+    expect(
+      history.items.find((item) => item.delivery.id === "unread"),
+    ).toMatchObject({
+      delivery: { state: "pending", acceptedAt: null },
+      readAt: null,
+    });
+    expect(
+      (await h.service.detail(recipient, "first"))?.subscription.status,
+    ).toBe("unfollowed");
+    expect(h.deliveries.map((item) => item.state)).toEqual([
+      "pending",
+      "accepted",
+      "uncertain",
+    ]);
+  });
   it("filters a requested wake batch before pagination even beyond the first hundred inbox records", async () => {
     const h = harness();
     for (let index = 0; index < 150; index++)

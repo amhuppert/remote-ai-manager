@@ -2,8 +2,10 @@
 
 Automatic passive follows belong to the current ordinary conversation, including
 project conversations. Recorded involvement establishes them: supplied notepad
-context, linked tickets, spec authorship/review and launched work. A read or
-search alone does not create a follow.
+context, linked tickets, spec authorship/review and launched graph workflows.
+Validation runs require an explicit subscription or finite wait; submitting a
+validation command does not create a follow, even while it is queued or running.
+A read or search alone does not create a follow.
 
 ```
 cctl subscription catalog

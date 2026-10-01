@@ -235,4 +235,72 @@ describe("conversation subscriptions durable state", () => {
       state: "pending",
     });
   });
+  it("removes unfollowed evidence from pending backlog while retaining durable history and paused follows", async () => {
+    const { fixture, repo } = setup();
+    await repo.createIfAbsent(subscription());
+    const history = [
+      delivery("pending", "pending"),
+      {
+        ...delivery("failed", "failed"),
+        state: "failed" as const,
+        lastError: "Not sent",
+      },
+      {
+        ...delivery("uncertain", "uncertain"),
+        state: "uncertain" as const,
+        lastError: "Receipt unknown",
+      },
+      {
+        ...delivery("accepted", "accepted"),
+        state: "accepted" as const,
+        acceptedAt: at,
+      },
+    ];
+    for (const item of history) await repo.recordDelivery(item);
+    const paused = {
+      ...subscription(),
+      id: "paused",
+      source: { ...source, id: "paused" },
+      pausedAt: at,
+    };
+    await repo.createIfAbsent(paused);
+    await repo.recordDelivery({
+      ...delivery("paused-delivery", "paused"),
+      subscriptionId: paused.id,
+      source: paused.source,
+    });
+    const other = {
+      ...subscription(),
+      id: "other",
+      recipient: { ...recipient, conversationId: "other" },
+    };
+    await repo.createIfAbsent(other);
+    await repo.recordDelivery({
+      ...delivery("other-delivery", "other"),
+      subscriptionId: other.id,
+      recipient: other.recipient,
+    });
+    expect(await repo.pendingCount(recipient)).toBe(4);
+    expect(await repo.pendingCount()).toBe(5);
+    await repo.unfollow(recipient, "sub-1", at);
+    const reloaded = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    expect(await reloaded.pendingCount(recipient)).toBe(1);
+    expect(await reloaded.pendingCount()).toBe(2);
+    expect(await reloaded.readInbox(recipient, { limit: 1 })).toMatchObject({
+      total: 1,
+      items: [{ id: "paused-delivery" }],
+    });
+    expect(
+      await reloaded.readInbox(recipient, { limit: 1, offset: 1 }),
+    ).toMatchObject({ total: 1, items: [] });
+    expect(
+      (await reloaded.readInbox(recipient, { includeSettled: true })).total,
+    ).toBe(5);
+    expect(await reloaded.listDeliveriesForOverview(recipient)).toHaveLength(5);
+    for (const item of history)
+      expect(await reloaded.getDelivery(recipient, item.id)).toEqual(item);
+  });
 });

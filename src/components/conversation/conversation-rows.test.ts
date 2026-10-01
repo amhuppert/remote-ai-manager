@@ -26,6 +26,29 @@ function message(
 }
 
 describe("conversation rows", () => {
+  it("allocates one receipt row for a notification with multiple raw blocks", () => {
+    const msg: TranscriptMessage = {
+      role: "user",
+      timestamp: null,
+      origin: {
+        source: "subscription_update",
+        subscriptionUpdate: { batchId: "batch" },
+      },
+      content: [
+        { type: "text", text: "Machine payload one" },
+        { type: "text", text: "Machine payload two" },
+      ],
+    };
+    const rows = buildConversationRows([msg], undefined);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      messageIndex: 0,
+      msg,
+      part: { index: 0, count: 1, start: 0, end: 0 },
+    });
+    expect(msg.content).toHaveLength(2);
+  });
+
   it("does not allocate virtual rows for standalone results or blank text", () => {
     const msg: TranscriptMessage = {
       role: "assistant",

@@ -8,6 +8,7 @@ import {
   type MessagePartRange,
 } from "@/lib/conversations/group-content-blocks";
 import type { DisplayMessage } from "@/hooks/conversation/use-display-messages";
+import { subscriptionMessagePresentation } from "@/lib/conversations/subscription-message-presentation";
 export interface CollabEnvelope {
   workflowId: string;
 }
@@ -96,13 +97,54 @@ export function buildConversationRows(
     msg: DisplayMessage,
     messageIndex: number,
   ): ConversationRow[] {
-    const content = transformContent
-      ? transformContent(msg.content, messageIndex)
-      : msg.content;
+    const presentation = subscriptionMessagePresentation(
+      msg,
+      msg.queued?.metadata,
+    );
+    const hasSubscription = presentation.subscriptionBatchIds.length > 0;
+    // Extensions may address original block indexes. Mask machine blocks
+    // before an extension sees them, retaining those coordinates until its
+    // transform has run; withdraw the placeholders before rendering.
+    const maskedBlocks = new Set<MessageContentBlock>();
+    const transformInput =
+      transformContent && presentation.hiddenContentIndexes.size > 0
+        ? msg.content.map((block, index) => {
+            if (!presentation.hiddenContentIndexes.has(index)) return block;
+            const placeholder: MessageContentBlock = { type: "text", text: "" };
+            maskedBlocks.add(placeholder);
+            return placeholder;
+          })
+        : msg.content;
+    const transformed = transformContent
+      ? transformContent(transformInput, messageIndex)
+      : presentation.content;
+    const content =
+      maskedBlocks.size > 0
+        ? transformed.filter((block) => !maskedBlocks.has(block))
+        : transformed;
     // A transform that hides every block withdraws the message; a message that
     // was natively empty still renders its header and affordances.
-    if (content !== msg.content && content.length === 0) return [];
-    const displayed = content === msg.content ? msg : { ...msg, content };
+    if (!hasSubscription && content !== msg.content && content.length === 0)
+      return [];
+    const keepRawMessage =
+      content === msg.content ||
+      (presentation.content.length === 0 && content.length === 0);
+    const displayed = keepRawMessage
+      ? msg
+      : {
+          ...msg,
+          content,
+          // These coordinates address raw blocks, not the derived display body.
+          // Retain origins for receipts without applying ranges a second time.
+          ...(hasSubscription && msg.sourceParts
+            ? {
+                sourceParts: msg.sourceParts.map(({ seq, origin }) => ({
+                  seq,
+                  ...(origin ? { origin } : {}),
+                })),
+              }
+            : {}),
+        };
     const count = groupContentBlocks(content).length;
     if (count <= 1) {
       return [

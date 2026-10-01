@@ -47,3 +47,42 @@ it("links both scopes to their actual host and selects the exact receipt message
     ),
   ).toBeNull();
 });
+it("selects a later wake receipt by provenance without changing its merged message index", () => {
+  const origin = (batchId: string) => ({
+    source: "subscription_update" as const,
+    subscriptionUpdate: { batchId },
+  });
+  const messages = [
+    { id: "earlier-assistant" },
+    {
+      id: "ordinary-user",
+      sourceParts: [
+        { seq: 1 },
+        { seq: 2, origin: origin("first-batch") },
+        { seq: 3, origin: origin("later-batch") },
+      ],
+    },
+  ];
+  for (const batchId of ["first-batch", "later-batch"])
+    expect(
+      subscriptionMessageIndex(
+        new URLSearchParams(`c=conversation&m=${batchId}`),
+        "conversation",
+        messages,
+      ),
+    ).toBe(1);
+  expect(
+    subscriptionMessageIndex(
+      new URLSearchParams("focus=conversation&m=later-batch"),
+      "conversation",
+      messages,
+    ),
+  ).toBe(1);
+  expect(
+    subscriptionMessageIndex(
+      new URLSearchParams("c=another&m=later-batch"),
+      "conversation",
+      messages,
+    ),
+  ).toBeNull();
+});

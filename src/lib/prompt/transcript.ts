@@ -1285,6 +1285,21 @@ async function readConversationMessagesWithSeqImpl(
       // A unit's content is the concatenation of its parts (the first part
       // already carries the parsed command block when the unit is a command).
       const content = projectTranscriptContent(unit.parts);
+      // User input contributes whole blocks. Derived ranges let presentation
+      // hide generated parts without renumbering merged messages or changing
+      // the raw transcript used by agents, copy ranges and fork anchors.
+      let contentOffset = 0;
+      const sourceParts = unit.parts.map(({ seq, origin, content: blocks }) => {
+        const start = contentOffset;
+        contentOffset += blocks.length;
+        return {
+          seq,
+          ...(origin ? { origin } : {}),
+          ...(unit.role === "user"
+            ? { contentRange: { start, end: contentOffset } }
+            : {}),
+        };
+      });
       const lastPart = unit.parts[unit.parts.length - 1]!;
       const firstOrigin = unit.parts[0]?.origin;
       const originKey = JSON.stringify(firstOrigin);
@@ -1317,10 +1332,7 @@ async function readConversationMessagesWithSeqImpl(
         seq: lastPart.seq,
         ...(unit.parts.some((part) => part.origin)
           ? {
-              sourceParts: unit.parts.map(({ seq, origin }) => ({
-                seq,
-                ...(origin ? { origin } : {}),
-              })),
+              sourceParts,
             }
           : {}),
       };
