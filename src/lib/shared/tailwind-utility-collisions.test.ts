@@ -175,6 +175,8 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointForkForm.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointForkProvenance.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointRelatedWorkPicker.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}WorktreeFileLinks.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}FilePreviewHost.tsx`,
 
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointPanel.stories.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}CheckpointStatusChip.tsx`,

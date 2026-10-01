@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   QueryClient,
   QueryClientProvider,
   type QueryKey,
 } from "@tanstack/react-query";
-import { fireEvent, render, screen, cleanup } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  cleanup,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import FilePreviewHost from "@/components/conversation/FilePreviewHost";
+import { useFilePreviewStore } from "@/stores/file-preview.store";
 import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
 import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import ProjectTranscriptHost from "./ProjectTranscriptHost";
@@ -71,7 +80,12 @@ const messages: TranscriptMessage[] = [
 afterEach(() => {
   cleanup();
   useSessionDetailStore.getState().resetStore();
+  useFilePreviewStore.getState().closePreview();
 });
+
+beforeAll(async () => {
+  await import("@/components/markdown/MarkdownRenderer");
+}, 120_000);
 
 describe("ProjectTranscriptHost", () => {
   it("shows the empty transcript state when the conversation has no messages", () => {
@@ -196,5 +210,49 @@ describe("ProjectTranscriptHost", () => {
       shiftKey: true,
     });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+  it("previews images linked from the project root and keeps Markdown links ordinary", async () => {
+    const user = userEvent.setup();
+    const linked: TranscriptMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "[Home screen](/repo/.cc/temp/home.png) · [Plan](/repo/docs/plan.md)",
+          },
+        ],
+        timestamp: null,
+      },
+    ];
+    renderSeeded(
+      <>
+        <ProjectTranscriptHost
+          projectName="proj"
+          conversationId="c1"
+          selectedBackend="claude"
+          worktreePath="/repo"
+        />
+        <FilePreviewHost />
+      </>,
+      [[projectConversationKeys.messages("proj", "c1"), linked]],
+    );
+
+    const imageLink = await screen.findByRole("link", { name: /Home screen/ });
+    expect(imageLink).toHaveAttribute(
+      "href",
+      "/api/projects/proj/worktree-images?path=.cc%2Ftemp%2Fhome.png",
+    );
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveAttribute(
+      "href",
+      "/repo/docs/plan.md",
+    );
+
+    await user.click(imageLink);
+    const dialog = await screen.findByRole("dialog", { name: "home.png" });
+    expect(within(dialog).getByRole("img")).toHaveAttribute(
+      "src",
+      "/api/projects/proj/worktree-images?path=.cc%2Ftemp%2Fhome.png",
+    );
   });
 });

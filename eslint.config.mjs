@@ -95,6 +95,8 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/conversation/CheckpointStatusChip.stories.tsx",
   "src/components/conversation/ConversationCheckpointControls.tsx",
   "src/components/conversation/checkpoint-story-fixtures.tsx",
+  "src/components/conversation/WorktreeFileLinks.tsx",
+  "src/components/conversation/FilePreviewHost.tsx",
   "src/features/session/conversation/collab/**/*.{ts,tsx}",
   "src/features/session/conversation/ConversationList.tsx",
   "src/features/session/conversation/ConversationMentionChip.tsx",

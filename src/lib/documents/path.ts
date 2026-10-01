@@ -72,6 +72,33 @@ function isSegmentPrefix(
 }
 
 /**
+ * Locate any file path against the worktree: a path inside it (absolute, or
+ * relative to the root) yields its worktree-relative identity; anything else
+ * yields its canonical absolute path. The worktree root itself is external.
+ */
+export function normalizeWorktreeLocator(
+  input: string,
+  worktreeRoot: string,
+): { path: string; location: "worktree" | "external" } {
+  const trimmed = input.trim();
+  const rootSegments = resolveAbsoluteSegments(splitSegments(worktreeRoot));
+  const absoluteSegments = trimmed.startsWith("/")
+    ? resolveAbsoluteSegments(splitSegments(trimmed))
+    : resolveAbsoluteSegments([...rootSegments, ...splitSegments(trimmed)]);
+
+  if (isSegmentPrefix(rootSegments, absoluteSegments)) {
+    return {
+      path: absoluteSegments.slice(rootSegments.length).join("/"),
+      location: "worktree",
+    };
+  }
+  return {
+    path: canonicalAbsolutePath(absoluteSegments),
+    location: "external",
+  };
+}
+
+/**
  * Canonicalize a Markdown locator for the viewer. Worktree files use the
  * existing relative identity; paths outside it use an absolute POSIX identity
  * so exact session-index authorization can distinguish them safely.
@@ -84,25 +111,8 @@ export function normalizeMarkdownLocator(
   if (trimmed.length === 0 || !isMarkdownPath(trimmed)) {
     return { ok: false, reason: "non-markdown" };
   }
-
-  const rootSegments = resolveAbsoluteSegments(splitSegments(worktreeRoot));
-  const absoluteSegments = trimmed.startsWith("/")
-    ? resolveAbsoluteSegments(splitSegments(trimmed))
-    : resolveAbsoluteSegments([...rootSegments, ...splitSegments(trimmed)]);
-
-  if (isSegmentPrefix(rootSegments, absoluteSegments)) {
-    return {
-      ok: true,
-      docPath: absoluteSegments.slice(rootSegments.length).join("/"),
-      location: "worktree",
-    };
-  }
-
-  return {
-    ok: true,
-    docPath: canonicalAbsolutePath(absoluteSegments),
-    location: "external",
-  };
+  const located = normalizeWorktreeLocator(trimmed, worktreeRoot);
+  return { ok: true, docPath: located.path, location: located.location };
 }
 
 /**

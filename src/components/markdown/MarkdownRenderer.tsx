@@ -15,6 +15,10 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { Element, Nodes } from "hast";
 import MarkdownLink from "./MarkdownLink";
+import {
+  WorktreeFileLink,
+  WorktreeImage,
+} from "@/components/conversation/WorktreeFileLinks";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { getReferenceByXmlTag } from "@/lib/prompt-editor/reference-registry";
 import { cn } from "@/lib/ui/cn";
@@ -742,8 +746,17 @@ export function createMarkdownComponents(intent: MarkdownIntent): Components {
           </WithTooltip>
         );
       }
+      const linkClassName = cn(LINK_CLASSES, className);
+      const link = <MarkdownLink {...props} className={linkClassName} />;
+      if (intent === "document") return link;
       return (
-        <MarkdownLink {...props} className={cn(LINK_CLASSES, className)} />
+        <WorktreeFileLink
+          href={props.href}
+          linkClassName={linkClassName}
+          fallback={link}
+        >
+          {props.children}
+        </WorktreeFileLink>
       );
     },
     span({ node, className, children, ...props }) {
@@ -830,14 +843,24 @@ export function createMarkdownComponents(intent: MarkdownIntent): Components {
       return <ins {...props} className={cn(DIFF_ADDED_CLASSES, className)} />;
     },
     img({ node: _node, className, alt, ...props }) {
-      return (
+      const imageClassName = cn("h-auto max-w-full rounded-md", className);
+      const image = (
         // Markdown image sources do not provide the dimensions required by next/image.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           {...props}
           alt={alt ?? ""}
           loading="lazy"
-          className={cn("h-auto max-w-full rounded-md", className)}
+          className={imageClassName}
+        />
+      );
+      if (intent === "document") return image;
+      return (
+        <WorktreeImage
+          src={props.src}
+          alt={alt ?? ""}
+          imageClassName={imageClassName}
+          fallback={image}
         />
       );
     },

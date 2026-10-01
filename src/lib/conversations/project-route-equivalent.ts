@@ -80,6 +80,7 @@ export const PROJECT_LEVEL_ROUTE_OPERATIONS: ReadonlySet<string> = new Set([
   "files",
   "mcp-config",
   "prompt",
+  "worktree-images",
 ]);
 
 /**

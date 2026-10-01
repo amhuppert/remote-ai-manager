@@ -13,6 +13,7 @@ function MarkdownMentionStory(): React.JSX.Element {
         projectName: "command-center",
         sessionName: "markdown-access",
         worktreePath: "/workspace/command-center",
+        markdownViewer: "pane",
       }}
     >
       <span className={FILE_MENTION_WRAPPER_CLASS}>

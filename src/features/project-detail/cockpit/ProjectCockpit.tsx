@@ -95,6 +95,8 @@ import "./styles/cockpit.css";
 
 export interface ProjectCockpitProps {
   projectName: string;
+  /** The project root; undefined until the projects list has loaded. */
+  projectPath?: string;
   /**
    * Open project conversations from the foundation (server truth), in the
    * PUBLIC shape the conversations query returns — the cockpit is a read
@@ -243,6 +245,7 @@ function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
  */
 export default function ProjectCockpit({
   projectName,
+  projectPath,
   openConversations,
   conversationCreations,
   sessions,
@@ -679,6 +682,7 @@ export default function ProjectCockpit({
       projectName={projectName}
       conversationId={activeTabId}
       selectedBackend={agentBackend}
+      {...(projectPath !== undefined ? { worktreePath: projectPath } : {})}
       spawnCards={spawnCards}
       renderSpawnCardRow={renderSpawnCardRow}
       pendingQueue={queueTurnState.pendingQueue}

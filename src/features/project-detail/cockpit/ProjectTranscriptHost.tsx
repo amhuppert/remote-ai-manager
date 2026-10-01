@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import MessageRow from "@/components/conversation/MessageRow";
+import { DocumentScopeProvider } from "@/components/conversation/document-scope";
 import ConversationTranscript, {
   type TranscriptExtensions,
 } from "@/components/conversation/ConversationTranscript";
@@ -28,6 +29,10 @@ export interface ProjectTranscriptHostProps {
   projectName: string;
   conversationId: string;
   selectedBackend: AgentBackendId;
+  /**
+   * The project root, where project conversations run. Linked images resolve
+   * against it; until it is known, file links render as ordinary links.
+   */
   worktreePath?: string;
   /** Active turn status — drives the running typing indicator (Req 12.2). */
   status?: ConversationStatus;
@@ -120,7 +125,7 @@ export default function ProjectTranscriptHost({
     [selectedBackend, thinkingExpansionCommand, worktreePath],
   );
 
-  return (
+  const transcript = (
     <div className={TRANSCRIPT_CLASS}>
       <ConversationTranscript
         scope={{ kind: "project", projectName, conversationId }}
@@ -133,5 +138,13 @@ export default function ProjectTranscriptHost({
         extensions={extensions}
       />
     </div>
+  );
+  if (worktreePath === undefined) return transcript;
+  return (
+    <DocumentScopeProvider
+      value={{ projectName, sessionName: null, worktreePath }}
+    >
+      {transcript}
+    </DocumentScopeProvider>
   );
 }

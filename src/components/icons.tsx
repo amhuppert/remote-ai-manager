@@ -369,6 +369,23 @@ export function DocumentIcon({ size, className }: IconProps) {
   );
 }
 
+export function ImageIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M3 4h18v16H3z" />
+      <path d="m3 17 5.5-5.5 4 4L15 13l6 6" />
+      <circle cx="15.5" cy="8.5" r="1.5" />
+    </svg>
+  );
+}
+
 export function RefreshIcon({ size, className }: IconProps) {
   return (
     <svg

@@ -159,6 +159,7 @@ export default function SessionContent({
         projectName,
         sessionName,
         worktreePath: session.worktreePath,
+        markdownViewer: "pane",
       }}
     >
       <div

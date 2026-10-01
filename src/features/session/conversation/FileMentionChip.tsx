@@ -4,8 +4,7 @@ import { NodeViewWrapper } from "@tiptap/react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import type { FileMentionAttrs } from "@/lib/prompt-editor";
 import { isMarkdownPath, normalizeMarkdownLocator } from "@/lib/documents/path";
-import { useOpenDocument } from "@/stores/session-detail.store";
-import { useDocumentScope } from "@/components/conversation/document-scope";
+import { useLinkedFiles } from "@/components/conversation/use-linked-files";
 
 function coerceAttrs(value: unknown): FileMentionAttrs {
   if (typeof value !== "object" || value === null) {
@@ -49,10 +48,10 @@ export function FileMentionChipBody({
   attrs: FileMentionAttrs;
   onRemove(): void;
 }): React.JSX.Element {
-  const scope = useDocumentScope();
-  const openDocument = useOpenDocument();
+  const files = useLinkedFiles();
+  const openMarkdown = files?.openMarkdown;
   const displayName = attrs.basename.length > 0 ? attrs.basename : attrs.path;
-  const canOpen = scope !== null && isMarkdownPath(attrs.path);
+  const canOpen = openMarkdown != null && isMarkdownPath(attrs.path);
 
   const label = (
     <>
@@ -66,16 +65,11 @@ export function FileMentionChipBody({
     </>
   );
 
-  const open = (): void => {
-    if (!scope) return;
-    const normalized = normalizeMarkdownLocator(attrs.path, scope.worktreePath);
+  const open = (opener: HTMLElement): void => {
+    if (!files || !openMarkdown) return;
+    const normalized = normalizeMarkdownLocator(attrs.path, files.worktreePath);
     if (!normalized.ok) return;
-    openDocument({
-      projectName: scope.projectName,
-      sessionName: scope.sessionName,
-      docPath: normalized.docPath,
-      title: displayName,
-    });
+    openMarkdown({ docPath: normalized.docPath, title: displayName }, opener);
   };
 
   return (
@@ -84,7 +78,7 @@ export function FileMentionChipBody({
         <button
           type="button"
           aria-label={`Open @${attrs.path} in Markdown viewer`}
-          onClick={open}
+          onClick={(event) => open(event.currentTarget)}
           onMouseDown={(event) => event.preventDefault()}
           className="font-inherit inline-flex cursor-pointer items-center gap-xs rounded-sm border-0 bg-transparent p-0 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
         >

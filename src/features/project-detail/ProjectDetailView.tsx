@@ -427,6 +427,7 @@ export default function ProjectDetailView({
 
               <ProjectCockpit
                 projectName={projectName}
+                {...(projectPath !== undefined ? { projectPath } : {})}
                 openConversations={openConversations}
                 conversationCreations={conversationCreations}
                 sessions={sessions}

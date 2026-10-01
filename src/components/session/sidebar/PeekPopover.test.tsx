@@ -26,6 +26,8 @@ import { makeConversationState } from "@/lib/conversations/testing/conversation-
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { useCollaborationStore } from "@/stores/collaboration.store";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
+import FilePreviewHost from "@/components/conversation/FilePreviewHost";
+import { useFilePreviewStore } from "@/stores/file-preview.store";
 import type { ApprovalScopedChanges } from "@/components/ApprovalGatePanel";
 
 vi.mock("@/lib/logging", () => ({
@@ -902,5 +904,36 @@ describe("PeekPopover", () => {
         id: "standard-agent",
       });
     });
+  });
+  it("dismisses itself and previews an image linked from the transcript", async () => {
+    vi.useRealTimers();
+    await import("@/components/markdown/MarkdownRenderer");
+    useFilePreviewStore.getState().closePreview();
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const imagePath = `${BASE_CONVERSATION.worktreePath}/.cc/temp/shot.png`;
+    renderPeek({
+      onClose,
+      transcriptMessages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: `[Screenshot](${imagePath})` }],
+          timestamp: "2026-05-15T12:29:00.000Z",
+        },
+      ],
+    });
+    const host = render(<FilePreviewHost />);
+
+    await user.click(await screen.findByRole("link", { name: /Screenshot/ }));
+
+    expect(onClose).toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "shot.png" });
+    expect(within(dialog).getByRole("img")).toHaveAttribute(
+      "src",
+      "/api/projects/command-center/sessions/peek-replay/worktree-images?path=.cc%2Ftemp%2Fshot.png",
+    );
+    // The suite's teardown clears document.body; unmount the dialog portal
+    // first so React is not left removing detached nodes.
+    host.unmount();
   });
 });

@@ -16,6 +16,7 @@ function scoped(content: MessageContentBlock[]): React.JSX.Element {
         projectName: "proj",
         sessionName: "sess",
         worktreePath: WORKTREE,
+        markdownViewer: "pane",
       }}
     >
       <MessageContent content={content} worktreePath={WORKTREE} />

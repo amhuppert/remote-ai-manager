@@ -14,7 +14,12 @@ function renderBody(
   const ext = basename.includes(".") ? (basename.split(".").pop() ?? "") : "";
   return render(
     <DocumentScopeProvider
-      value={{ projectName: "proj", sessionName: "sess", worktreePath: "/wt" }}
+      value={{
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/wt",
+        markdownViewer: "pane",
+      }}
     >
       <span>
         <FileMentionChipBody

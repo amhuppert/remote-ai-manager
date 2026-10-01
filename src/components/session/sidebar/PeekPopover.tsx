@@ -25,6 +25,7 @@ import ApprovalGatePanel, {
 } from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import MessageRow from "@/components/conversation/MessageRow";
+import { DocumentScopeProvider } from "@/components/conversation/document-scope";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
 import {
   RichPromptInput,
@@ -650,20 +651,30 @@ export default function PeekPopover({
                   No transcript messages yet.
                 </div>
               ) : (
-                transcriptMessages.map((message, index) => (
-                  <MessageRow
-                    key={`${message.role}-${message.timestamp ?? "no-time"}-${index}`}
-                    msg={message}
-                    messageIndex={index}
-                    isLast={index === transcriptMessages.length - 1}
-                    selectedBackend={conversation.agentBackend}
-                    worktreePath={conversation.worktreePath}
-                    onFork={onFork}
-                    forkProjectName={forkProjectName}
-                    forkRefusal={forkRefusal}
-                    lastMessageExtras={null}
-                  />
-                ))
+                <DocumentScopeProvider
+                  value={{
+                    projectName: conversation.projectName,
+                    sessionName: conversation.sessionName,
+                    worktreePath: conversation.worktreePath,
+                    markdownViewer: "dialog",
+                    transientHost: { close: onClose, anchor: anchorEl },
+                  }}
+                >
+                  {transcriptMessages.map((message, index) => (
+                    <MessageRow
+                      key={`${message.role}-${message.timestamp ?? "no-time"}-${index}`}
+                      msg={message}
+                      messageIndex={index}
+                      isLast={index === transcriptMessages.length - 1}
+                      selectedBackend={conversation.agentBackend}
+                      worktreePath={conversation.worktreePath}
+                      onFork={onFork}
+                      forkProjectName={forkProjectName}
+                      forkRefusal={forkRefusal}
+                      lastMessageExtras={null}
+                    />
+                  ))}
+                </DocumentScopeProvider>
               )}
               <TypingIndicator
                 conversationId={conversation.id}
