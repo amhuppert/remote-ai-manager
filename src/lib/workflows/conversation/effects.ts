@@ -1,16 +1,13 @@
 import type { ConversationState } from "@/lib/conversations/schemas";
-
-import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
+import type { RecordSubscriptionNoticeInput } from "@/lib/subscriptions/service";
 
 import type { MemoryIndexDeliveryKind } from "@/lib/memory/schemas";
 import type { MemoryDeliveredNote } from "@/lib/memory/telemetry";
 
-import type {
-  NotepadDeliveryRecord,
-  PreparedNotepadChangeNotice,
-} from "@/lib/notepads/change-notices";
+import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 
 export interface ConversationDurableEffects {
+  recordAgentNotice(input: RecordSubscriptionNoticeInput): Promise<boolean>;
   notifyRuntimeCleanup(
     input: import("./runtime-cleanup-notification").RuntimeCleanupNotificationInput,
   ): Promise<void>;
@@ -50,29 +47,6 @@ export interface ConversationDurableEffects {
     conversationId: string;
     notepads: readonly NotepadDeliveryRecord[];
   }): Promise<void>;
-
-  settleNotepadChangeNotice(notice: PreparedNotepadChangeNotice): Promise<void>;
-
-  claimWorkflowResults(input: {
-    projectPath: string;
-    sessionName: string;
-    originConversationId: string;
-    attemptId: string;
-  }): Promise<GraphWorkflowResultDelivery[]>;
-
-  settleWorkflowResults(input: {
-    projectPath: string;
-    sessionName: string;
-    originConversationId: string;
-    attemptId: string;
-  }): Promise<number>;
-
-  releaseWorkflowResults(input: {
-    projectPath: string;
-    sessionName: string;
-    originConversationId: string;
-    attemptId: string;
-  }): Promise<number>;
 
   // Reference documents — production routes through the shared
   // ArtifactRegistry primitive (`register()` on `focus_memory`). Tests can
@@ -131,6 +105,7 @@ export interface ConversationDurableEffects {
 }
 
 export const ephemeralConversationEffects = {
+  recordAgentNotice: async () => false,
   notifyRuntimeCleanup: async () => {},
   mutateConversation: async () => {},
   createReferenceDocument: async () => ({}),
@@ -141,8 +116,4 @@ export const ephemeralConversationEffects = {
   recordNotepadDeliveries: async () => {},
   recordMemoryIndexDeliveries: async () => {},
   resetMemoryIndexDelivery: async () => {},
-  settleNotepadChangeNotice: async () => {},
-  claimWorkflowResults: async () => [],
-  settleWorkflowResults: async () => 0,
-  releaseWorkflowResults: async () => 0,
 } satisfies ConversationDurableEffects;

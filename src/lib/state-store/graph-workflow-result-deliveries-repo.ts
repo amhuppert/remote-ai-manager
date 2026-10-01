@@ -134,7 +134,7 @@ interface StorageRow {
   boundary_seq: number;
   project_path: string;
   session_name: string;
-  origin_conversation_id: string;
+  origin_conversation_id: string | null;
   payload_json: string;
   recorded_at: string;
   delivery_state: string;
@@ -152,7 +152,8 @@ function isStorageRow(value: unknown): value is StorageRow {
     typeof row.boundary_seq === "number" &&
     typeof row.project_path === "string" &&
     typeof row.session_name === "string" &&
-    typeof row.origin_conversation_id === "string" &&
+    (typeof row.origin_conversation_id === "string" ||
+      row.origin_conversation_id === null) &&
     typeof row.payload_json === "string" &&
     typeof row.recorded_at === "string" &&
     typeof row.delivery_state === "string" &&

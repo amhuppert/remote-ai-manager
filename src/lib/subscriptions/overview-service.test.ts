@@ -283,6 +283,32 @@ describe("subscription overview projections", () => {
       "uncertain",
     ]);
   });
+  it("offers resume for an unfollowed own-conversation notice source only to an eligible recipient", async () => {
+    const h = harness();
+    h.subscriptions[1] = subscription("second", {
+      source: { kind: "conversation", id: recipient.conversationId },
+      mode: "passive",
+      status: "unfollowed",
+      unfollowedAt: at,
+      expiresAt: null,
+    });
+    const view = async () =>
+      (await h.service.overview({ subscriptionId: "second", status: "all" }))
+        .items[0];
+    expect(await view()).toMatchObject({
+      actions: ["resume"],
+      pendingCount: 0,
+    });
+    h.owners[0] = { ...owner(), eligible: false };
+    expect((await view())?.actions).toEqual([]);
+    h.owners[0] = { ...owner("conversation", "session", true), eligible: true };
+    expect((await view())?.actions).toEqual([]);
+    h.owners[0] = owner();
+    h.subscriptions[1].source = { kind: "conversation", id: "peer" };
+    expect((await view())?.actions).toEqual([]);
+    h.subscriptions[1].source = { kind: "notepad", id: "notes" };
+    expect((await view())?.actions).toEqual([]);
+  });
   it("filters a requested wake batch before pagination even beyond the first hundred inbox records", async () => {
     const h = harness();
     for (let index = 0; index < 150; index++)

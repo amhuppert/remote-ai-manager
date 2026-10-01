@@ -26,6 +26,7 @@ import {
   type SpecAssumptionRow,
   type SpecAttentionMutationReceipt,
   type SpecCommentRow,
+  type SpecEventRow,
   type SpecQuestionRow,
   type SpecRecordAuditSnapshot,
   type SpecRevision,
@@ -472,7 +473,11 @@ interface SignOffTransactionOutcome {
    * repeat on an approved revision reports nothing, so the author feedback
    * notice cannot re-fire on a replay.
    */
-  signedOff: { spec: Spec; occurredAt: string } | null;
+  signedOff: {
+    spec: Spec;
+    occurredAt: string;
+    durableEvent: SpecEventRow;
+  } | null;
 }
 
 interface CombinedSignOffTransactionOutcome {
@@ -480,7 +485,7 @@ interface CombinedSignOffTransactionOutcome {
   prepared: PreparedSpecEventPublication[];
   grantedNotices: SpecApprovalGrantNotice[];
   policyNotices: SpecPolicyAdmissionNotice[];
-  signedOff: { spec: Spec; occurredAt: string } | null;
+  signedOff: SignOffTransactionOutcome["signedOff"];
 }
 
 /**
@@ -617,6 +622,8 @@ export interface SpecReviewFeedbackNotice {
   threadId: string | null;
   proposer: AgentActorProvenance | null;
   occurredAt: string;
+  /** The committed source occurrence shared with passive spec follows. */
+  durableEvent: SpecEventRow;
 }
 
 /**
@@ -1110,6 +1117,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     subject: string | null,
     threadId: string | null,
     occurredAt: string,
+    durableEvent: SpecEventRow,
   ): void {
     const proposer = revisionAuthor(
       deps.attention.findBySpecId(spec.id),
@@ -1127,6 +1135,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       threadId,
       proposer,
       occurredAt,
+      durableEvent,
     });
   }
 
@@ -1930,6 +1939,20 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       satisfiedAttentionIds: answered,
       occurredAt,
     });
+    const feedbackEvent = appendEvent(
+      target.spec,
+      revision.id,
+      parsed.actor,
+      occurredAt,
+      "spec-review-revision-signed-off",
+      policyAdmitted
+        ? "policy-signed-off"
+        : allCombined
+          ? "combined-signed-off"
+          : "signed-off",
+      approval?.id,
+      parsed.activeStartedAt,
+    );
     return {
       result: {
         ok: true,
@@ -1939,20 +1962,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         approval: SpecApprovalRow | null;
       }>,
       prepared: [
-        appendEvent(
-          target.spec,
-          revision.id,
-          parsed.actor,
-          occurredAt,
-          "spec-review-revision-signed-off",
-          policyAdmitted
-            ? "policy-signed-off"
-            : allCombined
-              ? "combined-signed-off"
-              : "signed-off",
-          approval?.id,
-          parsed.activeStartedAt,
-        ),
+        feedbackEvent,
         ...stalePrepared,
         ...retireAnsweredRequests(
           target.spec,
@@ -1963,7 +1973,11 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       ],
       grantedNotice,
       policyNotices,
-      signedOff: { spec: target.spec, occurredAt },
+      signedOff: {
+        spec: target.spec,
+        occurredAt,
+        durableEvent: feedbackEvent.durableEvent,
+      },
     };
   }
 
@@ -2296,6 +2310,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       if (humanRefusal !== null) return humanRefusal;
       const occurredAt = now();
       let commentedSpec: Spec | null = null;
+      let commentedEvent: SpecEventRow | null = null;
       const transaction = await deps.specs.transaction(
         "specs.review.comment",
         (repo) => {
@@ -2367,25 +2382,29 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           };
           deps.review.saveComment(row);
           commentedSpec = target.spec;
+          const feedbackEvent = appendEvent(
+            target.spec,
+            target.revision.id,
+            parsed.actor,
+            occurredAt,
+            "spec-review-commented",
+            "commented",
+            row.thread_id,
+            parsed.activeStartedAt,
+          );
+          commentedEvent = feedbackEvent.durableEvent;
           return {
             result: { ok: true, value: row } as ReviewResult<SpecCommentRow>,
-            prepared: [
-              appendEvent(
-                target.spec,
-                target.revision.id,
-                parsed.actor,
-                occurredAt,
-                "spec-review-commented",
-                "commented",
-                row.thread_id,
-                parsed.activeStartedAt,
-              ),
-            ],
+            prepared: [feedbackEvent],
           };
         },
       );
       publishAll(transaction.prepared);
-      if (transaction.result.ok && commentedSpec !== null) {
+      if (
+        transaction.result.ok &&
+        commentedSpec !== null &&
+        commentedEvent !== null
+      ) {
         emitReviewFeedback(
           commentedSpec,
           parsed.revisionId,
@@ -2393,6 +2412,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           parsed.elementId,
           parsed.threadId,
           occurredAt,
+          commentedEvent,
         );
       }
       return transaction.result;
@@ -2409,6 +2429,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       const parsed = replyToReviewThreadInputSchema.parse(input);
       const occurredAt = now();
       let repliedSpec: Spec | null = null;
+      let repliedEvent: SpecEventRow | null = null;
       const transaction = await deps.specs.transaction(
         "specs.review.reply",
         (repo) => {
@@ -2472,20 +2493,20 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           };
           deps.review.saveComment(row);
           repliedSpec = target.spec;
+          const feedbackEvent = appendEvent(
+            target.spec,
+            target.revision.id,
+            parsed.actor,
+            occurredAt,
+            "spec-review-commented",
+            "commented",
+            row.thread_id,
+            parsed.activeStartedAt,
+          );
+          repliedEvent = feedbackEvent.durableEvent;
           return {
             result: { ok: true, value: row } as ReviewResult<SpecCommentRow>,
-            prepared: [
-              appendEvent(
-                target.spec,
-                target.revision.id,
-                parsed.actor,
-                occurredAt,
-                "spec-review-commented",
-                "commented",
-                row.thread_id,
-                parsed.activeStartedAt,
-              ),
-            ],
+            prepared: [feedbackEvent],
           };
         },
       );
@@ -2495,7 +2516,8 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       if (
         transaction.result.ok &&
         parsed.actor.kind === "human" &&
-        repliedSpec !== null
+        repliedSpec !== null &&
+        repliedEvent !== null
       ) {
         emitReviewFeedback(
           repliedSpec,
@@ -2504,6 +2526,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           transaction.result.value.element_id,
           transaction.result.value.thread_id,
           occurredAt,
+          repliedEvent,
         );
       }
       logger.info("specs.review.reply.complete", {
@@ -4635,6 +4658,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             null,
             null,
             transaction.signedOff.occurredAt,
+            transaction.signedOff.durableEvent,
           );
         }
       }
@@ -4679,6 +4703,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             null,
             null,
             transaction.signedOff.occurredAt,
+            transaction.signedOff.durableEvent,
           );
         }
       }

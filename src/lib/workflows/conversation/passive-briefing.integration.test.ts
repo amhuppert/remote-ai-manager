@@ -13,6 +13,8 @@ import {
 } from "@/lib/subscriptions/service";
 import { followAcceptedNotepadContext } from "@/lib/subscriptions/involvement";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
+import { createNotepadsRepo } from "@/lib/state-store/notepads-repo";
+import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
 
 const result: ConversationBackendTurnResult = {
   backendRef: { backend: "claude", ref: "passive-test" },
@@ -68,6 +70,27 @@ describe.each(["session", "project"] as const)(
                   },
           },
           actorDeps: {
+            readNotepadForInjection: async (id) => {
+              const pad = await notepads.find(id);
+              return pad
+                ? {
+                    ...pad,
+                    openComments: { count: 0, latestCreatedAt: null },
+                    commentIds: [],
+                  }
+                : null;
+            },
+            recordNotepadDeliveries: async ({
+              conversationId,
+              notepads: delivered,
+            }) => {
+              for (const context of delivered)
+                await watermarks.record({
+                  ...context,
+                  conversationId,
+                  updatedAt: "2026-10-01T10:00:00Z",
+                });
+            },
             getConversationBackendFactory: () => ({
               backend: "claude",
               createRuntime: async () => backend,
@@ -86,7 +109,6 @@ describe.each(["session", "project"] as const)(
             },
             subscriptions: {
               synchronizeInvolvement: async () => {},
-              coveredNotepadIds: async () => [],
               async prepareBriefing(input) {
                 return service.prepareBriefing(input);
               },
@@ -97,6 +119,26 @@ describe.each(["session", "project"] as const)(
           fixture.persistence.db,
           createWriteQueue(),
         );
+        const notepads = createNotepadsRepo(
+          fixture.persistence.db,
+          createWriteQueue(),
+        );
+        const watermarks = createNotepadDeliveryWatermarksRepo(
+          fixture.persistence.db,
+          createWriteQueue(),
+        );
+        await notepads.create({
+          id: "notes",
+          revisionId: "notes-r1",
+          scope: "global",
+          projectPath: null,
+          name: "Notes",
+          content: "Exact accepted source context",
+          writeMode: "full-edit",
+          authorKind: "user",
+          authorConversationId: null,
+          createdAt: "2026-10-01T09:00:00Z",
+        });
         const recipient = { projectPath: "/passive-repo", conversationId: "c" };
         const at = "2026-09-30T12:00:00Z";
         const service: SubscriptionService = createSubscriptionService({
@@ -130,7 +172,10 @@ describe.each(["session", "project"] as const)(
         });
         const turn = await fixture.manager.submitConversationTurn({
           binding: fixture.binding,
-          turn: { promptText: "Continue", inputOrigin: "user" },
+          turn: {
+            promptText: '<notepad-ref notepad-id="notes" />',
+            inputOrigin: "user",
+          },
         });
         if (turn.kind !== "accepted") throw new Error(turn.message);
         await turn.turn.completed;
@@ -138,10 +183,24 @@ describe.each(["session", "project"] as const)(
           (await repo.readInbox(recipient, { includeSettled: true })).items[0]
             ?.state,
         ).toBe("accepted");
+        expect(
+          (
+            await createNotepadDeliveryWatermarksRepo(
+              fixture.persistence.db,
+              createWriteQueue(),
+            ).listForConversation("c")
+          )[0],
+        ).toMatchObject({
+          notepadId: "notes",
+          revision: 1,
+          openComments: { count: 0, latestCreatedAt: null },
+          commentIds: [],
+        });
       },
     );
 
     it("records accepted notepad involvement independently of failed watermark persistence", async () => {
+      let failWatermark = true;
       const backend = createMockBackendRuntime({
         sendTurn: async (input) => {
           expect(input.promptText).toContain("revision: 7");
@@ -177,11 +236,11 @@ describe.each(["session", "project"] as const)(
             openComments: { count: 0, latestCreatedAt: null },
           }),
           recordNotepadDeliveries: async () => {
-            throw new Error("Notepad deleted before watermark persistence");
+            if (failWatermark)
+              throw new Error("Notepad receipt temporarily unavailable");
           },
           subscriptions: {
             synchronizeInvolvement: async () => {},
-            coveredNotepadIds: async () => [],
             prepareBriefing: async () => ({
               block: null,
               onInputAccepted: async () => {},
@@ -214,13 +273,20 @@ describe.each(["session", "project"] as const)(
         },
       });
       if (turn.kind !== "accepted") throw new Error(turn.message);
-      await turn.turn.completed;
+      expect((await turn.turn.completed).outcome.kind).toBe(
+        "settlement_failed",
+      );
+      failWatermark = false;
+      await fixture.manager.ensureConversationLifecycle(fixture.binding);
       expect(
         (
           await repo.list({ projectPath: "/passive-repo", conversationId: "c" })
         )[0],
       ).toMatchObject({
-        cursor: "7",
+        cursor: JSON.stringify({
+          revision: 7,
+          legacyOpenComments: { count: 0, latestCreatedAt: null },
+        }),
         source: { kind: "notepad", id: "notes" },
       });
     });
@@ -263,7 +329,6 @@ describe.each(["session", "project"] as const)(
           }),
           subscriptions: {
             synchronizeInvolvement: async () => {},
-            coveredNotepadIds: async () => [],
             prepareBriefing: async () => {
               preparations++;
               return {
@@ -337,7 +402,6 @@ describe.each(["session", "project"] as const)(
           }),
           subscriptions: {
             synchronizeInvolvement: async () => {},
-            coveredNotepadIds: async () => [],
             prepareBriefing: async () => ({
               block: "Passive update",
               onInputAccepted: async () => {

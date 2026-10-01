@@ -35,6 +35,7 @@ export interface NotepadInjectionSource {
   name: string;
   revision: number;
   openComments: NotepadOpenCommentMarker;
+  commentIds?: string[];
   writeMode: NotepadWriteMode;
   /** Canonical Markdown text with inline reference XML and image tokens. */
   content: string;
@@ -56,20 +57,32 @@ export interface NotepadInjectionReader {
  */
 export function createNotepadInjectionReader(
   service: NotepadService,
-  comments: Pick<NotepadCommentsRepo, "openCommentMarker">,
+  comments: Pick<NotepadCommentsRepo, "list">,
 ): NotepadInjectionReader {
   return {
     async readForInjection(notepadId) {
       const result = await service.get(notepadId);
       if (result.ok) {
         const { id, name, revision, writeMode, content } = result.value;
+        const threads = await comments.list({ notepadId: id });
+        const open = threads.filter(({ comment }) => comment.status === "open");
         return {
           id,
           name,
           revision,
           writeMode,
           content,
-          openComments: await comments.openCommentMarker(id),
+          openComments: {
+            count: open.length,
+            latestCreatedAt: open.reduce<string | null>(
+              (latest, { comment }) =>
+                latest === null || comment.createdAt > latest
+                  ? comment.createdAt
+                  : latest,
+              null,
+            ),
+          },
+          commentIds: threads.map(({ comment }) => comment.id),
         };
       }
       if (result.error.code === "not_found") return null;
@@ -97,6 +110,12 @@ function renderNotepadBlock(notepad: NotepadInjectionSource): string {
       ? []
       : [`latest-open-comment: ${notepad.openComments.latestCreatedAt}`]),
     `read: ${buildNotepadReadCommand(notepad.id)}`,
+    ...(notepad.openComments.count > 0
+      ? [
+          `read-comments: cctl notepad comment list --open -- ${quoteAgentCommandArgument(notepad.id)}`,
+          "Open-comment metadata does not include review bodies. Read open comments before acting.",
+        ]
+      : []),
     "---",
     notepad.content,
     "</notepad>",

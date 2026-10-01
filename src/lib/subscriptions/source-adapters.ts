@@ -1,3 +1,8 @@
+import { createNotepadSourceReader } from "./notepad-source";
+import { createWorkflowSourceReader } from "./workflow-source";
+import type { NotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
+import type { NotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
+import type { GraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import type { JobsRepo } from "@/lib/jobs/repo";
 import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import type { GraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
@@ -11,6 +16,7 @@ import type { SubscriptionSourceQueriesRepo } from "@/lib/state-store/subscripti
 import type { TicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
 import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
 import { z } from "zod";
+import type { Spec, SpecEventRow } from "@/lib/specs/schemas";
 import type {
   SourceCursor,
   SourceFact,
@@ -21,6 +27,9 @@ import type {
 
 export interface SubscriptionSourceDeps {
   notepads: NotepadsRepo;
+  comments: NotepadCommentsRepo;
+  watermarks: NotepadDeliveryWatermarksRepo;
+  resultDeliveries: GraphWorkflowResultDeliveriesRepo;
   tickets: TicketsRepo;
   specs: SpecsRepo;
   specEvents: SpecEventsRepo;
@@ -81,50 +90,63 @@ function payloadSummary(payload: Record<string, unknown>): string {
     .slice(0, 700);
 }
 
+export function projectSpecSourceFact(input: {
+  spec: Pick<Spec, "name" | "slug" | "projectPath">;
+  event: SpecEventRow;
+}): SourceFact {
+  const { spec, event } = input;
+  const actor = eventActorSchema.parse(JSON.parse(event.actor_json));
+  const payload = z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(event.payload_json));
+  const kind =
+    typeof payload.kind === "string" ? payload.kind : event.event_type;
+  const decision =
+    event.event_type.startsWith("spec-review-") ||
+    event.event_type === "spec-approval-changed" ||
+    event.event_type === "spec-attention-changed" ||
+    /proposed|signed|approved|requested|transitioned|returned/.test(kind);
+  return {
+    occurrenceId: String(event.id),
+    eventKind: event.event_type,
+    category:
+      event.event_type === "spec-execution-changed"
+        ? "outcome"
+        : decision
+          ? "decision"
+          : "revision",
+    sourceTitle: spec.name,
+    summary: `${event.event_type}: ${payloadSummary(payload) || kind}`,
+    occurredAt: event.occurred_at,
+    revision:
+      typeof payload.revisionId === "string" ? payload.revisionId : null,
+    outcome: decision ? kind : null,
+    retrievalHandle:
+      event.event_type === "spec-review-commented"
+        ? `cctl spec comments --project=${quoteArgument(projectNameFromPath(spec.projectPath))} --open -- ${quoteArgument(spec.slug)}`
+        : `cctl spec status --project=${quoteArgument(projectNameFromPath(spec.projectPath))} -- ${quoteArgument(spec.slug)}`,
+    actorConversationId:
+      actor.kind === "agent" ? (actor.conversationId ?? null) : null,
+  };
+}
+
 export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
+  const readNotepad = createNotepadSourceReader(deps);
+  const readWorkflow = createWorkflowSourceReader(deps);
   return async function readSource(
     recipient: SubscriptionRecipient,
     source: SubscriptionSourceRef,
     cursor: SourceCursor,
   ): Promise<SourceReadResult> {
-    if (source.kind === "notepad") {
-      const notepad = await deps.notepads.find(source.id);
-      if (
-        !notepad ||
-        (notepad.scope === "project" &&
-          notepad.projectPath !== recipient.projectPath)
-      ) {
-        return { cursor, facts: [], missing: true };
-      }
-      if (cursor === null)
-        return { cursor: String(notepad.revision), facts: [], missing: false };
-      const previous = eventIdCursor(cursor);
-      const revisions = (await deps.notepads.listRevisions(source.id))
-        .filter((revision) => revision.revision > previous)
-        .sort((a, b) => a.revision - b.revision);
-      return {
-        cursor: String(
-          Math.max(
-            previous,
-            notepad.revision,
-            ...revisions.map((revision) => revision.revision),
-          ),
-        ),
-        missing: false,
-        facts: revisions.map((revision) => ({
-          occurrenceId: `${revision.id}:${revision.revision}`,
-          eventKind: "notepad-content-revised",
-          category: "revision" as const,
-          sourceTitle: notepad.name,
-          summary: `${notepad.name} was ${revision.origin === "restore" ? "restored" : "updated"} to revision ${revision.revision}.`,
-          occurredAt: revision.createdAt,
-          revision: String(revision.revision),
-          outcome: null,
-          retrievalHandle: `cctl notepad get -- ${quoteArgument(source.id)}`,
-          actorConversationId: revision.authorConversationId,
-        })),
-      };
+    if (source.kind === "conversation") {
+      if (source.id !== recipient.conversationId)
+        throw new Error(
+          "Internal notices must use their own conversation source",
+        );
+      return { cursor: cursor ?? "0", facts: [], missing: false };
     }
+    if (source.kind === "notepad")
+      return readNotepad(recipient, source, cursor);
     if (source.kind === "spec") {
       const spec = await deps.specs.findById(source.id);
       if (!spec || spec.projectPath !== recipient.projectPath)
@@ -140,42 +162,7 @@ export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
             event.id > previous &&
             event.event_type !== "spec-intervention-recorded",
         )
-        .map((event): SourceFact => {
-          const actor = eventActorSchema.parse(JSON.parse(event.actor_json));
-          const payload = z
-            .record(z.string(), z.unknown())
-            .parse(JSON.parse(event.payload_json));
-          const kind =
-            typeof payload.kind === "string" ? payload.kind : event.event_type;
-          const decision =
-            event.event_type.startsWith("spec-review-") ||
-            event.event_type === "spec-approval-changed" ||
-            event.event_type === "spec-attention-changed" ||
-            /proposed|signed|approved|requested|transitioned|returned/.test(
-              kind,
-            );
-          return {
-            occurrenceId: String(event.id),
-            eventKind: event.event_type,
-            category:
-              event.event_type === "spec-execution-changed"
-                ? "outcome"
-                : decision
-                  ? "decision"
-                  : "revision",
-            sourceTitle: spec.name,
-            summary: `${event.event_type}: ${payloadSummary(payload) || kind}`,
-            occurredAt: event.occurred_at,
-            revision:
-              typeof payload.revisionId === "string"
-                ? payload.revisionId
-                : null,
-            outcome: decision ? kind : null,
-            retrievalHandle: `cctl spec status --project=${quoteArgument(projectNameFromPath(spec.projectPath))} -- ${quoteArgument(spec.slug)}`,
-            actorConversationId:
-              actor.kind === "agent" ? (actor.conversationId ?? null) : null,
-          };
-        });
+        .map((event) => projectSpecSourceFact({ spec, event }));
       return {
         cursor: String(Math.max(previous, head)),
         facts,
@@ -242,57 +229,8 @@ export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
         ],
       };
     }
-    if (source.kind === "workflow") {
-      const address = deps.queries.findWorkflowAddress(source.id);
-      if (!address || address.projectPath !== recipient.projectPath)
-        return { cursor, facts: [], missing: true };
-      const execution =
-        deps.workflows.findByExecutionId(source.id) ??
-        deps.archivedWorkflows.findByExecutionId(source.id);
-      if (!execution) return { cursor, facts: [], missing: true };
-      if (cursor === null) {
-        const latest = deps.workflowEvents.findPage(
-          address.projectPath,
-          address.sessionName,
-          source.id,
-          { limit: 1, direction: "desc" },
-        ).records[0];
-        return { cursor: String(latest?.id ?? 0), facts: [], missing: false };
-      }
-      let current = eventIdCursor(cursor);
-      const facts: SourceFact[] = [];
-      for (;;) {
-        const page = deps.workflowEvents.findPage(
-          address.projectPath,
-          address.sessionName,
-          source.id,
-          { limit: 500, cursor: current, direction: "asc" },
-        );
-        for (const record of page.records) {
-          current = record.id;
-          const event = record.event;
-          if (event.type !== "graph-workflow-boundary") continue;
-          const outcome = ["completion", "halt", "abandon", "abort"].includes(
-            event.boundaryKind,
-          );
-          facts.push({
-            occurrenceId: String(record.id),
-            eventKind: `${event.type}:${event.boundaryKind}`,
-            category: outcome ? "outcome" : "decision",
-            sourceTitle:
-              execution.launchDocument?.name ?? `Workflow ${execution.id}`,
-            summary: `Workflow reached ${event.boundaryKind} (${event.workflowStatus}).`,
-            occurredAt: record.occurredAt,
-            revision: null,
-            outcome: event.workflowStatus,
-            retrievalHandle: `cctl workflow status --project=${quoteArgument(projectNameFromPath(address.projectPath))} --session=${quoteArgument(address.sessionName)} -- ${quoteArgument(source.id)}`,
-            actorConversationId: null,
-          });
-        }
-        if (page.nextCursor === null) break;
-      }
-      return { cursor: String(current), facts, missing: false };
-    }
+    if (source.kind === "workflow")
+      return readWorkflow(recipient, source, cursor);
     if (source.kind === "ticket") {
       const ticket = await deps.tickets.findById(source.id);
       if (!ticket || ticket.projectPath !== recipient.projectPath)

@@ -22,11 +22,7 @@ import {
   withWriteQueue,
   withWriteQueueSync,
 } from "@/lib/state-store/write-queue";
-import {
-  createNotepadDeliveryStateReader,
-  createNotepadDeliveryTracker,
-  type NotepadDeliveryTracker,
-} from "./change-notices";
+import { createNotepadAcceptedContextRecorder } from "./accepted-context";
 import {
   createNotepadContentStore,
   NOTEPAD_CONTENT_ROOT_DIRNAME,
@@ -94,14 +90,10 @@ export function getNotepadDeliveryWatermarksRepo(): NotepadDeliveryWatermarksRep
  * Owner of what each conversation has been shown of each notepad (D17). Written
  * after accepted reference delivery, read by prompt assembly.
  */
-export function getNotepadDeliveryTracker(): NotepadDeliveryTracker {
-  return getGlobalSingleton("__cc_notepad_delivery_tracker", () =>
-    createNotepadDeliveryTracker({
+export function getNotepadAcceptedContextRecorder() {
+  return getGlobalSingleton("__cc_notepad_accepted_context_recorder", () =>
+    createNotepadAcceptedContextRecorder({
       watermarks: getNotepadDeliveryWatermarksRepo(),
-      readDeliveryState: createNotepadDeliveryStateReader({
-        repo: getNotepadsRepo(),
-        comments: getNotepadCommentsRepo(),
-      }),
       now: () => new Date().toISOString(),
     }),
   );

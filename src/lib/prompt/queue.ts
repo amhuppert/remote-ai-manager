@@ -1,3 +1,4 @@
+import { createRequiredInputReceipt } from "@/lib/workflows/conversation/pre-turn/required-input-receipt";
 import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
 /**
  * Durably enqueue a user message into a conversation and, for backends that
@@ -37,12 +38,9 @@ import {
   expandNotepadRefsForAgent,
   type NotepadInjectionSource,
 } from "@/lib/notepads/injection";
-import type {
-  NotepadDeliveryRecord,
-  PreparedNotepadChangeNotice,
-} from "@/lib/notepads/change-notices";
+import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 import {
-  getNotepadDeliveryTracker,
+  getNotepadAcceptedContextRecorder,
   getNotepadInjectionReader,
 } from "@/lib/notepads/service-factory";
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
@@ -116,20 +114,6 @@ export function buildQueueContent(args: {
     });
   }
   return content;
-}
-
-/**
- * Prepend the transient change notice to the blocks the backend receives. The
- * durable row and the transcript entry are built from the un-noticed content,
- * so the divergence the notepad expansion already models extends to the notice
- * (R21): agent-facing only, never part of what the user is recorded as saying.
- */
-function withNotepadChangeNotice(
-  content: MessageContentBlock[],
-  notice: PreparedNotepadChangeNotice | null,
-): MessageContentBlock[] {
-  if (notice?.block == null) return content;
-  return [{ type: "text", text: notice.block }, ...content];
 }
 
 interface ConversationKey {
@@ -214,17 +198,6 @@ export interface QueueMessageDeps {
     conversationId: string;
     notepads: readonly NotepadDeliveryRecord[];
   }): Promise<void>;
-  /**
-   * Builds this delivery's transient change notice (R21) — the same expansion
-   * the live turn runs, so a queued message carries the notice a live turn
-   * would have. A read: the watermarks advance only through `settle`.
-   */
-  prepareNotepadChangeNotice(
-    conversationId: string,
-    references?: readonly NotepadDeliveryRecord[],
-    excludedNotepadIds?: readonly string[],
-  ): Promise<PreparedNotepadChangeNotice>;
-  settleNotepadChangeNotice(notice: PreparedNotepadChangeNotice): Promise<void>;
 }
 
 const defaultDeps: QueueMessageDeps = {
@@ -249,19 +222,7 @@ const defaultDeps: QueueMessageDeps = {
   readNotepadForInjection: (notepadId) =>
     getNotepadInjectionReader().readForInjection(notepadId),
   recordNotepadDeliveries: (input) =>
-    getNotepadDeliveryTracker().recordDelivered(input),
-  prepareNotepadChangeNotice: (
-    conversationId,
-    references,
-    excludedNotepadIds,
-  ) =>
-    getNotepadDeliveryTracker().prepare(
-      conversationId,
-      references,
-      excludedNotepadIds,
-    ),
-  settleNotepadChangeNotice: (notice) =>
-    getNotepadDeliveryTracker().settle(notice),
+    getNotepadAcceptedContextRecorder().recordDelivered(input),
 };
 
 export interface QueueMessageParams {
@@ -639,10 +600,31 @@ async function queueMessageInOrder(
   // Rendered references provide a local baseline until backend acceptance.
   let passive;
   const passiveReceipts: (() => Promise<void>)[] = [];
+  const notepadReferences = deliveredNotepads.map(
+    ({ id, revision, openComments, commentIds }) => ({
+      notepadId: id,
+      revision,
+      openComments,
+      ...(commentIds === undefined ? {} : { commentIds }),
+    }),
+  );
+  const acceptedNotepadContext = createRequiredInputReceipt(async () => {
+    if (notepadReferences.length)
+      await deps.recordNotepadDeliveries({
+        conversationId,
+        notepads: notepadReferences,
+      });
+  });
+  let notepadContextFinalized = false;
+  const finishNotepadContext = () => {
+    notepadContextFinalized = true;
+    return acceptedNotepadContext.finish();
+  };
+  if (notepadReferences.length) passiveReceipts.push(finishNotepadContext);
   const acceptedNotepadReferences = prepareAcceptedNotepadReferences(
     deps.subscriptions,
     { projectPath, conversationId },
-    deliveredNotepads.map(({ id, revision }) => ({ notepadId: id, revision })),
+    notepadReferences,
     (finish) => passiveReceipts.push(finish),
   );
   try {
@@ -652,6 +634,7 @@ async function queueMessageInOrder(
         recipient: { projectPath, conversationId },
         attemptId: deliveryAttemptId,
         eligible: isQueuedUserMessage(claimed),
+        providedNotepadContext: notepadReferences,
       },
       (finish) => passiveReceipts.push(finish),
     );
@@ -676,39 +659,6 @@ async function queueMessageInOrder(
     });
     return { entry, deliveryTiming: "next_turn" };
   }
-  let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
-  try {
-    notepadChangeNotice = await deps.prepareNotepadChangeNotice(
-      conversationId,
-      deliveredNotepads.map(({ id, revision, openComments }) => ({
-        notepadId: id,
-        revision,
-        openComments,
-      })),
-      passive.coveredNotepadIds,
-    );
-    if (notepadChangeNotice.block !== null) {
-      logger.info("queue.notepad_change_notice_prepended", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        ...scopeRef,
-        conversationId,
-        messageIds: [entry.id],
-        deliveryAttemptId,
-        count: notepadChangeNotice.advances.length,
-      });
-    }
-  } catch (err) {
-    notepadChangeNotice = null;
-    logger.warn("queue.notepad_change_notice_failed", {
-      projectName: deps.getProjectDisplayName(projectPath),
-      ...scopeRef,
-      conversationId,
-      messageIds: [entry.id],
-      deliveryAttemptId,
-      error: getErrorMessage(err),
-    });
-  }
-
   let accepted = false;
   let acceptance: Promise<void> | undefined;
   let settlementError: string | null = null;
@@ -741,59 +691,9 @@ async function queueMessageInOrder(
       const notepadInvolvement = acceptedNotepadReferences.onInputAccepted();
       void passiveAcceptance.catch(() => {});
       void notepadInvolvement.catch(() => {});
-      if (deliveredNotepads.length > 0) {
-        try {
-          await deps.recordNotepadDeliveries({
-            conversationId,
-            notepads: deliveredNotepads.map(
-              ({ id, revision, openComments }) => ({
-                notepadId: id,
-                revision,
-                openComments,
-              }),
-            ),
-          });
-        } catch (err) {
-          logger.warn("queue.notepad_delivery_record_failed", {
-            projectName: deps.getProjectDisplayName(projectPath),
-            ...scopeRef,
-            conversationId,
-            count: deliveredNotepads.length,
-            error: getErrorMessage(err),
-          });
-        }
-      }
-      // The runtime invokes this callback on backend acceptance, which is the settle
-      // gate (D17): a delivery that threw above left the row unsettled AND the
-      // watermarks untouched, so the notice re-fires on the next message rather
-      // than being lost.
-      //
-      // Settled here rather than after the transcript write below: the agent has
-      // already been handed the notice, so a later failure in the transcript or
-      // image work must not strand the watermark and re-deliver the same notice.
-      if (notepadChangeNotice !== null && notepadChangeNotice.block !== null) {
-        try {
-          await deps.settleNotepadChangeNotice(notepadChangeNotice);
-          logger.info("queue.notepad_change_notice_settled", {
-            projectName: deps.getProjectDisplayName(projectPath),
-            ...scopeRef,
-            conversationId,
-            messageIds: [entry.id],
-            deliveryAttemptId,
-            count: notepadChangeNotice.advances.length,
-          });
-        } catch (err) {
-          logger.warn("queue.notepad_change_notice_settle_failed", {
-            projectName: deps.getProjectDisplayName(projectPath),
-            ...scopeRef,
-            conversationId,
-            messageIds: [entry.id],
-            deliveryAttemptId,
-            error: getErrorMessage(err),
-          });
-        }
-      }
-
+      const contextAcceptance = acceptedNotepadContext.onInputAccepted();
+      void contextAcceptance.catch(() => {});
+      await contextAcceptance;
       await passiveAcceptance;
       await notepadInvolvement;
 
@@ -883,14 +783,10 @@ async function queueMessageInOrder(
       ? [...deliveryContent, { type: "text", text: summary }]
       : deliveryContent;
     const promptContext = isNativeCommand
-      ? [passive.block, notepadChangeNotice?.block, summary.trimStart()]
-          .filter(Boolean)
-          .join("\n\n")
+      ? [passive.block, summary.trimStart()].filter(Boolean).join("\n\n")
       : undefined;
-    const noticedContent = withNotepadChangeNotice(
-      summarizedContent,
-      notepadChangeNotice,
-    );
+    if (notepadReferences.length && notepadContextFinalized)
+      throw new Error("Accepted notepad context input already finalized");
     acceptedNotepadReferences.markDispatched();
     passive.markDispatched();
     await runtime.queueUserInput({
@@ -898,8 +794,8 @@ async function queueMessageInOrder(
       content: isNativeCommand
         ? deliveryContent
         : passive.block
-          ? [{ type: "text", text: passive.block }, ...noticedContent]
-          : noticedContent,
+          ? [{ type: "text", text: passive.block }, ...summarizedContent]
+          : summarizedContent,
       ...(promptContext ? { promptContext } : {}),
       onAccepted,
     });
@@ -937,6 +833,7 @@ async function queueMessageInOrder(
     try {
       await passive.finish();
       await acceptedNotepadReferences.finish();
+      await finishNotepadContext();
     } catch (error) {
       settlementError = getErrorMessage(error);
       await holdForReview(settlementError);

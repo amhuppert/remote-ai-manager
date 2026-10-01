@@ -173,8 +173,18 @@ const DB_FILE_NAME = "command-center.db";
  * place, so content approvals record the subject fingerprint they approved.
  * Older builds would pin such an approval by revision id alone, so migration
  * `0057-continuous-spec-review` fences them.
+ *
+ * Version 26 admits internal own-conversation notice sources. Older subscription
+ * lists eagerly parse every source and cannot read the expanded source kind.
+ * `0061-conversation-notice-inbox` fences them before importing legacy notices.
+ *
+ * Version 27 records complete notepad context, withdrawn feedback receipts,
+ * and workflow boundaries whose origin conversation may be absent. Older
+ * strict readers cannot read these evidence shapes.
  */
-export const KNOWN_SCHEMA_VERSION = 25;
+export const KNOWN_SCHEMA_VERSION = 27;
+
+export const WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION = 27;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -1482,20 +1492,45 @@ export const VALIDATION_RUNS_SCHEMA_DDL = `
     ON validation_runs (project_path, command_name);
 `;
 
+function workflowResultEvidenceNeedsRebuild(db: Db): boolean {
+  return getTableColumns(db, "graph_workflow_result_deliveries").some(
+    (column) =>
+      column.name === "origin_conversation_id" && column.notnull === 1,
+  );
+}
+
+/** Preserve every boundary and receipt while allowing evidence without an owner. */
+export function migrateWorkflowResultEvidenceSchema(db: Db): void {
+  if (workflowResultEvidenceNeedsRebuild(db)) {
+    const objects = db
+      .prepare(
+        `SELECT sql FROM sqlite_master
+      WHERE tbl_name='graph_workflow_result_deliveries'
+        AND type IN ('index','trigger') AND sql IS NOT NULL`,
+      )
+      .all() as Array<{ sql: string }>;
+    const columns = getTableColumns(db, "graph_workflow_result_deliveries")
+      .map((column) => `"${column.name.replaceAll('"', '""')}"`)
+      .join(",");
+    db.exec(
+      "ALTER TABLE graph_workflow_result_deliveries RENAME TO graph_workflow_result_deliveries_prior_evidence",
+    );
+    db.exec(GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL);
+    db.exec(`INSERT INTO graph_workflow_result_deliveries (${columns})
+      SELECT ${columns} FROM graph_workflow_result_deliveries_prior_evidence;
+      DROP TABLE graph_workflow_result_deliveries_prior_evidence;`);
+    for (const object of objects) db.exec(object.sql);
+  }
+  db.exec(GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL);
+}
+
 /**
- * The result-delivery ledger (D7 decision D8): one row per lifecycle boundary
- * of an execution whose origin conversation is alive, inserted in the same
- * transaction as the boundary's event append. `(execution_id, boundary_seq)` is
- * the primary key, so a replayed recording collides instead of double-
- * delivering, and the pending scan a turn performs is one index range.
+ * One frozen result snapshot per lifecycle boundary, keyed by execution and
+ * boundary sequence so recording replays cannot duplicate evidence.
  *
- * Deliberately no FK on `origin_conversation_id`: deleting the origin
- * conversation must leave the pending rows alive long enough to settle once
- * into a session-scoped notification. The session FK cascades, because a
- * deleted session takes its executions with it.
- *
- * Exported so migration 0024 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy.
+ * The optional origin has no foreign key: deleting a conversation retains its
+ * evidence. The session foreign key cascades with the execution's scope.
+ * Migration 0024 uses this DDL for pre-floor databases too.
  */
 export const GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS graph_workflow_result_deliveries (
@@ -1503,7 +1538,7 @@ export const GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL = `
     boundary_seq           INTEGER NOT NULL,
     project_path           TEXT NOT NULL,
     session_name           TEXT NOT NULL,
-    origin_conversation_id TEXT NOT NULL,
+    origin_conversation_id TEXT,
     payload_json           TEXT NOT NULL,
     recorded_at            TEXT NOT NULL,
     delivery_state         TEXT NOT NULL DEFAULT 'pending' CHECK (
@@ -1787,6 +1822,7 @@ export const NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL = `
     revision               INTEGER NOT NULL,
     open_comment_count     INTEGER NOT NULL,
     latest_open_comment_at TEXT,
+    observed_comment_ids_json TEXT,
     updated_at             TEXT NOT NULL,
     PRIMARY KEY (conversation_id, notepad_id),
     FOREIGN KEY (notepad_id) REFERENCES notepads(id) ON DELETE CASCADE
@@ -1799,7 +1835,7 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     id TEXT PRIMARY KEY,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation')),
     source_id TEXT NOT NULL,
     reason TEXT NOT NULL,
     mode TEXT NOT NULL CHECK (mode IN ('passive','active')),
@@ -1820,12 +1856,12 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     subscription_id TEXT NOT NULL,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation')),
     source_id TEXT NOT NULL,
     occurrence_id TEXT NOT NULL,
     fact_json TEXT NOT NULL,
     recorded_at TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('pending','queued','accepted','failed','uncertain')),
+    state TEXT NOT NULL CHECK (state IN ('pending','queued','accepted','failed','uncertain','superseded')),
     attempt_id TEXT,
     attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
     queued_at TEXT,
@@ -1847,6 +1883,54 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_ticket_status_changes_ticket
     ON ticket_status_changes (ticket_id, id);
 `;
+
+export const CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION = 26;
+
+function conversationNoticeSourcesNeedRebuild(db: Db): boolean {
+  const rows = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('conversation_subscriptions','conversation_subscription_deliveries')",
+    )
+    .all() as Array<{ sql: string }>;
+  return rows.some((row) => !row.sql.includes("'conversation'"));
+}
+
+function subscriptionReceiptEvidenceNeedsRebuild(db: Db): boolean {
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_subscription_deliveries'",
+    )
+    .get() as { sql: string } | undefined;
+  return row !== undefined && !row.sql.includes("'superseded'");
+}
+
+/** Widen source and receipt constraints while retaining all existing evidence. */
+export function migrateConversationNoticeSourceSchema(db: Db): void {
+  for (const table of [
+    "conversation_subscriptions",
+    "conversation_subscription_deliveries",
+  ]) {
+    const row = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
+      .get(table) as { sql: string } | undefined;
+    if (
+      !row ||
+      (row.sql.includes("'conversation'") &&
+        (table !== "conversation_subscription_deliveries" ||
+          row.sql.includes("'superseded'")))
+    )
+      continue;
+    const columns = getTableColumns(db, table)
+      .map((column) => `"${column.name.replaceAll('"', '""')}"`)
+      .join(",");
+    db.exec(`DROP INDEX IF EXISTS idx_subscription_deliveries_inbox;
+      ALTER TABLE ${table} RENAME TO ${table}_notice_cutover;`);
+    db.exec(CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL);
+    db.exec(`INSERT INTO ${table} (${columns}) SELECT ${columns} FROM ${table}_notice_cutover;
+      DROP TABLE ${table}_notice_cutover;`);
+  }
+  db.exec(CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL);
+}
 
 export const CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS conversation_subscription_preferences (
@@ -3303,6 +3387,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "effects_delivered_at",
     type: "TEXT",
   },
+  {
+    table: "notepad_delivery_watermarks",
+    column: "observed_comment_ids_json",
+    type: "TEXT",
+  },
 ];
 
 function columnExists(db: Db, table: string, column: string): boolean {
@@ -3817,7 +3906,44 @@ function initializeSchema(db: Db, dbPath: string): void {
   // the additive columns, so it must run before ensureAdditiveColumns restores
   // them; the direct-launch rebuild runs after, against the settled shape.
   migrateGraphWorkflowExecutionsSeedProjection(db);
+  const evidenceNeedsUpgrade =
+    workflowResultEvidenceNeedsRebuild(db) ||
+    subscriptionReceiptEvidenceNeedsRebuild(db) ||
+    !columnExists(
+      db,
+      "notepad_delivery_watermarks",
+      "observed_comment_ids_json",
+    );
+  if (evidenceNeedsUpgrade && dbPath !== ":memory:")
+    publishSchemaCompatibilityBarrierSync(
+      path.dirname(dbPath),
+      WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION,
+    );
   ensureAdditiveColumns(db);
+  if (evidenceNeedsUpgrade) {
+    migrateWorkflowResultEvidenceSchema(db);
+    migrateConversationNoticeSourceSchema(db);
+    db.prepare(
+      "INSERT OR IGNORE INTO schema_migrations(version,description) VALUES (?,?)",
+    ).run(
+      WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION,
+      "complete subscription and workflow result evidence",
+    );
+  }
+  if (conversationNoticeSourcesNeedRebuild(db)) {
+    if (dbPath !== ":memory:")
+      publishSchemaCompatibilityBarrierSync(
+        path.dirname(dbPath),
+        CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION,
+      );
+    migrateConversationNoticeSourceSchema(db);
+    db.prepare(
+      "INSERT OR IGNORE INTO schema_migrations(version,description) VALUES (?,?)",
+    ).run(
+      CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION,
+      "durable own-conversation notice sources",
+    );
+  }
   // Names an additive column, so it cannot sit in SCHEMA_DDL above.
   db.exec(MEMORY_LINKS_IDENTITY_INDEX_DDL);
   migrateSpecDirectLaunchStorage(db);

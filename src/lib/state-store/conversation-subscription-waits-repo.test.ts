@@ -104,6 +104,41 @@ const batch = (
   });
 
 describe("one-time wait durability and governors", () => {
+  it.each(["pending", "accepted", "uncertain", "queued"] as const)(
+    "reuses an existing %s canonical outcome without a second delivery",
+    async (state) => {
+      fixture = createPersistenceFixture();
+      const queue = createWriteQueue();
+      const passive = createConversationSubscriptionsRepo(fixture.db, queue);
+      const repo = createConversationSubscriptionWaitsRepo(fixture.db, queue);
+      await repo.register(wait(), subscription());
+      const existing = delivery("existing");
+      existing.state = state;
+      existing.attemptCount = state === "pending" ? 0 : 1;
+      existing.attemptId = state === "pending" ? null : "prior-attempt";
+      existing.acceptedAt = state === "accepted" ? at : null;
+      await passive.recordDelivery(existing);
+      expect(await repo.settle("wait", "source_terminal", delivery(), at)).toBe(
+        true,
+      );
+      const restored = createConversationSubscriptionWaitsRepo(
+        fixture.db,
+        queue,
+      );
+      expect(await restored.get(recipient, "sub")).toMatchObject({
+        deliveryId: existing.id,
+        state: state === "accepted" ? "settled" : "ready",
+      });
+      const page = await passive.readInbox(recipient, { includeSettled: true });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({
+        id: existing.id,
+        state,
+        attemptId: existing.attemptId,
+        attemptCount: existing.attemptCount,
+      });
+    },
+  );
   it("promotes an existing source once while preserving its passive cursor", async () => {
     fixture = createPersistenceFixture();
     const queue = createWriteQueue();

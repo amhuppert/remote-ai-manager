@@ -383,10 +383,6 @@ export interface RehydrateConversationActorsDeps {
     sessionName: string;
     conversationId: string;
   }): Promise<number>;
-  recoverWorkflowResultClaims?(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<number>;
   reconcileWorkflowResultEffects?(
     projectPath: string,
     sessionName: string,
@@ -425,7 +421,6 @@ export async function loadRehydrationInfrastructure(): Promise<
         now: () => new Date().toISOString(),
         log: logger,
       }),
-    recoverWorkflowResultClaims: stateMod.recoverGraphWorkflowResultDeliveries,
     reconcileWorkflowResultEffects: (projectPath, sessionName) =>
       getGraphWorkflowResultDeliveryService().reconcilePendingResults(
         projectPath,
@@ -466,32 +461,6 @@ export async function rehydrateConversationActors(
             error: getErrorMessage(err),
           },
         );
-      }
-    }
-  }
-
-  if (resolved.recoverWorkflowResultClaims) {
-    for (const { projectPath, sessionName } of workflowResultScopes) {
-      try {
-        const recovered = await resolved.recoverWorkflowResultClaims(
-          projectPath,
-          sessionName,
-        );
-        if (recovered > 0) {
-          logger.info("conversation-manager.workflow_result_claims_recovered", {
-            scope: "session",
-            projectPath,
-            sessionName,
-            recovered,
-          });
-        }
-      } catch (err) {
-        logger.error("conversation-manager.workflow_result_recovery_failed", {
-          scope: "session",
-          projectPath,
-          sessionName,
-          error: getErrorMessage(err),
-        });
       }
     }
   }

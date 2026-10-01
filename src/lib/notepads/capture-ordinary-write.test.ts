@@ -14,11 +14,11 @@ import {
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 import { buildClipFragment } from "./capture-fragment";
+import { createNotepadAcceptedContextRecorder } from "./accepted-context";
 import {
-  createNotepadDeliveryStateReader,
-  createNotepadDeliveryTracker,
-  type NotepadDeliveryTracker,
-} from "./change-notices";
+  createNotepadSourceReader,
+  notepadInvolvementCursor,
+} from "@/lib/subscriptions/notepad-source";
 import {
   createNotepadsRouteHandlers,
   type NotepadsRouteHandlers,
@@ -57,7 +57,9 @@ let fixture: PersistenceFixture;
 let repo: NotepadsRepo;
 let service: NotepadService;
 let handlers: NotepadsRouteHandlers;
-let tracker: NotepadDeliveryTracker;
+let tracker: ReturnType<typeof createNotepadAcceptedContextRecorder>;
+let readSource: ReturnType<typeof createNotepadSourceReader>;
+let watermarks: ReturnType<typeof createNotepadDeliveryWatermarksRepo>;
 
 beforeEach(() => {
   fixture = createPersistenceFixture();
@@ -65,10 +67,7 @@ beforeEach(() => {
   const writeQueue = createWriteQueue();
   repo = createNotepadsRepo(fixture.db, writeQueue);
   const comments = createNotepadCommentsRepo(fixture.db, writeQueue);
-  const watermarks = createNotepadDeliveryWatermarksRepo(
-    fixture.db,
-    writeQueue,
-  );
+  watermarks = createNotepadDeliveryWatermarksRepo(fixture.db, writeQueue);
   let clock = 0;
   let idSeq = 0;
   const now = () => {
@@ -92,10 +91,11 @@ beforeEach(() => {
     resolveProjectPath: async () => PROJECT_PATH,
     auth,
   });
-  tracker = createNotepadDeliveryTracker({
+  tracker = createNotepadAcceptedContextRecorder({ watermarks, now });
+  readSource = createNotepadSourceReader({
+    notepads: repo,
+    comments,
     watermarks,
-    readDeliveryState: createNotepadDeliveryStateReader({ repo, comments }),
-    now,
   });
 });
 
@@ -164,13 +164,24 @@ describe("a capture is an ordinary user write (R23.3)", () => {
 
     await captureThroughRoute(notepadId);
 
-    const notice = await tracker.prepare(CONVERSATION_ID);
-    expect(notice.block).toContain(`id: ${notepadId}`);
-    expect(notice.block).toContain("name: Inbox");
-    expect(notice.block).toContain("revision: 2");
-    expect(notice.block).toContain("changed: content");
-    expect(notice.block).toContain("changed-by: user");
-    expect(notice.advances).toHaveLength(1);
+    const seen = (await watermarks.listForConversation(CONVERSATION_ID))[0];
+    if (!seen) throw new Error("Expected accepted source context");
+    const notice = await readSource(
+      { projectPath: PROJECT_PATH, conversationId: CONVERSATION_ID },
+      { kind: "notepad", id: notepadId },
+      notepadInvolvementCursor(seen),
+    );
+    expect(notice.facts).toMatchObject([
+      {
+        eventKind: "notepad-content-revised",
+        sourceTitle: "Inbox",
+        revision: "2",
+        actorConversationId: null,
+      },
+    ]);
+    expect(notice.facts[0]?.sourceText).toContain(
+      FRAGMENT.replaceAll("\n", "\\n"),
+    );
   });
 
   it("raises no notice for a conversation already at the captured revision", async () => {
@@ -187,6 +198,16 @@ describe("a capture is an ordinary user write (R23.3)", () => {
       ],
     });
 
-    expect((await tracker.prepare(CONVERSATION_ID)).block).toBeNull();
+    const seen = (await watermarks.listForConversation(CONVERSATION_ID))[0];
+    if (!seen) throw new Error("Expected accepted source context");
+    expect(
+      (
+        await readSource(
+          { projectPath: PROJECT_PATH, conversationId: CONVERSATION_ID },
+          { kind: "notepad", id: notepadId },
+          notepadInvolvementCursor(seen),
+        )
+      ).facts,
+    ).toEqual([]);
   });
 });

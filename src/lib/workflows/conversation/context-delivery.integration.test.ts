@@ -8,15 +8,17 @@ import { createNotepadsRepo } from "@/lib/state-store/notepads-repo";
 import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { createNotepadAcceptedContextRecorder } from "@/lib/notepads/accepted-context";
 import {
-  createNotepadDeliveryTracker,
-  createNotepadDeliveryStateReader,
-} from "@/lib/notepads/change-notices";
+  createNotepadSourceReader,
+  notepadInvolvementCursor,
+} from "@/lib/subscriptions/notepad-source";
 import { createNotepadService } from "@/lib/notepads/service";
 import { createNotepadInjectionReader } from "@/lib/notepads/injection";
 import { createLifecycleFixture } from "./testing/lifecycle-fixture";
 import { createMockBackendRuntime } from "./testing/actor-deps-fixture";
-import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
+import { createConversationSubscriptionsRepo } from "@/lib/state-store/conversation-subscriptions-repo";
+import { createSubscriptionService } from "@/lib/subscriptions/service";
 
 const result: ConversationBackendTurnResult = {
   backendRef: { backend: "claude", ref: "receipt-backend" },
@@ -63,10 +65,7 @@ it("records the rendered notepad marker once on acceptance and leaves a late com
         validateModelSelection() {},
       }),
       readNotepadForInjection: (id) => reader.readForInjection(id),
-      prepareNotepadChangeNotice: (id, references) =>
-        tracker.prepare(id, references),
       recordNotepadDeliveries: record,
-      settleNotepadChangeNotice: (notice) => tracker.settle(notice),
     },
   });
   const writes = createWriteQueue();
@@ -86,12 +85,10 @@ it("records the rendered notepad marker once on acceptance and leaves a late com
   });
   const reader: ReturnType<typeof createNotepadInjectionReader> =
     createNotepadInjectionReader(service, comments);
-  const tracker: ReturnType<typeof createNotepadDeliveryTracker> =
-    createNotepadDeliveryTracker({
-      watermarks,
-      readDeliveryState: createNotepadDeliveryStateReader({ repo, comments }),
-      now: () => "2026-09-06T10:05:00.000Z",
-    });
+  const tracker = createNotepadAcceptedContextRecorder({
+    watermarks,
+    now: () => "2026-09-06T10:05:00.000Z",
+  });
   const created = await service.create({
     scope: "global",
     projectPath: null,
@@ -135,33 +132,84 @@ it("records the rendered notepad marker once on acceptance and leaves a late com
     count: 0,
     latestCreatedAt: null,
   });
-  expect((await tracker.prepare("c")).block).toContain("changed: comments");
+  const seen = (await watermarks.listForConversation("c"))[0];
+  if (!seen) throw new Error("Expected exact accepted source context");
+  expect(seen.commentIds).toEqual([]);
+  const changed = await createNotepadSourceReader({
+    notepads: repo,
+    comments,
+    watermarks,
+  })(
+    { projectPath: "/lifecycle-fixture", conversationId: "c" },
+    { kind: "notepad", id: notepadId },
+    notepadInvolvementCursor(seen),
+  );
+  expect(changed.facts).toMatchObject([
+    {
+      occurrenceId: "notepad-comment:late-comment",
+      eventKind: "notepad-comment-added",
+    },
+  ]);
 });
 
-function workflowResult(): GraphWorkflowResultDelivery {
-  return {
-    executionId: "workflow",
-    boundarySeq: 1,
-    projectPath: "/lifecycle-fixture",
-    sessionName: "s",
-    originConversationId: "c",
-    payload: { status: "completed", output: "Completed work" },
-    recordedAt: "2026-09-06T10:00:00.000Z",
-    state: "delivering",
-    attemptId: "receipt-attempt",
-    attemptCount: 1,
-    deliveredAt: null,
-    effectsDeliveredAt: null,
+async function prepareWorkflowNotice(
+  active: Awaited<ReturnType<typeof createLifecycleFixture>>,
+  beforeSettle?: () => void,
+) {
+  const repo = createConversationSubscriptionsRepo(
+    active.persistence.db,
+    createWriteQueue(),
+  );
+  const recipient = {
+    projectPath: active.identity.projectPath,
+    conversationId: active.identity.conversationId,
   };
+  const service = createSubscriptionService({
+    repo: {
+      ...repo,
+      async settle(...args: Parameters<typeof repo.settle>) {
+        beforeSettle?.();
+        return repo.settle(...args);
+      },
+    },
+    isRecipientEligible: async () => true,
+    readSource: async (_recipient, _source, cursor) => ({
+      cursor,
+      missing: false,
+      facts: [],
+    }),
+    now: () => "2026-09-06T10:00:00.000Z",
+  });
+  await service.recordNotice({
+    recipient,
+    source: { kind: "workflow", id: "workflow" },
+    fact: {
+      occurrenceId: "1",
+      eventKind: "workflow-completed",
+      category: "outcome",
+      sourceTitle: "Workflow",
+      summary: "Completed work",
+      sourceText: "Full completed work evidence",
+      occurredAt: "2026-09-06T10:00:00.000Z",
+      revision: null,
+      outcome: "completed",
+      retrievalHandle: "cctl workflow read workflow",
+      actorConversationId: null,
+    },
+    reason: "Originated workflow",
+  });
+  return { repo, service, recipient };
 }
 
-it("retains a required workflow receipt failure for reconciliation without another dispatch", async () => {
+it("repairs a required subscription receipt without dispatching workflow evidence twice", async () => {
   let fail = true;
   let dispatches = 0;
   let recorded = 0;
   const backend = createMockBackendRuntime({
     sendTurn: async (input) => {
       dispatches++;
+      expect(input.promptText).toContain("Completed work");
+      expect(input.promptText).not.toContain("<workflow-results>");
       await input.onEvent({ type: "input_accepted" });
       return result;
     },
@@ -173,20 +221,22 @@ it("retains a required workflow receipt failure for reconciliation without anoth
         createRuntime: async () => backend,
         validateModelSelection() {},
       }),
-      claimWorkflowResults: async () => [workflowResult()],
-      settleWorkflowResults: async () => {
-        if (fail) throw new Error("workflow receipt unavailable");
-        recorded++;
-        return 1;
-      },
-      releaseWorkflowResults: async () => {
-        throw new Error("An accepted claim must remain owned");
+      subscriptions: {
+        synchronizeInvolvement: async () => {},
+        prepareBriefing: (input) => notice.service.prepareBriefing(input),
       },
     },
   });
+  const notice = await prepareWorkflowNotice(fixture, () => {
+    if (fail) throw new Error("subscription receipt unavailable");
+    recorded++;
+  });
   const request = {
     binding: fixture.binding,
-    turn: { promptText: "Use the workflow result" },
+    turn: {
+      promptText: "Use the workflow result",
+      inputOrigin: "user" as const,
+    },
   };
   const turn = await fixture.manager.submitConversationTurn(request);
   if (turn.kind !== "accepted") throw new Error(turn.message);
@@ -198,14 +248,21 @@ it("retains a required workflow receipt failure for reconciliation without anoth
     kind: "refused",
     code: "busy",
   });
+  expect(
+    (await notice.repo.readInbox(notice.recipient, { includeSettled: true }))
+      .items[0],
+  ).toMatchObject({ state: "queued", acceptedAt: null });
   fail = false;
   await fixture.manager.ensureConversationLifecycle(fixture.binding);
   expect(recorded).toBe(1);
   expect(dispatches).toBe(1);
+  expect(
+    (await notice.repo.readInbox(notice.recipient, { includeSettled: true }))
+      .items[0],
+  ).toMatchObject({ state: "accepted", attemptCount: 1 });
 });
 
-it("releases claimed workflow context when a later preparation step fails", async () => {
-  let claimed = false;
+it("releases prepared subscription evidence when a later preparation step fails", async () => {
   let dispatches = 0;
   const backend = createMockBackendRuntime({
     sendTurn: async () => {
@@ -220,30 +277,29 @@ it("releases claimed workflow context when a later preparation step fails", asyn
         createRuntime: async () => backend,
         validateModelSelection() {},
       }),
-      claimWorkflowResults: async () => {
-        claimed = true;
-        return [workflowResult()];
-      },
-      releaseWorkflowResults: async () => {
-        claimed = false;
-        return 1;
+      subscriptions: {
+        synchronizeInvolvement: async () => {},
+        prepareBriefing: (input) => notice.service.prepareBriefing(input),
       },
       getDebugLogUrl: () => {
         throw new Error("context preparation unavailable");
       },
     },
   });
+  const notice = await prepareWorkflowNotice(fixture);
   const turn = await fixture.manager.submitConversationTurn({
     binding: fixture.binding,
-    turn: { promptText: "Prepare context" },
+    turn: { promptText: "Prepare context", inputOrigin: "user" },
   });
   if (turn.kind !== "accepted") throw new Error(turn.message);
   await turn.turn.completed;
-  expect(claimed).toBe(false);
+  expect(
+    (await notice.repo.readInbox(notice.recipient, {})).items[0],
+  ).toMatchObject({ state: "failed", acceptedAt: null, attemptCount: 1 });
   expect(dispatches).toBe(0);
 });
 
-it("consumes only notices prepared for successful runtime creation and reuses that runtime", async () => {
+it("leaves legacy notices untouched and excludes them from runtime instructions", async () => {
   const created: ConversationBackendCreateInput[] = [];
   const backend = createMockBackendRuntime({
     sendTurn: async (input) => {
@@ -258,7 +314,8 @@ it("consumes only notices prepared for successful runtime creation and reuses th
         validateModelSelection() {},
         createRuntime: async (input) => {
           created.push(input);
-          await fixture!.persistence.store.mutateConversation(
+          if (!fixture) throw new Error("Lifecycle fixture is not ready");
+          await fixture.persistence.store.mutateConversation(
             "/lifecycle-fixture",
             "s",
             "c",
@@ -290,7 +347,7 @@ it("consumes only notices prepared for successful runtime creation and reuses th
     expect((await turn.turn.completed).outcome.kind).toBe("call_result");
   }
   expect(created).toHaveLength(1);
-  expect(created[0]?.sessionInstructions.join("\n")).toContain(
+  expect(created[0]?.sessionInstructions.join("\n")).not.toContain(
     "Prepared notice",
   );
   expect(created[0]?.sessionInstructions.join("\n")).not.toContain(
@@ -304,5 +361,5 @@ it("consumes only notices prepared for successful runtime creation and reuses th
         "c",
       )
     )?.pendingAgentNotices,
-  ).toEqual(["Arrived during creation"]);
+  ).toEqual(["Prepared notice", "Arrived during creation"]);
 });

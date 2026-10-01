@@ -43,6 +43,12 @@ const maximalDelivery = () =>
       category: "decision",
       sourceTitle: "Release design",
       summary: "Design approved",
+      sourceText: "Complete source-owned review evidence",
+      notepadContext: {
+        revision: 7,
+        openComments: { count: 2, latestCreatedAt: "2026-09-25T00:00:00Z" },
+        commentIds: ["comment-first", "comment-second", "comment-resolved"],
+      },
       occurredAt: "2026-09-25T00:00:00Z",
       revision: "revision-7",
       outcome: "approved",
@@ -59,6 +65,22 @@ const maximalDelivery = () =>
     lastError: "Recovered receipt after retry",
   });
 describe("conversation subscriptions maximal durability", () => {
+  it("round-trips every imported fact and receipt through the shared import writer", async () => {
+    fixture = createPersistenceFixture();
+    const db = fixture.db;
+    const repo = createConversationSubscriptionsRepo(db, createWriteQueue());
+    await assertRoundTripDurability({
+      label: "imported subscription evidence",
+      schema: subscriptionDeliverySchema,
+      buildMaximalFixture: maximalDelivery,
+      persist: (value) => repo.importDelivery(maximalSubscription(), value),
+      reload: (value) =>
+        createConversationSubscriptionsRepo(db, createWriteQueue()).getDelivery(
+          value.recipient,
+          value.id,
+        ),
+    });
+  });
   it("round-trips every subscription field including opt-out and lifetime", async () => {
     fixture = createPersistenceFixture();
     const db = fixture.db;

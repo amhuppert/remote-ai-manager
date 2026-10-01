@@ -7,6 +7,7 @@ import {
   type NotepadDeliveryWatermark,
 } from "@/lib/notepads/schemas";
 import { PersistenceError } from "../shared/errors";
+import { mergeAcceptedNotepadContext } from "@/lib/notepads/accepted-context";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import type { WriteQueue } from "./write-queue";
 
@@ -19,16 +20,16 @@ const logger = createLogger("state-store.notepad-delivery-watermarks");
 // ============================================================
 
 /**
- * One conversation's last-presented state for one notepad. Recording is an
- * upsert on `(conversationId, notepadId)`: the row states where the
- * conversation stands, not how it got there, so a re-record overwrites rather
- * than appending.
+ * Accepted source knowledge for one conversation and notepad. Recording joins
+ * the accepted revision and observed IDs so an older retried receipt cannot
+ * erase a later acceptance. The comment marker remains an actual rendered pair.
  */
 export const recordNotepadDeliveryWatermarkInputSchema = z.object({
   conversationId: z.string().min(1),
   notepadId: z.string().min(1),
   revision: z.number().int().positive(),
   openComments: notepadOpenCommentMarkerSchema,
+  commentIds: z.array(z.string().min(1)).optional(),
   updatedAt: z.string().min(1),
 });
 export type RecordNotepadDeliveryWatermarkInput = z.infer<
@@ -61,6 +62,7 @@ const notepadDeliveryWatermarksTableRowSchema = registerTrustedSchema(
     revision: z.number().int(),
     open_comment_count: z.number().int(),
     latest_open_comment_at: z.string().nullable(),
+    observed_comment_ids_json: z.string().nullable(),
     updated_at: z.string(),
   }),
   "notepadDeliveryWatermarksTableRowSchema",
@@ -106,6 +108,13 @@ function rowToWatermark(rawRow: unknown): NotepadDeliveryWatermark {
         count: row.open_comment_count,
         latestCreatedAt: row.latest_open_comment_at,
       },
+      ...(row.observed_comment_ids_json === null
+        ? {}
+        : {
+            commentIds: z
+              .array(z.string().min(1))
+              .parse(JSON.parse(row.observed_comment_ids_json)),
+          }),
       updatedAt: row.updated_at,
     },
     (issues) =>
@@ -143,14 +152,15 @@ export function createNotepadDeliveryWatermarksRepo(
   const upsertStmt = db.prepare(
     `INSERT INTO notepad_delivery_watermarks
        (conversation_id, notepad_id, revision, open_comment_count,
-        latest_open_comment_at, updated_at)
+        latest_open_comment_at, observed_comment_ids_json, updated_at)
      VALUES
        (@conversation_id, @notepad_id, @revision, @open_comment_count,
-        @latest_open_comment_at, @updated_at)
+        @latest_open_comment_at, @observed_comment_ids_json, @updated_at)
      ON CONFLICT (conversation_id, notepad_id) DO UPDATE SET
        revision = excluded.revision,
        open_comment_count = excluded.open_comment_count,
        latest_open_comment_at = excluded.latest_open_comment_at,
+       observed_comment_ids_json = excluded.observed_comment_ids_json,
        updated_at = excluded.updated_at`,
   );
   const findStmt = db.prepare(
@@ -170,12 +180,24 @@ export function createNotepadDeliveryWatermarksRepo(
       // deleted between the reference expansion and this write would otherwise
       // surface as a raised foreign-key constraint instead of a typed null.
       if (notepadExistsStmt.get(input.notepadId) === undefined) return null;
+      const existing: unknown = findStmt.get(
+        input.conversationId,
+        input.notepadId,
+      );
+      const context = mergeAcceptedNotepadContext(
+        existing === undefined ? undefined : rowToWatermark(existing),
+        input,
+      );
       upsertStmt.run({
         conversation_id: input.conversationId,
         notepad_id: input.notepadId,
-        revision: input.revision,
-        open_comment_count: input.openComments.count,
-        latest_open_comment_at: input.openComments.latestCreatedAt,
+        revision: context.revision,
+        open_comment_count: context.openComments.count,
+        latest_open_comment_at: context.openComments.latestCreatedAt,
+        observed_comment_ids_json:
+          context.commentIds === undefined
+            ? null
+            : JSON.stringify(context.commentIds),
         updated_at: input.updatedAt,
       });
       const rawRow: unknown = findStmt.get(

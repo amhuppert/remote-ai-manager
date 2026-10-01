@@ -386,6 +386,47 @@ describe("createNotepadInjectionReader (against the real service)", () => {
     expect(expanded).toContain("# Stored\n\n[Image: img-a]");
   });
 
+  it("names a separate open-comment read when the rendered marker covers review awareness", async () => {
+    const id = await createNotepad("Rendered body");
+    await comments.create({
+      id: "open-comment",
+      notepadId: id,
+      anchor: {
+        sectionId: "preamble",
+        headingLabel: "",
+        line: 1,
+        charStart: 0,
+        charEnd: 8,
+        quote: "Rendered",
+        prefix: "",
+        suffix: " body",
+        notepadRevision: 1,
+      },
+      body: "Private review evidence retrieved separately",
+      authorKind: "user",
+      authorConversationId: null,
+      createdAt: "2026-10-01T10:00:00Z",
+    });
+    const { text } = await expandNotepadRefsForAgent(
+      notepadRefXml({ id, name: "Notes" }),
+      createNotepadInjectionReader(service, comments),
+    );
+    expect(text).toContain(
+      `read-comments: cctl notepad comment list --open -- '${id}'`,
+    );
+    expect(text).not.toContain("Private review evidence retrieved separately");
+    await comments.updateStatus({
+      commentId: "open-comment",
+      status: "resolved",
+      updatedAt: "2026-10-01T10:01:00Z",
+    });
+    const resolved = await expandNotepadRefsForAgent(
+      notepadRefXml({ id, name: "Notes" }),
+      createNotepadInjectionReader(service, comments),
+    );
+    expect(resolved.text).not.toContain("read-comments:");
+  });
+
   it("delivers the current name and revision after a rename and a write", async () => {
     const id = await createNotepad("original");
     const renamed = await service.update(

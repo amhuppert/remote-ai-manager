@@ -110,6 +110,22 @@ afterEach(() => {
 });
 
 describe("graph-workflow-result-deliveries-repo durability contract", () => {
+  it("round-trips a frozen ownerless boundary and its settled origin-effect receipt", async () => {
+    const record = graphWorkflowResultDeliverySchema.parse({
+      ...maximalDelivery(),
+      originConversationId: null,
+      effectsDeliveredAt: "2026-10-01T04:00:00.000Z",
+    });
+    repo.record(record);
+    expect(
+      createGraphWorkflowResultDeliveriesRepo(db).findByBoundary(
+        record.projectPath,
+        record.sessionName,
+        record.executionId,
+        record.boundarySeq,
+      ),
+    ).toEqual(record);
+  });
   it("round-trips every persisted delivery key path through record -> findByBoundary", async () => {
     await assertRoundTripDurability({
       label: "graph-workflow-result-deliveries",

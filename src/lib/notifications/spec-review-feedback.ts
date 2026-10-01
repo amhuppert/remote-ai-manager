@@ -1,7 +1,7 @@
 /**
  * Delivers spec review feedback to the conversation that AUTHORED the draft
  * as passive, durable notices (#60): a transcript notice the human sees
- * immediately and a pending agent notice the agent reads at its NEXT turn.
+ * immediately and a subscription fact the agent reads with its NEXT user message.
  * Never an auto-wake — nothing here prompts, resumes, or otherwise starts a
  * turn.
  *
@@ -21,8 +21,8 @@ import { findConversationById } from "@/lib/conversations/cross-project-list";
 import { appendNotice } from "@/lib/prompt/transcript";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { SpecReviewFeedbackNotice } from "@/lib/specs/review-service";
-import { mutateConversation } from "@/lib/state-store";
-import { appendPendingAgentNotice as appendPendingAgentConversationNotice } from "@/lib/workflows/conversation/pre-turn/notices-drain";
+import { projectSpecSourceFact } from "@/lib/subscriptions/source-adapters";
+import type { RecordSubscriptionNoticeInput } from "@/lib/subscriptions/service";
 
 const logger = createLogger("notifications.spec-review-feedback");
 
@@ -51,13 +51,8 @@ export interface SpecReviewFeedbackNotifierDeps {
     projectName: string;
     storeSessionName: string;
   }): Promise<void>;
-  /** Durable agent notice drained into the NEXT runtime's instructions. */
-  appendPendingAgentNotice(input: {
-    projectPath: string;
-    storeSessionName: string;
-    conversationId: string;
-    text: string;
-  }): Promise<void>;
+  /** Passive fact settled only when the backend accepts the next user input. */
+  recordNotice(input: RecordSubscriptionNoticeInput): Promise<boolean>;
 }
 
 export interface SpecReviewFeedbackNotifier {
@@ -94,6 +89,17 @@ export function createSpecReviewFeedbackNotifier(
       });
       return;
     }
+    if (found.projectPath !== notice.projectPath) {
+      logger.warn("notifications.spec_review_feedback.project_mismatch", {
+        specId: notice.specId,
+        revisionId: notice.revisionId,
+        kind: notice.kind,
+        conversationId,
+        sourceProjectPath: notice.projectPath,
+        recipientProjectPath: found.projectPath,
+      });
+      return;
+    }
     const scopeRef: ConversationScopeRef =
       found.scope === "session"
         ? { scope: "session", sessionName: found.sessionName }
@@ -109,11 +115,18 @@ export function createSpecReviewFeedbackNotifier(
         projectName: found.projectName,
         storeSessionName,
       }),
-      deps.appendPendingAgentNotice({
-        projectPath: found.projectPath,
-        storeSessionName,
-        conversationId,
-        text,
+      deps.recordNotice({
+        recipient: { projectPath: found.projectPath, conversationId },
+        source: { kind: "spec", id: notice.specId },
+        fact: projectSpecSourceFact({
+          event: notice.durableEvent,
+          spec: {
+            name: notice.specName,
+            slug: notice.specSlug,
+            projectPath: notice.projectPath,
+          },
+        }),
+        reason: "Review feedback for the conversation that authored this draft",
       }),
     ]);
     for (const result of results) {
@@ -165,17 +178,10 @@ export function createProductionSpecReviewFeedbackNotifier(): SpecReviewFeedback
     appendNotice(input) {
       return appendNotice(input);
     },
-    appendPendingAgentNotice(input) {
-      return appendPendingAgentConversationNotice(
-        { mutateConversation },
-        {
-          projectPath: input.projectPath,
-          sessionName: input.storeSessionName,
-          conversationId: input.conversationId,
-        },
-        input.text,
-        "spec_review_feedback_notice",
-      );
+    async recordNotice(input) {
+      const { getSubscriptionService } =
+        await import("@/lib/subscriptions/service-factory");
+      return getSubscriptionService().recordNotice(input);
     },
   });
 }

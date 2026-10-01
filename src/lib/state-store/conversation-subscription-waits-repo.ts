@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { importSubscriptionDelivery } from "./subscription-delivery-import";
 import type { Db } from "./schemas";
 import type { WriteQueue } from "./write-queue";
 import {
@@ -283,7 +284,17 @@ export function createConversationSubscriptionWaitsRepo(
       at: string,
     ) => {
       const wait = readWait(waitId);
-      if (!wait || wait.state !== "waiting") return false;
+      if (
+        !wait ||
+        (wait.state !== "waiting" &&
+          !(
+            wait.state === "ready" &&
+            wait.batchId === null &&
+            wait.deliveryId === input.id &&
+            input.state === "accepted"
+          ))
+      )
+        return false;
       if (
         db
           .prepare(
@@ -301,31 +312,39 @@ export function createConversationSubscriptionWaitsRepo(
         delivery.source.id !== wait.source.id
       )
         throw new Error("Active wait outcome does not belong to this wait");
-      db.prepare(
-        `INSERT INTO conversation_subscription_deliveries (id,subscription_id,project_path,conversation_id,source_kind,source_id,occurrence_id,fact_json,recorded_at,state,attempt_id,attempt_count,queued_at,accepted_at,finished_at,last_error)
-      VALUES (@id,@subscription_id,@project_path,@conversation_id,@source_kind,@source_id,@occurrence_id,@fact_json,@recorded_at,@state,@attempt_id,@attempt_count,@queued_at,@accepted_at,@finished_at,@last_error)`,
-      ).run({
-        id: delivery.id,
-        subscription_id: delivery.subscriptionId,
-        ...scope(delivery.recipient),
-        source_kind: delivery.source.kind,
-        source_id: delivery.source.id,
-        occurrence_id: delivery.fact.occurrenceId,
-        fact_json: JSON.stringify(delivery.fact),
-        recorded_at: delivery.recordedAt,
-        state: delivery.state,
-        attempt_id: delivery.attemptId,
-        attempt_count: delivery.attemptCount,
-        queued_at: delivery.queuedAt,
-        accepted_at: delivery.acceptedAt,
-        finished_at: delivery.finishedAt,
-        last_error: delivery.lastError,
+      const canonical = importSubscriptionDelivery(db, {
+        subscription: {
+          id: wait.subscriptionId,
+          recipient: wait.recipient,
+          source: wait.source,
+          reason: wait.reason,
+          mode: "active",
+          eventKinds: null,
+          expiresAt: wait.expiresAt,
+          status: "following",
+          cursor: null,
+          createdAt: wait.createdAt,
+          updatedAt: at,
+          unfollowedAt: null,
+          pausedAt: null,
+          missingAt: null,
+          lastError: null,
+        },
+        delivery,
       });
+      // Proven-unsent passive input can be retried by this explicit wait.
+      // Ambiguous and already queued receipts remain held for reconciliation.
+      if (canonical.state === "failed")
+        db.prepare(
+          "UPDATE conversation_subscription_deliveries SET state='pending',finished_at=NULL WHERE id=? AND state='failed'",
+        ).run(canonical.id);
       writeWait({
         ...wait,
-        state: "ready",
+        state: canonical.state === "accepted" ? "settled" : "ready",
         outcome,
-        deliveryId: delivery.id,
+        deliveryId: canonical.id,
+        finishedAt:
+          canonical.state === "accepted" ? (canonical.acceptedAt ?? at) : null,
         updatedAt: at,
         lastError: null,
       });

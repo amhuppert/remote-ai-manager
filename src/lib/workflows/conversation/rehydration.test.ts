@@ -486,26 +486,6 @@ describe("workflow-result post-commit reconciliation", () => {
       "feat",
     );
   });
-
-  it("recovers abandoned claims for a session with no remaining conversations", async () => {
-    const recoverWorkflowResultClaims = vi.fn(async () => 1);
-
-    const count = await runRehydration({
-      ...rehydrationInfrastructure(),
-      readAllForStartup: () => stateWith([]),
-      listAllProjectConversations: async () => [],
-      getProjectDisplayName: () => "demo",
-      getConversationMachineSnapshot: () => null,
-      validateRestoredSnapshot: () => null,
-      recoverWorkflowResultClaims,
-    });
-
-    expect(count).toBe(0);
-    expect(recoverWorkflowResultClaims).toHaveBeenCalledExactlyOnceWith(
-      "/repo",
-      "feat",
-    );
-  });
 });
 
 describe("waitingForInput rehydration contract", () => {
@@ -1087,7 +1067,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
     ).toBeUndefined();
   });
 
-  it("resets abandoned workflow-result claims through a restarted store before actor selection", async () => {
+  it("preserves workflow-result claim evidence during actor rehydration", async () => {
     const fixture = createPersistenceFixture();
     try {
       fixture.seedProject("/repo");
@@ -1114,8 +1094,6 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         7,
         "abandoned-attempt",
       );
-      const restartedStore = fixture.recreateStore();
-
       await runRehydration({
         ...rehydrationInfrastructure(),
         readAllForStartup: () => stateWith([conv({ id: CONV_ID })]),
@@ -1123,16 +1101,6 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         getProjectDisplayName: () => "demo",
         getConversationMachineSnapshot: () => null,
         validateRestoredSnapshot: () => null,
-        recoverWorkflowResultClaims: (projectPath, sessionName) =>
-          restartedStore.recoverGraphWorkflowResultDeliveries(
-            projectPath,
-            sessionName,
-          ),
-      } as SweepDeps & {
-        recoverWorkflowResultClaims(
-          projectPath: string,
-          sessionName: string,
-        ): Promise<number>;
       });
 
       expect(
@@ -1142,7 +1110,11 @@ describe("rehydrateOneConversationActor startup recovery", () => {
           "exec-restart",
           7,
         ),
-      ).toMatchObject({ state: "pending", attemptId: null, attemptCount: 1 });
+      ).toMatchObject({
+        state: "delivering",
+        attemptId: "abandoned-attempt",
+        attemptCount: 1,
+      });
     } finally {
       fixture.close();
     }

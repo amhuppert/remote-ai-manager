@@ -21,10 +21,11 @@ export const subscriptionCatalog = subscriptionCatalogSchema.parse({
     {
       kind: "notepad",
       label: "Notepad",
-      description: "Content revisions, including restores.",
+      description:
+        "Content revisions and newly added open review comments. Comment resolution and deletion do not request work.",
       identityDescription: "Notepad ID",
       allowedModes: ["passive"],
-      eventKinds: events(["notepad-content-revised"]),
+      eventKinds: events(["notepad-content-revised", "notepad-comment-added"]),
     },
     {
       kind: "ticket",
@@ -85,6 +86,10 @@ export function validateSubscriptionSelection(
   mode: "passive" | "active",
   eventKinds: string[] | null,
 ): string | null {
+  if (kind === "conversation")
+    return mode === "passive"
+      ? null
+      : "Conversation notices support passive subscriptions only.";
   const source = subscriptionCatalog.sources.find(
     (entry) => entry.kind === kind,
   );

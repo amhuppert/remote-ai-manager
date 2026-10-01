@@ -1,7 +1,5 @@
-import type {
-  ConversationSubscription,
-  SubscriptionRecipient,
-} from "@/lib/subscriptions/schemas";
+import type { SubscriptionRecipient } from "@/lib/subscriptions/schemas";
+import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 import type { PreparedSubscriptionBriefing } from "@/lib/subscriptions/service";
 import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
 import { createRequiredInputReceipt } from "./required-input-receipt";
@@ -11,22 +9,12 @@ export interface PassiveSubscriptionContextDependencies {
   prepareBriefing(input: {
     recipient: SubscriptionRecipient;
     attemptId: string;
+    providedNotepadContext?: readonly NotepadDeliveryRecord[];
   }): Promise<PreparedSubscriptionBriefing>;
-  coveredNotepadIds(
-    recipient: SubscriptionRecipient,
-  ): Promise<readonly string[]>;
   recordAcceptedNotepadReferences?(
     recipient: SubscriptionRecipient,
-    references: readonly { notepadId: string; revision: number }[],
+    references: readonly NotepadDeliveryRecord[],
   ): Promise<void>;
-}
-
-export function subscriptionOwnedNotepadIds(
-  records: readonly Pick<ConversationSubscription, "source">[],
-): string[] {
-  return records
-    .filter((record) => record.source.kind === "notepad")
-    .map((record) => record.source.id);
 }
 
 export const productionPassiveSubscriptionDependencies: PassiveSubscriptionContextDependencies =
@@ -41,13 +29,6 @@ export const productionPassiveSubscriptionDependencies: PassiveSubscriptionConte
         await import("@/lib/subscriptions/service-factory");
       return getSubscriptionService().prepareBriefing(input);
     },
-    async coveredNotepadIds(recipient) {
-      const { getSubscriptionService } =
-        await import("@/lib/subscriptions/service-factory");
-      return subscriptionOwnedNotepadIds(
-        await getSubscriptionService().listRecorded(recipient),
-      );
-    },
     async recordAcceptedNotepadReferences(recipient, references) {
       const { followAcceptedNotepadContext } =
         await import("@/lib/subscriptions/involvement");
@@ -58,7 +39,7 @@ export const productionPassiveSubscriptionDependencies: PassiveSubscriptionConte
 export function prepareAcceptedNotepadReferences(
   deps: PassiveSubscriptionContextDependencies | undefined,
   recipient: SubscriptionRecipient,
-  references: readonly { notepadId: string; revision: number }[],
+  references: readonly NotepadDeliveryRecord[],
   ownReceipt: (finish: () => Promise<void>) => void,
 ) {
   const enabled =
@@ -86,7 +67,6 @@ export function prepareAcceptedNotepadReferences(
 
 export interface PassiveSubscriptionContext {
   block: string | null;
-  coveredNotepadIds: readonly string[];
   onInputAccepted(): Promise<void>;
   markDispatched(): void;
   markDispatchFailure(error: unknown): void;
@@ -99,32 +79,23 @@ export async function preparePassiveSubscriptionContext(
     recipient: SubscriptionRecipient;
     attemptId: string;
     eligible: boolean;
-    inspectLegacySources?: boolean;
+    providedNotepadContext?: readonly NotepadDeliveryRecord[];
   },
   ownReceipt: (finish: () => Promise<void>) => void,
 ): Promise<PassiveSubscriptionContext> {
-  const inert = (
-    coveredNotepadIds: readonly string[],
-  ): PassiveSubscriptionContext => ({
+  const inert: PassiveSubscriptionContext = {
     block: null,
-    coveredNotepadIds,
     onInputAccepted: async () => {},
     markDispatched() {},
     markDispatchFailure() {},
     finish: async () => {},
-  });
-  if (!deps) return inert([]);
-  if (!input.eligible)
-    return inert(
-      input.inspectLegacySources === false
-        ? []
-        : await deps.coveredNotepadIds(input.recipient),
-    );
+  };
+  if (!deps || !input.eligible) return inert;
   await deps.synchronizeInvolvement(input.recipient);
-  const coveredNotepadIds = await deps.coveredNotepadIds(input.recipient);
   const briefing = await deps.prepareBriefing({
     recipient: input.recipient,
     attemptId: input.attemptId,
+    providedNotepadContext: input.providedNotepadContext,
   });
   let dispatched = false;
   let provenUndelivered = false;
@@ -138,7 +109,6 @@ export async function preparePassiveSubscriptionContext(
   ownReceipt(finish);
   return {
     block: briefing.block,
-    coveredNotepadIds,
     onInputAccepted: () => briefing.onInputAccepted(),
     markDispatched() {
       if (finalized)

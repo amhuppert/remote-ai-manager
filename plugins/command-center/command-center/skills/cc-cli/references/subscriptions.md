@@ -7,6 +7,13 @@ Validation runs require an explicit subscription or finite wait; submitting a
 validation command does not create a follow, even while it is queued or running.
 A read or search alone does not create a follow.
 
+Spec review feedback and lost-background-task notices use the same passive inbox
+for ordinary session and project conversations. They arrive with the next user
+message even when the runtime already exists. Internal `conversation` sources
+contain notices for their own recipient; they are not peer-turn subscriptions
+and cannot be created through the catalog. `inbox get` exposes the full preserved
+text when a notice's briefing contains only a preview.
+
 ```
 cctl subscription catalog
 cctl subscription subscribe notepad <notepad-id> --reason "Track decisions"
@@ -57,7 +64,9 @@ and waking while source collection and the finite expiry clock continue.
 Outcomes remain inspectable. It safely withdraws a pending wake or an unsent
 planned batch, subject to the queue evidence described below. `resume` resumes
 delivery of retained outcomes; it does not recreate a cancelled wait or clear
-an opt-out. Accepted turns cannot be recalled.
+an opt-out for public sources. For an internal own-conversation notice source,
+`resume` also restores passive following after `unfollow`; public `subscribe`
+does not create these internal sources. Accepted turns cannot be recalled.
 
 `subscription mode` changes an existing follow to passive or to a finite active
 wait. Active mode supports only exact terminal sources: workflow, validation

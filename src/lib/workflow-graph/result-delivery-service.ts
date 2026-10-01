@@ -234,6 +234,7 @@ export function createGraphWorkflowResultDeliveryService(
       sessionName,
     );
     for (const delivery of pending) {
+      if (delivery.originConversationId === null) continue;
       const event: GraphWorkflowResultRecordedEvent = {
         type: "graph-workflow-result-recorded",
         projectName: path.basename(projectPath),

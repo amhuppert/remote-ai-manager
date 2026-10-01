@@ -162,8 +162,12 @@ function availableActions(input: {
     batch,
     queueStatus,
   } = input;
-  if (subscription.status !== "following" || !eligible || owner.archived)
-    return [];
+  if (!eligible || owner.archived) return [];
+  if (subscription.status !== "following")
+    return subscription.source.kind === "conversation" &&
+      subscription.source.id === subscription.recipient.conversationId
+      ? ["resume"]
+      : [];
   if (
     wait &&
     (wait.state === "settled" ||
@@ -362,8 +366,11 @@ export function createSubscriptionOverviewService(
             : null,
           pendingCount:
             subscription.status === "following"
-              ? related.filter((delivery) => delivery.state !== "accepted")
-                  .length
+              ? related.filter(
+                  (delivery) =>
+                    delivery.state !== "accepted" &&
+                    delivery.state !== "superseded",
+                ).length
               : 0,
           unreadCount: related.filter(
             (delivery) => !state.reads.get(key)?.has(delivery.id),
@@ -497,6 +504,7 @@ export function createSubscriptionOverviewService(
     );
     const isPending = (view: InboxView) =>
       view.delivery.state !== "accepted" &&
+      view.delivery.state !== "superseded" &&
       following.has(
         subscriptionKey(view.delivery.recipient, view.delivery.subscriptionId),
       );

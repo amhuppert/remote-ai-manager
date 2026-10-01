@@ -7,6 +7,8 @@ import type { TicketStatusChangesRepo } from "@/lib/state-store/ticket-status-ch
 import type { SubscriptionRecipient } from "./schemas";
 import type { SubscriptionInvolvement, SubscriptionService } from "./service";
 import { ticketInvolvementCursor } from "./source-adapters";
+import { notepadInvolvementCursor } from "./notepad-source";
+import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 
 export interface SubscriptionInvolvementDeps {
   readConversation(conversationId: string): DurableConversationIdentity | null;
@@ -42,7 +44,7 @@ export function createSubscriptionInvolvementReader(
       involvement.push({
         source: { kind: "notepad", id: watermark.notepadId },
         reason: "Notepad supplied as accepted conversation context",
-        initialCursor: String(watermark.revision),
+        initialCursor: notepadInvolvementCursor(watermark),
       });
     }
     for (const ticket of deps.queries.findTicketInvolvement(
@@ -86,7 +88,7 @@ export async function synchronizeSubscriptionInvolvement(
 /** Acceptance owns these revisions even if a source vanishes before inspection. */
 export async function followAcceptedNotepadContext(
   recipient: SubscriptionRecipient,
-  references: readonly { notepadId: string; revision: number }[],
+  references: readonly NotepadDeliveryRecord[],
   service?: SubscriptionService,
 ): Promise<void> {
   const owner =
@@ -96,7 +98,7 @@ export async function followAcceptedNotepadContext(
       recipient,
       source: { kind: "notepad", id: reference.notepadId },
       reason: "Notepad supplied as accepted conversation context",
-      initialCursor: String(reference.revision),
+      initialCursor: notepadInvolvementCursor(reference),
     });
   }
 }

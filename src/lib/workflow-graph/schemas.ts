@@ -2213,14 +2213,9 @@ export type GraphWorkflowExecution = z.infer<
 >;
 
 /**
- * Where a recorded boundary result stands with its origin conversation (D7
- * decision D8). The three states are the message queue's proven claim/recover/
- * settle shape applied to a ledger that is deliberately NOT a message: nothing
- * here ever enters the pending-message queue or starts an agent turn.
- *
- * `delivering` is a CLAIM, not an outcome — a turn that dies before
- * acknowledgment leaves it here, and rehydration recovery returns it to
- * `pending` so the same boundary re-presents under its stable identity.
+ * The retained origin attachment receipt used by the workflow inbox migration.
+ * Current backend delivery is owned by subscription receipts. These legacy
+ * states remain readable alongside frozen evidence and missing-origin fallback.
  */
 export const graphWorkflowResultDeliveryStateSchema = z.enum([
   "pending",
@@ -2229,9 +2224,9 @@ export const graphWorkflowResultDeliveryStateSchema = z.enum([
 ]);
 
 /**
- * One lifecycle boundary's durable result record for its origin conversation
- * (D7 decision D8), written in the same transaction as the boundary's event
- * append. `(executionId, boundarySeq)` is the identity: the boundary cursor is
+ * One lifecycle boundary's frozen result evidence, written in the same
+ * transaction as the boundary's event append. `(executionId, boundarySeq)` is
+ * the identity: the boundary cursor is
  * the durable event row id, so a replayed recording collides with itself rather
  * than delivering the same result twice.
  *
@@ -2245,7 +2240,7 @@ export const graphWorkflowResultDeliverySchema = z.object({
   boundarySeq: z.number().int().min(1),
   projectPath: z.string().trim().min(1),
   sessionName: z.string().trim().min(1),
-  originConversationId: z.string().trim().min(1),
+  originConversationId: z.string().trim().min(1).nullable(),
   payload: z.record(z.string(), z.unknown()),
   recordedAt: z.string(),
   state: graphWorkflowResultDeliveryStateSchema.default("pending"),

@@ -12,8 +12,6 @@ describe("assembleTurnPrompt", () => {
         debugManifestPath: ".debug/conv/instrumentation.json",
       }),
       activeTicketBlock: block,
-      workflowResultsBlock: null,
-      notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
       checkpointSeedBlock: null,
     });
@@ -44,8 +42,6 @@ describe("assembleTurnPrompt", () => {
         debugManifestPath: ".debug/conv/instrumentation.json",
       }),
       activeTicketBlock: block,
-      workflowResultsBlock: null,
-      notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
       checkpointSeedBlock: null,
     });
@@ -78,8 +74,6 @@ describe("assembleTurnPrompt", () => {
         debugManifestPath: ".debug/conv/instrumentation.json",
       }),
       activeTicketBlock: null,
-      workflowResultsBlock: null,
-      notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
       checkpointSeedBlock: null,
     });
@@ -113,8 +107,6 @@ describe("assembleTurnPrompt", () => {
         debugManifestPath: ".debug/conv/instrumentation.json",
       }),
       activeTicketBlock: null,
-      workflowResultsBlock: null,
-      notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
       checkpointSeedBlock: null,
     });
@@ -134,8 +126,6 @@ describe("assembleTurnPrompt", () => {
         debugManifestPath: ".debug/conv/instrumentation.json",
       }),
       activeTicketBlock: null,
-      workflowResultsBlock: null,
-      notepadChangeNoticeBlock: null,
       memoryIndexBlock: null,
       checkpointSeedBlock: null,
     });
@@ -147,17 +137,13 @@ it("orders every transient contribution ahead of expanded user text", () => {
   expect(
     assembleTurnPrompt({
       passiveBriefingBlock: "briefing",
-      notepadChangeNoticeBlock: "notepads",
-      workflowResultsBlock: "workflow",
       activeTicketBlock: "ticket",
       memoryIndexBlock: "memory",
       checkpointSeedBlock: null,
       debugContext: "debug",
       userText: "original [Image #1]",
     }),
-  ).toBe(
-    "briefing\n\nnotepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\noriginal [Image #1]",
-  );
+  ).toBe("briefing\n\nticket\n\nmemory\n\ndebug\n\noriginal [Image #1]");
 });
 
 describe("checkpoint seed placement", () => {
@@ -167,15 +153,13 @@ describe("checkpoint seed placement", () => {
       assembleTurnPrompt({
         checkpointSeedBlock: seed,
         passiveBriefingBlock: "briefing",
-        notepadChangeNoticeBlock: "notepads",
-        workflowResultsBlock: "workflow",
         activeTicketBlock: "ticket",
         memoryIndexBlock: "memory",
         debugContext: "debug",
         userText: "the actual user message",
       }),
     ).toBe(
-      `${seed}\n\nbriefing\n\nnotepads\n\nworkflow\n\nticket\n\nmemory\n\ndebug\n\nthe actual user message`,
+      `${seed}\n\nbriefing\n\nticket\n\nmemory\n\ndebug\n\nthe actual user message`,
     );
   });
 
@@ -183,8 +167,6 @@ describe("checkpoint seed placement", () => {
     expect(
       assembleTurnPrompt({
         checkpointSeedBlock: null,
-        notepadChangeNoticeBlock: null,
-        workflowResultsBlock: null,
         activeTicketBlock: null,
         memoryIndexBlock: null,
         debugContext: null,
@@ -202,8 +184,6 @@ it.each([undefined, null, ""])(
       assembleTurnPrompt({
         checkpointSeedBlock: null,
         passiveBriefingBlock,
-        notepadChangeNoticeBlock: null,
-        workflowResultsBlock: null,
         activeTicketBlock: null,
         memoryIndexBlock: null,
         debugContext: null,

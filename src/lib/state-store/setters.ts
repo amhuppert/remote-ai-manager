@@ -219,9 +219,6 @@ export function createSetters(
     publications: GraphWorkflowSSEEvent[];
     resultEffects: NonNullable<GraphWorkflowEventDelivery["resultEffects"]>;
   } {
-    if (execution.ownerConversationId === null) {
-      return { publications: [], resultEffects: [] };
-    }
     const publications: GraphWorkflowSSEEvent[] = [];
     const resultEffects: NonNullable<
       GraphWorkflowEventDelivery["resultEffects"]
@@ -246,13 +243,15 @@ export function createSetters(
         attemptId: null,
         attemptCount: 0,
         deliveredAt: null,
-        effectsDeliveredAt: null,
+        effectsDeliveredAt:
+          execution.ownerConversationId === null ? record.occurredAt : null,
       });
       if (!inserted) {
         throw new Error(
           `Boundary result ${execution.id}::${record.id} already exists`,
         );
       }
+      if (execution.ownerConversationId === null) continue;
       const event: GraphWorkflowResultRecordedEvent = {
         type: "graph-workflow-result-recorded",
         projectName: record.event.projectName,
@@ -435,6 +434,7 @@ export function createSetters(
                   boundarySeq,
                 );
               if (delivery === null) return false;
+              if (delivery.originConversationId === null) return false;
               return (
                 repos.graphWorkflowResultDeliveries.markExecutionFallbackDelivered(
                   projectPath,
@@ -501,6 +501,8 @@ export function createSetters(
                   `Workflow result ${executionId}::${boundarySeq} was not found`,
                 );
               }
+              if (delivery.originConversationId === null)
+                throw new Error("An ownerless workflow has no origin fallback");
               const result =
                 repos.notifications.createWorkflowNotificationInTransaction(
                   notificationInput,

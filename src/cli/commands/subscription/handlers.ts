@@ -569,7 +569,7 @@ export const inboxGetHandler: Read<typeof inboxGetSpec> = {
     },
     text: ({ delivery: d }) =>
       quoteLiteralText(
-        `${d.id}  ${d.state}  ${d.fact.eventKind}\nsource: ${d.source.kind}:${d.source.id}  ${d.fact.sourceTitle}\nwhen: ${d.fact.occurredAt}\n${d.fact.summary}\nread: ${d.fact.retrievalHandle}\naccepted: ${d.acceptedAt ?? "not accepted"}${d.lastError ? `\nproblem: ${d.lastError}` : ""}\n`,
+        `${d.id}  ${d.state}  ${d.fact.eventKind}\nsource: ${d.source.kind}:${d.source.id}  ${d.fact.sourceTitle}\nwhen: ${d.fact.occurredAt}\n${d.fact.sourceText ?? d.fact.summary}\nread: ${d.fact.retrievalHandle}\naccepted: ${d.acceptedAt ?? "not accepted"}${d.lastError ? `\nproblem: ${d.lastError}` : ""}\n`,
       ),
   }),
 };

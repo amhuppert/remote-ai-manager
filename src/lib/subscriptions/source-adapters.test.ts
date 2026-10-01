@@ -1,3 +1,6 @@
+import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
+import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
+import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import {
@@ -21,6 +24,12 @@ let fixture: PersistenceFixture;
 function reader() {
   return createSubscriptionSourceReader({
     notepads: createNotepadsRepo(fixture.db, createWriteQueue()),
+    comments: createNotepadCommentsRepo(fixture.db, createWriteQueue()),
+    watermarks: createNotepadDeliveryWatermarksRepo(
+      fixture.db,
+      createWriteQueue(),
+    ),
+    resultDeliveries: createGraphWorkflowResultDeliveriesRepo(fixture.db),
     tickets: createTicketsRepo(fixture.db, createWriteQueue()),
     specs: fixture.specs,
     specEvents: createSpecEventsRepo(fixture.db),
@@ -65,7 +74,11 @@ describe("durable subscription sources", () => {
     const repo = await notepad();
     const source = { kind: "notepad", id: "pad" } as const;
     const baseline = await reader()(recipient, source, null);
-    expect(baseline).toEqual({ cursor: "1", facts: [], missing: false });
+    expect(baseline).toEqual({
+      cursor: JSON.stringify({ revision: 1, commentIds: [] }),
+      facts: [],
+      missing: false,
+    });
     await repo.writeContent({
       notepadId: "pad",
       revisionId: "pad-r2",
@@ -81,7 +94,10 @@ describe("durable subscription sources", () => {
       coalesceWindowMs: null,
     });
     const updated = await reader()(recipient, source, baseline.cursor);
-    expect(updated.cursor).toBe("2");
+    expect(JSON.parse(updated.cursor ?? "null")).toEqual({
+      revision: 2,
+      commentIds: [],
+    });
     expect(updated.facts).toMatchObject([
       {
         occurrenceId: "pad-r2:2",
@@ -90,8 +106,8 @@ describe("durable subscription sources", () => {
         actorConversationId: "other-conversation",
       },
     ]);
-    expect(await reader()(recipient, source, updated.cursor)).toEqual({
-      cursor: "2",
+    expect(await reader()(recipient, source, updated.cursor)).toMatchObject({
+      cursor: updated.cursor,
       facts: [],
       missing: false,
     });

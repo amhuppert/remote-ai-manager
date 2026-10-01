@@ -91,6 +91,55 @@ function harness() {
   };
 }
 describe("explicit finite terminal waits", () => {
+  it("closes a shared wait after passive input acceptance without queuing another turn", async () => {
+    const h = harness();
+    const wait = await h.build().register({
+      recipient,
+      source: { kind: "workflow", id: "workflow" },
+      reason: "Use the result",
+    });
+    if (!fixture || !wait.deliveryId)
+      throw new Error("Expected durable wait result");
+    const repo = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    const following = await repo.get(recipient, wait.subscriptionId);
+    if (!following) throw new Error("Expected subscription");
+    await repo.updateControls(
+      recipient,
+      following.id,
+      { ...following, mode: "passive" },
+      following.updatedAt,
+    );
+    await repo.claim(
+      recipient,
+      [wait.deliveryId],
+      "passive-attempt",
+      "2026-09-30T12:00:00.000Z",
+    );
+    await repo.updateControls(
+      recipient,
+      following.id,
+      { ...following, mode: "active" },
+      following.updatedAt,
+    );
+    expect(await h.build().prepareBatch(recipient)).toBeNull();
+    await repo.settle(
+      recipient,
+      "passive-attempt",
+      "accepted",
+      "2026-09-30T12:00:01.000Z",
+      null,
+    );
+    await h.build().reconcile(recipient);
+    expect(await h.build().get(recipient, wait.subscriptionId)).toMatchObject({
+      state: "settled",
+      deliveryId: wait.deliveryId,
+    });
+    expect(await h.build().prepareBatch(recipient)).toBeNull();
+  });
+
   it("discards only the selected coalesced wait and holds the governor until all members are discarded", async () => {
     const h = harness();
     const first = await h.build().register({

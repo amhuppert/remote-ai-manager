@@ -10,6 +10,11 @@ import {
 import { createWriteQueue, type WriteQueue } from "./write-queue";
 import { notepadDeliveryWatermarkSchema } from "@/lib/notepads/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { createNotepadCommentsRepo } from "./notepad-comments-repo";
+import {
+  createNotepadSourceReader,
+  notepadInvolvementCursor,
+} from "@/lib/subscriptions/notepad-source";
 
 type Db = InstanceType<typeof Database>;
 
@@ -65,6 +70,121 @@ async function createNotepad(name = "Release checklist") {
 }
 
 describe("recording a delivery watermark", () => {
+  it("retains opaque legacy marker knowledge without inventing comment identities", async () => {
+    const notepad = await createNotepad();
+    await watermarks.record({
+      conversationId: "legacy-context",
+      notepadId: notepad.id,
+      revision: 4,
+      openComments: { count: 2, latestCreatedAt: "2026-10-01T10:02:00Z" },
+      updatedAt: "2026-10-01T10:03:00Z",
+    });
+    await watermarks.record({
+      conversationId: "legacy-context",
+      notepadId: notepad.id,
+      revision: 2,
+      openComments: { count: 3, latestCreatedAt: "2026-10-01T10:00:00Z" },
+      updatedAt: "2026-10-01T10:04:00Z",
+    });
+    const persisted = (await reader().listForConversation("legacy-context"))[0];
+    expect(persisted).toMatchObject({
+      revision: 4,
+      openComments: { count: 2, latestCreatedAt: "2026-10-01T10:02:00Z" },
+    });
+    expect(persisted?.commentIds).toBeUndefined();
+  });
+  it("preserves accepted knowledge when an older reference receipt retries after a newer acceptance", async () => {
+    const notepad = await createNotepad();
+    const comments = createNotepadCommentsRepo(db, queue);
+    const add = (id: string, createdAt: string) =>
+      comments.create({
+        id,
+        notepadId: notepad.id,
+        body: id,
+        authorKind: "user",
+        authorConversationId: null,
+        createdAt,
+        anchor: {
+          sectionId: "preamble",
+          headingLabel: "",
+          line: 1,
+          charStart: 0,
+          charEnd: 1,
+          quote: "#",
+          prefix: "",
+          suffix: "",
+          notepadRevision: 1,
+        },
+      });
+    await add("older-observed", "2026-10-01T10:00:00Z");
+    await comments.delete("older-observed");
+    await add("newer-observed", "2026-10-01T10:01:00Z");
+    await notepads.writeContent({
+      notepadId: notepad.id,
+      revisionId: "later-revision",
+      operation: "update",
+      content: "Later accepted body",
+      authorKind: "user",
+      authorConversationId: null,
+      baseRevision: null,
+      enforceBaseRevision: false,
+      permittedWriteModes: null,
+      restoredFromRevision: null,
+      writtenAt: "2026-10-01T10:01:00Z",
+      coalesceWindowMs: null,
+    });
+    await watermarks.record({
+      conversationId: "out-of-order",
+      notepadId: notepad.id,
+      revision: 2,
+      openComments: { count: 1, latestCreatedAt: "2026-10-01T10:01:00Z" },
+      commentIds: ["newer-observed"],
+      updatedAt: "2026-10-01T10:02:00Z",
+    });
+    await watermarks.record({
+      conversationId: "out-of-order",
+      notepadId: notepad.id,
+      revision: 1,
+      openComments: { count: 1, latestCreatedAt: "2026-10-01T10:00:00Z" },
+      commentIds: ["older-observed"],
+      updatedAt: "2026-10-01T10:03:00Z",
+    });
+    const persisted = (await reader().listForConversation("out-of-order"))[0];
+    expect(persisted).toMatchObject({
+      revision: 2,
+      openComments: { count: 1, latestCreatedAt: "2026-10-01T10:01:00Z" },
+      commentIds: ["newer-observed", "older-observed"],
+    });
+    const source = await createNotepadSourceReader({
+      notepads,
+      comments,
+      watermarks: reader(),
+    })(
+      { projectPath: "/global-reader", conversationId: "out-of-order" },
+      { kind: "notepad", id: notepad.id },
+      notepadInvolvementCursor({
+        notepadId: notepad.id,
+        revision: 1,
+        openComments: { count: 0, latestCreatedAt: null },
+        commentIds: [],
+      }),
+    );
+    expect(source.facts).toEqual([]);
+  });
+  it("retains the exact observed comment identities without rereading after acceptance", async () => {
+    const notepad = await createNotepad();
+    await watermarks.record({
+      conversationId: "conversation-ids",
+      notepadId: notepad.id,
+      revision: 1,
+      openComments: { count: 1, latestCreatedAt: "2026-10-01T10:00:00Z" },
+      commentIds: ["open-at-render", "resolved-at-render"],
+      updatedAt: "2026-10-01T10:01:00Z",
+    });
+    expect(
+      (await reader().listForConversation("conversation-ids"))[0]?.commentIds,
+    ).toEqual(["open-at-render", "resolved-at-render"]);
+  });
   it("persists the presented revision and open-comment marker", async () => {
     const notepad = await createNotepad();
 
@@ -208,6 +328,7 @@ describe("round-trip durability", () => {
             count: 4,
             latestCreatedAt: "2026-03-16T09:10:11.000Z",
           },
+          commentIds: ["comment-first", "comment-second", "comment-resolved"],
           updatedAt: "2026-04-17T10:11:12.000Z",
         }),
       persist: async (fixture) => {

@@ -130,6 +130,25 @@ export function createActiveWaitService(
     };
     const at = now();
     for (const wait of await deps.repo.list(recipient)) {
+      if (
+        wait.state === "ready" &&
+        wait.batchId === null &&
+        wait.deliveryId &&
+        wait.outcome
+      ) {
+        const receipt = await deps.subscriptions.getDelivery(
+          wait.recipient,
+          wait.deliveryId,
+        );
+        if (
+          receipt?.state === "accepted" &&
+          (await deps.repo.settle(wait.id, wait.outcome, receipt, at))
+        ) {
+          report.settled++;
+          deps.onChange?.(wait.recipient);
+        }
+        continue;
+      }
       if (wait.state !== "waiting") continue;
       report.checked++;
       try {

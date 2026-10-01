@@ -171,7 +171,14 @@ it("suppresses a verified conversation's own notepad revision and retains the ne
   const runtime = createSubscriptionRuntime(fixture.db, createWriteQueue());
   await followAcceptedNotepadContext(
     recipient,
-    [{ notepadId: created.id, revision: created.revision }],
+    [
+      {
+        notepadId: created.id,
+        revision: created.revision,
+        openComments: { count: 0, latestCreatedAt: null },
+        commentIds: [],
+      },
+    ],
     runtime.service,
   );
   const context = { params: Promise.resolve({ notepadId: created.id }) };

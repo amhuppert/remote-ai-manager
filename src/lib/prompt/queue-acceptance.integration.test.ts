@@ -81,12 +81,6 @@ describe.each(["session", "project"] as const)(
         recordNotepadDeliveries: async () => {},
         subscriptions: undefined,
         ownSubscriptionReceipt: () => true,
-        prepareNotepadChangeNotice: async () => ({
-          conversationId: key.conversationId,
-          block: null,
-          advances: [],
-        }),
-        settleNotepadChangeNotice: async () => {},
         appendTranscriptEntry: async (_id, entry) => {
           archive.push(entry);
         },
@@ -128,7 +122,6 @@ describe.each(["session", "project"] as const)(
       let state = "pending";
       h.deps.subscriptions = {
         synchronizeInvolvement: async () => {},
-        coveredNotepadIds: async () => [],
         prepareBriefing: async () => {
           state = "queued";
           return {
@@ -159,7 +152,6 @@ describe.each(["session", "project"] as const)(
       let preparations = 0;
       h.deps.subscriptions = {
         synchronizeInvolvement: async () => {},
-        coveredNotepadIds: async () => [],
         prepareBriefing: async () => {
           preparations++;
           return {
@@ -218,7 +210,6 @@ describe.each(["session", "project"] as const)(
       };
       h.deps.subscriptions = {
         synchronizeInvolvement: async () => {},
-        coveredNotepadIds: async () => [],
         prepareBriefing: async () => ({
           block: null,
           onInputAccepted: async () => {},
@@ -236,10 +227,18 @@ describe.each(["session", "project"] as const)(
           })
         )[0],
       ).toMatchObject({
-        cursor: "7",
+        cursor: JSON.stringify({
+          revision: 7,
+          legacyOpenComments: { count: 0, latestCreatedAt: null },
+        }),
         source: { kind: "notepad", id: "notes" },
       });
-      expect((await h.reload())?.pendingQueue).toEqual([]);
+      expect((await h.reload())?.pendingQueue).toMatchObject([
+        {
+          status: "uncertain",
+          error: "Source deleted before watermark persistence",
+        },
+      ]);
     });
 
     it("holds unconfirmed live briefing delivery as uncertain", async () => {
@@ -247,7 +246,6 @@ describe.each(["session", "project"] as const)(
       let disposition: string | undefined;
       h.deps.subscriptions = {
         synchronizeInvolvement: async () => {},
-        coveredNotepadIds: async () => [],
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {},
@@ -278,7 +276,6 @@ describe.each(["session", "project"] as const)(
       };
       h.deps.subscriptions = {
         synchronizeInvolvement: async () => {},
-        coveredNotepadIds: async () => [],
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {
@@ -332,7 +329,6 @@ describe.each(["session", "project"] as const)(
         };
         h.deps.subscriptions = {
           synchronizeInvolvement: async () => {},
-          coveredNotepadIds: async () => [],
           prepareBriefing: async () => ({
             block: "Update",
             onInputAccepted: async () => {},
@@ -388,7 +384,6 @@ describe.each(["session", "project"] as const)(
       h.deps.ownSubscriptionReceipt = () => false;
       h.deps.subscriptions = {
         synchronizeInvolvement: async () => {},
-        coveredNotepadIds: async () => [],
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {},

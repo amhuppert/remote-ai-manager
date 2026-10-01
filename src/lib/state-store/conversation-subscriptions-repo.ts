@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Db } from "./schemas";
 import type { WriteQueue } from "./write-queue";
+import { importSubscriptionDelivery } from "./subscription-delivery-import";
 import {
   conversationSubscriptionSchema,
   inboxQuerySchema,
@@ -72,6 +73,20 @@ export interface ConversationSubscriptionsRepo {
     at: string,
   ): Promise<void>;
   recordDelivery(delivery: SubscriptionDelivery): Promise<boolean>;
+  recordNotice(
+    subscription: ConversationSubscription,
+    delivery: SubscriptionDelivery,
+  ): Promise<boolean>;
+  importDelivery(
+    subscription: ConversationSubscription,
+    delivery: SubscriptionDelivery,
+  ): Promise<SubscriptionDelivery>;
+  supersedePending(
+    recipient: SubscriptionRecipient,
+    source: SubscriptionSourceRef,
+    occurrenceIds: readonly string[],
+    at: string,
+  ): Promise<number>;
   readInbox(
     recipient: SubscriptionRecipient,
     query: InboxQuery,
@@ -199,7 +214,7 @@ export function createConversationSubscriptionsRepo(
   db: Db,
   writeQueue: WriteQueue,
 ): ConversationSubscriptionsRepo {
-  const pendingDeliveryWhere = `state<>'accepted' AND EXISTS (
+  const pendingDeliveryWhere = `state NOT IN ('accepted','superseded') AND EXISTS (
     SELECT 1 FROM conversation_subscriptions s
     WHERE s.id=conversation_subscription_deliveries.subscription_id
       AND s.project_path=conversation_subscription_deliveries.project_path
@@ -316,36 +331,64 @@ export function createConversationSubscriptionsRepo(
       return result;
     },
   );
+  function createSubscription(
+    value: ConversationSubscription,
+  ): ConversationSubscription {
+    create.run({
+      id: value.id,
+      ...scope(value.recipient),
+      source_kind: value.source.kind,
+      source_id: value.source.id,
+      reason: value.reason,
+      mode: value.mode,
+      event_kinds_json:
+        value.eventKinds === null ? null : JSON.stringify(value.eventKinds),
+      expires_at: value.expiresAt,
+      status: value.status,
+      cursor: value.cursor,
+      created_at: value.createdAt,
+      updated_at: value.updatedAt,
+      unfollowed_at: value.unfollowedAt,
+      paused_at: value.pausedAt,
+      missing_at: value.missingAt,
+      last_error: value.lastError,
+    });
+    return subscriptionFromRow(
+      findSource.get({
+        ...scope(value.recipient),
+        source_kind: value.source.kind,
+        source_id: value.source.id,
+      }),
+    );
+  }
+  const recordNoticeTx = db.transaction(
+    (candidate: ConversationSubscription, delivery: SubscriptionDelivery) => {
+      if (
+        delivery.recipient.projectPath !== candidate.recipient.projectPath ||
+        delivery.recipient.conversationId !==
+          candidate.recipient.conversationId ||
+        delivery.source.kind !== candidate.source.kind ||
+        delivery.source.id !== candidate.source.id
+      )
+        throw new Error("Notice delivery does not belong to this subscription");
+      const subscription = createSubscription(candidate);
+      if (
+        subscription.status !== "following" ||
+        subscription.mode !== "passive" ||
+        (subscription.expiresAt !== null &&
+          subscription.expiresAt <= delivery.recordedAt) ||
+        (subscription.eventKinds !== null &&
+          !subscription.eventKinds.includes(delivery.fact.eventKind))
+      )
+        return false;
+      return insert({ ...delivery, subscriptionId: subscription.id });
+    },
+  );
   return {
     async createIfAbsent(input) {
       const value = conversationSubscriptionSchema.parse(input);
       return writeQueue.withWriteQueueSync("subscriptions.create", () => {
-        create.run({
-          id: value.id,
-          ...scope(value.recipient),
-          source_kind: value.source.kind,
-          source_id: value.source.id,
-          reason: value.reason,
-          mode: value.mode,
-          event_kinds_json:
-            value.eventKinds === null ? null : JSON.stringify(value.eventKinds),
-          expires_at: value.expiresAt,
-          status: value.status,
-          cursor: value.cursor,
-          created_at: value.createdAt,
-          updated_at: value.updatedAt,
-          unfollowed_at: value.unfollowedAt,
-          paused_at: value.pausedAt,
-          missing_at: value.missingAt,
-          last_error: value.lastError,
-        });
-        return subscriptionFromRow(
-          findSource.get({
-            ...scope(value.recipient),
-            source_kind: value.source.kind,
-            source_id: value.source.id,
-          }),
-        );
+        return createSubscription(value);
       });
     },
     async get(recipient, id) {
@@ -467,6 +510,51 @@ export function createConversationSubscriptionsRepo(
       const value = subscriptionDeliverySchema.parse(delivery);
       return writeQueue.withWriteQueueSync("subscriptions.recordDelivery", () =>
         insert(value),
+      );
+    },
+    async recordNotice(subscription, delivery) {
+      const candidate = conversationSubscriptionSchema.parse(subscription);
+      const value = subscriptionDeliverySchema.parse(delivery);
+      return writeQueue.withWriteQueueSync("subscriptions.recordNotice", () =>
+        recordNoticeTx.immediate(candidate, value),
+      );
+    },
+    async importDelivery(subscription, delivery) {
+      return writeQueue.withWriteQueueSync("subscriptions.importDelivery", () =>
+        db
+          .transaction(() =>
+            importSubscriptionDelivery(db, { subscription, delivery }),
+          )
+          .immediate(),
+      );
+    },
+    async supersedePending(recipient, source, occurrenceIds, at) {
+      if (occurrenceIds.length === 0) return 0;
+      const update = db.prepare(`UPDATE conversation_subscription_deliveries
+        SET state='superseded',finished_at=@at,accepted_at=NULL,
+          last_error='Source fact was superseded by accepted context or feedback withdrawal'
+        WHERE project_path=@project_path AND conversation_id=@conversation_id
+          AND source_kind=@source_kind AND source_id=@source_id
+          AND occurrence_id=@occurrence_id AND state IN ('pending','failed')`);
+      return writeQueue.withWriteQueueSync(
+        "subscriptions.supersedePending",
+        () =>
+          db
+            .transaction(() =>
+              occurrenceIds.reduce(
+                (count, occurrenceId) =>
+                  count +
+                  update.run({
+                    ...scope(recipient),
+                    source_kind: source.kind,
+                    source_id: source.id,
+                    occurrence_id: occurrenceId,
+                    at,
+                  }).changes,
+                0,
+              ),
+            )
+            .immediate(),
       );
     },
     async readInbox(recipient, query) {

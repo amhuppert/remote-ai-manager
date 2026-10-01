@@ -231,7 +231,28 @@ describe("review feedback notices to the authoring conversation", () => {
       subject: "fb-r1",
       threadId: "thread-1",
       proposer: { kind: "agent", conversationId: "conversation-1" },
+      durableEvent: createSpecEventsRepo(db)
+        .findBySpecId(specId)
+        .findLast((event) => event.event_type === "spec-review-commented"),
     });
+  });
+
+  it("retains distinct committed identities for repeated comments on the same subject", async () => {
+    const { specId, revisionId } = await reviewableDraft({
+      author: AGENT,
+      proposer: AGENT,
+    });
+    await humanComment(specId, revisionId);
+    await humanComment(specId, revisionId);
+
+    const comments = createSpecEventsRepo(db)
+      .findBySpecId(specId)
+      .filter((event) => event.event_type === "spec-review-commented");
+    expect(comments).toHaveLength(2);
+    expect(feedbackNotices).toEqual([
+      expect.objectContaining({ durableEvent: comments[0] }),
+      expect.objectContaining({ durableEvent: comments[1] }),
+    ]);
   });
 
   it("notifies the conversation that last wrote the draft, not the one that proposed it", async () => {
@@ -308,6 +329,9 @@ describe("review feedback notices to the authoring conversation", () => {
       subject: "fb-r1",
       threadId: "thread-1",
       proposer: { kind: "agent", conversationId: "conversation-1" },
+      durableEvent: createSpecEventsRepo(db)
+        .findBySpecId(specId)
+        .findLast((event) => event.event_type === "spec-review-commented"),
     });
   });
 
@@ -334,6 +358,11 @@ describe("review feedback notices to the authoring conversation", () => {
       subject: null,
       threadId: null,
       proposer: { kind: "agent", conversationId: "conversation-1" },
+      durableEvent: createSpecEventsRepo(db)
+        .findBySpecId(specId)
+        .findLast(
+          (event) => event.event_type === "spec-review-revision-signed-off",
+        ),
     });
 
     const repeated = await reviewing.signOffRevision({

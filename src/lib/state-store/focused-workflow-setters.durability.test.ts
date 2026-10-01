@@ -116,6 +116,77 @@ function boundaryEvent(
 }
 
 describe("graph-workflow boundary result atomicity", () => {
+  it("freezes ownerless boundary evidence without creating origin lifecycle effects", async () => {
+    await seedSessionWithExecution();
+    const execution = makeExecution({
+      status: "halted",
+      ownerConversationId: null,
+    });
+    const committed = await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.ownerless-boundary",
+      () => ({
+        kind: "commit",
+        value: undefined,
+        execution,
+        events: [boundaryEvent(execution, "halt")],
+      }),
+    );
+    if (committed.kind !== "committed") throw Error("Expected execution write");
+    const boundary = fixture.graphWorkflowEvents
+      .findRecordsByExecution(PROJECT_PATH, SESSION_NAME, execution.id)
+      .find((row) => row.event.type === "graph-workflow-boundary");
+    if (!boundary) throw Error("Expected boundary event");
+    const reloaded = createGraphWorkflowResultDeliveriesRepo(fixture.db);
+    expect(
+      reloaded.findByBoundary(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution.id,
+        boundary.id,
+      ),
+    ).toMatchObject({
+      originConversationId: null,
+      effectsDeliveredAt: boundary.occurredAt,
+      payload: {
+        cursor: boundary.id,
+        boundaryKind: "halt",
+        pendingActions: [{ kind: "act-halt" }],
+        outputs: {
+          kind: "declared_outputs",
+          byContext: { "context-plan": { value: "halt" } },
+        },
+      },
+    });
+    expect(committed.delivery.resultEffects).toEqual([]);
+    expect(committed.delivery.publications).toEqual([]);
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.ownerless-later-state",
+      () => ({
+        kind: "commit",
+        value: undefined,
+        execution: makeExecution({
+          status: "running",
+          ownerConversationId: null,
+        }),
+        events: [],
+      }),
+    );
+    expect(
+      reloaded.findByBoundary(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution.id,
+        boundary.id,
+      )?.payload.outputs,
+    ).toEqual({
+      kind: "declared_outputs",
+      byContext: { "context-plan": { value: "halt" } },
+    });
+  });
   const cases: ReadonlyArray<{
     kind: GraphWorkflowBoundaryKind;
     status: GraphWorkflowExecution["status"];

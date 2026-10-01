@@ -324,7 +324,25 @@ export function createSubscriptionControlsService(
     },
     get: (recipient, id) => deps.repo.get(recipient, id),
     pause: (recipient, id) => apply(recipient, id, { pausedAt: now() }),
-    resume: (recipient, id) => apply(recipient, id, { pausedAt: null }),
+    async resume(recipient, id) {
+      await eligible(recipient);
+      const current = await deps.repo.get(recipient, id);
+      if (!current) return null;
+      if (current.source.kind !== "conversation")
+        return apply(recipient, id, { pausedAt: null });
+      if (current.source.id !== recipient.conversationId)
+        throw new SubscriptionControlError(
+          "SUBSCRIPTION_SOURCE_MISMATCH",
+          "Internal notices must use their own conversation source.",
+          409,
+        );
+      // Internal notice sources cannot be restored through public subscribe.
+      return apply(recipient, id, {
+        status: "following",
+        mode: "passive",
+        pausedAt: null,
+      });
+    },
     async setMode(recipient, id, mode, expiresAt) {
       await eligible(recipient);
       const current = await deps.repo.get(recipient, id);

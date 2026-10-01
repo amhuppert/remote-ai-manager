@@ -13,7 +13,6 @@ function fixture() {
   const finishes: (() => Promise<void>)[] = [];
   const deps: PassiveSubscriptionContextDependencies = {
     synchronizeInvolvement: async () => {},
-    coveredNotepadIds: async () => ["followed-notepad"],
     prepareBriefing: async () => {
       preparations++;
       state = "queued";
@@ -64,14 +63,12 @@ describe("passive subscription delivery", () => {
     expect(f.preparations()).toBe(0);
     expect(f.state()).toBe("pending");
     expect(context.block).toBeNull();
-    expect(context.coveredNotepadIds).toEqual(["followed-notepad"]);
   });
 
   it("settles only on input acceptance and owns the required receipt", async () => {
     const f = fixture();
     const context = await f.prepare();
     expect(context.block).toContain("Update");
-    expect(context.coveredNotepadIds).toEqual(["followed-notepad"]);
     expect(f.state()).toBe("queued");
     expect(f.finishes).toHaveLength(1);
     context.markDispatched();

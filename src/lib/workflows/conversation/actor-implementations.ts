@@ -142,7 +142,7 @@ import {
   applyCapabilityCascadeAtTurnStart,
 } from "./pre-turn/capability-cascade";
 import { recordSeenAlignmentVersion } from "./pre-turn/alignment-gate";
-import { createBackgroundTasksLostHandler } from "./pre-turn/notices-drain";
+import { createBackgroundTasksLostHandler } from "./pre-turn/background-tasks-lost";
 
 import { wireTurnAbort } from "./pre-turn/abort-wiring";
 import { createQueuedDeliveryAccounting } from "./post-turn/queued-delivery-accounting";
@@ -1132,12 +1132,11 @@ async function executePromptForMachine(
     };
 
     const surfaceBackgroundTasksLost = createBackgroundTasksLostHandler(
-      deps.effects,
+      { recordAgentNotice: deps.effects.recordAgentNotice, log: deps.log },
       {
         projectPath: input.projectPath,
         sessionName: conversationTargetStoreSessionName(input.target),
         conversationId: input.target.conversationId,
-        isProjectConversation,
         appendTranscriptEntry: safeAppendWithMeta,
       },
     );
@@ -1271,8 +1270,6 @@ async function executePromptForMachine(
         ),
       );
     }
-
-    await instructions.consumeNotices();
 
     return newRuntime;
   }

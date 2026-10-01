@@ -444,6 +444,9 @@ describe("0034-native-sdd-attention-citations", () => {
       "0058-add-conversation-subscriptions",
       "0059-add-conversation-subscription-waits",
       "0060-add-conversation-subscription-controls",
+      "0061-conversation-notice-inbox",
+      "0062-notepad-notice-context",
+      "0063-workflow-result-inbox",
     ]);
   });
 

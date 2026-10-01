@@ -12,7 +12,6 @@ import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/nat
 import { getDebugManifestPath } from "@/lib/debug-log/service";
 import { prepareNotepadContext } from "./pre-turn/notepad-context";
 import { prepareMemoryContext } from "./pre-turn/memory-context";
-import { prepareWorkflowResultContext } from "./pre-turn/workflow-result-context";
 import {
   preparePassiveSubscriptionContext,
   prepareAcceptedNotepadReferences,
@@ -37,13 +36,6 @@ export interface PreparedTurnContribution {
  * session instructions or the persistent runtime, so attachment changes
  * appear on the next turn without runtime recreation (5.5).
  *
- * `workflowResultsBlock` is another transient pre-turn source. It stays out of
- * the message queue and transcript while appearing before the user's content.
- *
- * `notepadChangeNoticeBlock` is the third: a content-free notice that a notepad
- * this conversation was given has changed (R21). Like the others it is
- * agent-facing only — the durable transcript keeps the user's original text.
- *
  * `memoryIndexBlock` is the fourth (spec `memory` R5/D4): the conversation's
  * generated `<memory-index>`, rebuilt per turn from live rows and placed
  * directly below the ticket block so the artifact being worked on reads
@@ -59,8 +51,6 @@ export function assembleTurnPrompt(input: {
   userText: string;
   debugContext: string | null;
   activeTicketBlock: string | null;
-  workflowResultsBlock: string | null;
-  notepadChangeNoticeBlock: string | null;
   memoryIndexBlock: string | null;
   checkpointSeedBlock: string | null;
   passiveBriefingBlock?: string | null;
@@ -68,8 +58,6 @@ export function assembleTurnPrompt(input: {
   return [
     input.checkpointSeedBlock,
     input.passiveBriefingBlock,
-    input.notepadChangeNoticeBlock,
-    input.workflowResultsBlock,
     input.activeTicketBlock,
     input.memoryIndexBlock,
     input.debugContext,
@@ -163,26 +151,6 @@ export async function prepareConversationTurnContext(
       );
     const syntheticForkSeed =
       continuation.kind === "fork" ? continuation.seed : undefined;
-    const passive = await preparePassiveSubscriptionContext(
-      deps.subscriptions,
-      {
-        recipient: {
-          projectPath: execution.projectPath,
-          conversationId: target.conversationId,
-        },
-        attemptId: execution.executionAttemptId ?? input.resultAttemptId,
-        inspectLegacySources:
-          execution.persistence === "durable" &&
-          execution.role === null &&
-          input.workflowContext === undefined,
-        eligible:
-          execution.persistence === "durable" &&
-          execution.role === null &&
-          input.workflowContext === undefined &&
-          execution.turn.inputOrigin === "user",
-      },
-      ownReceipt,
-    );
     let acceptedBackendRef: AgentSessionRef | null = null;
     const fork = createRequiredInputReceipt(async () => {
       if (!syntheticForkSeed || !acceptedBackendRef) return;
@@ -196,7 +164,6 @@ export async function prepareConversationTurnContext(
     });
     ownReceipt(fork.finish);
     let activeTicketBlock: string | null = null;
-    let workflow: PreparedTurnContribution = { block: null };
     // Project conversations are session-less and cannot be ticket-linked.
     // A lookup failure degrades to an uncontextualized turn.
     if (target.scope === "session") {
@@ -211,16 +178,6 @@ export async function prepareConversationTurnContext(
           error: getErrorMessage(error),
         });
       }
-      workflow = await prepareWorkflowResultContext(
-        deps,
-        {
-          projectPath: execution.projectPath,
-          sessionName: target.sessionName,
-          originConversationId: target.conversationId,
-          attemptId: input.resultAttemptId,
-        },
-        ownReceipt,
-      );
     }
     const memory = await prepareMemoryContext(deps, {
       projectPath: execution.projectPath,
@@ -244,8 +201,25 @@ export async function prepareConversationTurnContext(
     const notepad = await prepareNotepadContext(deps, {
       conversationId: target.conversationId,
       promptText: expanded,
-      excludedNotepadIds: passive.coveredNotepadIds,
     });
+    ownReceipt(notepad.finish);
+    const passive = await preparePassiveSubscriptionContext(
+      deps.subscriptions,
+      {
+        recipient: {
+          projectPath: execution.projectPath,
+          conversationId: target.conversationId,
+        },
+        attemptId: execution.executionAttemptId ?? input.resultAttemptId,
+        providedNotepadContext: notepad.references,
+        eligible:
+          execution.persistence === "durable" &&
+          execution.role === null &&
+          input.workflowContext === undefined &&
+          execution.turn.inputOrigin === "user",
+      },
+      ownReceipt,
+    );
     const summarizedText = await appendLiveReferenceSummaries(notepad.text, {
       read: (target) => deps.context.readLiveReference(target),
     });
@@ -262,9 +236,7 @@ export async function prepareConversationTurnContext(
       checkpointSeedBlock: checkpoint?.block ?? null,
       passiveBriefingBlock: passive.block,
       activeTicketBlock,
-      workflowResultsBlock: workflow.block,
       memoryIndexBlock: memory.block,
-      notepadChangeNoticeBlock: notepad.block,
       debugContext: buildDebugPromptContext({
         debugMode: execution.debugMode,
         debugLogUrl: deps.debug.getDebugLogUrl(target.conversationId),
@@ -288,7 +260,10 @@ export async function prepareConversationTurnContext(
         })
       : undefined;
     let passiveAcceptance: Promise<void> | undefined;
+    let notepadAcceptance: Promise<void> | undefined;
     const observeInputAccepted = () => {
+      notepadAcceptance ??= notepad.onInputAccepted?.() ?? Promise.resolve();
+      void notepadAcceptance.catch(() => {});
       passiveAcceptance ??= passive.onInputAccepted();
       // The attempt owns retries; capture the evidence before unrelated
       // policy persistence can reject this accepted event.
@@ -301,12 +276,11 @@ export async function prepareConversationTurnContext(
     const acknowledgeAccepted = async (
       backendRef: AgentSessionRef | null,
     ): Promise<void> => {
-      await notepad.onInputAccepted?.();
-      await memory.onInputAccepted?.();
       observeInputAccepted();
+      await notepadAcceptance;
+      await memory.onInputAccepted?.();
       await passiveAcceptance;
       await acceptedNotepadReferences.onInputAccepted();
-      await workflow.onInputAccepted?.();
       if (syntheticForkSeed && backendRef) {
         acceptedBackendRef ??= backendRef;
         await fork.onInputAccepted();
@@ -320,6 +294,7 @@ export async function prepareConversationTurnContext(
       ...(promptContext ? { promptContext } : {}),
       syntheticForkSeed,
       markDispatched() {
+        notepad.markDispatched();
         acceptedNotepadReferences.markDispatched();
         passive.markDispatched();
       },

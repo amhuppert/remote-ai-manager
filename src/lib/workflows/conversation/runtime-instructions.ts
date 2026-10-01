@@ -16,11 +16,6 @@ import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import { registerFocusMemoryIfPresent } from "./pre-turn/focus-memory";
 import { resolveAlignmentInstructionForNewRuntime } from "./pre-turn/alignment-gate";
 import { resolveConversationProfileInjection } from "./pre-turn/profile-injection";
-import {
-  readPendingAgentNotices,
-  buildPendingNoticesInstruction,
-  drainConsumedAgentNotices,
-} from "./pre-turn/notices-drain";
 
 type RuntimeInstructionDependencies = {
   execution: Pick<
@@ -38,7 +33,7 @@ type RuntimeInstructionDependencies = {
   >;
   effects: Pick<
     ConversationActorDependencies["effects"],
-    "createReferenceDocument" | "mutateConversation"
+    "createReferenceDocument"
   >;
 };
 
@@ -140,19 +135,15 @@ export async function readRuntimeInstructions(
     workflowLaneInstructions,
   ].filter((s): s is string => s != null && s.length > 0);
 
-  function renderSessionInstructions(notices?: string | null): string[] {
-    return [
-      ...beforeProfile,
-      notices,
-      // LAST by design. The profile is level 5 of the composer's precedence
-      // contract — a subordinate specialization lens — so it is delivered after
-      // every CC-owned layer it must not override.
-      profileInjection.instructionBlock,
-    ].filter((s): s is string => s != null && s.length > 0);
-  }
+  const sessionInstructions = [
+    ...beforeProfile,
+    // LAST by design. The profile is level 5 of the composer's precedence
+    // contract — a subordinate specialization lens — so it is delivered after
+    // every CC-owned layer it must not override.
+    profileInjection.instructionBlock,
+  ].filter((s): s is string => s != null && s.length > 0);
   return {
-    repeatableInstructions: renderSessionInstructions(),
-    renderSessionInstructions,
+    repeatableInstructions: sessionInstructions,
     alignmentEligible: alignment.eligible,
     alignmentVersion: activeAlignmentVersion,
   };
@@ -187,36 +178,8 @@ export async function prepareRuntimeInstructions(
   }
 
   const projection = await readRuntimeInstructions(deps, input, profile);
-  // Pending agent notices — messages recorded while the conversation had no
-  // live backend session (e.g. background tasks lost with a dead session).
-  // Injected into this runtime's instructions and drained below once the
-  // runtime exists, so a notice is delivered exactly once.
-  const pendingAgentNotices = isProjectConversation
-    ? []
-    : await readPendingAgentNotices(deps.execution, {
-        projectPath: input.projectPath,
-        sessionName: conversationTargetStoreSessionName(input.target),
-        conversationId: input.target.conversationId,
-      });
-  const pendingNoticesInstruction =
-    buildPendingNoticesInstruction(pendingAgentNotices);
-
   return {
     ...projection,
-    sessionInstructions: projection.renderSessionInstructions(
-      pendingNoticesInstruction,
-    ),
-    async consumeNotices() {
-      if (isProjectConversation) return;
-      await drainConsumedAgentNotices(
-        deps.effects,
-        {
-          projectPath: input.projectPath,
-          sessionName: conversationTargetStoreSessionName(input.target),
-          conversationId: input.target.conversationId,
-        },
-        pendingAgentNotices,
-      );
-    },
+    sessionInstructions: projection.repeatableInstructions,
   };
 }

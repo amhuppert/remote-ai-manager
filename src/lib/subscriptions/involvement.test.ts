@@ -20,6 +20,7 @@ import {
   followAcceptedNotepadContext,
 } from "./involvement";
 import { createSubscriptionRuntime } from "./service-factory";
+import { notepadInvolvementCursor } from "./notepad-source";
 
 const projectPath = "/repos/involvement";
 const conversationId = "recipient";
@@ -237,7 +238,14 @@ describe("recorded subscription involvement", () => {
         coalesceWindowMs: null,
       });
       expect(await discover()({ projectPath, conversationId })).toMatchObject([
-        { source: { kind: "notepad", id: "pad" }, initialCursor: "1" },
+        {
+          source: { kind: "notepad", id: "pad" },
+          initialCursor: notepadInvolvementCursor({
+            notepadId: "pad",
+            revision: 1,
+            openComments: { count: 0, latestCreatedAt: null },
+          }),
+        },
       ]);
       const runtime = createSubscriptionRuntime(fixture.db, createWriteQueue());
       const inbox = await runtime.service.readInbox(
@@ -312,7 +320,14 @@ describe("recorded subscription involvement", () => {
     const runtime = createSubscriptionRuntime(fixture.db, queue);
     await followAcceptedNotepadContext(
       { projectPath, conversationId },
-      [{ notepadId: "pad", revision: 1 }],
+      [
+        {
+          notepadId: "pad",
+          revision: 1,
+          openComments: { count: 0, latestCreatedAt: null },
+          commentIds: [],
+        },
+      ],
       runtime.service,
     );
     await pads.delete("pad");

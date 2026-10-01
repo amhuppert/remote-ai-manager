@@ -311,6 +311,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",
+    recordAgentNotice: async () => false,
     mutateConversation: async (_pp, _sn, _id, _label, mutate) => {
       mutate(conversation);
     },
@@ -347,15 +348,6 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     recordNotepadDeliveries: async () => {},
     recordMemoryIndexDeliveries: async () => {},
     resetMemoryIndexDelivery: async () => {},
-    prepareNotepadChangeNotice: async (conversationId: string) => ({
-      conversationId,
-      block: null,
-      advances: [],
-    }),
-    settleNotepadChangeNotice: async () => {},
-    claimWorkflowResults: async () => [],
-    settleWorkflowResults: async () => 0,
-    releaseWorkflowResults: async () => 0,
     confirmQueuedDelivery: async () => 0,
     markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},

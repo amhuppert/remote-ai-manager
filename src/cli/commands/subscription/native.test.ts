@@ -311,6 +311,34 @@ describe("conversation subscription commands", () => {
     expect(row.reason).toBeUndefined();
   });
 
+  it("reveals full preserved notice evidence in detail without expanding the inbox outline", async () => {
+    const fullText =
+      "Preserved notice detail beyond the bounded briefing summary.";
+    const delivery = {
+      ...pendingDelivery,
+      source: { kind: "conversation", id: "conversation-one" },
+      fact: {
+        ...pendingDelivery.fact,
+        summary: "Brief notice",
+        sourceText: fullText,
+      },
+    };
+    const detailRead = fixture({ delivery });
+    const text = await detailRead.run(["inbox", "get", delivery.id], "text");
+    expect(text.exitCode, text.stdout).toBe(0);
+    expect(text.stdout).toContain(fullText);
+    const outline = fixture({
+      deliveries: [delivery],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    });
+    const list = await outline.run(["inbox", "list"], "text");
+    expect(list.exitCode, list.stdout).toBe(0);
+    expect(list.stdout).toContain("Brief notice");
+    expect(list.stdout).not.toContain(fullText);
+  });
+
   it("bounds saved update content in the JSON inbox outline with its full-detail handle", async () => {
     const test = fixture({
       deliveries: [

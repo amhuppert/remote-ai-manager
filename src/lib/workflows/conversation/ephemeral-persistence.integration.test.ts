@@ -515,6 +515,7 @@ function makeFakeBackendActorDeps(
     getCodexToolPromptHint: () => "",
     // Durable state-store writes → the fixture, so a stray one shows in the diff.
     mutateConversation: fixture.store.mutateConversation,
+    recordAgentNotice: unusedInTaskRun("recordAgentNotice"),
     getConversation: fixture.store.getConversation,
     getSessionState: fixture.store.getSession,
     getActiveAlignmentInjection: async () => null,
@@ -526,33 +527,6 @@ function makeFakeBackendActorDeps(
     recordNotepadDeliveries: async () => {},
     recordMemoryIndexDeliveries: async () => {},
     resetMemoryIndexDelivery: async () => {},
-    prepareNotepadChangeNotice: async (conversationId: string) => ({
-      conversationId,
-      block: null,
-      advances: [],
-    }),
-    settleNotepadChangeNotice: async () => {},
-    claimWorkflowResults: (input) =>
-      fixture.store.claimGraphWorkflowResultDeliveries(
-        input.projectPath,
-        input.sessionName,
-        input.originConversationId,
-        input.attemptId,
-      ),
-    settleWorkflowResults: (input) =>
-      fixture.store.settleGraphWorkflowResultDeliveries(
-        input.projectPath,
-        input.sessionName,
-        input.originConversationId,
-        input.attemptId,
-      ),
-    releaseWorkflowResults: (input) =>
-      fixture.store.releaseGraphWorkflowResultDeliveries(
-        input.projectPath,
-        input.sessionName,
-        input.originConversationId,
-        input.attemptId,
-      ),
     createReferenceDocument: fixture.store.createReferenceDocument,
     getReferenceDocuments: async () => [],
     getWorkflowLaneInstructions: async () => null,

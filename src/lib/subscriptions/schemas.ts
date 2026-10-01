@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { notepadAcceptedContextSchema } from "@/lib/notepads/schemas";
 
 export const subscriptionRecipientSchema = z
   .object({
@@ -17,11 +18,19 @@ export const subscriptionSourceRefSchema = z
       "workflow",
       "validation",
       "git_job",
+      "conversation",
     ]),
     id: z.string().min(1),
   })
   .strict();
 export type SubscriptionSourceRef = z.infer<typeof subscriptionSourceRefSchema>;
+export const publicSubscriptionSourceRefSchema =
+  subscriptionSourceRefSchema.extend({
+    kind: subscriptionSourceRefSchema.shape.kind.exclude(["conversation"]),
+  });
+export type PublicSubscriptionSourceRef = z.infer<
+  typeof publicSubscriptionSourceRefSchema
+>;
 export const sourceCursorSchema = z.string().nullable();
 export type SourceCursor = z.infer<typeof sourceCursorSchema>;
 
@@ -32,6 +41,10 @@ export const sourceFactSchema = z
     category: z.enum(["revision", "decision", "outcome", "activity"]),
     sourceTitle: z.string(),
     summary: z.string(),
+    sourceText: z.string().optional(),
+    notepadContext: notepadAcceptedContextSchema
+      .omit({ notepadId: true })
+      .optional(),
     occurredAt: z.string().min(1),
     revision: z.string().nullable(),
     outcome: z.string().nullable(),
@@ -46,6 +59,7 @@ export const sourceReadResultSchema = z
     cursor: sourceCursorSchema,
     facts: z.array(sourceFactSchema),
     missing: z.boolean(),
+    withdrawnOccurrenceIds: z.array(z.string().min(1)).optional(),
   })
   .strict();
 export type SourceReadResult = z.infer<typeof sourceReadResultSchema>;
@@ -81,7 +95,14 @@ export const subscriptionDeliverySchema = z
     source: subscriptionSourceRefSchema,
     fact: sourceFactSchema,
     recordedAt: z.string().min(1),
-    state: z.enum(["pending", "queued", "accepted", "failed", "uncertain"]),
+    state: z.enum([
+      "pending",
+      "queued",
+      "accepted",
+      "failed",
+      "uncertain",
+      "superseded",
+    ]),
     attemptId: z.string().nullable(),
     attemptCount: z.number().int().nonnegative(),
     queuedAt: z.string().nullable(),

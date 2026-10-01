@@ -269,6 +269,15 @@ export type NotepadOpenCommentMarker = z.infer<
   typeof notepadOpenCommentMarkerSchema
 >;
 
+/** Exact source metadata carried by a reference or an accepted source read. */
+export const notepadAcceptedContextSchema = z.object({
+  notepadId: z.string().min(1),
+  revision: z.number().int().positive(),
+  openComments: notepadOpenCommentMarkerSchema,
+  /** All observed IDs, including resolved comments, so reopening is not an addition. */
+  commentIds: z.array(z.string().min(1)).optional(),
+});
+
 /**
  * Per conversation and notepad, the state last presented to the agent (D17).
  * Written when a reference is expanded into an agent-facing message, and
@@ -285,6 +294,7 @@ export const notepadDeliveryWatermarkSchema = registerTrustedSchema(
     /** The notepad revision whose content was last presented. */
     revision: z.number().int().positive(),
     openComments: notepadOpenCommentMarkerSchema,
+    commentIds: z.array(z.string().min(1)).optional(),
     updatedAt: z.string().min(1),
   }),
   "notepadDeliveryWatermarkSchema",

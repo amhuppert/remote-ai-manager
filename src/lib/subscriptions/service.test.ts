@@ -82,6 +82,164 @@ function setup(overrides: Partial<SubscriptionServiceDeps> = {}) {
   };
 }
 describe("passive subscription policy", () => {
+  it("settles only notepad facts covered by accepted supplied context", async () => {
+    const s = setup();
+    await s.follow();
+    s.setResult({
+      cursor: "3",
+      missing: false,
+      facts: [
+        fact("revision-2", "Covered revision", {
+          eventKind: "notepad-content-revised",
+          revision: "2",
+        }),
+        fact("revision-3", "Later revision", {
+          eventKind: "notepad-content-revised",
+          revision: "3",
+        }),
+        fact("comment-seen", "Covered comment", {
+          eventKind: "notepad-comment-added",
+          category: "activity",
+          notepadContext: {
+            revision: 2,
+            openComments: { count: 1, latestCreatedAt: at },
+            commentIds: ["seen"],
+          },
+        }),
+        fact("comment-later", "Later comment", {
+          eventKind: "notepad-comment-added",
+          category: "activity",
+          notepadContext: {
+            revision: 3,
+            openComments: { count: 2, latestCreatedAt: at },
+            commentIds: ["later"],
+          },
+        }),
+      ],
+    });
+    const briefing = await s.service.prepareBriefing({
+      recipient,
+      attemptId: "context",
+      providedNotepadContext: [
+        {
+          notepadId: source.id,
+          revision: 2,
+          openComments: { count: 1, latestCreatedAt: at },
+          commentIds: ["seen"],
+        },
+      ],
+    });
+    expect(briefing.block).not.toContain("Covered");
+    expect(briefing.block).toContain("Later revision");
+    expect(briefing.block).toContain("Later comment");
+    const before = await s.repo.readInbox(recipient, { includeSettled: true });
+    expect(
+      before.items.every(
+        (row) => row.state === "queued" && row.acceptedAt === null,
+      ),
+    ).toBe(true);
+    await briefing.onInputAccepted();
+    const after = await s.repo.readInbox(recipient, { includeSettled: true });
+    expect(after.items).toHaveLength(4);
+    expect(after.items.every((row) => row.state === "accepted")).toBe(true);
+  });
+  it("keeps a receipt when supplied context covers the whole briefing", async () => {
+    const s = setup();
+    await s.follow();
+    s.setResult({
+      cursor: "2",
+      missing: false,
+      facts: [
+        fact("revision-2", "Covered", {
+          eventKind: "notepad-content-revised",
+          revision: "2",
+        }),
+      ],
+    });
+    const briefing = await s.service.prepareBriefing({
+      recipient,
+      attemptId: "covered",
+      providedNotepadContext: [
+        {
+          notepadId: source.id,
+          revision: 2,
+          openComments: { count: 0, latestCreatedAt: null },
+          commentIds: [],
+        },
+      ],
+    });
+    expect(briefing.block).toBeNull();
+    expect((await s.repo.readInbox(recipient, {})).items[0]?.state).toBe(
+      "queued",
+    );
+    await briefing.finish({ disposition: "not_sent" });
+    expect((await s.repo.readInbox(recipient, {})).items[0]?.state).toBe(
+      "failed",
+    );
+  });
+  it("withdraws resolved comment notices without pretending they were accepted", async () => {
+    const s = setup();
+    await s.follow();
+    s.setResult({
+      cursor: "2",
+      missing: false,
+      facts: [
+        fact("comment", "New comment", {
+          eventKind: "notepad-comment-added",
+          category: "activity",
+        }),
+      ],
+    });
+    await s.service.reconcile(recipient);
+    s.setResult({
+      cursor: "2",
+      missing: false,
+      facts: [],
+      withdrawnOccurrenceIds: ["comment"],
+    });
+    const briefing = await s.service.prepareBriefing({
+      recipient,
+      attemptId: "resolved",
+    });
+    expect(briefing.block).toBeNull();
+    expect((await s.repo.readInbox(recipient, {})).total).toBe(0);
+    expect(
+      (await s.repo.readInbox(recipient, { includeSettled: true })).items[0],
+    ).toMatchObject({ state: "superseded", acceptedAt: null });
+  });
+  it("links bounded notices to their exact frozen inbox evidence", async () => {
+    const s = setup();
+    await s.follow();
+    const evidence = "Frozen boundary output ".repeat(250);
+    s.setResult({
+      cursor: "3",
+      missing: false,
+      facts: [
+        fact("boundary-3", "Workflow halted", {
+          category: "outcome",
+          sourceText: evidence,
+        }),
+      ],
+    });
+    const briefing = await s.service.prepareBriefing({
+      recipient,
+      attemptId: "evidence",
+    });
+    const delivery = (await s.reload().readInbox(recipient, {})).items[0];
+    if (!delivery) throw new Error("Expected durable boundary evidence");
+    expect(briefing.block).toContain(
+      `cctl inbox get --conversation='conversation' -- '${delivery.id}'`,
+    );
+    expect(briefing.block).not.toContain(evidence);
+    expect(briefing.block?.length).toBeLessThanOrEqual(2400);
+    expect(
+      (await s.service.getDelivery(recipient, delivery.id))?.fact.sourceText,
+    ).toBe(evidence);
+    await briefing.onInputAccepted();
+    expect(
+      (await s.reload().getDelivery(recipient, delivery.id))?.fact.sourceText,
+    ).toBe(evidence);
+  });
   it("baselines a new automatic follow and preserves cursor progress and opt-out", async () => {
     const s = setup();
     const followed = await s.service.autoFollow({

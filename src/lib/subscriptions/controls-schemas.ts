@@ -4,6 +4,7 @@ import {
   conversationSubscriptionSchema,
   subscriptionDeliverySchema,
   subscriptionSourceRefSchema,
+  publicSubscriptionSourceRefSchema,
   subscriptionRecipientSchema,
 } from "./schemas";
 import {
@@ -26,7 +27,7 @@ export const subscriptionCatalogSchema = z
     sources: z.array(
       z
         .object({
-          kind: subscriptionSourceRefSchema.shape.kind,
+          kind: publicSubscriptionSourceRefSchema.shape.kind,
           label: z.string(),
           description: z.string(),
           identityDescription: z.string(),
@@ -43,7 +44,7 @@ export type SubscriptionCatalog = z.infer<typeof subscriptionCatalogSchema>;
 
 export const subscribeRequestSchema = z
   .object({
-    source: subscriptionSourceRefSchema.extend({
+    source: publicSubscriptionSourceRefSchema.extend({
       id: z.string().trim().min(1).max(256),
     }),
     reason: z

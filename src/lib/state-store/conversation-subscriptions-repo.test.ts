@@ -304,3 +304,91 @@ describe("conversation subscriptions durable state", () => {
       expect(await reloaded.getDelivery(recipient, item.id)).toEqual(item);
   });
 });
+
+describe("subscription evidence import and source withdrawal", () => {
+  it("rolls back subscription creation if an imported delivery identity conflicts", async () => {
+    const { fixture, repo } = setup();
+    await repo.createIfAbsent(subscription());
+    await repo.recordDelivery(delivery());
+    const otherSource = { kind: "workflow", id: "execution" } as const;
+    await expect(
+      repo.importDelivery(
+        { ...subscription(), id: "new-subscription", source: otherSource },
+        {
+          ...delivery(),
+          subscriptionId: "new-subscription",
+          source: otherSource,
+        },
+      ),
+    ).rejects.toThrow(/UNIQUE/);
+    const reloaded = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    expect(await reloaded.findBySource(recipient, otherSource)).toBeNull();
+    expect(await reloaded.getDelivery(recipient, "delivery-1")).toEqual(
+      delivery(),
+    );
+  });
+
+  it("supersedes only unclaimed resolved facts and removes them from pending reads without recording acceptance", async () => {
+    const { fixture, repo } = setup();
+    await repo.createIfAbsent(subscription());
+    for (const state of [
+      "pending",
+      "failed",
+      "queued",
+      "uncertain",
+      "accepted",
+    ] as const) {
+      await repo.recordDelivery({ ...delivery(state, state), state });
+    }
+    const otherSource = { kind: "notepad", id: "notes" } as const;
+    await repo.createIfAbsent({
+      ...subscription(),
+      id: "other-subscription",
+      source: otherSource,
+    });
+    await repo.recordDelivery({
+      ...delivery("other-source", "pending"),
+      source: otherSource,
+      subscriptionId: "other-subscription",
+    });
+    expect(
+      await repo.supersedePending(
+        recipient,
+        source,
+        ["pending", "failed", "queued", "uncertain", "accepted"],
+        at,
+      ),
+    ).toBe(2);
+    expect(
+      await repo.supersedePending(recipient, source, ["pending", "failed"], at),
+    ).toBe(0);
+    const reloaded = createConversationSubscriptionsRepo(
+      fixture.db,
+      createWriteQueue(),
+    );
+    for (const id of ["pending", "failed"]) {
+      expect(await reloaded.getDelivery(recipient, id)).toMatchObject({
+        state: "superseded",
+        acceptedAt: null,
+        finishedAt: at,
+        lastError:
+          "Source fact was superseded by accepted context or feedback withdrawal",
+      });
+    }
+    expect(
+      (await reloaded.readInbox(recipient, {})).items
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual(["other-source", "queued", "uncertain"]);
+    expect(await reloaded.pendingCount(recipient)).toBe(3);
+    expect(
+      (await reloaded.readInbox(recipient, { includeSettled: true })).total,
+    ).toBe(6);
+    for (const state of ["queued", "uncertain", "accepted"]) {
+      expect((await reloaded.getDelivery(recipient, state))?.state).toBe(state);
+    }
+  });
+});

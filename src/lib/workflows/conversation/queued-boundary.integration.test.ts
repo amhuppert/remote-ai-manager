@@ -59,29 +59,26 @@ it.each(["preparation", "readiness", "transcript", "receipt"] as const)(
           if (!transcript.some((stored) => stored.id === entry.id))
             transcript.push(entry);
         },
-        claimWorkflowResults: async () =>
-          phase === "receipt"
-            ? [
-                {
-                  executionId: "workflow",
-                  boundarySeq: 1,
-                  projectPath: "/lifecycle-fixture",
-                  sessionName: "s",
-                  originConversationId: "c",
-                  payload: { status: "completed", output: "Completed work" },
-                  recordedAt: "2026-09-06T10:00:00.000Z",
-                  state: "delivering",
-                  attemptId: "receipt-attempt",
-                  attemptCount: 1,
-                  deliveredAt: null,
-                  effectsDeliveredAt: null,
-                },
-              ]
-            : [],
-        settleWorkflowResults: async () => {
-          if (phase === "receipt" && failing)
-            throw new Error("Required receipt unavailable");
-          return 1;
+        subscriptions: {
+          synchronizeInvolvement: async () => {},
+          async prepareBriefing() {
+            let accepted = false;
+            return {
+              block:
+                phase === "receipt"
+                  ? "<subscription_briefing>Completed work</subscription_briefing>"
+                  : null,
+              async onInputAccepted() {
+                accepted = true;
+                if (phase === "receipt" && failing)
+                  throw new Error("Required receipt unavailable");
+              },
+              async finish() {
+                if (accepted && phase === "receipt" && failing)
+                  throw new Error("Required receipt unavailable");
+              },
+            };
+          },
         },
       },
     });
@@ -94,7 +91,11 @@ it.each(["preparation", "readiness", "transcript", "receipt"] as const)(
     if (!claim) throw new Error("Claim missing");
     const admission = await fixture.manager.submitConversationTurn({
       binding: fixture.binding,
-      turn: { promptText: `queued-${phase}`, queuedDelivery: claim },
+      turn: {
+        promptText: `queued-${phase}`,
+        queuedDelivery: claim,
+        inputOrigin: "user",
+      },
     });
     if (admission.kind !== "accepted") throw new Error(admission.message);
     const settled = await admission.turn.completed;

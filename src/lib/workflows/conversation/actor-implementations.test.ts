@@ -138,7 +138,6 @@ import type {
   TranscriptEntry,
 } from "@/lib/prompt/transcript";
 import type { SSEEvent } from "@/lib/api/sse-events";
-import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
 
 // ---------------------------------------------------------------------------
 // Shared mock backend runtime
@@ -3791,7 +3790,7 @@ describe("executePromptForMachine", () => {
       expect(recordNotepadDeliveries).not.toHaveBeenCalled();
     });
 
-    it("still delivers the turn when recording the watermark fails", async () => {
+    it("retains a required receipt when recording accepted source context fails", async () => {
       conversationActors = createTestActorImplementations(
         createMockDeps({
           readNotepadForInjection: vi.fn(async () => ({
@@ -3820,477 +3819,80 @@ describe("executePromptForMachine", () => {
         },
       );
 
-      const result = await conversationActors.executePromptForMachine(input);
-
-      expect(result.error).toBeNull();
+      await expect(
+        conversationActors.executePromptForMachine(input),
+      ).rejects.toThrow("Turn context receipts failed");
       expect(deliveredPromptText()).toContain("Body line.");
-    });
-
-    describe("notepad change notices", () => {
-      const NOTICE_BLOCK = [
-        "<notepad-changes>",
-        "<notepad-change>",
-        "id: np-1",
-        "revision: 5",
-        "</notepad-change>",
-        "</notepad-changes>",
-      ].join("\n");
-
-      function preparedNotice() {
-        return {
-          conversationId: "conv-1",
-          block: NOTICE_BLOCK,
-          advances: [
-            {
-              conversationId: "conv-1",
-              notepadId: "np-1",
-              revision: 5,
-              openComments: { count: 0, latestCreatedAt: null },
-              updatedAt: "2026-08-28T12:00:00.000Z",
-            },
-          ],
-        };
-      }
-
-      it("prepends the notice to the agent's prompt while the transcript keeps the user's text", async () => {
-        const append = vi.fn<
-          ActorFixtureDependencies["safeAppendTranscriptEntry"]
-        >(async () => {});
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            safeAppendTranscriptEntry: append,
-            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        await conversationActors.executePromptForMachine(input);
-
-        const delivered = deliveredPromptText();
-        expect(delivered).toContain(NOTICE_BLOCK);
-        expect(delivered.indexOf(NOTICE_BLOCK)).toBeLessThan(
-          delivered.indexOf("carry on"),
-        );
-        const storedUser = append.mock.calls
-          .map(([, entry]) => entry)
-          .find((entry) => entry.role === "user");
-        expect(storedUser?.content).toEqual([
-          { type: "text", text: "carry on" },
-        ]);
-      });
-
-      it("prepends nothing when no tracked notepad changed", async () => {
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            prepareNotepadChangeNotice: vi.fn(
-              async (conversationId: string) => ({
-                conversationId,
-                block: null,
-                advances: [],
-              }),
-            ),
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        await conversationActors.executePromptForMachine(input);
-
-        expect(deliveredPromptText()).toBe("carry on");
-      });
-
-      it("advances the watermarks only once the backend accepts the message", async () => {
-        const settleNotepadChangeNotice = vi.fn(async () => {});
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
-            settleNotepadChangeNotice,
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        mockSendTurn.mockImplementation(
-          async (turnInput: ConversationBackendTurnInput) => {
-            expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
-            await turnInput.onEvent({ type: "input_accepted" });
-            return defaultTurnResult;
-          },
-        );
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        await conversationActors.executePromptForMachine(input);
-
-        expect(settleNotepadChangeNotice).toHaveBeenCalledWith(
-          preparedNotice(),
-        );
-      });
-
-      it("leaves the watermarks untouched when the turn fails before acceptance", async () => {
-        const settleNotepadChangeNotice = vi.fn(async () => {});
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
-            settleNotepadChangeNotice,
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        await conversationActors.executePromptForMachine(input);
-
-        expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
-      });
-
-      it("keeps the watermarks advanced when the turn fails after acceptance", async () => {
-        const settleNotepadChangeNotice = vi.fn(async () => {});
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
-            settleNotepadChangeNotice,
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        mockSendTurn.mockImplementation(
-          async (turnInput: ConversationBackendTurnInput) => {
-            await turnInput.onEvent({ type: "input_accepted" });
-            throw new Error("post-ack crash");
-          },
-        );
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        await conversationActors.executePromptForMachine(input);
-
-        expect(settleNotepadChangeNotice).toHaveBeenCalledTimes(1);
-      });
-
-      it("settles the notice even when an unrelated post-acceptance write fails", async () => {
-        // The backend has already taken the message, so the notice was
-        // delivered. A neighbouring settle failing must not strand the
-        // watermark and make the agent read the same notice twice.
-        const settleNotepadChangeNotice = vi.fn(async () => {});
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
-            settleNotepadChangeNotice,
-            claimWorkflowResults: vi.fn(async () => [
-              {
-                executionId: "exec-alpha",
-                boundarySeq: 11,
-                projectPath: "/projects/repo",
-                sessionName: "test-session",
-                originConversationId: "conv-1",
-                payload: { status: "halted", output: "first" },
-                recordedAt: "2026-08-14T12:00:01.000Z",
-                state: "delivering",
-                attemptId: "stream-1",
-                attemptCount: 1,
-                deliveredAt: null,
-                effectsDeliveredAt: null,
-              },
-            ]),
-            settleWorkflowResults: vi.fn(async () => {
-              throw new Error("workflow settle unavailable");
-            }),
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        mockSendTurn.mockImplementation(
-          async (turnInput: ConversationBackendTurnInput) => {
-            await turnInput.onEvent({ type: "input_accepted" });
-            return defaultTurnResult;
-          },
-        );
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        await expect(
-          conversationActors.executePromptForMachine(input),
-        ).rejects.toThrow("Turn context receipts failed");
-
-        expect(settleNotepadChangeNotice).toHaveBeenCalledWith(
-          preparedNotice(),
-        );
-      });
-
-      it("delivers the turn without a notice when preparing one fails", async () => {
-        const settleNotepadChangeNotice = vi.fn(async () => {});
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            prepareNotepadChangeNotice: vi.fn(async () => {
-              throw new Error("state store unavailable");
-            }),
-            settleNotepadChangeNotice,
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        const input = makeExecutePromptInput({
-          turn: { promptText: "carry on" },
-        });
-        registerRuntime(input);
-
-        const result = await conversationActors.executePromptForMachine(input);
-
-        expect(result.error).toBeNull();
-        expect(deliveredPromptText()).toBe("carry on");
-        expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
-      });
-
-      it("prepares from local references and records them after acceptance", async () => {
-        const order: string[] = [];
-        conversationActors = createTestActorImplementations(
-          createMockDeps({
-            readNotepadForInjection: vi.fn(async () => ({
-              id: "np-1",
-              name: "Design Notes",
-              revision: 4,
-              openComments: { count: 0, latestCreatedAt: null },
-              writeMode: "full-edit" as const,
-              content: "Body line.",
-            })),
-            recordNotepadDeliveries: vi.fn(async () => {
-              order.push("record");
-            }),
-            prepareNotepadChangeNotice: vi.fn(
-              async (conversationId: string) => {
-                order.push("prepare");
-                return { conversationId, block: null, advances: [] };
-              },
-            ),
-          } as unknown as Partial<ActorFixtureDependencies>),
-        );
-        const input = makeExecutePromptInput({
-          turn: {
-            promptText: `Please review ${NOTEPAD_REF}`,
-          },
-        });
-        registerRuntime(input);
-        mockSendTurn.mockImplementationOnce(
-          async (turnInput: ConversationBackendTurnInput) => {
-            await turnInput.onEvent({ type: "input_accepted" });
-            return defaultTurnResult;
-          },
-        );
-
-        await conversationActors.executePromptForMachine(input);
-
-        // Content delivered in full this turn needs no notice to re-read it.
-        expect(order).toEqual(["prepare", "record"]);
-      });
     });
   });
 
-  describe("workflow result injection", () => {
-    function claimedResults(): GraphWorkflowResultDelivery[] {
-      return [
-        {
-          executionId: "exec-alpha",
-          boundarySeq: 11,
-          projectPath: "/projects/repo",
-          sessionName: "test-session",
-          originConversationId: "conv-1",
-          payload: { status: "halted", output: "first" },
-          recordedAt: "2026-08-14T12:00:01.000Z",
-          state: "delivering",
-          attemptId: "stream-1",
-          attemptCount: 1,
-          deliveredAt: null,
-          effectsDeliveredAt: null,
-        },
-        {
-          executionId: "exec-zeta",
-          boundarySeq: 42,
-          projectPath: "/projects/repo",
-          sessionName: "test-session",
-          originConversationId: "conv-1",
-          payload: { status: "completed", output: "second" },
-          recordedAt: "2026-08-14T12:00:02.000Z",
-          state: "delivering",
-          attemptId: "stream-1",
-          attemptCount: 1,
-          deliveredAt: null,
-          effectsDeliveredAt: null,
-        },
-      ];
-    }
-
-    function registerRuntime(input: ExecutePromptInput): void {
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        conversationTargetStoreSessionName(input.target),
-        input.target.conversationId,
-      );
-      registerConversationRuntime(key, {
-        managed: createManagedRuntimeFixture(key),
-        abortController: new AbortController(),
-      });
-    }
-
-    function assertOrderedResultsBeforeUser(prompt: string, userText: string) {
-      expect(prompt.match(/<workflow-results>/g)).toHaveLength(1);
-      expect(prompt.match(/<\/workflow-results>/g)).toHaveLength(1);
-      expect(prompt.indexOf('"key":"exec-alpha:11"')).toBeLessThan(
-        prompt.indexOf('"key":"exec-zeta:42"'),
-      );
-      expect(prompt.indexOf('"key":"exec-zeta:42"')).toBeLessThan(
-        prompt.indexOf(userText),
-      );
-    }
-
-    it("claims and prepends pending boundaries for a direct turn without changing stored user text", async () => {
-      const append = vi.fn<
-        ActorFixtureDependencies["safeAppendTranscriptEntry"]
-      >(async () => {});
-      const claimWorkflowResults = vi.fn(async () => claimedResults());
-      conversationActors = createTestActorImplementations(
-        createMockDeps({
-          safeAppendTranscriptEntry: append,
-          claimWorkflowResults,
-        } as unknown as Partial<ActorFixtureDependencies>),
-      );
-      const input = makeExecutePromptInput({
-        turn: { promptText: "direct user text" },
-      });
-      registerRuntime(input);
-
-      await conversationActors.executePromptForMachine(input);
-
-      expect(claimWorkflowResults).toHaveBeenCalledWith({
-        projectPath: input.projectPath,
-        sessionName: conversationTargetStoreSessionName(input.target),
-        originConversationId: input.target.conversationId,
-        attemptId: "stream-1",
-      });
-      const turnInput = mockSendTurn.mock.calls.at(-1)![0] as
-        | ConversationBackendTurnInput
-        | undefined;
-      expect(turnInput).toBeDefined();
-      assertOrderedResultsBeforeUser(turnInput!.promptText, "direct user text");
-      const storedUser = append.mock.calls
-        .map(([, entry]) => entry)
-        .find((entry) => entry.role === "user");
-      expect(storedUser?.content).toEqual([
-        { type: "text", text: "direct user text" },
-      ]);
-    });
-
-    it("claims and prepends pending boundaries for a queued turn without changing stored user text", async () => {
-      const append = vi.fn<
-        ActorFixtureDependencies["appendTranscriptEntryOnce"]
-      >(async () => {});
-      const claimWorkflowResults = vi.fn(async () => claimedResults());
-      conversationActors = createTestActorImplementations(
-        createMockDeps({
-          appendTranscriptEntryOnce: append,
-          claimWorkflowResults,
-        } as unknown as Partial<ActorFixtureDependencies>),
-      );
-      mockSendTurn.mockImplementation(
-        async (turnInput: ConversationBackendTurnInput) => {
-          await turnInput.onEvent({ type: "input_accepted" });
-          return defaultTurnResult;
-        },
-      );
-      const input = makeExecutePromptInput({
-        turn: {
-          promptText: "queued user text",
-          queuedDelivery: {
-            messageIds: ["message-1"],
-            deliveryAttemptId: "queue-attempt-1",
+  describe("workflow subscription evidence", () => {
+    it.each(["direct", "queued"] as const)(
+      "prepends the shared briefing to a %s user turn while storing the original text",
+      async (mode) => {
+        const stored: TranscriptEntry[] = [];
+        conversationActors = createTestActorImplementations(
+          createMockDeps({
+            safeAppendTranscriptEntry: async (_id, entry) => {
+              stored.push(entry);
+            },
+            appendTranscriptEntryOnce: async (_id, entry) => {
+              stored.push(entry);
+            },
+            subscriptions: {
+              synchronizeInvolvement: async () => {},
+              prepareBriefing: async () => ({
+                block:
+                  "<subscription_briefing>Workflow completed: produced a result</subscription_briefing>",
+                onInputAccepted: async () => {},
+                finish: async () => {},
+              }),
+            },
+          }),
+        );
+        mockSendTurn.mockImplementation(
+          async (turnInput: ConversationBackendTurnInput) => {
+            await turnInput.onEvent({ type: "input_accepted" });
+            return defaultTurnResult;
           },
-        },
-      });
-      registerRuntime(input);
-
-      await conversationActors.executePromptForMachine(input);
-
-      expect(claimWorkflowResults).toHaveBeenCalledWith({
-        projectPath: input.projectPath,
-        sessionName: conversationTargetStoreSessionName(input.target),
-        originConversationId: input.target.conversationId,
-        attemptId: "queue-attempt-1",
-      });
-      const turnInput = mockSendTurn.mock.calls.at(-1)![0] as
-        | ConversationBackendTurnInput
-        | undefined;
-      expect(turnInput).toBeDefined();
-      assertOrderedResultsBeforeUser(turnInput!.promptText, "queued user text");
-      const storedUser = append.mock.calls
-        .map(([, entry]) => entry)
-        .find((entry) => entry.role === "user");
-      expect(storedUser?.content).toEqual([
-        { type: "text", text: "queued user text" },
-      ]);
-    });
-
-    it("returns claimed boundaries to pending when dispatch fails before input acceptance", async () => {
-      const releaseWorkflowResults = vi.fn(async () => 2);
-      const settleWorkflowResults = vi.fn(async () => 0);
-      conversationActors = createTestActorImplementations(
-        createMockDeps({
-          claimWorkflowResults: vi.fn(async () => claimedResults()),
-          releaseWorkflowResults,
-          settleWorkflowResults,
-        } as unknown as Partial<ActorFixtureDependencies>),
-      );
-      mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
-      const input = makeExecutePromptInput({
-        turn: { promptText: "retry safely" },
-      });
-      registerRuntime(input);
-
-      await conversationActors.executePromptForMachine(input);
-
-      expect(settleWorkflowResults).not.toHaveBeenCalled();
-      expect(releaseWorkflowResults).toHaveBeenCalledWith({
-        projectPath: input.projectPath,
-        sessionName: conversationTargetStoreSessionName(input.target),
-        originConversationId: input.target.conversationId,
-        attemptId: "stream-1",
-      });
-    });
-
-    it("settles claimed boundaries at input acceptance and does not release them when the turn later fails", async () => {
-      const releaseWorkflowResults = vi.fn(async () => 0);
-      const settleWorkflowResults = vi.fn(async () => 2);
-      conversationActors = createTestActorImplementations(
-        createMockDeps({
-          claimWorkflowResults: vi.fn(async () => claimedResults()),
-          releaseWorkflowResults,
-          settleWorkflowResults,
-        } as unknown as Partial<ActorFixtureDependencies>),
-      );
-      mockSendTurn.mockImplementation(
-        async (turnInput: ConversationBackendTurnInput) => {
-          await turnInput.onEvent({ type: "input_accepted" });
-          throw new Error("post-ack crash");
-        },
-      );
-      const input = makeExecutePromptInput({
-        turn: { promptText: "accepted once" },
-      });
-      registerRuntime(input);
-
-      await conversationActors.executePromptForMachine(input);
-
-      expect(settleWorkflowResults).toHaveBeenCalledWith({
-        projectPath: input.projectPath,
-        sessionName: conversationTargetStoreSessionName(input.target),
-        originConversationId: input.target.conversationId,
-        attemptId: "stream-1",
-      });
-      expect(releaseWorkflowResults).not.toHaveBeenCalled();
-    });
+        );
+        const userText = `${mode} user text`;
+        const input = makeExecutePromptInput({
+          turn: {
+            promptText: userText,
+            inputOrigin: "user",
+            ...(mode === "queued"
+              ? {
+                  queuedDelivery: {
+                    messageIds: ["message-1"],
+                    deliveryAttemptId: "queue-attempt-1",
+                  },
+                }
+              : {}),
+          },
+        });
+        const key = conversationRuntimeKey(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
+        );
+        registerConversationRuntime(key, {
+          managed: createManagedRuntimeFixture(key),
+          abortController: new AbortController(),
+        });
+        await conversationActors.executePromptForMachine(input);
+        const sent: ConversationBackendTurnInput | undefined =
+          mockSendTurn.mock.calls.at(-1)?.[0];
+        if (!sent) throw new Error("Expected backend dispatch");
+        expect(sent.promptText.indexOf("Workflow completed")).toBeLessThan(
+          sent.promptText.indexOf(userText),
+        );
+        expect(sent.promptText).not.toContain("<workflow-results>");
+        expect(stored.find((entry) => entry.role === "user")?.content).toEqual([
+          { type: "text", text: userText },
+        ]);
+      },
+    );
   });
 
   it("persists non-Claude content events incrementally before the result entry", async () => {
@@ -5776,24 +5378,20 @@ describe("executePromptForMachine", () => {
       };
     }
 
-    /** One claimed workflow result, enough to make the turn settle them. */
-    function claimedWorkflowResults(): GraphWorkflowResultDelivery[] {
-      return [
-        {
-          executionId: "exec-alpha",
-          boundarySeq: 11,
-          projectPath: "/projects/repo",
-          sessionName: "test-session",
-          originConversationId: "conv-1",
-          payload: { status: "halted", output: "first" },
-          recordedAt: "2026-08-14T12:00:01.000Z",
-          state: "delivering",
-          attemptId: "stream-1",
-          attemptCount: 1,
-          deliveredAt: null,
-          effectsDeliveredAt: null,
-        },
-      ];
+    function failingSubscriptionReceipts(): ActorFixtureDependencies["subscriptions"] {
+      return {
+        synchronizeInvolvement: async () => {},
+        prepareBriefing: async () => ({
+          block:
+            "<subscription_briefing>Workflow completed</subscription_briefing>",
+          async onInputAccepted() {
+            throw new Error("subscription receipt unavailable");
+          },
+          async finish() {
+            throw new Error("subscription receipt unavailable");
+          },
+        }),
+      };
     }
 
     const MEMORY_BLOCK = [
@@ -6164,15 +5762,12 @@ describe("executePromptForMachine", () => {
             memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
           ),
           recordMemoryIndexDeliveries,
-          claimWorkflowResults: vi.fn(async () => claimedWorkflowResults()),
-          settleWorkflowResults: vi.fn(async () => {
-            throw new Error("workflow settle unavailable");
-          }),
+          subscriptions: failingSubscriptionReceipts(),
         }),
       );
       acceptTurnOnSend();
       const input = makeExecutePromptInput({
-        turn: { promptText: "do the work" },
+        turn: { promptText: "do the work", inputOrigin: "user" },
       });
       registerRuntime(input);
 
@@ -6315,10 +5910,7 @@ describe("executePromptForMachine", () => {
                 composedAt: input.composedAt,
                 notes: input.notes,
               }),
-            claimWorkflowResults: vi.fn(async () => claimedWorkflowResults()),
-            settleWorkflowResults: vi.fn(async () => {
-              throw new Error("workflow settle unavailable");
-            }),
+            subscriptions: failingSubscriptionReceipts(),
           }),
         );
 
@@ -6326,6 +5918,7 @@ describe("executePromptForMachine", () => {
         const delivered = makeExecutePromptInput({
           turn: {
             promptText: "delivered turn",
+            inputOrigin: "user",
           },
         });
         registerRuntime(delivered);
@@ -7924,10 +7517,10 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
 });
 
 // ===========================================================================
-// Integration tests: pending agent notices (lost background tasks)
+// Integration tests: runtime notices and lost background tasks
 // ===========================================================================
 
-describe("executePromptForMachine pending agent notices", () => {
+describe("executePromptForMachine runtime notices", () => {
   let mockDeps: ActorFixtureDependencies;
 
   function makeConversationState(
@@ -7941,11 +7534,11 @@ describe("executePromptForMachine pending agent notices", () => {
     });
   }
 
-  function capturedCreateInput(): Record<string, unknown> {
+  function capturedCreateInput(): ConversationBackendCreateInput {
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
-    return (
-      mockFactory.createRuntime.mock.calls as unknown[][]
-    )[0]![0] as Record<string, unknown>;
+    const call = mockFactory.createRuntime.mock.calls[0];
+    if (!call) throw new Error("Backend runtime was not created");
+    return call[0];
   }
 
   function registerFreshRuntime(input: ExecutePromptInput): void {
@@ -7958,12 +7551,6 @@ describe("executePromptForMachine pending agent notices", () => {
       managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
-  }
-
-  function mutatorCalls(label: string): Array<(c: ConversationState) => void> {
-    return (mockDeps.mutateConversation as ReturnType<typeof vi.fn>).mock.calls
-      .filter((call: unknown[]) => call[3] === label)
-      .map((call: unknown[]) => call[4] as (c: ConversationState) => void);
   }
 
   beforeEach(() => {
@@ -7989,47 +7576,12 @@ describe("executePromptForMachine pending agent notices", () => {
     _resetForTesting();
   });
 
-  it("injects pending agent notices into the new runtime's session instructions and drains them", async () => {
-    mockDeps = createMockDeps({
-      getConversation: vi.fn(async () =>
-        makeConversationState({
-          pendingAgentNotices: ["notice about lost task A", "notice B"],
-        }),
-      ),
-    });
-    conversationActors = createTestActorImplementations(mockDeps);
-
-    const input = makeExecutePromptInput();
-    registerFreshRuntime(input);
-    await conversationActors.executePromptForMachine(input);
-
-    const instructions = capturedCreateInput()[
-      "sessionInstructions"
-    ] as string[];
-    const noticesSection = instructions.find((s) =>
-      s.includes("notice about lost task A"),
-    );
-    expect(noticesSection).toBeDefined();
-    expect(noticesSection).toContain("notice B");
-
-    // The consumed notices are drained — but only the consumed ones, so a
-    // notice recorded between read and drain survives.
-    const drains = mutatorCalls("drain_agent_notices");
-    expect(drains).toHaveLength(1);
+  it("excludes legacy agent notices from runtime instructions without draining them", async () => {
     const state = makeConversationState({
-      pendingAgentNotices: [
-        "notice about lost task A",
-        "notice B",
-        "recorded after the read",
-      ],
+      pendingAgentNotices: ["notice about lost task A", "notice B"],
     });
-    drains[0]!(state);
-    expect(state.pendingAgentNotices).toEqual(["recorded after the read"]);
-  });
-
-  it("adds no notices section and performs no drain when none are pending", async () => {
     mockDeps = createMockDeps({
-      getConversation: vi.fn(async () => makeConversationState()),
+      getConversation: async () => state,
     });
     conversationActors = createTestActorImplementations(mockDeps);
 
@@ -8037,90 +7589,78 @@ describe("executePromptForMachine pending agent notices", () => {
     registerFreshRuntime(input);
     await conversationActors.executePromptForMachine(input);
 
-    const instructions = capturedCreateInput()[
-      "sessionInstructions"
-    ] as string[];
-    expect(instructions.join("\n")).not.toContain("Session notices");
-    expect(mutatorCalls("drain_agent_notices")).toHaveLength(0);
-  });
-
-  it("wires onBackgroundTasksLost to append a visible notice and persist a capped agent reminder", async () => {
-    mockDeps = createMockDeps({
-      getConversation: vi.fn(async () => makeConversationState()),
-    });
-    conversationActors = createTestActorImplementations(mockDeps);
-
-    const input = makeExecutePromptInput();
-    registerFreshRuntime(input);
-    await conversationActors.executePromptForMachine(input);
-
-    const onBackgroundTasksLost = capturedCreateInput()[
-      "onBackgroundTasksLost"
-    ] as (info: {
-      tasks: Array<{ taskId: string; description: string | null }>;
-      reason: string;
-    }) => void;
-    expect(onBackgroundTasksLost).toBeTypeOf("function");
-
-    onBackgroundTasksLost({
-      tasks: [{ taskId: "task-a", description: "full regression suite" }],
-      reason: "pump_completed",
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-
-    // A visible notice row lands in the transcript.
-    const appendCalls = (
-      mockDeps.safeAppendTranscriptEntry as ReturnType<typeof vi.fn>
-    ).mock.calls;
-    const noticeCall = appendCalls.find(
-      (call: unknown[]) =>
-        (call[1] as { role?: string; type?: string }).role === "notice",
+    expect(capturedCreateInput().sessionInstructions.join("\n")).not.toContain(
+      "notice about lost task A",
     );
-    expect(noticeCall).toBeDefined();
-    const noticeEntry = noticeCall![1] as {
-      content: Array<{ type: string; text: string }>;
-    };
-    expect(noticeEntry.content[0]!.text).toContain("full regression suite");
-    expect(noticeEntry.content[0]!.text).toContain("pump_completed");
-
-    // The agent reminder is persisted, capped to the most recent entries.
-    const persists = mutatorCalls("background_tasks_lost");
-    expect(persists).toHaveLength(1);
-    const crowded = makeConversationState({
-      pendingAgentNotices: Array.from({ length: 12 }, (_, i) => `old-${i}`),
-    });
-    persists[0]!(crowded);
-    expect(crowded.pendingAgentNotices.length).toBeLessThanOrEqual(10);
+    expect(state.pendingAgentNotices).toEqual([
+      "notice about lost task A",
+      "notice B",
+    ]);
     expect(
-      crowded.pendingAgentNotices[crowded.pendingAgentNotices.length - 1],
-    ).toContain("full regression suite");
+      (mockDeps.mutateConversation as ReturnType<typeof vi.fn>).mock.calls.some(
+        (call: unknown[]) => call[3] === "drain_agent_notices",
+      ),
+    ).toBe(false);
   });
 
-  it("does not persist agent reminders for project conversations", async () => {
-    mockDeps = createMockDeps({
-      getConversation: vi.fn(async () => makeConversationState()),
-      getSessionState: vi.fn(async () => null),
-    });
-    conversationActors = createTestActorImplementations(mockDeps);
+  it.each(["session", "project"] as const)(
+    "wires background loss into the %s inbox and human transcript",
+    async (scope) => {
+      const notices: Parameters<
+        ActorFixtureDependencies["recordAgentNotice"]
+      >[0][] = [];
+      mockDeps = createMockDeps({
+        getConversation: async () => makeConversationState(),
+        async recordAgentNotice(notice) {
+          notices.push(notice);
+          return true;
+        },
+      });
+      conversationActors = createTestActorImplementations(mockDeps);
 
-    const input = makeProjectExecutePromptInput();
-    registerFreshRuntime(input);
-    await conversationActors.executePromptForMachine(input);
+      const input =
+        scope === "project"
+          ? makeProjectExecutePromptInput()
+          : makeExecutePromptInput();
+      registerFreshRuntime(input);
+      await conversationActors.executePromptForMachine(input);
+      const onBackgroundTasksLost = capturedCreateInput().onBackgroundTasksLost;
+      if (!onBackgroundTasksLost)
+        throw new Error("Background loss handler is missing");
+      onBackgroundTasksLost({
+        tasks: [{ taskId: "task-a", description: "full regression suite" }],
+        reason: "pump_completed",
+      });
+      await vi.waitFor(() => expect(notices).toHaveLength(1));
 
-    const onBackgroundTasksLost = capturedCreateInput()[
-      "onBackgroundTasksLost"
-    ] as (info: {
-      tasks: Array<{ taskId: string; description: string | null }>;
-      reason: string;
-    }) => void;
-    onBackgroundTasksLost({
-      tasks: [{ taskId: "task-a", description: null }],
-      reason: "closed",
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(mutatorCalls("background_tasks_lost")).toHaveLength(0);
-  });
+      expect(notices[0]).toMatchObject({
+        recipient: {
+          projectPath: input.projectPath,
+          conversationId: input.target.conversationId,
+        },
+        source: { kind: "conversation", id: input.target.conversationId },
+        fact: { category: "outcome", eventKind: "background-tasks-lost" },
+      });
+      expect(notices[0]?.fact.summary).toContain("full regression suite");
+      const appendCalls = (
+        mockDeps.safeAppendTranscriptEntry as ReturnType<typeof vi.fn>
+      ).mock.calls;
+      const noticeEntry = appendCalls.find(
+        (call: unknown[]) =>
+          (call[1] as { role?: string; type?: string }).role === "notice",
+      )?.[1];
+      expect(noticeEntry).toMatchObject({ type: "notice", role: "notice" });
+      expect(JSON.stringify(noticeEntry)).toContain("full regression suite");
+      expect(JSON.stringify(noticeEntry)).toContain("pump_completed");
+      expect(
+        (
+          mockDeps.mutateConversation as ReturnType<typeof vi.fn>
+        ).mock.calls.some(
+          (call: unknown[]) => call[3] === "background_tasks_lost",
+        ),
+      ).toBe(false);
+    },
+  );
 
   describe("background-activity wiring", () => {
     function backgroundActivityHandler(): (

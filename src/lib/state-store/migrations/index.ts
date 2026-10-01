@@ -1,3 +1,6 @@
+import { notepadNoticeContext } from "./0062-notepad-notice-context";
+import { workflowResultInbox } from "./0063-workflow-result-inbox";
+import { conversationNoticeInbox } from "./0061-conversation-notice-inbox";
 import { addConversationSubscriptionControls } from "./0060-add-conversation-subscription-controls";
 import { addConversationSubscriptionWaits } from "./0059-add-conversation-subscription-waits";
 import { addConversationSubscriptions } from "./0058-add-conversation-subscriptions";
@@ -157,6 +160,9 @@ export const migrations: readonly StateMigration[] = [
   addConversationSubscriptions,
   addConversationSubscriptionWaits,
   addConversationSubscriptionControls,
+  conversationNoticeInbox,
+  notepadNoticeContext,
+  workflowResultInbox,
 ];
 
 export type { StateMigration } from "./types";

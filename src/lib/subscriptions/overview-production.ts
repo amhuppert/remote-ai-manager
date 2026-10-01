@@ -71,6 +71,8 @@ export function createSubscriptionSourcePresentationReader(
     const projectName = projectNameFromPath(recipient.projectPath);
     const projectHref = `/projects/${encodeURIComponent(projectName)}`;
     switch (source.kind) {
+      case "conversation":
+        return { title: "Conversation notices", href: null };
       case "notepad": {
         const row = await deps.findNotepad(source.id);
         if (

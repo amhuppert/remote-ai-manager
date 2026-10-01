@@ -14,6 +14,9 @@ import path from "node:path";
 import os from "node:os";
 import {
   KNOWN_SCHEMA_VERSION,
+  CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL,
+  GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL,
+  NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL,
   SPEC_EXECUTIONS_SCHEMA_DDL,
   _createTestDb,
   _createTestDbAtPath,
@@ -1206,8 +1209,239 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build fences subscription controls at schema version 25", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(25);
+  it("widens prior workflow evidence at open time while preserving receipts, indexes, and session cascades", () => {
+    const dir = mkdtempSync(
+      path.join(os.tmpdir(), "cc-workflow-evidence-floor-"),
+    );
+    const dbPath = path.join(dir, "command-center.db");
+    const previous = _createTestDbAtPath(dbPath);
+    previous.exec(`INSERT INTO projects(root_path) VALUES ('/project');
+      INSERT INTO sessions(project_path,session_name,worktree_path,branch_name,created_at,last_activity_at)
+      VALUES ('/project','session','/worktree','branch','created','active');
+      DROP TABLE graph_workflow_result_deliveries;`);
+    previous.exec(
+      GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL.replace(
+        /origin_conversation_id TEXT(?: NOT NULL)?/,
+        "origin_conversation_id TEXT NOT NULL",
+      ),
+    );
+    previous
+      .prepare(
+        `INSERT INTO graph_workflow_result_deliveries
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "execution",
+        5,
+        "/project",
+        "session",
+        "conversation",
+        '{"status":"completed","output":"whole output"}',
+        "recorded",
+        "delivered",
+        "attempt",
+        3,
+        "delivered",
+        "effects",
+      );
+    const original = previous
+      .prepare("SELECT * FROM graph_workflow_result_deliveries")
+      .get();
+    previous.close();
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      expect(
+        reopened
+          .prepare("SELECT * FROM graph_workflow_result_deliveries")
+          .get(),
+      ).toEqual(original);
+      expect(() =>
+        reopened
+          .prepare(
+            `INSERT INTO graph_workflow_result_deliveries
+        (execution_id,boundary_seq,project_path,session_name,origin_conversation_id,payload_json,recorded_at)
+        VALUES ('ownerless',6,'/project','session',NULL,'{}','now')`,
+          )
+          .run(),
+      ).not.toThrow();
+      expect(
+        reopened
+          .prepare(
+            "SELECT tbl_name FROM sqlite_master WHERE name IN ('idx_graph_workflow_result_deliveries_pending','idx_graph_workflow_result_deliveries_session') ORDER BY name",
+          )
+          .all(),
+      ).toEqual([
+        { tbl_name: "graph_workflow_result_deliveries" },
+        { tbl_name: "graph_workflow_result_deliveries" },
+      ]);
+      expect(
+        reopened
+          .prepare("SELECT version FROM schema_migrations WHERE version=27")
+          .get(),
+      ).toEqual({ version: 27 });
+      expect(existsSync(schemaCompatibilityBarrierPath(dir, 27))).toBe(true);
+      expect(() =>
+        enforceCurrentSchemaCompatibility(reopened, dbPath, 26),
+      ).toThrow(/greater than known build version/);
+      reopened.exec(
+        "DELETE FROM sessions WHERE project_path='/project' AND session_name='session'",
+      );
+      expect(
+        reopened
+          .prepare(
+            "SELECT COUNT(*) AS count FROM graph_workflow_result_deliveries",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      reopened.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds observed comment identity storage to existing watermarks without inventing prior observations", () => {
+    const dir = mkdtempSync(
+      path.join(os.tmpdir(), "cc-comment-identity-floor-"),
+    );
+    const dbPath = path.join(dir, "command-center.db");
+    const previous = _createTestDbAtPath(dbPath);
+    previous.exec("DROP TABLE notepad_delivery_watermarks");
+    previous.exec(
+      NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL.replace(
+        /\s+observed_comment_ids_json TEXT,/,
+        "",
+      ),
+    );
+    previous.exec(`INSERT INTO notepads(id,scope,project_path,name,content,revision,created_at,updated_at)
+      VALUES ('notes','global',NULL,'Notes','body',3,'created','updated');
+      INSERT INTO notepad_delivery_watermarks
+      VALUES ('conversation','notes',3,2,'comment-time','watermark-time');`);
+    previous.close();
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      expect(
+        reopened
+          .prepare("PRAGMA table_info(notepad_delivery_watermarks)")
+          .all(),
+      ).toContainEqual(
+        expect.objectContaining({ name: "observed_comment_ids_json" }),
+      );
+      expect(
+        reopened
+          .prepare(
+            "SELECT revision,open_comment_count,latest_open_comment_at,updated_at,observed_comment_ids_json FROM notepad_delivery_watermarks",
+          )
+          .all(),
+      ).toEqual([
+        {
+          revision: 3,
+          open_comment_count: 2,
+          latest_open_comment_at: "comment-time",
+          updated_at: "watermark-time",
+          observed_comment_ids_json: null,
+        },
+      ]);
+    } finally {
+      reopened.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("widens prior subscription receipts for superseded evidence without changing existing receipts", () => {
+    const dir = mkdtempSync(
+      path.join(os.tmpdir(), "cc-subscription-receipt-floor-"),
+    );
+    const dbPath = path.join(dir, "command-center.db");
+    const previous = new Database(dbPath);
+    previous.exec(
+      CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replace(",'superseded'", ""),
+    );
+    previous.exec(`INSERT INTO conversation_subscriptions VALUES ('existing','/project','conversation','workflow','execution','Purpose','passive',NULL,NULL,'following','5','created','updated',NULL,'paused',NULL,NULL);
+      INSERT INTO conversation_subscription_deliveries VALUES ('evidence','existing','/project','conversation','workflow','execution','5','{}','recorded','uncertain','attempt',2,'queued',NULL,'finished','Unknown');`);
+    previous.close();
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      expect(
+        reopened
+          .prepare(
+            "SELECT state,attempt_id,attempt_count,accepted_at,last_error FROM conversation_subscription_deliveries",
+          )
+          .all(),
+      ).toEqual([
+        {
+          state: "uncertain",
+          attempt_id: "attempt",
+          attempt_count: 2,
+          accepted_at: null,
+          last_error: "Unknown",
+        },
+      ]);
+      expect(() =>
+        reopened.exec(
+          "UPDATE conversation_subscription_deliveries SET state='superseded'",
+        ),
+      ).not.toThrow();
+      expect(existsSync(schemaCompatibilityBarrierPath(dir, 27))).toBe(true);
+    } finally {
+      reopened.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("this build fences complete subscription and workflow evidence at schema version 27", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(27);
+  });
+
+  it("rebuilds prior subscription source constraints at open time without losing paused evidence", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-notice-floor-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const previous = new Database(dbPath);
+    previous.exec(
+      CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replaceAll(",'conversation'", ""),
+    );
+    previous.exec(`INSERT INTO conversation_subscriptions VALUES ('existing','/project','conversation','spec','spec','Purpose','passive',NULL,NULL,'following','9','created','updated',NULL,'paused',NULL,NULL);
+      INSERT INTO conversation_subscription_deliveries VALUES ('evidence','existing','/project','conversation','spec','spec','10','{}','recorded','uncertain','attempt',2,'queued',NULL,'finished','Unknown');`);
+    previous.close();
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      expect(
+        reopened
+          .prepare("SELECT cursor,paused_at FROM conversation_subscriptions")
+          .all(),
+      ).toEqual([{ cursor: "9", paused_at: "paused" }]);
+      expect(
+        reopened
+          .prepare(
+            "SELECT state,attempt_id,attempt_count FROM conversation_subscription_deliveries",
+          )
+          .all(),
+      ).toEqual([
+        { state: "uncertain", attempt_id: "attempt", attempt_count: 2 },
+      ]);
+      expect(
+        reopened
+          .prepare(
+            "SELECT tbl_name FROM sqlite_master WHERE name='idx_subscription_deliveries_inbox'",
+          )
+          .get(),
+      ).toEqual({ tbl_name: "conversation_subscription_deliveries" });
+      expect(
+        reopened
+          .prepare("SELECT version FROM schema_migrations WHERE version=26")
+          .get(),
+      ).toEqual({ version: 26 });
+      expect(() =>
+        enforceCurrentSchemaCompatibility(reopened, dbPath, 25),
+      ).toThrow(/greater than known build version/);
+      expect(() =>
+        reopened.exec(
+          "UPDATE conversation_subscriptions SET source_kind='conversation'",
+        ),
+      ).not.toThrow();
+    } finally {
+      reopened.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("refuses a version-12 binary after ticket relationships stamp version 13", () => {

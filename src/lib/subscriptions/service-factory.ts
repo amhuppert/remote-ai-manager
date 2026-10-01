@@ -1,3 +1,5 @@
+import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
+import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import { withdrawSubscriptionWakeFromQueue } from "./wake-queue-control";
 import { validateSubscriptionSelection } from "./catalog";
 import { createConversationSubscriptionPreferencesRepo } from "@/lib/state-store/conversation-subscription-preferences-repo";
@@ -62,6 +64,9 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
   });
   const sourceDeps = {
     notepads,
+    comments: createNotepadCommentsRepo(db, writeQueue),
+    watermarks: createNotepadDeliveryWatermarksRepo(db, writeQueue),
+    resultDeliveries: createGraphWorkflowResultDeliveriesRepo(db),
     tickets: createTicketsRepo(db, writeQueue),
     specs: createSpecsRepo(db, writeQueue),
     specEvents: createSpecEventsRepo(db),
@@ -136,6 +141,14 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     readSource: createSubscriptionSourceReader(sourceDeps),
     now: () => new Date().toISOString(),
     newId: randomUUID,
+    inboxGetCommand(recipient, deliveryId) {
+      const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+      const identity = readConversation(recipient.conversationId);
+      const sessionFlag = identity?.sessionName
+        ? ` --session=${quote(identity.sessionName)}`
+        : "";
+      return `cctl inbox get --project=${quote(projectNameFromPath(recipient.projectPath))}${sessionFlag} --conversation=${quote(recipient.conversationId)} -- ${quote(deliveryId)}`;
+    },
     inboxCommand(recipient) {
       const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       const identity = readConversation(recipient.conversationId);

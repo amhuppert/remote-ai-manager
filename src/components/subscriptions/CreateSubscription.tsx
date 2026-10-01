@@ -17,7 +17,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/Dialog";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
-import type { SubscriptionSourceRef } from "@/lib/subscriptions/schemas";
+import {
+  publicSubscriptionSourceRefSchema,
+  type PublicSubscriptionSourceRef,
+  type SubscriptionSourceRef,
+} from "@/lib/subscriptions/schemas";
 import type { SubscriptionScope } from "@/lib/subscriptions/controls-schemas";
 import {
   useSubscriptionCatalog,
@@ -78,6 +82,8 @@ function SubscriptionForm({
 }) {
   const prefix = useId();
   const catalog = useSubscriptionCatalog();
+  const parsedSource = publicSubscriptionSourceRefSchema.safeParse(source);
+  const initialSource = parsedSource.success ? parsedSource.data : undefined;
   const [recipientSearch, setRecipientSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [recipient, setRecipient] = useState<ConversationTarget | undefined>(
@@ -93,10 +99,10 @@ function SubscriptionForm({
     },
     !target,
   );
-  const [kind, setKind] = useState<SubscriptionSourceRef["kind"]>(
-    source?.kind ?? "notepad",
+  const [kind, setKind] = useState<PublicSubscriptionSourceRef["kind"]>(
+    initialSource?.kind ?? "notepad",
   );
-  const [id, setId] = useState(source?.id ?? "");
+  const [id, setId] = useState(initialSource?.id ?? "");
   const [mode, setMode] = useState<"passive" | "active">("passive");
   const [reason, setReason] = useState("");
   const [lifetime, setLifetime] = useState("86400");
@@ -108,7 +114,7 @@ function SubscriptionForm({
       className="mt-5 flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!recipient) return;
+        if (!recipient || !entry) return;
         mutation.mutate(
           {
             target: recipient,

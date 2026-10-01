@@ -46,7 +46,6 @@ import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-
 import type { ActorConfig } from "./pre-turn/resolve-model-effort";
 
 import { type NotepadInjectionSource } from "@/lib/notepads/injection";
-import type { PreparedNotepadChangeNotice } from "@/lib/notepads/change-notices";
 import type {
   CapabilitySeed,
   ProjectCapabilitySeed,
@@ -268,15 +267,6 @@ export interface TurnContextDependencies {
   readNotepadForInjection(
     notepadId: string,
   ): Promise<NotepadInjectionSource | null>;
-
-  // Builds the transient change notice for this turn (R21). A read: the
-  // watermarks it names advance only through `settleNotepadChangeNotice`,
-  // after the backend accepts the message that carried it.
-  prepareNotepadChangeNotice(
-    conversationId: string,
-    references?: readonly import("@/lib/notepads/change-notices").NotepadDeliveryRecord[],
-    excludedNotepadIds?: readonly string[],
-  ): Promise<PreparedNotepadChangeNotice>;
 
   getReferenceDocuments(
     projectPath: string,

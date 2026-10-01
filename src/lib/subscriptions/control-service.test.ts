@@ -71,6 +71,25 @@ describe("subscription controls", () => {
     ).not.toBeNull();
     expect((await h.controls.resume(recipient, sub.id))?.pausedAt).toBeNull();
   });
+  it("resumes a public source without restoring its opt-out or expired deadline", async () => {
+    const h = setup();
+    const expiresAt = "2026-09-29T12:00:00.000Z";
+    const sub = await h.service.autoFollow({
+      recipient,
+      source,
+      reason: "notes",
+      expiresAt,
+    });
+    if (!sub) throw Error("Expected subscription");
+    await h.controls.pause(recipient, sub.id);
+    await h.controls.unfollow(recipient, sub.id);
+    await h.controls.resume(recipient, sub.id);
+    expect(await h.repo.get(recipient, sub.id)).toMatchObject({
+      status: "unfollowed",
+      pausedAt: null,
+      expiresAt,
+    });
+  });
 });
 
 import { createConversationSubscriptionWaitsRepo } from "@/lib/state-store/conversation-subscription-waits-repo";
@@ -146,6 +165,95 @@ function finiteHarness() {
     sourceReads: () => sourceReads,
   };
 }
+it("restores an unfollowed own-conversation notice source and preserves its pending evidence", async () => {
+  const h = finiteHarness();
+  const source = {
+    kind: "conversation",
+    id: recipient.conversationId,
+  } as const;
+  const fact = sourceFactSchema.parse({
+    occurrenceId: "lost-task",
+    eventKind: "background-tasks-lost",
+    category: "outcome",
+    sourceTitle: "Background tasks",
+    summary: "The background task terminated",
+    occurredAt: "2026-09-30T12:00:00.000Z",
+    revision: null,
+    outcome: "terminated",
+    retrievalHandle: "cctl conversation read conversation",
+    actorConversationId: null,
+  });
+  const notice = { recipient, source, fact, reason: "Runtime notice" };
+  await h.service.recordNotice(notice);
+  const sub = await h.repo.findBySource(recipient, source);
+  if (!sub) throw Error("Expected notice subscription");
+  await h.controls.pause(recipient, sub.id);
+  await h.controls.unfollow(recipient, sub.id);
+  expect(
+    await h.service.recordNotice({
+      ...notice,
+      fact: { ...fact, occurrenceId: "suppressed-task" },
+    }),
+  ).toBe(false);
+  await h.controls.resume(recipient, sub.id);
+  expect(await h.repo.get(recipient, sub.id)).toMatchObject({
+    status: "following",
+    mode: "passive",
+    pausedAt: null,
+    unfollowedAt: null,
+    cursor: "0",
+  });
+  const briefing = await h.service.prepareBriefing({
+    recipient,
+    attemptId: "restored-user-input",
+  });
+  expect(briefing.block).toContain("The background task terminated");
+  await briefing.onInputAccepted();
+  const reloaded = createConversationSubscriptionsRepo(
+    fixture?.db ??
+      (() => {
+        throw Error("Fixture absent");
+      })(),
+    createWriteQueue(),
+  );
+  expect(
+    (await reloaded.readInbox(recipient, { includeSettled: true })).items,
+  ).toMatchObject([{ fact, state: "accepted" }]);
+  expect(
+    await h.service.recordNotice({
+      ...notice,
+      fact: { ...fact, occurrenceId: "next-task" },
+    }),
+  ).toBe(true);
+});
+it("refuses notice restoration for a peer source or an ineligible recipient", async () => {
+  const h = finiteHarness();
+  for (const conversationId of [recipient.conversationId, "peer"]) {
+    const sub = await h.service.autoFollow({
+      recipient,
+      source: { kind: "conversation", id: conversationId },
+      reason: "Runtime notice",
+    });
+    if (!sub) throw Error("Expected notice subscription");
+    await h.controls.unfollow(recipient, sub.id);
+    const controls =
+      conversationId === recipient.conversationId
+        ? createSubscriptionControlsService({
+            repo: h.repo,
+            waits: h.waits,
+            isRecipientEligible: async () => false,
+          })
+        : h.controls;
+    await expect(controls.resume(recipient, sub.id)).rejects.toMatchObject({
+      code:
+        conversationId === recipient.conversationId
+          ? "SUBSCRIPTION_RECIPIENT_INELIGIBLE"
+          : "SUBSCRIPTION_SOURCE_MISMATCH",
+      status: 409,
+    });
+    expect((await h.repo.get(recipient, sub.id))?.status).toBe("unfollowed");
+  }
+});
 it("keeps paused outcomes durable and briefs a downgraded finite result after expiry", async () => {
   const h = finiteHarness();
   const wait = await h.active.register({

@@ -197,9 +197,14 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         });
       },
       mutateConversation: stateMod.mutateConversation,
+      async recordAgentNotice(input) {
+        const { getSubscriptionService } =
+          await import("@/lib/subscriptions/service-factory");
+        return getSubscriptionService().recordNotice(input);
+      },
       recordNotepadDeliveries: (input) =>
         notepadServiceFactoryMod
-          .getNotepadDeliveryTracker()
+          .getNotepadAcceptedContextRecorder()
           .recordDelivered(input),
       recordMemoryIndexDeliveries: (input) =>
         memoryServiceFactoryMod.getMemoryTelemetryService().recordDelivery({
@@ -213,44 +218,6 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         memoryServiceFactoryMod
           .getMemoryTelemetryService()
           .resetIndexDelivery(conversationId),
-      settleNotepadChangeNotice: (notice) =>
-        notepadServiceFactoryMod.getNotepadDeliveryTracker().settle(notice),
-      claimWorkflowResults: ({
-        projectPath,
-        sessionName,
-        originConversationId,
-        attemptId,
-      }) =>
-        stateMod.claimGraphWorkflowResultDeliveries(
-          projectPath,
-          sessionName,
-          originConversationId,
-          attemptId,
-        ),
-      settleWorkflowResults: ({
-        projectPath,
-        sessionName,
-        originConversationId,
-        attemptId,
-      }) =>
-        stateMod.settleGraphWorkflowResultDeliveries(
-          projectPath,
-          sessionName,
-          originConversationId,
-          attemptId,
-        ),
-      releaseWorkflowResults: ({
-        projectPath,
-        sessionName,
-        originConversationId,
-        attemptId,
-      }) =>
-        stateMod.releaseGraphWorkflowResultDeliveries(
-          projectPath,
-          sessionName,
-          originConversationId,
-          attemptId,
-        ),
       createReferenceDocument: stateMod.createReferenceDocument,
       confirmQueuedDelivery:
         messageQueueMod.messageQueueService.confirmDelivery,
@@ -285,14 +252,6 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
         notepadServiceFactoryMod
           .getNotepadInjectionReader()
           .readForInjection(notepadId),
-      prepareNotepadChangeNotice: (
-        conversationId,
-        references,
-        excludedNotepadIds,
-      ) =>
-        notepadServiceFactoryMod
-          .getNotepadDeliveryTracker()
-          .prepare(conversationId, references, excludedNotepadIds),
       getReferenceDocuments: stateMod.getReferenceDocuments,
     },
     policy: {
