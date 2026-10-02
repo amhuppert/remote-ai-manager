@@ -84,6 +84,35 @@ describe("resolveWorktreeLink", () => {
     expect(resolveWorktreeLink("../other/shot.png", WORKTREE)).toBeNull();
   });
 
+  it("resolves HTML reports inside the worktree", () => {
+    for (const href of [
+      `${WORKTREE}/reports/my%20report.html`,
+      "./reports/my%20report.html",
+      "reports/my%20report.html:12",
+    ]) {
+      expect(resolveWorktreeLink(href, WORKTREE)).toEqual({
+        kind: "html",
+        htmlPath: "reports/my report.html",
+        fileName: "my report.html",
+      });
+    }
+    expect(resolveWorktreeLink("report.HTM", WORKTREE)).toMatchObject({
+      kind: "html",
+      htmlPath: "report.HTM",
+    });
+  });
+
+  it("leaves external HTML URLs and files outside the worktree alone", () => {
+    for (const href of [
+      "https://example.com/report.html",
+      "//example.com/report.html",
+      "/tmp/report.html",
+      "../report.html",
+    ]) {
+      expect(resolveWorktreeLink(href, WORKTREE)).toBeNull();
+    }
+  });
+
   it("leaves web links, anchors, and other files alone", () => {
     for (const href of [
       undefined,

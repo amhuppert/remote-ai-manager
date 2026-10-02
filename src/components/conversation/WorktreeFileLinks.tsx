@@ -1,7 +1,7 @@
 "use client";
 
 import type { MouseEvent, ReactNode } from "react";
-import { DocumentIcon, ImageIcon } from "@/components/icons";
+import { ArrowUpRightIcon, DocumentIcon, ImageIcon } from "@/components/icons";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import type { WorktreeLinkTarget } from "@/lib/documents/worktree-links";
 import { useLinkedFiles, type LinkedFiles } from "./use-linked-files";
@@ -9,15 +9,15 @@ import { useLinkedFiles, type LinkedFiles } from "./use-linked-files";
 /**
  * Message-Markdown renderers for links to scope files. A Markdown link becomes
  * a chip that opens the document viewer; an image link or embed is served from
- * the worktree and previews in a dialog. Outside a document scope, where the
- * scope has no Markdown viewer, or for anything else, the caller's ordinary
- * rendering is kept.
+ * the worktree and previews in a dialog. HTML opens in a new tab. Outside a
+ * document scope, where the scope has no Markdown viewer, or for anything
+ * else, the caller's ordinary rendering is kept.
  */
 
 type MarkdownTarget = Extract<WorktreeLinkTarget, { kind: "markdown" }>;
 type ImageTarget = Extract<WorktreeLinkTarget, { kind: "image" }>;
 
-const MARKDOWN_CHIP_CLASSES =
+const FILE_CHIP_CLASSES =
   "inline-flex max-w-full cursor-pointer items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised px-sm py-2xs align-[-0.2em] font-mono text-[0.72rem] leading-[1.45] text-text-primary transition-colors duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-elevated focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
 
 function MarkdownFileChip({
@@ -39,7 +39,7 @@ function MarkdownFileChip({
             event.currentTarget,
           )
         }
-        className={MARKDOWN_CHIP_CLASSES}
+        className={FILE_CHIP_CLASSES}
       >
         <DocumentIcon size={13} className="shrink-0 text-cyan" />
         <span className="min-w-0 truncate">{children}</span>
@@ -115,6 +115,29 @@ export function WorktreeFileLink({
       <MarkdownFileChip target={target} onOpen={files.openMarkdown}>
         {children}
       </MarkdownFileChip>
+    );
+  }
+  if (target.kind === "html") {
+    return (
+      <WithTooltip label={`${target.htmlPath} · Open in a new tab`}>
+        <a
+          href={files.htmlUrl(target.htmlPath)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={FILE_CHIP_CLASSES}
+        >
+          <DocumentIcon size={13} className="shrink-0 text-cyan" />
+          <span className="min-w-0 truncate">{children}</span>
+          <span className="shrink-0 text-text-secondary" aria-hidden="true">
+            HTML
+          </span>
+          <ArrowUpRightIcon
+            size={13}
+            className="shrink-0 text-text-secondary"
+          />
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      </WithTooltip>
     );
   }
   return (

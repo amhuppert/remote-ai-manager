@@ -14,7 +14,8 @@ export type WorktreeLinkTarget =
       location: "worktree" | "external";
       fileName: string;
     }
-  | { kind: "image"; imagePath: string; fileName: string };
+  | { kind: "image"; imagePath: string; fileName: string }
+  | { kind: "html"; htmlPath: string; fileName: string };
 
 const IMAGE_MEDIA_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -28,6 +29,10 @@ const IMAGE_MEDIA_TYPES: Readonly<Record<string, string>> = {
 
 const URL_SCHEME = /^[a-z][a-z\d+.-]*:/i;
 const LINE_SUFFIX = /:\d+(?::\d+)?$/;
+
+export function isHtmlPath(path: string): boolean {
+  return /\.html?$/i.test(path);
+}
 
 /** The media type served for an image path, or null for a non-image path. */
 export function imageMediaType(path: string): string | null {
@@ -55,8 +60,8 @@ function fileNameOf(path: string): string {
 
 /**
  * Classify a message link. Markdown resolves to the viewer's canonical
- * identity, inside or outside the worktree. Images resolve only inside the
- * worktree, the one place the image endpoint serves from. Anything else is
+ * identity, inside or outside the worktree. Images and HTML resolve only inside
+ * the worktree, where their serving endpoints can read them. Anything else is
  * null and stays an ordinary link.
  */
 export function resolveWorktreeLink(
@@ -76,9 +81,17 @@ export function resolveWorktreeLink(
     };
   }
 
-  if (imageMediaType(filePath) === null) return null;
+  const html = isHtmlPath(filePath);
+  if (!html && imageMediaType(filePath) === null) return null;
   const located = normalizeWorktreeLocator(filePath, worktreeRoot);
   if (located.location !== "worktree") return null;
+  if (html) {
+    return {
+      kind: "html",
+      htmlPath: located.path,
+      fileName: fileNameOf(located.path),
+    };
+  }
   return {
     kind: "image",
     imagePath: located.path,
@@ -99,10 +112,25 @@ export function worktreeImageUrl(
   scope: LinkedFileScope,
   imagePath: string,
 ): string {
+  return worktreeFileUrl(scope, "worktree-images", imagePath);
+}
+
+export function worktreeHtmlUrl(
+  scope: LinkedFileScope,
+  htmlPath: string,
+): string {
+  return worktreeFileUrl(scope, "worktree-html", htmlPath);
+}
+
+function worktreeFileUrl(
+  scope: LinkedFileScope,
+  endpoint: "worktree-images" | "worktree-html",
+  filePath: string,
+): string {
   const project = `/api/projects/${encodeURIComponent(scope.projectName)}`;
   const owner =
     scope.sessionName === null
       ? project
       : `${project}/sessions/${encodeURIComponent(scope.sessionName)}`;
-  return `${owner}/worktree-images?path=${encodeURIComponent(imagePath)}`;
+  return `${owner}/${endpoint}?path=${encodeURIComponent(filePath)}`;
 }
