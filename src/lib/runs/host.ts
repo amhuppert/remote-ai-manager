@@ -1,6 +1,9 @@
 import type { ControlPermits } from "@/lib/control/permits";
 import type { ContextHost } from "@/lib/execution-context/host";
-import { contextStartRequestSchema, type ContextStartRequest } from "@/lib/execution-context/schemas";
+import {
+  contextStartRequestSchema,
+  type ContextStartRequest,
+} from "@/lib/execution-context/schemas";
 import { runControllerId } from "@/lib/execution-context/host";
 import type { ContextProgress } from "@/lib/execution-context/schemas";
 import type { IntentLedger } from "@/lib/intents/ledger";
@@ -57,13 +60,21 @@ export interface RunHost {
   observe(runId: string): RunObservation | null;
   /** `expectedRevision` null skips the optimistic check for callers that hold no revision. */
   pause(runId: string, expectedRevision: number | null): Promise<void>;
-  resume(runId: string, expectedRevision: number | null, dispositions?: RunDisposition[]): Promise<void>;
+  resume(
+    runId: string,
+    expectedRevision: number | null,
+    dispositions?: RunDisposition[],
+  ): Promise<void>;
   cancel(runId: string, expectedRevision: number | null): Promise<void>;
   /** Records a human approval decision on one of the Run's Contexts. */
   decide(
     runId: string,
     contextId: string,
-    input: { candidateId: string; decision: "approved" | "rejected"; notes?: string },
+    input: {
+      candidateId: string;
+      decision: "approved" | "rejected";
+      notes?: string;
+    },
   ): void;
   /** Boot: every active Run restores paused, and its owner is told. */
   restoreAfterRestart(): Promise<void>;
@@ -90,22 +101,37 @@ function contextBoundary(
   progress: ContextProgress,
   occurrence: string,
 ): Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt"> | null {
-  const base = { runId: run.runId, occurrence: `${invocation.contextId}:${occurrence}` };
+  const base = {
+    runId: run.runId,
+    occurrence: `${invocation.contextId}:${occurrence}`,
+  };
   const title = invocation.request.contract.title;
-  if (progress.kind === "waiting" && progress.obligation.kind === "await_answer") {
+  if (
+    progress.kind === "waiting" &&
+    progress.obligation.kind === "await_answer"
+  ) {
     return {
       ...base,
       kind: "question",
       summary: `${title}: the agent asked you a question.`,
-      detail: { contextId: invocation.contextId, questionId: progress.obligation.questionId },
+      detail: {
+        contextId: invocation.contextId,
+        questionId: progress.obligation.questionId,
+      },
     };
   }
-  if (progress.kind === "waiting" && progress.obligation.kind === "await_approval") {
+  if (
+    progress.kind === "waiting" &&
+    progress.obligation.kind === "await_approval"
+  ) {
     return {
       ...base,
       kind: "approval",
       summary: `${title}: the result awaits a human decision.`,
-      detail: { contextId: invocation.contextId, candidateId: progress.obligation.candidateId },
+      detail: {
+        contextId: invocation.contextId,
+        candidateId: progress.obligation.candidateId,
+      },
     };
   }
   if (progress.kind === "halted") {
@@ -113,7 +139,11 @@ function contextBoundary(
       ...base,
       kind: "halted",
       summary: `${title}: halted (${progress.halt}). ${progress.detail}`,
-      detail: { contextId: invocation.contextId, halt: progress.halt, occurrence },
+      detail: {
+        contextId: invocation.contextId,
+        halt: progress.halt,
+        occurrence,
+      },
     };
   }
   return null;
@@ -125,29 +155,43 @@ export function deriveRunProgress(
   views: ReadonlyArray<{ key: string; progress: ContextProgress | null }>,
 ): RunProgress {
   const allTerminal = views.every((v) => isTerminal(v.progress));
-  if (facts.control.cancelled) return allTerminal ? { kind: "cancelled" } : { kind: "stopping" };
+  if (facts.control.cancelled)
+    return allTerminal ? { kind: "cancelled" } : { kind: "stopping" };
   // Success outranks pause: work that drained during a pause and finished the run is done.
-  if (views.length > 0 && views.every((v) => v.progress?.kind === "succeeded")) {
+  if (
+    views.length > 0 &&
+    views.every((v) => v.progress?.kind === "succeeded")
+  ) {
     return { kind: "succeeded" };
   }
   if (facts.control.paused) {
-    const draining = views.some((v) => v.progress?.kind === "paused" && v.progress.draining);
+    const draining = views.some(
+      (v) => v.progress?.kind === "paused" && v.progress.draining,
+    );
     return { kind: "paused", draining };
   }
   const reasons = views.flatMap((v) => {
     const progress = v.progress;
     if (progress === null) return [];
-    if (progress.kind === "halted") return [`${v.key}: halted (${progress.halt})`];
-    if (progress.kind === "waiting" && progress.obligation.kind === "await_answer") {
+    if (progress.kind === "halted")
+      return [`${v.key}: halted (${progress.halt})`];
+    if (
+      progress.kind === "waiting" &&
+      progress.obligation.kind === "await_answer"
+    ) {
       return [`${v.key}: question`];
     }
-    if (progress.kind === "waiting" && progress.obligation.kind === "await_approval") {
+    if (
+      progress.kind === "waiting" &&
+      progress.obligation.kind === "await_approval"
+    ) {
       return [`${v.key}: approval`];
     }
     return [];
   });
   const independentWork = views.some((v) => v.progress?.kind === "running");
-  if (reasons.length > 0 && !independentWork) return { kind: "needs_owner", reasons };
+  if (reasons.length > 0 && !independentWork)
+    return { kind: "needs_owner", reasons };
   return { kind: "running" };
 }
 
@@ -167,20 +211,32 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         contextId: invocation.contextId,
         progress: observed?.record.progress ?? null,
         occurrence: observed?.record.progressOccurrence ?? null,
-        output: observed?.record.progress.kind === "succeeded"
-          ? observed.record.facts.candidates.items.find(
-              (c) => observed.record.progress.kind === "succeeded" && c.id === observed.record.progress.candidateId,
-            )?.output
-          : undefined,
+        output:
+          observed?.record.progress.kind === "succeeded"
+            ? observed.record.facts.candidates.items.find(
+                (c) =>
+                  observed.record.progress.kind === "succeeded" &&
+                  c.id === observed.record.progress.candidateId,
+              )?.output
+            : undefined,
       };
     });
   }
 
   function recordBoundary(
     run: RunRecord,
-    boundary: { occurrence: string; kind: RunBoundaryKind; summary: string; detail: unknown },
+    boundary: {
+      occurrence: string;
+      kind: RunBoundaryKind;
+      summary: string;
+      detail: unknown;
+    },
   ): void {
-    deps.runs.recordBoundary({ runId: run.runId, ...boundary, recordedAt: deps.now() });
+    deps.runs.recordBoundary({
+      runId: run.runId,
+      ...boundary,
+      recordedAt: deps.now(),
+    });
   }
 
   /** Projects and persists in the caller's transaction. */
@@ -188,7 +244,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     const views = observeInvocations(facts);
     for (const view of views) {
       if (view.progress === null || view.occurrence === null) continue;
-      const boundary = contextBoundary(record, view.invocation, view.progress, view.occurrence);
+      const boundary = contextBoundary(
+        record,
+        view.invocation,
+        view.progress,
+        view.occurrence,
+      );
       if (boundary !== null) recordBoundary(record, boundary);
     }
     const progress = deriveRunProgress(facts, views);
@@ -197,7 +258,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         occurrence: "run:succeeded",
         kind: "succeeded",
         summary: `${facts.title}: finished.`,
-        detail: { outputs: Object.fromEntries(views.map((v) => [v.key, v.output ?? null])) },
+        detail: {
+          outputs: Object.fromEntries(
+            views.map((v) => [v.key, v.output ?? null]),
+          ),
+        },
       });
     }
     if (progress.kind === "cancelled") {
@@ -268,21 +333,38 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     if (!deps.permits.admits(permit)) return;
     for (const intent of deps.intents.pending(owner(runId))) {
       await deps.contexts.submit({ ...intent, permit });
-      deps.touchContext(contextStartRequestSchema.parse(intent.request).contextId);
+      deps.touchContext(
+        contextStartRequestSchema.parse(intent.request).contextId,
+      );
     }
   }
 
-  function updateControl(runId: string, expectedRevision: number | null, change: Partial<RunFacts["control"]>, permitChange: () => void): RunRecord {
+  function updateControl(
+    runId: string,
+    expectedRevision: number | null,
+    change: Partial<RunFacts["control"]>,
+    permitChange: () => void,
+  ): RunRecord {
     return deps.transaction(() => {
       const record = requireRecord(runId);
       if (expectedRevision !== null && record.revision !== expectedRevision) {
-        throw new RunControlRefusedError(`Run ${runId} is at revision ${record.revision}, not ${expectedRevision}`);
+        throw new RunControlRefusedError(
+          `Run ${runId} is at revision ${record.revision}, not ${expectedRevision}`,
+        );
       }
-      if (record.progress.kind === "succeeded" || record.progress.kind === "cancelled") {
-        throw new RunControlRefusedError(`Run ${runId} already finished (${record.progress.kind})`);
+      if (
+        record.progress.kind === "succeeded" ||
+        record.progress.kind === "cancelled"
+      ) {
+        throw new RunControlRefusedError(
+          `Run ${runId} already finished (${record.progress.kind})`,
+        );
       }
       permitChange();
-      return project(record, { ...record.facts, control: { ...record.facts.control, ...change } });
+      return project(record, {
+        ...record.facts,
+        control: { ...record.facts.control, ...change },
+      });
     });
   }
 
@@ -292,7 +374,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         const existing = deps.runs.getByLaunchCause(input.cause);
         if (existing !== null) return existing;
         const now = deps.now();
-        deps.permits.issue({ controllerId: runControllerId(input.runId), parent: null, now });
+        deps.permits.issue({
+          controllerId: runControllerId(input.runId),
+          parent: null,
+          now,
+        });
         const invocations: RunInvocation[] = input.invocations.map((inv) => ({
           key: inv.key,
           pass: 0,
@@ -317,7 +403,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           facts,
           revision: 1,
           progress: { kind: "running" },
-          invocations: invocations.map((i) => ({ key: i.key, contextId: i.contextId, progress: null, occurrence: null })),
+          invocations: invocations.map((i) => ({
+            key: i.key,
+            contextId: i.contextId,
+            progress: null,
+            occurrence: null,
+          })),
           createdAt: now,
           updatedAt: now,
         };
@@ -353,7 +444,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     },
 
     recordReconcileFailure(runId, error) {
-      deps.log.error("runs.reconcile_failed", { runId, error: getErrorMessage(error) });
+      deps.log.error("runs.reconcile_failed", {
+        runId,
+        error: getErrorMessage(error),
+      });
       deps.transaction(() => {
         const record = requireRecord(runId);
         recordBoundary(record, {
@@ -370,7 +464,9 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       if (record === null) return null;
       const stalled = deps.intents
         .pending(owner(runId))
-        .filter((intent) => deps.contexts.outcome(intent.cause).kind === "settled")
+        .filter(
+          (intent) => deps.contexts.outcome(intent.cause).kind === "settled",
+        )
         .map((intent) => intent.cause);
       return { record, boundaries: deps.runs.boundaries(runId), stalled };
     },
@@ -386,60 +482,94 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       // context as it was, rather than half resumed.
       const record = deps.transaction(() => {
         const current = requireRecord(runId);
-        const members = new Set(current.facts.invocations.map((invocation) => invocation.contextId));
+        const members = new Set(
+          current.facts.invocations.map((invocation) => invocation.contextId),
+        );
         const foreign = dispositions.find((d) => !members.has(d.contextId));
         if (foreign !== undefined) {
-          throw new RunControlRefusedError(`Context ${foreign.contextId} does not belong to run ${runId}`);
+          throw new RunControlRefusedError(
+            `Context ${foreign.contextId} does not belong to run ${runId}`,
+          );
         }
-        const resumed = updateControl(runId, expectedRevision, { paused: false }, () => {
-          if (current.facts.control.paused) deps.permits.reopen(runControllerId(runId), deps.now());
-        });
+        const resumed = updateControl(
+          runId,
+          expectedRevision,
+          { paused: false },
+          () => {
+            if (current.facts.control.paused)
+              deps.permits.reopen(runControllerId(runId), deps.now());
+          },
+        );
         for (const invocation of resumed.facts.invocations) {
-          const disposition = dispositions.find((d) => d.contextId === invocation.contextId);
+          const disposition = dispositions.find(
+            (d) => d.contextId === invocation.contextId,
+          );
           const observed = deps.contexts.observe(invocation.contextId);
           if (observed === null) continue;
-          if (disposition !== undefined || observed.record.facts.control.paused) {
+          if (
+            disposition !== undefined ||
+            observed.record.facts.control.paused
+          ) {
             deps.contexts.resume(
               invocation.contextId,
               observed.record.revision,
               disposition === undefined
                 ? undefined
-                : { occurrence: disposition.occurrence, disposition: disposition.disposition },
+                : {
+                    occurrence: disposition.occurrence,
+                    disposition: disposition.disposition,
+                  },
             );
           }
         }
         return resumed;
       });
-      for (const invocation of record.facts.invocations) deps.touchContext(invocation.contextId);
+      for (const invocation of record.facts.invocations)
+        deps.touchContext(invocation.contextId);
       await host.reconcile(runId);
     },
 
     async cancel(runId, expectedRevision) {
-      const record = updateControl(runId, expectedRevision, { cancelled: true }, () =>
-        deps.permits.revoke(runControllerId(runId), deps.now()),
+      const record = updateControl(
+        runId,
+        expectedRevision,
+        { cancelled: true },
+        () => deps.permits.revoke(runControllerId(runId), deps.now()),
       );
       for (const invocation of record.facts.invocations) {
         const observed = deps.contexts.observe(invocation.contextId);
         if (observed === null || isTerminal(observed.record.progress)) continue;
-        await deps.contexts.cancel(invocation.contextId, observed.record.revision);
+        await deps.contexts.cancel(
+          invocation.contextId,
+          observed.record.revision,
+        );
       }
       await host.reconcile(runId);
     },
 
     decide(runId, contextId, input) {
       const record = requireRecord(runId);
-      if (!record.facts.invocations.some((invocation) => invocation.contextId === contextId)) {
-        throw new RunControlRefusedError(`Context ${contextId} does not belong to run ${runId}`);
+      if (
+        !record.facts.invocations.some(
+          (invocation) => invocation.contextId === contextId,
+        )
+      ) {
+        throw new RunControlRefusedError(
+          `Context ${contextId} does not belong to run ${runId}`,
+        );
       }
       deps.contexts.decide(contextId, input);
     },
 
     async restoreAfterRestart() {
-      const active = deps.runs.listActive().filter((run) => !run.facts.control.cancelled);
+      const active = deps.runs
+        .listActive()
+        .filter((run) => !run.facts.control.cancelled);
       // Close every permit first, in one transaction, so nothing a later failure
       // skips can admit work before its owner decides to resume.
       deps.transaction(() => {
-        for (const run of active) deps.permits.close(runControllerId(run.runId), deps.now());
+        for (const run of active)
+          deps.permits.close(runControllerId(run.runId), deps.now());
       });
       for (const run of active) {
         try {
@@ -457,11 +587,15 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             });
           });
         } catch (error) {
-          deps.log.error("runs.restore_failed", { runId: run.runId, error: getErrorMessage(error) });
+          deps.log.error("runs.restore_failed", {
+            runId: run.runId,
+            error: getErrorMessage(error),
+          });
         }
       }
       // Finished runs too: a result whose notice was lost must still reach its owner.
-      for (const runId of deps.runs.runsWithUnnotifiedBoundaries()) await notifyPending(runId);
+      for (const runId of deps.runs.runsWithUnnotifiedBoundaries())
+        await notifyPending(runId);
     },
   };
   return host;

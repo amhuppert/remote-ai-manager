@@ -21,7 +21,8 @@ const reviewVerdictSchema = z
 export type ReviewVerdict = z.infer<typeof reviewVerdictSchema>;
 
 /** Output contract every reviewer seat returns, generated from the parser's schema. */
-export const REVIEW_VERDICT_OUTPUT_SCHEMA: Record<string, unknown> = z.toJSONSchema(reviewVerdictSchema);
+export const REVIEW_VERDICT_OUTPUT_SCHEMA: Record<string, unknown> =
+  z.toJSONSchema(reviewVerdictSchema);
 
 export function parseReviewVerdict(value: unknown): ReviewVerdict | null {
   const parsed = reviewVerdictSchema.safeParse(value);
@@ -108,11 +109,19 @@ export function certificationStanding(
   }
   const defects = blocking.filter((s) => s.status === "defect");
   if (defects.length > 0) {
-    return { kind: "defect", round, findings: defects.flatMap((s) => s.findings) };
+    return {
+      kind: "defect",
+      round,
+      findings: defects.flatMap((s) => s.findings),
+    };
   }
   const failures = blocking.filter((s) => s.status === "fail");
   if (failures.length > 0) {
-    return { kind: "failed", round, findings: failures.flatMap((s) => s.findings) };
+    return {
+      kind: "failed",
+      round,
+      findings: failures.flatMap((s) => s.findings),
+    };
   }
   return {
     kind: "cleared",
@@ -186,7 +195,8 @@ export function recordCheckResult(
   },
 ): ContextFacts {
   const wrote = input.wroteReviewedScope;
-  const status = wrote.length > 0 && input.status === "passed" ? "failed" : input.status;
+  const status =
+    wrote.length > 0 && input.status === "passed" ? "failed" : input.status;
   const detail =
     wrote.length > 0
       ? `The command changed reviewed files: ${wrote.join(", ")}. Acceptance checks must not write the reviewed scope.${input.detail ? ` ${input.detail}` : ""}`
@@ -195,7 +205,11 @@ export function recordCheckResult(
     ...round,
     checks: round.checks.map((check) =>
       check.command === input.command
-        ? { command: check.command, status, ...(detail !== undefined ? { detail } : {}) }
+        ? {
+            command: check.command,
+            status,
+            ...(detail !== undefined ? { detail } : {}),
+          }
         : check,
     ),
   }));
@@ -238,7 +252,10 @@ export function recordSeatVerdict(
   }));
 }
 
-export function retireRound(facts: ContextFacts, roundId: string): ContextFacts {
+export function retireRound(
+  facts: ContextFacts,
+  roundId: string,
+): ContextFacts {
   return {
     ...facts,
     certification: {

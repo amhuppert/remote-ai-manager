@@ -41,7 +41,8 @@ describe("conversation core repository", () => {
         createConversationCoreRepo(db).insertSeat(value);
         return value;
       },
-      reload: (value) => createConversationCoreRepo(db).getSeat(value.conversationId),
+      reload: (value) =>
+        createConversationCoreRepo(db).getSeat(value.conversationId),
     });
   });
 
@@ -97,7 +98,8 @@ describe("conversation core repository", () => {
         createConversationCoreRepo(db).insertAttempt(value);
         return value;
       },
-      reload: (value) => createConversationCoreRepo(db).getAttempt(value.attemptId),
+      reload: (value) =>
+        createConversationCoreRepo(db).getAttempt(value.attemptId),
     });
   });
 
@@ -122,7 +124,8 @@ describe("conversation core repository", () => {
         createConversationCoreRepo(db).insertQuestion(value);
         return value;
       },
-      reload: (value) => createConversationCoreRepo(db).getQuestion(value.questionId),
+      reload: (value) =>
+        createConversationCoreRepo(db).getQuestion(value.questionId),
     });
   });
 });

@@ -35,7 +35,10 @@ function fakeServer(
     buildEnv: () => ({ PATH: "/bin" }),
     discoverNativeMcpServers:
       options.discoverNativeMcpServers ??
-      (async () => ({ kind: "complete", servers: options.nativeServers ?? [] })),
+      (async () => ({
+        kind: "complete",
+        servers: options.nativeServers ?? [],
+      })),
     createAppServer(launch) {
       launches.push(launch);
       const client: AppServerClient = {

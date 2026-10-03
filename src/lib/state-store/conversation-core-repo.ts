@@ -94,7 +94,10 @@ function mailboxFromRow(raw: unknown): MailboxItemRecord {
     permit:
       r.permit_controller_id === null || r.permit_generation === null
         ? null
-        : { controllerId: r.permit_controller_id, generation: r.permit_generation },
+        : {
+            controllerId: r.permit_controller_id,
+            generation: r.permit_generation,
+          },
     state: r.state,
     attemptId: r.attempt_id,
     createdAt: r.created_at,
@@ -134,14 +137,26 @@ function questionFromRow(raw: unknown): CoreQuestionRecord {
 export interface ConversationCoreRepo {
   insertSeat(record: SeatBindingRecord): void;
   getSeat(conversationId: string): SeatBindingRecord | null;
-  findSeat(contextId: string, assignmentId: string, replacement: number): SeatBindingRecord | null;
-  setSeatBackendRef(conversationId: string, backendRef: string | null, updatedAt: string): void;
+  findSeat(
+    contextId: string,
+    assignmentId: string,
+    replacement: number,
+  ): SeatBindingRecord | null;
+  setSeatBackendRef(
+    conversationId: string,
+    backendRef: string | null,
+    updatedAt: string,
+  ): void;
 
   insertMailboxIfAbsent(record: MailboxItemRecord): void;
   getMailbox(cause: string): MailboxItemRecord | null;
   nextQueued(conversationId: string): MailboxItemRecord | null;
   conversationsWithQueued(): string[];
-  refreshMailboxPermit(cause: string, permit: MailboxItemRecord["permit"], updatedAt: string): void;
+  refreshMailboxPermit(
+    cause: string,
+    permit: MailboxItemRecord["permit"],
+    updatedAt: string,
+  ): void;
   consumeMailbox(cause: string, attemptId: string, updatedAt: string): void;
   deleteMailbox(cause: string): void;
 
@@ -150,13 +165,32 @@ export interface ConversationCoreRepo {
   latestAttemptFor(cause: string): AttemptRecord | null;
   attemptsInState(state: AttemptRecord["state"]): AttemptRecord[];
   admitAttempt(attemptId: string): void;
-  settleAttempt(attemptId: string, outcome: AttemptRecord["outcome"], settledAt: string): void;
+  settleAttempt(
+    attemptId: string,
+    outcome: AttemptRecord["outcome"],
+    settledAt: string,
+  ): void;
 
   insertQuestion(record: CoreQuestionRecord): void;
   getQuestion(questionId: string): CoreQuestionRecord | null;
-  questionForAttempt(conversationId: string, attemptId: string): CoreQuestionRecord | null;
-  resolveQuestion(questionId: string, change: { state: "answered" | "withdrawn"; answer: string | null; answeredAt: string }): void;
-  insertWaitIfAbsent(input: { cause: string; questionId: string; requester: OwnerRef; createdAt: string }): void;
+  questionForAttempt(
+    conversationId: string,
+    attemptId: string,
+  ): CoreQuestionRecord | null;
+  resolveQuestion(
+    questionId: string,
+    change: {
+      state: "answered" | "withdrawn";
+      answer: string | null;
+      answeredAt: string;
+    },
+  ): void;
+  insertWaitIfAbsent(input: {
+    cause: string;
+    questionId: string;
+    requester: OwnerRef;
+    createdAt: string;
+  }): void;
   getWait(cause: string): { questionId: string; requester: OwnerRef } | null;
   waitersFor(questionId: string): OwnerRef[];
 }
@@ -167,30 +201,78 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
   const ATTEMPT = `attempt_id, conversation_id, cause, state, outcome_json, opened_at, settled_at`;
   const QUESTION = `question_id, conversation_id, attempt_id, question_text, questions_json, state, answer, created_at, answered_at`;
   const st = {
-    insertSeat: db.prepare(`INSERT OR IGNORE INTO core_seat_bindings (${SEAT}) VALUES (@conversationId, @contextId, @assignmentId, @replacement, @role, @projectPath, @sessionName, @backend, @backendRef, @createdAt, @updatedAt)`),
-    getSeat: db.prepare(`SELECT ${SEAT} FROM core_seat_bindings WHERE conversation_id = ?`),
-    findSeat: db.prepare(`SELECT ${SEAT} FROM core_seat_bindings WHERE context_id = ? AND assignment_id = ? AND replacement = ?`),
-    setSeatRef: db.prepare(`UPDATE core_seat_bindings SET backend_ref = ?, updated_at = ? WHERE conversation_id = ?`),
-    insertMailbox: db.prepare(`INSERT OR IGNORE INTO core_mailbox (${MAILBOX}) VALUES (@cause, @conversationId, @requesterKind, @requesterId, @requestJson, @permitControllerId, @permitGeneration, @state, @attemptId, @createdAt, @updatedAt)`),
-    getMailbox: db.prepare(`SELECT ${MAILBOX} FROM core_mailbox WHERE cause = ?`),
-    nextQueued: db.prepare(`SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'queued' ORDER BY created_at, rowid LIMIT 1`),
-    withQueued: db.prepare(`SELECT DISTINCT conversation_id AS id FROM core_mailbox WHERE state = 'queued'`),
-    refreshPermit: db.prepare(`UPDATE core_mailbox SET permit_controller_id = ?, permit_generation = ?, updated_at = ? WHERE cause = ? AND state = 'queued'`),
-    consume: db.prepare(`UPDATE core_mailbox SET state = 'consumed', attempt_id = ?, updated_at = ? WHERE cause = ?`),
-    deleteMailbox: db.prepare(`DELETE FROM core_mailbox WHERE cause = ? AND state = 'queued'`),
-    insertAttempt: db.prepare(`INSERT INTO core_attempts (${ATTEMPT}) VALUES (@attemptId, @conversationId, @cause, @state, @outcomeJson, @openedAt, @settledAt)`),
-    getAttempt: db.prepare(`SELECT ${ATTEMPT} FROM core_attempts WHERE attempt_id = ?`),
-    latestAttempt: db.prepare(`SELECT ${ATTEMPT} FROM core_attempts WHERE cause = ? ORDER BY opened_at DESC, rowid DESC LIMIT 1`),
-    attemptsInState: db.prepare(`SELECT ${ATTEMPT} FROM core_attempts WHERE state = ?`),
-    admitAttempt: db.prepare(`UPDATE core_attempts SET state = 'admitted' WHERE attempt_id = ? AND state = 'open'`),
-    settleAttempt: db.prepare(`UPDATE core_attempts SET state = 'settled', outcome_json = ?, settled_at = ? WHERE attempt_id = ?`),
-    insertQuestion: db.prepare(`INSERT INTO core_questions (${QUESTION}) VALUES (@questionId, @conversationId, @attemptId, @questionText, @questionsJson, @state, @answer, @createdAt, @answeredAt)`),
-    getQuestion: db.prepare(`SELECT ${QUESTION} FROM core_questions WHERE question_id = ?`),
-    questionForAttempt: db.prepare(`SELECT ${QUESTION} FROM core_questions WHERE conversation_id = ? AND attempt_id = ? ORDER BY created_at DESC LIMIT 1`),
-    resolveQuestion: db.prepare(`UPDATE core_questions SET state = ?, answer = ?, answered_at = ? WHERE question_id = ? AND state = 'open'`),
-    insertWait: db.prepare(`INSERT OR IGNORE INTO core_question_waits (cause, question_id, requester_kind, requester_id, created_at) VALUES (?, ?, ?, ?, ?)`),
-    getWait: db.prepare(`SELECT cause, question_id, requester_kind, requester_id FROM core_question_waits WHERE cause = ?`),
-    waitersFor: db.prepare(`SELECT cause, question_id, requester_kind, requester_id FROM core_question_waits WHERE question_id = ?`),
+    insertSeat: db.prepare(
+      `INSERT OR IGNORE INTO core_seat_bindings (${SEAT}) VALUES (@conversationId, @contextId, @assignmentId, @replacement, @role, @projectPath, @sessionName, @backend, @backendRef, @createdAt, @updatedAt)`,
+    ),
+    getSeat: db.prepare(
+      `SELECT ${SEAT} FROM core_seat_bindings WHERE conversation_id = ?`,
+    ),
+    findSeat: db.prepare(
+      `SELECT ${SEAT} FROM core_seat_bindings WHERE context_id = ? AND assignment_id = ? AND replacement = ?`,
+    ),
+    setSeatRef: db.prepare(
+      `UPDATE core_seat_bindings SET backend_ref = ?, updated_at = ? WHERE conversation_id = ?`,
+    ),
+    insertMailbox: db.prepare(
+      `INSERT OR IGNORE INTO core_mailbox (${MAILBOX}) VALUES (@cause, @conversationId, @requesterKind, @requesterId, @requestJson, @permitControllerId, @permitGeneration, @state, @attemptId, @createdAt, @updatedAt)`,
+    ),
+    getMailbox: db.prepare(
+      `SELECT ${MAILBOX} FROM core_mailbox WHERE cause = ?`,
+    ),
+    nextQueued: db.prepare(
+      `SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'queued' ORDER BY created_at, rowid LIMIT 1`,
+    ),
+    withQueued: db.prepare(
+      `SELECT DISTINCT conversation_id AS id FROM core_mailbox WHERE state = 'queued'`,
+    ),
+    refreshPermit: db.prepare(
+      `UPDATE core_mailbox SET permit_controller_id = ?, permit_generation = ?, updated_at = ? WHERE cause = ? AND state = 'queued'`,
+    ),
+    consume: db.prepare(
+      `UPDATE core_mailbox SET state = 'consumed', attempt_id = ?, updated_at = ? WHERE cause = ?`,
+    ),
+    deleteMailbox: db.prepare(
+      `DELETE FROM core_mailbox WHERE cause = ? AND state = 'queued'`,
+    ),
+    insertAttempt: db.prepare(
+      `INSERT INTO core_attempts (${ATTEMPT}) VALUES (@attemptId, @conversationId, @cause, @state, @outcomeJson, @openedAt, @settledAt)`,
+    ),
+    getAttempt: db.prepare(
+      `SELECT ${ATTEMPT} FROM core_attempts WHERE attempt_id = ?`,
+    ),
+    latestAttempt: db.prepare(
+      `SELECT ${ATTEMPT} FROM core_attempts WHERE cause = ? ORDER BY opened_at DESC, rowid DESC LIMIT 1`,
+    ),
+    attemptsInState: db.prepare(
+      `SELECT ${ATTEMPT} FROM core_attempts WHERE state = ?`,
+    ),
+    admitAttempt: db.prepare(
+      `UPDATE core_attempts SET state = 'admitted' WHERE attempt_id = ? AND state = 'open'`,
+    ),
+    settleAttempt: db.prepare(
+      `UPDATE core_attempts SET state = 'settled', outcome_json = ?, settled_at = ? WHERE attempt_id = ?`,
+    ),
+    insertQuestion: db.prepare(
+      `INSERT INTO core_questions (${QUESTION}) VALUES (@questionId, @conversationId, @attemptId, @questionText, @questionsJson, @state, @answer, @createdAt, @answeredAt)`,
+    ),
+    getQuestion: db.prepare(
+      `SELECT ${QUESTION} FROM core_questions WHERE question_id = ?`,
+    ),
+    questionForAttempt: db.prepare(
+      `SELECT ${QUESTION} FROM core_questions WHERE conversation_id = ? AND attempt_id = ? ORDER BY created_at DESC LIMIT 1`,
+    ),
+    resolveQuestion: db.prepare(
+      `UPDATE core_questions SET state = ?, answer = ?, answered_at = ? WHERE question_id = ? AND state = 'open'`,
+    ),
+    insertWait: db.prepare(
+      `INSERT OR IGNORE INTO core_question_waits (cause, question_id, requester_kind, requester_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ),
+    getWait: db.prepare(
+      `SELECT cause, question_id, requester_kind, requester_id FROM core_question_waits WHERE cause = ?`,
+    ),
+    waitersFor: db.prepare(
+      `SELECT cause, question_id, requester_kind, requester_id FROM core_question_waits WHERE question_id = ?`,
+    ),
   };
   return {
     insertSeat(record) {
@@ -201,7 +283,11 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
       return raw === undefined ? null : seatFromRow(raw);
     },
     findSeat(contextId, assignmentId, replacement) {
-      const raw: unknown = st.findSeat.get(contextId, assignmentId, replacement);
+      const raw: unknown = st.findSeat.get(
+        contextId,
+        assignmentId,
+        replacement,
+      );
       return raw === undefined ? null : seatFromRow(raw);
     },
     setSeatBackendRef(conversationId, backendRef, updatedAt) {
@@ -232,10 +318,18 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
       return raw === undefined ? null : mailboxFromRow(raw);
     },
     conversationsWithQueued() {
-      return z.array(z.object({ id: z.string() })).parse(st.withQueued.all()).map((r) => r.id);
+      return z
+        .array(z.object({ id: z.string() }))
+        .parse(st.withQueued.all())
+        .map((r) => r.id);
     },
     refreshMailboxPermit(cause, permit, updatedAt) {
-      st.refreshPermit.run(permit?.controllerId ?? null, permit?.generation ?? null, updatedAt, cause);
+      st.refreshPermit.run(
+        permit?.controllerId ?? null,
+        permit?.generation ?? null,
+        updatedAt,
+        cause,
+      );
     },
     consumeMailbox(cause, attemptId, updatedAt) {
       st.consume.run(attemptId, updatedAt, cause);
@@ -270,7 +364,11 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
       st.admitAttempt.run(attemptId);
     },
     settleAttempt(attemptId, outcome, settledAt) {
-      st.settleAttempt.run(outcome === null ? null : JSON.stringify(outcome), settledAt, attemptId);
+      st.settleAttempt.run(
+        outcome === null ? null : JSON.stringify(outcome),
+        settledAt,
+        attemptId,
+      );
     },
     insertQuestion(record) {
       const p = coreQuestionRecordSchema.parse(record);
@@ -295,16 +393,30 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
       return raw === undefined ? null : questionFromRow(raw);
     },
     resolveQuestion(questionId, change) {
-      st.resolveQuestion.run(change.state, change.answer, change.answeredAt, questionId);
+      st.resolveQuestion.run(
+        change.state,
+        change.answer,
+        change.answeredAt,
+        questionId,
+      );
     },
     insertWaitIfAbsent(input) {
-      st.insertWait.run(input.cause, input.questionId, input.requester.kind, input.requester.id, input.createdAt);
+      st.insertWait.run(
+        input.cause,
+        input.questionId,
+        input.requester.kind,
+        input.requester.id,
+        input.createdAt,
+      );
     },
     getWait(cause) {
       const raw: unknown = st.getWait.get(cause);
       if (raw === undefined) return null;
       const r = waitRow.parse(raw);
-      return { questionId: r.question_id, requester: { kind: r.requester_kind, id: r.requester_id } };
+      return {
+        questionId: r.question_id,
+        requester: { kind: r.requester_kind, id: r.requester_id },
+      };
     },
     waitersFor(questionId) {
       return st.waitersFor.all(questionId).map((raw) => {

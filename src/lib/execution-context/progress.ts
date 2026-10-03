@@ -34,9 +34,14 @@ export function deriveProgress(
 ): ContextProgress {
   const control = facts.control;
   const admitted = effects.some((effect) => effect.admitted);
-  if (control.cancelled) return admitted ? { kind: "stopping" } : { kind: "cancelled" };
+  if (control.cancelled)
+    return admitted ? { kind: "stopping" } : { kind: "cancelled" };
   if (control.halt !== null) {
-    return { kind: "halted", halt: control.halt.kind, detail: control.halt.detail };
+    return {
+      kind: "halted",
+      halt: control.halt.kind,
+      detail: control.halt.detail,
+    };
   }
   if (control.paused) {
     return admitted
@@ -47,7 +52,10 @@ export function deriveProgress(
   if (effects.length === 0) return next;
   if (next.kind === "running" || next.kind === "waiting") {
     const waiting = effects.every((effect) => effect.waitsOnPerson);
-    return { kind: waiting ? "waiting" : "running", obligation: next.obligation };
+    return {
+      kind: waiting ? "waiting" : "running",
+      obligation: next.obligation,
+    };
   }
   return next;
 }
@@ -74,13 +82,19 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
   if (openTasks(facts).length > 0) {
     return remainingAllowance(facts, "unfinishedTaskRetries") > 0
       ? running({ kind: "work", reason: "retry" })
-      : halted("retries_exhausted", "Tasks remain open and no unfinished-task retries are left");
+      : halted(
+          "retries_exhausted",
+          "Tasks remain open and no unfinished-task retries are left",
+        );
   }
 
   const candidate = currentCandidate(facts);
   if (candidate === null) {
     if (candidateUnstable(facts)) {
-      return halted("candidate_unstable", "The reviewed files kept changing before acceptance");
+      return halted(
+        "candidate_unstable",
+        "The reviewed files kept changing before acceptance",
+      );
     }
     if (captureExhausted(facts)) {
       return halted(
@@ -102,12 +116,16 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
     case "defect":
       return halted(
         "plan_defect",
-        certification.findings.map((f) => f.title).join("; ") || "A reviewer reported a plan defect",
+        certification.findings.map((f) => f.title).join("; ") ||
+          "A reviewer reported a plan defect",
       );
     case "failed":
       return remainingAllowance(facts, "validationRetries") > 0
         ? running({ kind: "work", reason: "remediate" })
-        : halted("retries_exhausted", "Blocking review failed and no validation retries are left");
+        : halted(
+            "retries_exhausted",
+            "Blocking review failed and no validation retries are left",
+          );
     case "cleared":
     case "not_required":
       break;
@@ -115,10 +133,14 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
 
   const advice = adviceStanding(facts, certification);
   if (advice.kind === "invalid") {
-    return halted("advice_invalid", "The advisory response did not give one valid disposition per advisory");
+    return halted(
+      "advice_invalid",
+      "The advisory response did not give one valid disposition per advisory",
+    );
   }
   if (advice.kind === "owed") return running({ kind: "advise" });
-  if (facts.candidates.verifyPending !== null) return running({ kind: "verify" });
+  if (facts.candidates.verifyPending !== null)
+    return running({ kind: "verify" });
 
   const approval = approvalStanding(facts, candidate);
   if (approval.kind === "pending") {
@@ -128,7 +150,9 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
     return running({ kind: "work", reason: "rework" });
   }
 
-  const accepted = facts.acceptance.receipts.some((r) => r.candidateId === candidate.id);
+  const accepted = facts.acceptance.receipts.some(
+    (r) => r.candidateId === candidate.id,
+  );
   if (!accepted) return running({ kind: "accept", candidateId: candidate.id });
 
   return { kind: "succeeded", candidateId: candidate.id };

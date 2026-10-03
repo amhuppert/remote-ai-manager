@@ -1,14 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createControlPermits, type ControlPermits } from "@/lib/control/permits";
-import { createContextHost, type ContextHost } from "@/lib/execution-context/host";
+import {
+  createControlPermits,
+  type ControlPermits,
+} from "@/lib/control/permits";
+import {
+  createContextHost,
+  type ContextHost,
+} from "@/lib/execution-context/host";
 import {
   DEFAULT_CONTEXT_POLICY,
   contextContractSchema,
   type ContextStartRequest,
 } from "@/lib/execution-context/schemas";
 import { createIntentLedger, type IntentLedger } from "@/lib/intents/ledger";
-import { createReconcileScheduler, type ReconcileScheduler } from "@/lib/intents/reconcile-scheduler";
-import { createFakeExecutor, type FakeExecutor } from "@/lib/intents/testing/fake-executor";
+import {
+  createReconcileScheduler,
+  type ReconcileScheduler,
+} from "@/lib/intents/reconcile-scheduler";
+import {
+  createFakeExecutor,
+  type FakeExecutor,
+} from "@/lib/intents/testing/fake-executor";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -42,7 +54,10 @@ const seat = {
   modelSelection: { modelId: "sonnet", parameters: {} },
 };
 
-function startRequest(contextId: string, humanApproval = false): ContextStartRequest {
+function startRequest(
+  contextId: string,
+  humanApproval = false,
+): ContextStartRequest {
   return {
     contextId,
     runId: "run-1",
@@ -85,7 +100,7 @@ const report = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   fixture = createPersistenceFixture();
-  const transaction = <T,>(fn: () => T): T => fixture.db.transaction(fn)();
+  const transaction = <T>(fn: () => T): T => fixture.db.transaction(fn)();
   permits = createControlPermits(createControlPermitsRepo(fixture.db));
   intents = createIntentLedger(createPendingIntentsRepo(fixture.db));
   scheduler = createReconcileScheduler();
@@ -111,7 +126,8 @@ beforeEach(() => {
     intents,
     permits,
     contexts,
-    touchContext: (contextId) => scheduler.touch({ kind: "context", id: contextId }),
+    touchContext: (contextId) =>
+      scheduler.touch({ kind: "context", id: contextId }),
     async notifyOwner({ boundary }) {
       await deliver(boundary);
       notified.push(boundary);
@@ -134,11 +150,19 @@ afterEach(async () => {
 });
 
 /** Settles the single pending operation of `executor` and lets reconciles run. */
-async function settle(executor: FakeExecutor, kind: string, outcome: unknown): Promise<void> {
+async function settle(
+  executor: FakeExecutor,
+  kind: string,
+  outcome: unknown,
+): Promise<void> {
   await scheduler.idle();
   const op = executor
     .submitted()
-    .find((i) => (i.request as { kind?: string }).kind === kind && executor.outcome(i.cause).kind !== "settled");
+    .find(
+      (i) =>
+        (i.request as { kind?: string }).kind === kind &&
+        executor.outcome(i.cause).kind !== "settled",
+    );
   if (op === undefined) throw new Error(`No pending ${kind}`);
   executor.admit(op.cause);
   executor.settle(op.cause, outcome);
@@ -155,7 +179,9 @@ async function launch(humanApproval = false): Promise<void> {
     projectPath: "/repo",
     sessionName: "session",
     owner: { conversationId: "owner-1", sessionName: "session" },
-    invocations: [{ key: "agent", request: startRequest("run-1.agent", humanApproval) }],
+    invocations: [
+      { key: "agent", request: startRequest("run-1.agent", humanApproval) },
+    ],
   });
   await scheduler.idle();
 }
@@ -168,13 +194,22 @@ describe("run progress", () => {
     invocations: [],
     control: { paused: false, cancelled: false },
   };
-  const question = { kind: "waiting" as const, obligation: { kind: "await_answer" as const, questionId: "q-1" } };
+  const question = {
+    kind: "waiting" as const,
+    obligation: { kind: "await_answer" as const, questionId: "q-1" },
+  };
 
   it("needs the owner only once no other invocation can make progress", () => {
     expect(
       deriveRunProgress(facts, [
         { key: "a", progress: question },
-        { key: "b", progress: { kind: "running", obligation: { kind: "work", reason: "initial" } } },
+        {
+          key: "b",
+          progress: {
+            kind: "running",
+            obligation: { kind: "work", reason: "initial" },
+          },
+        },
       ]),
     ).toEqual({ kind: "running" });
     expect(
@@ -192,11 +227,18 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     await settle(conversation, "work", report());
     await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
-    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+    await settle(workspace, "accept", {
+      kind: "accepted",
+      receipt: "snapshot:git:a:a",
+    });
 
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
-    expect(notified[0]?.detail).toEqual({ outputs: { agent: { summary: "Done." } } });
+    expect(notified[0]?.detail).toEqual({
+      outputs: { agent: { summary: "Done." } },
+    });
     await runs.reconcile("run-1");
     expect(notified).toHaveLength(1);
   });
@@ -206,11 +248,24 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     await settle(conversation, "work", report({ openQuestionId: "q-1" }));
 
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "needs_owner", reasons: ["agent: question"] });
-    expect(notified.map((b) => [b.kind, b.detail])).toEqual([["question", { contextId: "run-1.agent", questionId: "q-1" }]]);
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "needs_owner",
+      reasons: ["agent: question"],
+    });
+    expect(notified.map((b) => [b.kind, b.detail])).toEqual([
+      ["question", { contextId: "run-1.agent", questionId: "q-1" }],
+    ]);
 
-    await settle(requests, "answer", { kind: "answered", question: "Which file?", answer: "notice.ts" });
-    expect(conversation.submitted().map((i) => (i.request as { reason?: string }).reason)).toEqual(["initial", "continue"]);
+    await settle(requests, "answer", {
+      kind: "answered",
+      question: "Which file?",
+      answer: "notice.ts",
+    });
+    expect(
+      conversation
+        .submitted()
+        .map((i) => (i.request as { reason?: string }).reason),
+    ).toEqual(["initial", "continue"]);
   });
 
   it("admits nothing while paused and continues after resume", async () => {
@@ -245,18 +300,28 @@ describe("run host", () => {
   it("passes a halt disposition to its context through resume", async () => {
     await launch();
     await settle(workspace, "bind", { kind: "bound" });
-    await settle(conversation, "work", report({ status: "failed", failure: "provider error" }));
+    await settle(
+      conversation,
+      "work",
+      report({ status: "failed", failure: "provider error" }),
+    );
     const halted = notified.find((b) => b.kind === "halted");
     expect(halted?.summary).toContain("turn_failed");
     expect(conversation.submitted()).toHaveLength(1);
     const occurrence = (halted?.detail as { occurrence: string }).occurrence;
 
     await runs.resume("run-1", runs.observe("run-1")?.record.revision ?? 0, [
-      { contextId: "run-1.agent", occurrence, disposition: { kind: "continue" } },
+      {
+        contextId: "run-1.agent",
+        occurrence,
+        disposition: { kind: "continue" },
+      },
     ]);
     await scheduler.idle();
     expect(conversation.submitted()).toHaveLength(2);
-    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe("running");
+    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe(
+      "running",
+    );
   });
 
   it("asks the owner for a human decision and accepts the approved candidate", async () => {
@@ -266,15 +331,29 @@ describe("run host", () => {
     await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
 
     const approval = notified.find((b) => b.kind === "approval");
-    const detail = approval?.detail as { contextId: string; candidateId: string };
+    const detail = approval?.detail as {
+      contextId: string;
+      candidateId: string;
+    };
     expect(detail.contextId).toBe("run-1.agent");
-    expect(() => runs.decide("run-1", "other.context", { candidateId: detail.candidateId, decision: "approved" })).toThrow(
-      /does not belong/,
-    );
-    runs.decide("run-1", detail.contextId, { candidateId: detail.candidateId, decision: "approved" });
-    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+    expect(() =>
+      runs.decide("run-1", "other.context", {
+        candidateId: detail.candidateId,
+        decision: "approved",
+      }),
+    ).toThrow(/does not belong/);
+    runs.decide("run-1", detail.contextId, {
+      candidateId: detail.candidateId,
+      decision: "approved",
+    });
+    await settle(workspace, "accept", {
+      kind: "accepted",
+      receipt: "snapshot:git:a:a",
+    });
 
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
   });
 
   it("redelivers a notice that failed, at the next boot, even after the run finished", async () => {
@@ -285,14 +364,21 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     await settle(conversation, "work", report());
     await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
-    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    await settle(workspace, "accept", {
+      kind: "accepted",
+      receipt: "snapshot:git:a:a",
+    });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(notified).toEqual([]);
 
     deliver = async () => {};
     await runs.restoreAfterRestart();
     expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
   });
 
   it("delivers each boundary once when reconciles overlap", async () => {
@@ -304,7 +390,10 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     deliver = () => gate;
     conversation.admit(conversation.submitted()[0]?.cause ?? "");
-    conversation.settle(conversation.submitted()[0]?.cause ?? "", report({ openQuestionId: "q-1" }));
+    conversation.settle(
+      conversation.submitted()[0]?.cause ?? "",
+      report({ openQuestionId: "q-1" }),
+    );
     await contexts.reconcile("run-1.agent");
     const first = runs.reconcile("run-1");
     const second = runs.reconcile("run-1");
@@ -332,20 +421,39 @@ describe("run host", () => {
   it("refuses a stale or foreign disposition and leaves the run exactly as it was", async () => {
     await launch();
     await settle(workspace, "bind", { kind: "bound" });
-    await settle(conversation, "work", report({ status: "failed", failure: "provider error" }));
+    await settle(
+      conversation,
+      "work",
+      report({ status: "failed", failure: "provider error" }),
+    );
     await runs.pause("run-1", null);
-    const occurrence = runs.observe("run-1")?.record.invocations[0]?.occurrence ?? "";
+    const occurrence =
+      runs.observe("run-1")?.record.invocations[0]?.occurrence ?? "";
 
     await expect(
-      runs.resume("run-1", null, [{ contextId: "run-1.agent", occurrence: "stale", disposition: { kind: "continue" } }]),
+      runs.resume("run-1", null, [
+        {
+          contextId: "run-1.agent",
+          occurrence: "stale",
+          disposition: { kind: "continue" },
+        },
+      ]),
     ).rejects.toThrow(/occurrence/);
     await expect(
-      runs.resume("run-1", null, [{ contextId: "elsewhere", occurrence, disposition: { kind: "continue" } }]),
+      runs.resume("run-1", null, [
+        {
+          contextId: "elsewhere",
+          occurrence,
+          disposition: { kind: "continue" },
+        },
+      ]),
     ).rejects.toThrow(/does not belong/);
     await scheduler.idle();
 
     expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
-    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe("halted");
+    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe(
+      "halted",
+    );
     expect(conversation.submitted()).toHaveLength(1);
   });
 
@@ -354,11 +462,18 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     await settle(conversation, "work", report());
     await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
-    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+    await settle(workspace, "accept", {
+      kind: "accepted",
+      receipt: "snapshot:git:a:a",
+    });
 
-    await expect(runs.cancel("run-1", null)).rejects.toThrow(/already finished/);
+    await expect(runs.cancel("run-1", null)).rejects.toThrow(
+      /already finished/,
+    );
     await expect(runs.pause("run-1", null)).rejects.toThrow(/already finished/);
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
   });
 
@@ -367,15 +482,22 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     await settle(conversation, "work", report());
     await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
-    const accept = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "accept");
+    const accept = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "accept");
     if (accept === undefined) throw new Error("no accept");
     workspace.admit(accept.cause);
     await runs.pause("run-1", null);
-    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:git:a:a" });
+    workspace.settle(accept.cause, {
+      kind: "accepted",
+      receipt: "snapshot:git:a:a",
+    });
     scheduler.touch(accept.requester);
     await scheduler.idle();
 
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
   });
 
@@ -385,7 +507,9 @@ describe("run host", () => {
     await runs.cancel("run-1", runs.observe("run-1")?.record.revision ?? 0);
     await scheduler.idle();
 
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
     expect(notified.map((b) => b.kind)).toContain("cancelled");
   });
 });

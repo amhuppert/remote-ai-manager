@@ -57,7 +57,8 @@ export function createFakeExecutor(permits: ControlPermits): FakeExecutor {
     },
     admit(cause) {
       const op = require(cause);
-      if (op.state.kind !== "queued" || !permits.admits(op.intent.permit)) return false;
+      if (op.state.kind !== "queued" || !permits.admits(op.intent.permit))
+        return false;
       op.state = { kind: "running" };
       return true;
     },

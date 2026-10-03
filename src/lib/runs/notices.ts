@@ -9,10 +9,15 @@ export interface BoundaryNoticeExtras {
 
 function dispositionsFor(halt: unknown): ReadonlyArray<string> {
   const parsed = haltKindSchema.safeParse(halt);
-  return parsed.success ? DISPOSITIONS_BY_HALT[parsed.data] : ["see cctl run show"];
+  return parsed.success
+    ? DISPOSITIONS_BY_HALT[parsed.data]
+    : ["see cctl run show"];
 }
 
-function actionLine(run: Pick<RunRecord, "runId">, boundary: RunBoundary): string {
+function actionLine(
+  run: Pick<RunRecord, "runId">,
+  boundary: RunBoundary,
+): string {
   const id = run.runId;
   const detail = boundaryDetail(boundary);
   switch (boundary.kind) {
@@ -22,7 +27,10 @@ function actionLine(run: Pick<RunRecord, "runId">, boundary: RunBoundary): strin
       return `Only Alex can decide this; agents cannot approve it. Tell Alex that run ${id}, context ${String(detail.contextId)}, candidate ${String(detail.candidateId)} awaits approval.`;
     case "halted":
       // A run-level halt (its own reconcile failed) clears with a plain resume.
-      if (typeof detail.contextId !== "string" || typeof detail.occurrence !== "string") {
+      if (
+        typeof detail.contextId !== "string" ||
+        typeof detail.occurrence !== "string"
+      ) {
         return `Inspect: cctl run show ${id}. Retry: cctl run resume ${id}`;
       }
       return [
@@ -47,9 +55,12 @@ export function composeBoundaryNotice(
     `<run-boundary run="${run.runId}" kind="${boundary.kind}" boundary="${boundary.seq}">`,
     boundary.summary,
   ];
-  if (extras.questionText !== undefined) lines.push(`Question: ${extras.questionText}`);
+  if (extras.questionText !== undefined)
+    lines.push(`Question: ${extras.questionText}`);
   if (boundary.kind === "succeeded") {
-    lines.push(`Result: ${JSON.stringify(boundaryDetail(boundary).outputs ?? null)}`);
+    lines.push(
+      `Result: ${JSON.stringify(boundaryDetail(boundary).outputs ?? null)}`,
+    );
   }
   lines.push(actionLine(run, boundary), "</run-boundary>");
   return lines.join("\n");

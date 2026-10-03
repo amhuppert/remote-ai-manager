@@ -10,33 +10,71 @@ const grant = (
   kind: GrantRequest["kind"],
   paths?: string[],
   worktree = wt,
-): GrantRequest => ({ worktree, kind, ...(paths !== undefined ? { paths } : {}), holder: kind });
+): GrantRequest => ({
+  worktree,
+  kind,
+  ...(paths !== undefined ? { paths } : {}),
+  holder: kind,
+});
 
 describe("workspace conflict relation", () => {
   it("never blocks interactive turns on supervised work or reviews, only on Git operations", () => {
-    for (const other of [grant("interactive_write"), grant("scoped_write", ["src/a"]), grant("full_write"), grant("stable_read")]) {
+    for (const other of [
+      grant("interactive_write"),
+      grant("scoped_write", ["src/a"]),
+      grant("full_write"),
+      grant("stable_read"),
+    ]) {
       expect(grantsConflict(grant("interactive_write"), other)).toBe(false);
     }
     expect(grantsConflict(grant("interactive_write"), grant("git"))).toBe(true);
   });
 
   it("lets scoped writers overlap only when their scopes are disjoint", () => {
-    expect(grantsConflict(grant("scoped_write", ["src/api"]), grant("scoped_write", ["src/ui"]))).toBe(false);
-    expect(grantsConflict(grant("scoped_write", ["src/api"]), grant("scoped_write", ["src/api/routes"]))).toBe(true);
-    expect(grantsConflict(grant("scoped_write", ["src/api"]), grant("full_write"))).toBe(true);
+    expect(
+      grantsConflict(
+        grant("scoped_write", ["src/api"]),
+        grant("scoped_write", ["src/ui"]),
+      ),
+    ).toBe(false);
+    expect(
+      grantsConflict(
+        grant("scoped_write", ["src/api"]),
+        grant("scoped_write", ["src/api/routes"]),
+      ),
+    ).toBe(true);
+    expect(
+      grantsConflict(grant("scoped_write", ["src/api"]), grant("full_write")),
+    ).toBe(true);
   });
 
   it("protects a stable read from supervised writes inside its scope", () => {
-    expect(grantsConflict(grant("stable_read"), grant("scoped_write", ["src/api"]))).toBe(true);
-    expect(grantsConflict(grant("stable_read", ["src/ui"]), grant("scoped_write", ["src/api"]))).toBe(false);
-    expect(grantsConflict(grant("stable_read"), grant("stable_read"))).toBe(false);
-    expect(grantsConflict(grant("stable_read"), grant("full_write"))).toBe(true);
+    expect(
+      grantsConflict(grant("stable_read"), grant("scoped_write", ["src/api"])),
+    ).toBe(true);
+    expect(
+      grantsConflict(
+        grant("stable_read", ["src/ui"]),
+        grant("scoped_write", ["src/api"]),
+      ),
+    ).toBe(false);
+    expect(grantsConflict(grant("stable_read"), grant("stable_read"))).toBe(
+      false,
+    );
+    expect(grantsConflict(grant("stable_read"), grant("full_write"))).toBe(
+      true,
+    );
   });
 
   it("serializes Git operations against every write and stable read, and nothing across worktrees", () => {
     expect(grantsConflict(grant("git"), grant("stable_read"))).toBe(true);
     expect(grantsConflict(grant("git"), grant("observe"))).toBe(false);
-    expect(grantsConflict(grant("git"), grant("full_write", undefined, "/repo/.worktrees/other"))).toBe(false);
+    expect(
+      grantsConflict(
+        grant("git"),
+        grant("full_write", undefined, "/repo/.worktrees/other"),
+      ),
+    ).toBe(false);
   });
 });
 

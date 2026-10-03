@@ -58,7 +58,8 @@ export const runAnswerSpec = {
 export const runPauseSpec = {
   path: "run pause",
   summary: "Pause a run you launched",
-  description: "Nothing new starts; work already admitted finishes. Resume with run resume.",
+  description:
+    "Nothing new starts; work already admitted finishes. Resume with run resume.",
   requires: "cc",
   effects: "write",
   args: [runId],
@@ -78,19 +79,32 @@ export const runResumeSpec = {
       value: { kind: "string", minLength: 1 },
     },
     occurrence: {
-      description: "Halt occurrence from run show; a stale occurrence is refused",
+      description:
+        "Halt occurrence from run show; a stale occurrence is refused",
       value: { kind: "string", minLength: 1 },
     },
     disposition: {
       description: "How to clear the halt",
       value: {
         kind: "enum",
-        values: ["continue", "retry", "retry_capture", "retry_advice", "replace_seat", "rereview", "grant", "confirm_effect"],
+        values: [
+          "continue",
+          "retry",
+          "retry_capture",
+          "retry_advice",
+          "replace_seat",
+          "rereview",
+          "grant",
+          "confirm_effect",
+        ],
       },
     },
     allowance: {
       description: "Allowance a grant adds to",
-      value: { kind: "enum", values: ["unfinishedTaskRetries", "validationRetries"] },
+      value: {
+        kind: "enum",
+        values: ["unfinishedTaskRetries", "validationRetries"],
+      },
     },
     count: {
       description: "How many more attempts a grant allows",
@@ -101,7 +115,8 @@ export const runResumeSpec = {
       value: { kind: "string", minLength: 1, maxLength: 1000 },
     },
     evidence: {
-      description: "What you checked to confirm an uncertain effect (confirm_effect)",
+      description:
+        "What you checked to confirm an uncertain effect (confirm_effect)",
       value: { kind: "string", minLength: 1, maxLength: 2000 },
     },
   },
@@ -109,7 +124,8 @@ export const runResumeSpec = {
 export const runCancelSpec = {
   path: "run cancel",
   summary: "Cancel a run you launched",
-  description: "Stops every context in the run; admitted turns are interrupted and their partial work kept.",
+  description:
+    "Stops every context in the run; admitted turns are interrupted and their partial work kept.",
   requires: "cc",
   effects: "write",
   args: [runId],
@@ -118,7 +134,8 @@ export const runCancelSpec = {
 export const contextTaskCompleteSpec = {
   path: "context task complete",
   summary: "Mark one of your context's tasks done",
-  description: "For the agent working a supervised context: record that a task in your task list is done.",
+  description:
+    "For the agent working a supervised context: record that a task in your task list is done.",
   requires: "cc",
   effects: "write",
   args: [taskId],
@@ -127,7 +144,8 @@ export const contextTaskCompleteSpec = {
 export const contextTaskReopenSpec = {
   path: "context task reopen",
   summary: "Reopen one of your context's tasks",
-  description: "For the agent working a supervised context: record that a task you completed is not done.",
+  description:
+    "For the agent working a supervised context: record that a task you completed is not done.",
   requires: "cc",
   effects: "write",
   args: [taskId],
@@ -158,7 +176,9 @@ export const contextTaskAddSpec = {
 const handlers = async () => import("./handlers");
 
 export const runLaunchCommand = ccCommands.defineCommand(runLaunchSpec, {
-  examples: [{ file: ".cc/temp/run.json", why: "Launch an agent from a brief" }],
+  examples: [
+    { file: ".cc/temp/run.json", why: "Launch an agent from a brief" },
+  ],
   handler: async () => ({ default: (await handlers()).launchHandler }),
 });
 export const runShowCommand = ccCommands.defineCommand(runShowSpec, {
@@ -185,7 +205,11 @@ export const runResumeCommand = ccCommands.defineCommand(runResumeSpec, {
     {
       why: "Continue past a failed turn",
       args: { "run-id": "run-1" },
-      flags: { context: "run-1.agent", occurrence: "occ-1", disposition: "continue" },
+      flags: {
+        context: "run-1.agent",
+        occurrence: "occ-1",
+        disposition: "continue",
+      },
     },
   ],
   handler: async () => ({ default: (await handlers()).resumeHandler }),
@@ -194,18 +218,33 @@ export const runCancelCommand = ccCommands.defineCommand(runCancelSpec, {
   examples: [{ why: "Cancel a run", args: { "run-id": "run-1" } }],
   handler: async () => ({ default: (await handlers()).cancelHandler }),
 });
-export const contextTaskCompleteCommand = ccCommands.defineCommand(contextTaskCompleteSpec, {
-  examples: [{ why: "Mark a task done", args: { "task-id": "t1" } }],
-  handler: async () => ({ default: (await handlers()).taskCompleteHandler }),
-});
-export const contextTaskReopenCommand = ccCommands.defineCommand(contextTaskReopenSpec, {
-  examples: [{ why: "Reopen a task", args: { "task-id": "t1" } }],
-  handler: async () => ({ default: (await handlers()).taskReopenHandler }),
-});
-export const contextTaskAddCommand = ccCommands.defineCommand(contextTaskAddSpec, {
-  examples: [{ why: "Add a missing task", args: { "task-id": "t3" }, flags: { title: "Cover the refusal" } }],
-  handler: async () => ({ default: (await handlers()).taskAddHandler }),
-});
+export const contextTaskCompleteCommand = ccCommands.defineCommand(
+  contextTaskCompleteSpec,
+  {
+    examples: [{ why: "Mark a task done", args: { "task-id": "t1" } }],
+    handler: async () => ({ default: (await handlers()).taskCompleteHandler }),
+  },
+);
+export const contextTaskReopenCommand = ccCommands.defineCommand(
+  contextTaskReopenSpec,
+  {
+    examples: [{ why: "Reopen a task", args: { "task-id": "t1" } }],
+    handler: async () => ({ default: (await handlers()).taskReopenHandler }),
+  },
+);
+export const contextTaskAddCommand = ccCommands.defineCommand(
+  contextTaskAddSpec,
+  {
+    examples: [
+      {
+        why: "Add a missing task",
+        args: { "task-id": "t3" },
+        flags: { title: "Cover the refusal" },
+      },
+    ],
+    handler: async () => ({ default: (await handlers()).taskAddHandler }),
+  },
+);
 
 export const runCommands = [
   runLaunchCommand,
@@ -233,6 +272,7 @@ export const runGroups = [
   defineGroup({
     path: "context task",
     summary: "Report progress on your context's tasks",
-    description: "Task commands apply to the context your conversation is working.",
+    description:
+      "Task commands apply to the context your conversation is working.",
   }),
 ] as const;

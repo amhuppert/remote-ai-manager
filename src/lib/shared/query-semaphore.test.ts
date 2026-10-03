@@ -344,7 +344,8 @@ describe("tryAcquireQuerySlot", () => {
   });
 
   it("does not overtake a caller already queued for a slot", async () => {
-    const { acquireQuerySlot, tryAcquireQuerySlot } = await import("./query-semaphore");
+    const { acquireQuerySlot, tryAcquireQuerySlot } =
+      await import("./query-semaphore");
     const a = await acquireQuerySlot("a");
     await acquireQuerySlot("b");
     const queued = acquireQuerySlot("queued");
@@ -355,7 +356,8 @@ describe("tryAcquireQuerySlot", () => {
   });
 
   it("signals waiters when a slot is released", async () => {
-    const { tryAcquireQuerySlot, waitForQuerySlotRelease } = await import("./query-semaphore");
+    const { tryAcquireQuerySlot, waitForQuerySlotRelease } =
+      await import("./query-semaphore");
     const a = await tryAcquireQuerySlot("a");
     await tryAcquireQuerySlot("b");
     let woke = false;

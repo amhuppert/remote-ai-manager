@@ -6,7 +6,11 @@ import type { OwnerRef, PendingIntent } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
-import type { Grant, GrantRequest, WorkspaceAdmission } from "@/lib/workspace/admission";
+import type {
+  Grant,
+  GrantRequest,
+  WorkspaceAdmission,
+} from "@/lib/workspace/admission";
 import {
   seatTurnRequestSchema,
   type MailboxItemRecord,
@@ -53,7 +57,9 @@ export interface ConversationCoreDeps {
     tryAcquire(label: string): Promise<(() => void) | null>;
     waitForRelease(signal?: AbortSignal): Promise<void>;
   };
-  questions: { openedDuring(conversationId: string, attemptId: string): string | null };
+  questions: {
+    openedDuring(conversationId: string, attemptId: string): string | null;
+  };
   touchRequester(owner: OwnerRef): void;
   now(): string;
   /** How often a blocked acquisition re-checks its permit; permits carry no change signal. */
@@ -81,7 +87,10 @@ type Acquired =
   | { kind: "admitted"; grant: Grant | null; releaseSlot: () => void }
   | { kind: "not_admitted"; reason: string };
 
-function grantFor(request: SeatTurnRequest, holder: string): GrantRequest | null {
+function grantFor(
+  request: SeatTurnRequest,
+  holder: string,
+): GrantRequest | null {
   const { worktreePath, access, scope } = request.workspace;
   switch (access) {
     case "observe":
@@ -90,13 +99,22 @@ function grantFor(request: SeatTurnRequest, holder: string): GrantRequest | null
       return { worktree: worktreePath, kind: "stable_read", holder };
     case "write":
       if (scope.mode === "owned") {
-        return { worktree: worktreePath, kind: "scoped_write", paths: scope.paths, holder };
+        return {
+          worktree: worktreePath,
+          kind: "scoped_write",
+          paths: scope.paths,
+          holder,
+        };
       }
-      return scope.mode === "full" ? { worktree: worktreePath, kind: "full_write", holder } : null;
+      return scope.mode === "full"
+        ? { worktree: worktreePath, kind: "full_write", holder }
+        : null;
   }
 }
 
-export function createConversationCore(deps: ConversationCoreDeps): ConversationCore {
+export function createConversationCore(
+  deps: ConversationCoreDeps,
+): ConversationCore {
   const runners = new Map<string, Promise<void>>();
   const rerun = new Set<string>();
   const controllers = new Map<string, AbortController>();
@@ -106,10 +124,14 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
   function sleep(ms: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
-      signal.addEventListener("abort", () => {
-        clearTimeout(timer);
-        resolve();
-      }, { once: true });
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
     });
   }
 
@@ -120,26 +142,38 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
   ): Promise<Acquired> {
     const grantRequest = grantFor(request, item.cause);
     for (;;) {
-      if (signal.aborted) return { kind: "not_admitted", reason: "cancelled before admission" };
+      if (signal.aborted)
+        return { kind: "not_admitted", reason: "cancelled before admission" };
       const current = deps.repo.getMailbox(item.cause);
       const permit: PermitRef | null = current?.permit ?? item.permit;
       if (!deps.permits.admits(permit)) {
         return { kind: "not_admitted", reason: "the permit is closed" };
       }
-      const grant = grantRequest === null ? null : deps.admission.tryAcquire(grantRequest);
+      const grant =
+        grantRequest === null ? null : deps.admission.tryAcquire(grantRequest);
       if (grantRequest !== null && grant === null) {
-        await Promise.race([deps.admission.waitForChange(signal), sleep(pollMs, signal)]);
+        await Promise.race([
+          deps.admission.waitForChange(signal),
+          sleep(pollMs, signal),
+        ]);
         continue;
       }
-      const releaseSlot = await deps.slots.tryAcquire(`seat:${item.conversationId}`);
+      const releaseSlot = await deps.slots.tryAcquire(
+        `seat:${item.conversationId}`,
+      );
       if (releaseSlot === null) {
         // Never hold a workspace grant while waiting for model capacity.
         if (grant !== null) deps.admission.release(grant);
-        await Promise.race([deps.slots.waitForRelease(signal), sleep(pollMs, signal)]);
+        await Promise.race([
+          deps.slots.waitForRelease(signal),
+          sleep(pollMs, signal),
+        ]);
         continue;
       }
       // Re-check the permit at the moment of admission, with the bundle in hand.
-      if (!deps.permits.admits(deps.repo.getMailbox(item.cause)?.permit ?? permit)) {
+      if (
+        !deps.permits.admits(deps.repo.getMailbox(item.cause)?.permit ?? permit)
+      ) {
         releaseSlot();
         if (grant !== null) deps.admission.release(grant);
         return { kind: "not_admitted", reason: "the permit is closed" };
@@ -148,9 +182,15 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
     }
   }
 
-  async function ensureSeat(request: SeatTurnRequest): Promise<SeatBindingRecord> {
+  async function ensureSeat(
+    request: SeatTurnRequest,
+  ): Promise<SeatBindingRecord> {
     const { seat, workspace } = request;
-    const existing = deps.repo.findSeat(seat.contextId, seat.assignmentId, seat.replacement);
+    const existing = deps.repo.findSeat(
+      seat.contextId,
+      seat.assignmentId,
+      seat.replacement,
+    );
     if (existing !== null) return existing;
     const conversationId = await deps.createSeatConversation({
       projectPath: workspace.projectPath,
@@ -173,8 +213,15 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
         updatedAt: deps.now(),
       }),
     );
-    const created = deps.repo.findSeat(seat.contextId, seat.assignmentId, seat.replacement);
-    if (created === null) throw new Error(`Seat ${seat.contextId}/${seat.assignmentId} was not recorded`);
+    const created = deps.repo.findSeat(
+      seat.contextId,
+      seat.assignmentId,
+      seat.replacement,
+    );
+    if (created === null)
+      throw new Error(
+        `Seat ${seat.contextId}/${seat.assignmentId} was not recorded`,
+      );
     return created;
   }
 
@@ -190,20 +237,29 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
       finalText: result.finalText,
       structuredOutput: result.structuredOutput,
       outputIssue: result.outputIssue,
-      openQuestionId: deps.questions.openedDuring(item.conversationId, attemptId),
+      openQuestionId: deps.questions.openedDuring(
+        item.conversationId,
+        attemptId,
+      ),
       failure: result.failure,
     };
     deps.transaction(() => {
       deps.repo.settleAttempt(attemptId, report, deps.now());
       deps.repo.consumeMailbox(item.cause, attemptId, deps.now());
       if (result.backendRef !== null) {
-        deps.repo.setSeatBackendRef(item.conversationId, result.backendRef, deps.now());
+        deps.repo.setSeatBackendRef(
+          item.conversationId,
+          result.backendRef,
+          deps.now(),
+        );
       }
     });
   }
 
   /** One turn lifetime: every exit after `open` records exactly one terminal. */
-  async function runTurn(item: MailboxItemRecord): Promise<"settled" | "not_admitted"> {
+  async function runTurn(
+    item: MailboxItemRecord,
+  ): Promise<"settled" | "not_admitted"> {
     const request = seatTurnRequestSchema.parse(item.request);
     const attemptId = randomUUID();
     deps.transaction(() =>
@@ -223,7 +279,11 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
       const acquired = await acquire(item, request, controller.signal);
       if (acquired.kind === "not_admitted") {
         deps.transaction(() =>
-          deps.repo.settleAttempt(attemptId, { notAdmitted: acquired.reason }, deps.now()),
+          deps.repo.settleAttempt(
+            attemptId,
+            { notAdmitted: acquired.reason },
+            deps.now(),
+          ),
         );
         return "not_admitted";
       }
@@ -232,7 +292,10 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
       let result: SeatTurnResult;
       try {
         const binding = deps.repo.getSeat(item.conversationId);
-        if (binding === null) throw new Error(`Seat conversation ${item.conversationId} has no binding`);
+        if (binding === null)
+          throw new Error(
+            `Seat conversation ${item.conversationId} has no binding`,
+          );
         result = await deps.turns.run({
           conversationId: item.conversationId,
           binding,
@@ -299,7 +362,13 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
       if (existing !== null) {
         if (existing.state === "queued") {
           // A resubmission refreshes the permit of an item not yet admitted.
-          deps.transaction(() => deps.repo.refreshMailboxPermit(intent.cause, intent.permit, deps.now()));
+          deps.transaction(() =>
+            deps.repo.refreshMailboxPermit(
+              intent.cause,
+              intent.permit,
+              deps.now(),
+            ),
+          );
           wake(existing.conversationId);
         }
         return;
@@ -328,7 +397,9 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
         return { kind: "settled", outcome: attempt?.outcome ?? null };
       }
       const attempt = deps.repo.latestAttemptFor(cause);
-      return attempt !== null && attempt.state === "admitted" ? { kind: "running" } : { kind: "queued" };
+      return attempt !== null && attempt.state === "admitted"
+        ? { kind: "running" }
+        : { kind: "queued" };
     },
     withdraw(cause) {
       const attempt = deps.repo.latestAttemptFor(cause);
@@ -352,10 +423,18 @@ export function createConversationCore(deps: ConversationCoreDeps): Conversation
             failure: "The server restarted while this turn was running",
           };
           deps.repo.settleAttempt(attempt.attemptId, report, deps.now());
-          deps.repo.consumeMailbox(attempt.cause, attempt.attemptId, deps.now());
+          deps.repo.consumeMailbox(
+            attempt.cause,
+            attempt.attemptId,
+            deps.now(),
+          );
         }
         for (const attempt of deps.repo.attemptsInState("open")) {
-          deps.repo.settleAttempt(attempt.attemptId, { notAdmitted: "the server restarted before admission" }, deps.now());
+          deps.repo.settleAttempt(
+            attempt.attemptId,
+            { notAdmitted: "the server restarted before admission" },
+            deps.now(),
+          );
         }
       });
     },

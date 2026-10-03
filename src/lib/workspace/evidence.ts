@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
@@ -36,27 +36,47 @@ function scopePaths(scope: WorkspaceScope): string[] {
   return scope.mode === "owned" ? scope.paths : [];
 }
 
-export function createWorkspaceEvidence(client: GitClient = defaultGitClient): WorkspaceEvidence {
-  async function git(cwd: string, args: string[], indexFile?: string): Promise<string> {
+export function createWorkspaceEvidence(
+  client: GitClient = defaultGitClient,
+): WorkspaceEvidence {
+  async function git(
+    cwd: string,
+    args: string[],
+    indexFile?: string,
+  ): Promise<string> {
     const { stdout } = await client.git(args, cwd, {
       maxBuffer: MAX_BUFFER,
-      ...(indexFile === undefined ? {} : { env: { GIT_INDEX_FILE: indexFile } }),
+      ...(indexFile === undefined
+        ? {}
+        : { env: { GIT_INDEX_FILE: indexFile } }),
     });
     return stdout;
   }
 
-  async function seedIndex(worktreePath: string, indexFile: string): Promise<void> {
+  async function seedIndex(
+    worktreePath: string,
+    indexFile: string,
+  ): Promise<void> {
     // Starting from the worktree's own index reuses its stat cache, so only
     // changed files are rehashed; `add -A` then matches the working tree.
     const realIndex = path.resolve(
       worktreePath,
       (await git(worktreePath, ["rev-parse", "--git-path", "index"])).trim(),
     );
+    let copied = true;
     try {
       await copyFile(realIndex, indexFile);
     } catch {
+      copied = false;
       await git(worktreePath, ["read-tree", "--empty"], indexFile);
     }
+    if (!copied) return;
+    // Git rehashes entries whose stat is as new as the index file itself (its
+    // racy-entry check). A fresh copy would look newer than every entry, so a
+    // same-size edit made in the second the index was written would pass as
+    // clean; the copy keeps the original timestamps to preserve that check.
+    const { atime, mtime } = await stat(realIndex);
+    await utimes(indexFile, atime, mtime);
   }
 
   return {
@@ -66,10 +86,18 @@ export function createWorkspaceEvidence(client: GitClient = defaultGitClient): W
       try {
         await seedIndex(worktreePath, indexFile);
         await git(worktreePath, ["add", "-A", "--", "."], indexFile);
-        const tree = (await git(worktreePath, ["write-tree"], indexFile)).trim();
+        const tree = (
+          await git(worktreePath, ["write-tree"], indexFile)
+        ).trim();
         const paths = scopePaths(scope);
         if (paths.length === 0) return `git:${tree}:${tree}`;
-        const listing = await git(worktreePath, ["ls-tree", "-r", tree, "--", ...paths]);
+        const listing = await git(worktreePath, [
+          "ls-tree",
+          "-r",
+          tree,
+          "--",
+          ...paths,
+        ]);
         const digest = createHash("sha256").update(listing).digest("hex");
         return `git:${tree}:${digest}`;
       } finally {

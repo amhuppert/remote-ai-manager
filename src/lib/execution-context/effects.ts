@@ -84,7 +84,14 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("work"),
       workspace: seatAccessSchema,
-      reason: z.enum(["initial", "retry", "steer", "remediate", "rework", "continue"]),
+      reason: z.enum([
+        "initial",
+        "retry",
+        "steer",
+        "remediate",
+        "rework",
+        "continue",
+      ]),
       seat: seatRefSchema,
       message: z.string().min(1),
       allowance: allowanceKindSchema.nullable(),
@@ -135,7 +142,9 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
       binding: workspaceBindingRequestSchema,
     })
     .strict(),
-  z.object({ kind: z.literal("freeze"), bindingId: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("freeze"), bindingId: z.string().min(1) })
+    .strict(),
   z
     .object({
       kind: z.literal("check"),
@@ -163,7 +172,9 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
       evidence: z.string().min(1),
     })
     .strict(),
-  z.object({ kind: z.literal("answer"), questionId: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("answer"), questionId: z.string().min(1) })
+    .strict(),
 ]);
 export type ContextEffectRequest = z.infer<typeof contextEffectRequestSchema>;
 
@@ -198,9 +209,15 @@ export function waitsOnPerson(request: ContextEffectRequest): boolean {
 
 const IMPLEMENTER = "implementer";
 
-function seatAccess(facts: ContextFacts, access: SeatAccess["access"]): SeatAccess {
+function seatAccess(
+  facts: ContextFacts,
+  access: SeatAccess["access"],
+): SeatAccess {
   const binding = facts.binding.request;
-  const effective = access === "write" && binding.scope.mode === "readOnly" ? "observe" : access;
+  const effective =
+    access === "write" && binding.scope.mode === "readOnly"
+      ? "observe"
+      : access;
   return {
     projectPath: binding.projectPath,
     sessionName: binding.sessionName,
@@ -241,7 +258,13 @@ function seatRef(
 }
 
 function implementerSeat(facts: ContextFacts, contextId: string): SeatRef {
-  return seatRef(facts, contextId, IMPLEMENTER, "implementer", facts.contract.current.implementer);
+  return seatRef(
+    facts,
+    contextId,
+    IMPLEMENTER,
+    "implementer",
+    facts.contract.current.implementer,
+  );
 }
 
 /**
@@ -249,15 +272,17 @@ function implementerSeat(facts: ContextFacts, contextId: string): SeatRef {
  * admits and nothing is pending; records any fact the plan itself needs (a new
  * review round, a reserved allowance, the effect sequence) in the returned facts.
  */
-export function planEffects(input: {
+export function planEffects(input: { facts: ContextFacts }): {
   facts: ContextFacts;
-}): { facts: ContextFacts; effects: PlannedEffect[] } {
+  effects: PlannedEffect[];
+} {
   let facts = input.facts;
   const contextId = facts.contextId;
   // Control facts outrank the acceptance chain: nothing new starts while the
   // context is cancelled, halted or paused.
   const control = facts.control;
-  if (control.cancelled || control.halt !== null || control.paused) return { facts, effects: [] };
+  if (control.cancelled || control.halt !== null || control.paused)
+    return { facts, effects: [] };
   const progress = nextProgress(facts);
   if (progress.kind !== "running" && progress.kind !== "waiting") {
     return { facts, effects: [] };
@@ -278,7 +303,11 @@ export function planEffects(input: {
           {
             executor: "workspace",
             cause: `${contextId}:bind`,
-            request: { kind: "bind", bindingId: contextId, binding: facts.binding.request },
+            request: {
+              kind: "bind",
+              bindingId: contextId,
+              binding: facts.binding.request,
+            },
           },
         ],
       };
@@ -310,7 +339,13 @@ export function planEffects(input: {
       const cause = nextCause("freeze");
       return {
         facts,
-        effects: [{ executor: "workspace", cause, request: { kind: "freeze", bindingId: contextId } }],
+        effects: [
+          {
+            executor: "workspace",
+            cause,
+            request: { kind: "freeze", bindingId: contextId },
+          },
+        ],
       };
     }
     case "certify": {
@@ -353,9 +388,19 @@ export function planEffects(input: {
           request: {
             kind: "review",
             workspace: seatAccess(facts, "stable_read"),
-            seat: seatRef(facts, contextId, assignment.id, "reviewer", assignment),
+            seat: seatRef(
+              facts,
+              contextId,
+              assignment.id,
+              "reviewer",
+              assignment,
+            ),
             roundId: round.id,
-            message: composeReview(facts, { candidate, round, seat: assignment }),
+            message: composeReview(facts, {
+              candidate,
+              round,
+              seat: assignment,
+            }),
             outputSchema: REVIEW_VERDICT_OUTPUT_SCHEMA,
             timeoutMs,
           },
@@ -366,7 +411,10 @@ export function planEffects(input: {
     case "advise": {
       const candidate = currentCandidate(facts);
       if (candidate === null) return { facts, effects: [] };
-      const advice = adviceStanding(facts, certificationStanding(facts, candidate));
+      const advice = adviceStanding(
+        facts,
+        certificationStanding(facts, candidate),
+      );
       if (advice.kind !== "owed") return { facts, effects: [] };
       const pendingItems = advice.items.filter(
         (item) => facts.advice.dispositions[item.id] === undefined,
@@ -469,7 +517,14 @@ function planWork(
     const question = answered.questionId;
     const message = composeContinuation(answered.question, answered.answer);
     if (answered.seat !== IMPLEMENTER) {
-      return planReviewContinuation(facts, contextId, answered.seat, question, message, timeoutMs);
+      return planReviewContinuation(
+        facts,
+        contextId,
+        answered.seat,
+        question,
+        message,
+        timeoutMs,
+      );
     }
     const cause = nextCause("work");
     return {
@@ -532,7 +587,10 @@ function planWork(
       const candidate = currentCandidate(facts);
       if (candidate === null) return { facts: initial, effects: [] };
       const approval = approvalStanding(facts, candidate);
-      message = composeRework(facts, approval.kind === "rejected" ? approval.notes : null);
+      message = composeRework(
+        facts,
+        approval.kind === "rejected" ? approval.notes : null,
+      );
       extra.candidateId = candidate.id;
       break;
     }
@@ -567,7 +625,9 @@ function planReviewContinuation(
   timeoutMs: number | null,
 ): { facts: ContextFacts; effects: PlannedEffect[] } {
   const candidate = currentCandidate(facts);
-  const assignment = facts.contract.current.reviewers.find((r) => r.id === assignmentId);
+  const assignment = facts.contract.current.reviewers.find(
+    (r) => r.id === assignmentId,
+  );
   const round = candidate === null ? null : activeRound(facts, candidate);
   if (assignment === undefined || round === null) return { facts, effects: [] };
   return {

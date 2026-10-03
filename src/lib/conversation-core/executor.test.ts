@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createControlPermits, type ControlPermits } from "@/lib/control/permits";
+import {
+  createControlPermits,
+  type ControlPermits,
+} from "@/lib/control/permits";
 import type { OwnerRef, PendingIntent } from "@/lib/intents/schemas";
 import {
   createPersistenceFixture,
@@ -7,14 +10,20 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
-import { createWorkspaceAdmission, type WorkspaceAdmission } from "@/lib/workspace/admission";
+import {
+  createWorkspaceAdmission,
+  type WorkspaceAdmission,
+} from "@/lib/workspace/admission";
 import {
   createConversationCore,
   type ConversationCore,
   type SeatTurnPort,
   type SeatTurnResult,
 } from "./executor";
-import { createConversationRequests, type ConversationRequests } from "./requests";
+import {
+  createConversationRequests,
+  type ConversationRequests,
+} from "./requests";
 import type { SeatTurnRequest } from "./schemas";
 
 const now = "2026-10-03T10:00:00.000Z";
@@ -26,7 +35,12 @@ let admission: WorkspaceAdmission;
 let requests: ConversationRequests;
 let touched: OwnerRef[];
 let spawned: number;
-let turnCalls: Array<{ conversationId: string; request: SeatTurnRequest; signal: AbortSignal; attemptId: string }>;
+let turnCalls: Array<{
+  conversationId: string;
+  request: SeatTurnRequest;
+  signal: AbortSignal;
+  attemptId: string;
+}>;
 let nextResult: () => Promise<SeatTurnResult>;
 let freeSlots: number;
 
@@ -154,14 +168,21 @@ describe("conversation core for seats", () => {
         failure: null,
       },
     });
-    expect(core.seatBinding("conv-1")).toMatchObject({ contextId: "ctx-1", assignmentId: "implementer", backendRef: "session-1" });
+    expect(core.seatBinding("conv-1")).toMatchObject({
+      contextId: "ctx-1",
+      assignmentId: "implementer",
+      backendRef: "session-1",
+    });
     expect(touched).toContainEqual({ kind: "context", id: "ctx-1" });
 
     const second = workIntent({ message: "Continue" });
     await core.submit(second);
     await core.idle();
     expect(spawned).toBe(1);
-    expect(turnCalls.map((c) => c.conversationId)).toEqual(["conv-1", "conv-1"]);
+    expect(turnCalls.map((c) => c.conversationId)).toEqual([
+      "conv-1",
+      "conv-1",
+    ]);
   });
 
   it("leaves an item queued without calling the backend while its permit is closed", async () => {
@@ -196,7 +217,10 @@ describe("conversation core for seats", () => {
     expect(turnCalls[0]?.signal.aborted).toBe(true);
     finish({ ...ok(), status: "cancelled", finalText: null });
     await core.idle();
-    expect(core.outcome(intent.cause)).toMatchObject({ kind: "settled", outcome: { status: "cancelled" } });
+    expect(core.outcome(intent.cause)).toMatchObject({
+      kind: "settled",
+      outcome: { status: "cancelled" },
+    });
   });
 
   it("settles a thrown turn as failed with its message", async () => {
@@ -218,7 +242,12 @@ describe("conversation core for seats", () => {
     nextResult = async () => {
       const call = turnCalls.at(-1);
       if (call === undefined) throw new Error("no call");
-      requests.open({ conversationId: call.conversationId, attemptId: call.attemptId, questionText: "Which file?", questions: [] });
+      requests.open({
+        conversationId: call.conversationId,
+        attemptId: call.attemptId,
+        questionText: "Which file?",
+        questions: [],
+      });
       return ok("Asked my owner.");
     };
     const intent = workIntent();
@@ -227,13 +256,20 @@ describe("conversation core for seats", () => {
 
     const state = core.outcome(intent.cause);
     expect(state).toMatchObject({ kind: "settled" });
-    const questionId = state.kind === "settled" ? (state.outcome as { openQuestionId: string | null }).openQuestionId : null;
+    const questionId =
+      state.kind === "settled"
+        ? (state.outcome as { openQuestionId: string | null }).openQuestionId
+        : null;
     expect(questionId).not.toBeNull();
   });
 
   it("waits for a conflicting stable read before a write turn starts", async () => {
     const core = newCore();
-    const review = admission.tryAcquire({ worktree, kind: "stable_read", holder: "review" });
+    const review = admission.tryAcquire({
+      worktree,
+      kind: "stable_read",
+      holder: "review",
+    });
     const intent = workIntent();
     await core.submit(intent);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -266,11 +302,22 @@ describe("conversation core for seats", () => {
       createdAt: now,
       updatedAt: now,
     });
-    repo.insertAttempt({ attemptId: "att-x", conversationId: "conv-1", cause: admitted.cause, state: "admitted", outcome: null, openedAt: now, settledAt: null });
+    repo.insertAttempt({
+      attemptId: "att-x",
+      conversationId: "conv-1",
+      cause: admitted.cause,
+      state: "admitted",
+      outcome: null,
+      openedAt: now,
+      settledAt: null,
+    });
 
     const restarted = newCore();
     restarted.recover();
-    expect(restarted.outcome(admitted.cause)).toMatchObject({ kind: "settled", outcome: { status: "interrupted" } });
+    expect(restarted.outcome(admitted.cause)).toMatchObject({
+      kind: "settled",
+      outcome: { status: "interrupted" },
+    });
     expect(restarted.outcome(queued.cause)).toEqual({ kind: "queued" });
   });
 
@@ -287,7 +334,12 @@ describe("conversation core for seats", () => {
 
 describe("conversation requests", () => {
   it("settles a wait when the owner answers and hints the waiting requester", async () => {
-    const questionId = requests.open({ conversationId: "conv-1", attemptId: "att-1", questionText: "Which file?", questions: [] });
+    const questionId = requests.open({
+      conversationId: "conv-1",
+      attemptId: "att-1",
+      questionText: "Which file?",
+      questions: [],
+    });
     const wait: PendingIntent = {
       id: "intent-q",
       requester: { kind: "context", id: "ctx-1" },
@@ -303,7 +355,11 @@ describe("conversation requests", () => {
     requests.answer(questionId, "notice.ts");
     expect(requests.outcome(wait.cause)).toEqual({
       kind: "settled",
-      outcome: { kind: "answered", question: "Which file?", answer: "notice.ts" },
+      outcome: {
+        kind: "answered",
+        question: "Which file?",
+        answer: "notice.ts",
+      },
     });
     expect(touched).toContainEqual({ kind: "context", id: "ctx-1" });
   });

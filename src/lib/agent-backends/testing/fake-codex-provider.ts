@@ -214,7 +214,10 @@ export function createFakeCodexProvider(
     ensureManagedSkillsBridge: async () =>
       ({ status: "skipped", reason: "no_bundle" }) as const,
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
-    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
+    discoverNativeCodexMcpServers: async () => ({
+      kind: "complete",
+      servers: [],
+    }),
     getCodexPricingOverrides: async () => null,
     readPersistedCostBaseline: async () => null,
     now: () => Date.now(),
@@ -309,7 +312,10 @@ export function createFakeCodexTaskPort(
       };
     },
     buildChildEnv: () => ({ NODE_ENV: "test" }),
-    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
+    discoverNativeCodexMcpServers: async () => ({
+      kind: "complete",
+      servers: [],
+    }),
     getCodexPricingOverrides: async () => null,
     // Conformance runs carry no `ccSessionScope`, so no session env contract
     // is ever built from these.
@@ -377,7 +383,10 @@ export function createEnvCapturingCodexTaskRunner(config: {
       return { startThread: () => thread, resumeThread: () => thread };
     },
     buildChildEnv: () => ({ ...config.ambientEnv }),
-    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
+    discoverNativeCodexMcpServers: async () => ({
+      kind: "complete",
+      servers: [],
+    }),
     getCodexPricingOverrides: async () => null,
     getServerUrl: () => config.serverUrl ?? null,
     getApiToken: () => config.apiToken ?? null,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ValidationRunResult } from "@/lib/validation/schemas";
-import type { ValidationSubmission, ValidationSystemSubmitRequest } from "@/lib/validation/service";
+import type {
+  ValidationSubmission,
+  ValidationSystemSubmitRequest,
+} from "@/lib/validation/service";
 import { createValidationCheckRunner } from "./validation-checks";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -12,7 +15,10 @@ const binding = {
   scope: { mode: "full" as const },
 };
 
-function harness(submission: ValidationSubmission, result?: ValidationRunResult) {
+function harness(
+  submission: ValidationSubmission,
+  result?: ValidationRunResult,
+) {
   const submitted: ValidationSystemSubmitRequest[] = [];
   const run = createValidationCheckRunner({
     service: {
@@ -64,11 +70,19 @@ describe("validation check runner", () => {
           return true;
         },
       },
-      branchOf: async () => ({ branchName: "csm/session", targetBranch: "main" }),
+      branchOf: async () => ({
+        branchName: "csm/session",
+        targetBranch: "main",
+      }),
       log: silent,
     });
     const controller = new AbortController();
-    const pending = run({ binding, bindingId: "ctx-1", command: "test", signal: controller.signal });
+    const pending = run({
+      binding,
+      bindingId: "ctx-1",
+      command: "test",
+      signal: controller.signal,
+    });
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort();
 
@@ -77,7 +91,12 @@ describe("validation check runner", () => {
   });
 
   it("runs the registered command against the binding's worktree and branch", async () => {
-    const h = harness(accepted, { kind: "passed", runId: "vrun-1", exitCode: 0, output: "ok" });
+    const h = harness(accepted, {
+      kind: "passed",
+      runId: "vrun-1",
+      exitCode: 0,
+      output: "ok",
+    });
     expect(await h.run()).toEqual({ status: "passed" });
     expect(h.submitted).toEqual([
       {
@@ -99,7 +118,12 @@ describe("validation check runner", () => {
 
   it("fails with the tail of the command's output", async () => {
     const output = `${"x".repeat(10_000)}\nsrc/a.ts(1,1): error TS2322`;
-    const h = harness(accepted, { kind: "failed", runId: "vrun-1", exitCode: 2, output });
+    const h = harness(accepted, {
+      kind: "failed",
+      runId: "vrun-1",
+      exitCode: 2,
+      output,
+    });
     const result = await h.run();
 
     expect(result.status).toBe("failed");
@@ -109,16 +133,33 @@ describe("validation check runner", () => {
 
   it("fails a timed-out run and reports cancelled or unstartable runs as unavailable", async () => {
     expect(
-      await harness(accepted, { kind: "timed_out", runId: "vrun-1", timeoutMs: 60_000, output: "" }).run(),
-    ).toMatchObject({ status: "failed", detail: expect.stringContaining("timed out") });
-    expect(await harness(accepted, { kind: "interrupted", runId: "vrun-1" }).run()).toMatchObject({
+      await harness(accepted, {
+        kind: "timed_out",
+        runId: "vrun-1",
+        timeoutMs: 60_000,
+        output: "",
+      }).run(),
+    ).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("timed out"),
+    });
+    expect(
+      await harness(accepted, { kind: "interrupted", runId: "vrun-1" }).run(),
+    ).toMatchObject({
       status: "unavailable",
     });
     expect(
       await harness({
         kind: "not_started",
-        result: { kind: "command_not_found", name: "typecheck", knownCommands: ["test", "lint"] },
+        result: {
+          kind: "command_not_found",
+          name: "typecheck",
+          knownCommands: ["test", "lint"],
+        },
       }).run(),
-    ).toMatchObject({ status: "unavailable", detail: expect.stringContaining("not registered") });
+    ).toMatchObject({
+      status: "unavailable",
+      detail: expect.stringContaining("not registered"),
+    });
   });
 });

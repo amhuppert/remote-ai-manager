@@ -32,7 +32,8 @@ const operationRowSchema = z.object({
   updated_at: z.string(),
 });
 
-const BINDING_COLUMNS = "binding_id, request_json, state, baseline, created_at, updated_at";
+const BINDING_COLUMNS =
+  "binding_id, request_json, state, baseline, created_at, updated_at";
 const OPERATION_COLUMNS = `cause, binding_id, requester_kind, requester_id, request_json,
   permit_controller_id, permit_generation, state, outcome_json, created_at, updated_at`;
 
@@ -58,7 +59,10 @@ function operationFromRow(raw: unknown): WorkspaceOperationRecord {
     permit:
       row.permit_controller_id === null || row.permit_generation === null
         ? null
-        : { controllerId: row.permit_controller_id, generation: row.permit_generation },
+        : {
+            controllerId: row.permit_controller_id,
+            generation: row.permit_generation,
+          },
     state: row.state,
     outcome: row.outcome_json === null ? null : JSON.parse(row.outcome_json),
     createdAt: row.created_at,
@@ -70,17 +74,28 @@ function operationFromRow(raw: unknown): WorkspaceOperationRecord {
 export interface WorkspaceRepo {
   insertBindingIfAbsent(record: WorkspaceBindingRecord): void;
   getBinding(bindingId: string): WorkspaceBindingRecord | null;
-  listBindings(worktreePath: string, state: WorkspaceBindingRecord["state"]): WorkspaceBindingRecord[];
+  listBindings(
+    worktreePath: string,
+    state: WorkspaceBindingRecord["state"],
+  ): WorkspaceBindingRecord[];
   setBindingState(
     bindingId: string,
-    change: { state: WorkspaceBindingRecord["state"]; baseline: string | null; updatedAt: string },
+    change: {
+      state: WorkspaceBindingRecord["state"];
+      baseline: string | null;
+      updatedAt: string;
+    },
   ): void;
   insertOperationIfAbsent(record: WorkspaceOperationRecord): void;
   getOperation(cause: string): WorkspaceOperationRecord | null;
-  listOperations(state: WorkspaceOperationRecord["state"]): WorkspaceOperationRecord[];
+  listOperations(
+    state: WorkspaceOperationRecord["state"],
+  ): WorkspaceOperationRecord[];
   updateOperation(
     cause: string,
-    change: Partial<Pick<WorkspaceOperationRecord, "state" | "outcome" | "permit">> & { updatedAt: string },
+    change: Partial<
+      Pick<WorkspaceOperationRecord, "state" | "outcome" | "permit">
+    > & { updatedAt: string },
   ): void;
   deleteOperation(cause: string): void;
 }
@@ -90,7 +105,9 @@ export function createWorkspaceRepo(db: Db): WorkspaceRepo {
     `INSERT OR IGNORE INTO workspace_bindings (binding_id, worktree_path, request_json, state, baseline, created_at, updated_at)
      VALUES (@bindingId, @worktreePath, @requestJson, @state, @baseline, @createdAt, @updatedAt)`,
   );
-  const getBinding = db.prepare(`SELECT ${BINDING_COLUMNS} FROM workspace_bindings WHERE binding_id = ?`);
+  const getBinding = db.prepare(
+    `SELECT ${BINDING_COLUMNS} FROM workspace_bindings WHERE binding_id = ?`,
+  );
   const listBindings = db.prepare(
     `SELECT ${BINDING_COLUMNS} FROM workspace_bindings WHERE worktree_path = ? AND state = ? ORDER BY created_at, rowid`,
   );
@@ -102,11 +119,15 @@ export function createWorkspaceRepo(db: Db): WorkspaceRepo {
      VALUES (@cause, @bindingId, @requesterKind, @requesterId, @requestJson, @permitControllerId,
              @permitGeneration, @state, @outcomeJson, @createdAt, @updatedAt)`,
   );
-  const getOperation = db.prepare(`SELECT ${OPERATION_COLUMNS} FROM workspace_operations WHERE cause = ?`);
+  const getOperation = db.prepare(
+    `SELECT ${OPERATION_COLUMNS} FROM workspace_operations WHERE cause = ?`,
+  );
   const listOperations = db.prepare(
     `SELECT ${OPERATION_COLUMNS} FROM workspace_operations WHERE state = ? ORDER BY created_at, rowid`,
   );
-  const deleteOperation = db.prepare(`DELETE FROM workspace_operations WHERE cause = ?`);
+  const deleteOperation = db.prepare(
+    `DELETE FROM workspace_operations WHERE cause = ?`,
+  );
   const updateOperation = db.prepare(
     `UPDATE workspace_operations
         SET state = @state, outcome_json = @outcomeJson, permit_controller_id = @permitControllerId,
@@ -147,7 +168,10 @@ export function createWorkspaceRepo(db: Db): WorkspaceRepo {
         permitControllerId: parsed.permit?.controllerId ?? null,
         permitGeneration: parsed.permit?.generation ?? null,
         state: parsed.state,
-        outcomeJson: parsed.outcome === null || parsed.outcome === undefined ? null : JSON.stringify(parsed.outcome),
+        outcomeJson:
+          parsed.outcome === null || parsed.outcome === undefined
+            ? null
+            : JSON.stringify(parsed.outcome),
         createdAt: parsed.createdAt,
         updatedAt: parsed.updatedAt,
       });
@@ -161,12 +185,16 @@ export function createWorkspaceRepo(db: Db): WorkspaceRepo {
     },
     updateOperation(cause, change) {
       const current = this.getOperation(cause);
-      if (current === null) throw new Error(`Unknown workspace operation ${cause}`);
+      if (current === null)
+        throw new Error(`Unknown workspace operation ${cause}`);
       const next = { ...current, ...change };
       updateOperation.run({
         cause,
         state: next.state,
-        outcomeJson: next.outcome === null || next.outcome === undefined ? null : JSON.stringify(next.outcome),
+        outcomeJson:
+          next.outcome === null || next.outcome === undefined
+            ? null
+            : JSON.stringify(next.outcome),
         permitControllerId: next.permit?.controllerId ?? null,
         permitGeneration: next.permit?.generation ?? null,
         updatedAt: change.updatedAt,

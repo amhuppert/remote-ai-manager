@@ -26,7 +26,8 @@ const adviceResponseSchema = z
   .strict();
 
 /** Output contract for the implementer's response to fresh advice, generated from the parser's schema. */
-export const ADVICE_RESPONSE_OUTPUT_SCHEMA: Record<string, unknown> = z.toJSONSchema(adviceResponseSchema);
+export const ADVICE_RESPONSE_OUTPUT_SCHEMA: Record<string, unknown> =
+  z.toJSONSchema(adviceResponseSchema);
 
 export type AdviceStanding =
   | { kind: "not_applicable" }
@@ -80,7 +81,9 @@ export function recordAdviceResponse(
 ): { facts: ContextFacts; complete: boolean } {
   const parsed = adviceResponseSchema.safeParse(input.response);
   const byId = new Map(
-    parsed.success ? parsed.data.dispositions.map((d) => [d.advisoryId, d]) : [],
+    parsed.success
+      ? parsed.data.dispositions.map((d) => [d.advisoryId, d])
+      : [],
   );
   const complete =
     parsed.success &&
@@ -112,5 +115,8 @@ export function recordAdviceResponse(
       ...(entry.reason.trim().length > 0 ? { reason: entry.reason } : {}),
     };
   }
-  return { facts: { ...facts, advice: { ...facts.advice, dispositions } }, complete: true };
+  return {
+    facts: { ...facts, advice: { ...facts.advice, dispositions } },
+    complete: true,
+  };
 }

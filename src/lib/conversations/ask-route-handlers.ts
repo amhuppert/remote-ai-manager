@@ -171,7 +171,11 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
     // the answer resumes; the conversation itself never parks on the question.
     const seat = deps.seatAsk.seatFor(conversationId);
     if (seat !== null) {
-      return registerSeatAsk(deps, request, { conversationId, sessionName, seat });
+      return registerSeatAsk(deps, request, {
+        conversationId,
+        sessionName,
+        seat,
+      });
     }
 
     // Mode gate. A graph-workflow lane conversation (role "iteration" =

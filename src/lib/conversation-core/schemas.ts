@@ -109,7 +109,12 @@ export const attemptRecordSchema = z
     cause: z.string().min(1),
     state: attemptStateSchema,
     /** `not_admitted` when the permit closed before admission; otherwise the report. */
-    outcome: z.union([seatTurnReportSchema, z.object({ notAdmitted: z.string() }).strict()]).nullable(),
+    outcome: z
+      .union([
+        seatTurnReportSchema,
+        z.object({ notAdmitted: z.string() }).strict(),
+      ])
+      .nullable(),
     openedAt: z.string().min(1),
     settledAt: z.string().min(1).nullable(),
   })
@@ -136,7 +141,13 @@ export type CoreQuestionRecord = z.infer<typeof coreQuestionRecordSchema>;
 
 /** The settled outcome of a wait on a question, as requesters consume it. */
 export const questionReportSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("answered"), question: z.string(), answer: z.string() }).strict(),
+  z
+    .object({
+      kind: z.literal("answered"),
+      question: z.string(),
+      answer: z.string(),
+    })
+    .strict(),
   z.object({ kind: z.literal("withdrawn") }).strict(),
 ]);
 export type QuestionReport = z.infer<typeof questionReportSchema>;

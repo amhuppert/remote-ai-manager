@@ -40,7 +40,9 @@ export function candidateUnstable(facts: ContextFacts): boolean {
 export function needsOutputCapture(facts: ContextFacts): boolean {
   if (facts.contract.current.outputSchema === null) return false;
   const captured = facts.candidates.captured;
-  return captured === null || captured.workTurn !== facts.ledger.settledWorkTurns;
+  return (
+    captured === null || captured.workTurn !== facts.ledger.settledWorkTurns
+  );
 }
 
 export function retireCurrent(

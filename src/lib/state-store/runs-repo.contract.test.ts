@@ -25,11 +25,20 @@ const contract = contextContractSchema.parse({
   outputSchema: { type: "object" },
   allowTaskAddition: true,
   implementer: { id: "implementer", focus: "Backend", ...seat },
-  reviewers: [{ id: "reviewer-a", authority: "blocking", focus: "Correctness", ...seat }],
+  reviewers: [
+    { id: "reviewer-a", authority: "blocking", focus: "Correctness", ...seat },
+  ],
   checks: ["typecheck"],
   humanApproval: true,
   ownerQuestions: true,
-  documents: [{ artifactId: "a-1", path: "docs/x.md", description: "Design", readWhen: "Before editing" }],
+  documents: [
+    {
+      artifactId: "a-1",
+      path: "docs/x.md",
+      description: "Design",
+      readWhen: "Before editing",
+    },
+  ],
 });
 
 describe("runs repository", () => {
@@ -84,7 +93,10 @@ describe("runs repository", () => {
           control: { paused: true, cancelled: true },
         },
         revision: 4,
-        progress: { kind: "needs_owner" as const, reasons: ["implement: question"] },
+        progress: {
+          kind: "needs_owner" as const,
+          reasons: ["implement: question"],
+        },
         invocations: [
           {
             key: "implement",
@@ -126,10 +138,14 @@ describe("runs repository", () => {
       }),
       persist: (value) => {
         repo.recordBoundary(value);
-        if (value.notifiedAt !== null) repo.markNotified(value.seq, value.notifiedAt);
+        if (value.notifiedAt !== null)
+          repo.markNotified(value.seq, value.notifiedAt);
         return value;
       },
-      reload: (value) => createRunsRepo(db).boundaries(value.runId).find((b) => b.seq === value.seq) ?? null,
+      reload: (value) =>
+        createRunsRepo(db)
+          .boundaries(value.runId)
+          .find((b) => b.seq === value.seq) ?? null,
     });
   });
 });

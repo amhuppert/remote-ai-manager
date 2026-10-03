@@ -9,7 +9,10 @@ import {
   type ImplementerLaneWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
-import { toTaskRunResult, type TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import {
+  toTaskRunResult,
+  type TaskRunResult,
+} from "@/lib/workflows/conversation/turn-result";
 import type {
   ConversationTurnRequest,
   ConversationTurnSubmission,
@@ -18,7 +21,9 @@ import type { SeatTurnPort, SeatTurnResult } from "./executor";
 import type { SeatTurnRequest } from "./schemas";
 
 export interface ActorSeatTurnDeps {
-  executeConversationTurn(input: ConversationTurnSubmission): Promise<ConversationTurnExecution>;
+  executeConversationTurn(
+    input: ConversationTurnSubmission,
+  ): Promise<ConversationTurnExecution>;
   stopConversationActor(
     projectPath: string,
     sessionName: string,
@@ -26,7 +31,9 @@ export interface ActorSeatTurnDeps {
     reason: string,
   ): Promise<void>;
   getProjectDisplayName(projectPath: string): string;
-  composeWriteEnvelope(input: ComposeImplementerLaneWriteEnvelopeInput): ImplementerLaneWriteEnvelope;
+  composeWriteEnvelope(
+    input: ComposeImplementerLaneWriteEnvelopeInput,
+  ): ImplementerLaneWriteEnvelope;
   fsWriteRestriction(backend: AgentBackendId): FsWriteRestrictionSupport;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
@@ -49,25 +56,64 @@ function seatTurnResultFrom(
   const text = result.text ?? "";
   const finalText = text.length > 0 ? text : null;
   if (result.kind === "structured") {
-    return { status: "succeeded", finalText, structuredOutput: result.structuredOutput, outputIssue: null, failure: null, backendRef };
+    return {
+      status: "succeeded",
+      finalText,
+      structuredOutput: result.structuredOutput,
+      outputIssue: null,
+      failure: null,
+      backendRef,
+    };
   }
   if (result.kind === "text") {
-    return { status: "succeeded", finalText, structuredOutput: null, outputIssue: null, failure: null, backendRef };
+    return {
+      status: "succeeded",
+      finalText,
+      structuredOutput: null,
+      outputIssue: null,
+      failure: null,
+      backendRef,
+    };
   }
   // The structured-output gate refused the payload of a turn that ran: the work
   // happened, and the requester decides what a missing value means.
   if (result.failure?.kind === "schema_validation") {
     const issues = result.structuredOutputIssues ?? [];
-    const outputIssue = issues.length > 0 ? `${result.error}: ${issues.join("; ")}` : result.error;
-    return { status: "succeeded", finalText, structuredOutput: null, outputIssue, failure: null, backendRef };
+    const outputIssue =
+      issues.length > 0
+        ? `${result.error}: ${issues.join("; ")}`
+        : result.error;
+    return {
+      status: "succeeded",
+      finalText,
+      structuredOutput: null,
+      outputIssue,
+      failure: null,
+      backendRef,
+    };
   }
   if (timedOutAfterMs !== null) {
-    return { ...failed(`The turn timed out after ${timedOutAfterMs}ms`), finalText, backendRef };
+    return {
+      ...failed(`The turn timed out after ${timedOutAfterMs}ms`),
+      finalText,
+      backendRef,
+    };
   }
   if (result.interruption?.reason === "shutdown") {
-    return { ...failed(result.error), status: "interrupted", finalText, backendRef };
+    return {
+      ...failed(result.error),
+      status: "interrupted",
+      finalText,
+      backendRef,
+    };
   }
-  if (result.aborted) return { ...failed(result.error), status: "cancelled", finalText, backendRef };
+  if (result.aborted)
+    return {
+      ...failed(result.error),
+      status: "cancelled",
+      finalText,
+      backendRef,
+    };
   return { ...failed(result.error), finalText, backendRef };
 }
 
@@ -79,9 +125,14 @@ function seatTurnResultFrom(
  * core composes a pass-through capacity port while seats use this adapter.
  */
 export function createActorSeatTurns(deps: ActorSeatTurnDeps): SeatTurnPort {
-  function envelopeFor(
-    request: SeatTurnRequest,
-  ): { kind: "none" } | { kind: "envelope"; envelope: ImplementerLaneWriteEnvelope; restriction: FsWriteRestrictionSupport } | { kind: "refused"; reason: string } {
+  function envelopeFor(request: SeatTurnRequest):
+    | { kind: "none" }
+    | {
+        kind: "envelope";
+        envelope: ImplementerLaneWriteEnvelope;
+        restriction: FsWriteRestrictionSupport;
+      }
+    | { kind: "refused"; reason: string } {
     const { access, scope, worktreePath } = request.workspace;
     if (access !== "write" || scope.mode !== "owned") return { kind: "none" };
     const backend = request.seat.assignment.backend;
@@ -102,7 +153,10 @@ export function createActorSeatTurns(deps: ActorSeatTurnDeps): SeatTurnPort {
       });
       return { kind: "envelope", envelope, restriction };
     } catch (error) {
-      return { kind: "refused", reason: `Cannot establish the write envelope: ${getErrorMessage(error)}` };
+      return {
+        kind: "refused",
+        reason: `Cannot establish the write envelope: ${getErrorMessage(error)}`,
+      };
     }
   }
 
@@ -135,12 +189,16 @@ export function createActorSeatTurns(deps: ActorSeatTurnDeps): SeatTurnPort {
         ...(outputFormat !== undefined
           ? { outputFormat, structuredOutputTurns: "work_then_format" as const }
           : {}),
-        ...(confinement.kind === "envelope" ? { fsWritePolicy: confinement.envelope.policy } : {}),
+        ...(confinement.kind === "envelope"
+          ? { fsWritePolicy: confinement.envelope.policy }
+          : {}),
       };
 
       const timeoutMs = request.timeoutMs;
-      const timeout = timeoutMs === null ? null : AbortSignal.timeout(timeoutMs);
-      const turnSignal = timeout === null ? signal : AbortSignal.any([signal, timeout]);
+      const timeout =
+        timeoutMs === null ? null : AbortSignal.timeout(timeoutMs);
+      const turnSignal =
+        timeout === null ? signal : AbortSignal.any([signal, timeout]);
       let execution: ConversationTurnExecution;
       try {
         execution = await deps.executeConversationTurn({
@@ -165,7 +223,12 @@ export function createActorSeatTurns(deps: ActorSeatTurnDeps): SeatTurnPort {
         // after the turn and keeps its durable conversation for the next round.
         if (request.seat.role === "reviewer") {
           await deps
-            .stopConversationActor(binding.projectPath, binding.sessionName, conversationId, "seat_turn_completed")
+            .stopConversationActor(
+              binding.projectPath,
+              binding.sessionName,
+              conversationId,
+              "seat_turn_completed",
+            )
             .catch((error: unknown) =>
               deps.log.warn("conversation_core.seat_runtime_release_failed", {
                 conversationId,
@@ -174,14 +237,23 @@ export function createActorSeatTurns(deps: ActorSeatTurnDeps): SeatTurnPort {
             );
         }
       }
-      const timedOut = timeout !== null && timeout.aborted && !signal.aborted ? timeoutMs : null;
+      const timedOut =
+        timeout !== null && timeout.aborted && !signal.aborted
+          ? timeoutMs
+          : null;
       if (execution.kind === "refused") {
-        if (timedOut !== null) return failed(`The turn timed out after ${timedOut}ms before it started`);
+        if (timedOut !== null)
+          return failed(
+            `The turn timed out after ${timedOut}ms before it started`,
+          );
         return execution.code === "cancelled"
           ? { ...failed(execution.message), status: "cancelled" }
           : failed(execution.message);
       }
-      return seatTurnResultFrom(toTaskRunResult(execution.turn.outcome, outputFormat), timedOut);
+      return seatTurnResultFrom(
+        toTaskRunResult(execution.turn.outcome, outputFormat),
+        timedOut,
+      );
     },
   };
 }

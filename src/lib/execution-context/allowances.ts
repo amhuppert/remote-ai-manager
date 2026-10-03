@@ -29,7 +29,10 @@ export function reserveAllowance(
 }
 
 /** An admitted work turn stays charged whatever its outcome. */
-export function chargeAllowance(facts: ContextFacts, cause: string): ContextFacts {
+export function chargeAllowance(
+  facts: ContextFacts,
+  cause: string,
+): ContextFacts {
   return {
     ...facts,
     allowances: {
@@ -42,7 +45,10 @@ export function chargeAllowance(facts: ContextFacts, cause: string): ContextFact
 }
 
 /** A reservation withdrawn before admission is returned. */
-export function releaseAllowance(facts: ContextFacts, cause: string): ContextFacts {
+export function releaseAllowance(
+  facts: ContextFacts,
+  cause: string,
+): ContextFacts {
   return {
     ...facts,
     allowances: {

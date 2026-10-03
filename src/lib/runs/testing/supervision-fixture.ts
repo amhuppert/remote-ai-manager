@@ -1,4 +1,7 @@
-import type { SeatTurnPort, SeatTurnResult } from "@/lib/conversation-core/executor";
+import type {
+  SeatTurnPort,
+  SeatTurnResult,
+} from "@/lib/conversation-core/executor";
 import {
   DEFAULT_CONTEXT_POLICY,
   contextContractSchema,
@@ -25,7 +28,10 @@ export type TurnScript = (
   supervision: RunSupervision,
 ) => Promise<SeatTurnResult>;
 
-export function agentStartRequest(runId: string, contract: Partial<ContextContract> = {}): ContextStartRequest {
+export function agentStartRequest(
+  runId: string,
+  contract: Partial<ContextContract> = {},
+): ContextStartRequest {
   return {
     contextId: `${runId}.agent`,
     runId,
@@ -87,7 +93,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           harness.conversations += 1;
           return `conv-${harness.conversations}`;
         },
-        slots: { tryAcquire: async () => () => {}, waitForRelease: async () => {} },
+        slots: {
+          tryAcquire: async () => () => {},
+          waitForRelease: async () => {},
+        },
         evidence: {
           capture: async () => "git:tree:digest",
           sameContent: (a, b) => a === b,
@@ -108,9 +117,16 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
 }
 
 /** Lets every reconcile, turn and workspace operation run; `turnsSettle: false` skips waiting on turns. */
-export async function quiesce(s: RunSupervision, turnsSettle = true): Promise<void> {
+export async function quiesce(
+  s: RunSupervision,
+  turnsSettle = true,
+): Promise<void> {
   for (let i = 0; i < 30; i += 1) {
     await new Promise((resolve) => setImmediate(resolve));
-    await Promise.all([s.scheduler.idle(), turnsSettle ? s.core.idle() : null, s.workspace.drain()]);
+    await Promise.all([
+      s.scheduler.idle(),
+      turnsSettle ? s.core.idle() : null,
+      s.workspace.drain(),
+    ]);
   }
 }

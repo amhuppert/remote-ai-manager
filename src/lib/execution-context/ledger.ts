@@ -21,10 +21,16 @@ export function applyTaskCommand(
   const tasks = facts.ledger.tasks;
   if (command.kind === "add") {
     if (!facts.contract.current.allowTaskAddition) {
-      return { kind: "refused", reason: "This context does not allow adding tasks" };
+      return {
+        kind: "refused",
+        reason: "This context does not allow adding tasks",
+      };
     }
     if (tasks.some((task) => task.id === command.taskId)) {
-      return { kind: "refused", reason: `Task ${command.taskId} already exists` };
+      return {
+        kind: "refused",
+        reason: `Task ${command.taskId} already exists`,
+      };
     }
     const added: LedgerTask = {
       id: command.taskId,

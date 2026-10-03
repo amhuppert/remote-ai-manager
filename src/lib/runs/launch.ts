@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
 import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
-import { backendModelSelectionSchema, type BackendModelSelection } from "@/lib/agent-backends/schemas";
+import {
+  backendModelSelectionSchema,
+  type BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import {
   DEFAULT_CONTEXT_POLICY,
   contextContractSchema,
@@ -33,7 +36,14 @@ export const agentLaunchRequestSchema = z
     modelSelection: backendModelSelectionSchema.optional(),
     profile: agentProfileRefSchema.optional(),
     tasks: z
-      .array(z.object({ title: z.string().trim().min(1), instructions: z.string().trim().min(1).optional() }).strict())
+      .array(
+        z
+          .object({
+            title: z.string().trim().min(1),
+            instructions: z.string().trim().min(1).optional(),
+          })
+          .strict(),
+      )
       .optional(),
     acceptanceCriteria: z.array(z.string().trim().min(1)).optional(),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
@@ -53,7 +63,10 @@ export interface ResolvedSeat {
   modelSelection: BackendModelSelection;
 }
 
-const STANDARD_AGENT = { tier: "builtin" as const, id: STANDARD_AGENT_PROFILE_ID };
+const STANDARD_AGENT = {
+  tier: "builtin" as const,
+  id: STANDARD_AGENT_PROFILE_ID,
+};
 const GENERAL_REVIEWER = { tier: "builtin" as const, id: "general-reviewer" };
 
 function titleOf(request: AgentLaunchRequest): string {
@@ -83,11 +96,20 @@ export function resolveAgentLaunch(input: {
   const contract = contextContractSchema.parse({
     title,
     brief: request.brief,
-    tasks: (request.tasks ?? []).map((task, index) => ({ id: `t${index + 1}`, ...task })),
-    acceptanceCriteria: (request.acceptanceCriteria ?? []).map((text, index) => ({ id: `ac-${index + 1}`, text })),
+    tasks: (request.tasks ?? []).map((task, index) => ({
+      id: `t${index + 1}`,
+      ...task,
+    })),
+    acceptanceCriteria: (request.acceptanceCriteria ?? []).map(
+      (text, index) => ({ id: `ac-${index + 1}`, text }),
+    ),
     outputSchema: request.outputSchema ?? null,
     allowTaskAddition: true,
-    implementer: { id: "implementer", profile: request.profile ?? STANDARD_AGENT, ...seats.implementer },
+    implementer: {
+      id: "implementer",
+      profile: request.profile ?? STANDARD_AGENT,
+      ...seats.implementer,
+    },
     reviewers: reviewerRequests.map((reviewer, index) => ({
       id: `reviewer-${index + 1}`,
       authority: reviewer.authority,
@@ -123,7 +145,10 @@ export function resolveAgentLaunch(input: {
             scope: { mode: "full" },
           },
           contract,
-          policy: { ...DEFAULT_CONTEXT_POLICY, invocationTimeoutMs: request.timeoutMs ?? null },
+          policy: {
+            ...DEFAULT_CONTEXT_POLICY,
+            invocationTimeoutMs: request.timeoutMs ?? null,
+          },
         },
       },
     ],

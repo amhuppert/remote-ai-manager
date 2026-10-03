@@ -3,7 +3,11 @@ import type { ControlPermits } from "@/lib/control/permits";
 import type { PermitRef } from "@/lib/control/schemas";
 import type { Executor, OperationState } from "@/lib/intents/executor";
 import type { IntentLedger } from "@/lib/intents/ledger";
-import type { ExecutorKind, OwnerRef, PendingIntent } from "@/lib/intents/schemas";
+import type {
+  ExecutorKind,
+  OwnerRef,
+  PendingIntent,
+} from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
@@ -20,7 +24,11 @@ import {
   type ContextEffectRequest,
 } from "./effects";
 import { initialContextFacts } from "./facts";
-import { applyTaskCommand, type TaskCommand, type TaskCommandResult } from "./ledger";
+import {
+  applyTaskCommand,
+  type TaskCommand,
+  type TaskCommandResult,
+} from "./ledger";
 import { deriveProgress, type EffectView } from "./progress";
 import {
   contextStartRequestSchema,
@@ -30,7 +38,6 @@ import {
   type ContextRecord,
   type HaltDisposition,
 } from "./schemas";
-
 
 /** What Run observes while a Context runs, and its settled result. */
 export interface ContextProgressReport {
@@ -55,10 +62,14 @@ export interface ContextHostDeps {
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
-export const contextControllerId = (contextId: string): string => `context:${contextId}`;
+export const contextControllerId = (contextId: string): string =>
+  `context:${contextId}`;
 export const runControllerId = (runId: string): string => `run:${runId}`;
 
-const owner = (contextId: string): OwnerRef => ({ kind: "context", id: contextId });
+const owner = (contextId: string): OwnerRef => ({
+  kind: "context",
+  id: contextId,
+});
 
 function occurrenceKey(progress: ContextProgress): string {
   switch (progress.kind) {
@@ -100,7 +111,11 @@ export interface ContextHost extends Executor<ContextProgressReport> {
   recordReconcileFailure(contextId: string, error: unknown): void;
   observe(contextId: string): ContextObservation | null;
   /** `caller` is the calling conversation's controller binding, resolved from its record. */
-  applyTaskCommand(contextId: string, caller: SeatBinding | null, command: TaskCommand): TaskCommandResult;
+  applyTaskCommand(
+    contextId: string,
+    caller: SeatBinding | null,
+    command: TaskCommand,
+  ): TaskCommandResult;
   pause(contextId: string, expectedRevision: number): void;
   resume(
     contextId: string,
@@ -111,15 +126,25 @@ export interface ContextHost extends Executor<ContextProgressReport> {
   steer(contextId: string, expectedRevision: number, instruction: string): void;
   decide(
     contextId: string,
-    input: { candidateId: string; decision: "approved" | "rejected"; notes?: string },
+    input: {
+      candidateId: string;
+      decision: "approved" | "rejected";
+      notes?: string;
+    },
   ): void;
-  amend(contextId: string, expectedRevision: number, contract: ContextContract, reason: string): Promise<void>;
+  amend(
+    contextId: string,
+    expectedRevision: number,
+    contract: ContextContract,
+    reason: string,
+  ): Promise<void>;
 }
 
 export function createContextHost(deps: ContextHostDeps): ContextHost {
   function requireRecord(contextId: string): ContextRecord {
     const record = deps.contexts.get(contextId);
-    if (record === null) throw new ContextInputRefusedError(`Unknown context ${contextId}`);
+    if (record === null)
+      throw new ContextInputRefusedError(`Unknown context ${contextId}`);
     return record;
   }
 
@@ -137,18 +162,28 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
 
   function executorFor(intent: PendingIntent): Executor {
     if (intent.executor === "context") {
-      throw new Error(`Context ${intent.requester.id} cannot request another context`);
+      throw new Error(
+        `Context ${intent.requester.id} cannot request another context`,
+      );
     }
     return deps.executors[intent.executor];
   }
 
   /** Persists facts and the derived projection in the caller's transaction. */
-  function persist(record: ContextRecord, derivedFrom: ContextFacts, pending: PendingIntent[]): ContextRecord {
+  function persist(
+    record: ContextRecord,
+    derivedFrom: ContextFacts,
+    pending: PendingIntent[],
+  ): ContextRecord {
     const progress = deriveProgress(derivedFrom, effectViews(pending));
     let facts = derivedFrom;
     // A finished context gives its workspace back in the same transaction that
     // records the finish, so a later binding on the worktree is never stranded.
-    if (isTerminal(progress) && facts.binding.bound && !facts.binding.released) {
+    if (
+      isTerminal(progress) &&
+      facts.binding.bound &&
+      !facts.binding.released
+    ) {
       deps.releaseBinding(record.contextId);
       facts = { ...facts, binding: { ...facts.binding, released: true } };
     }
@@ -163,7 +198,14 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       progressOccurrence: occurrence,
       updatedAt,
     });
-    return { ...record, facts, progress, progressOccurrence: occurrence, revision, updatedAt };
+    return {
+      ...record,
+      facts,
+      progress,
+      progressOccurrence: occurrence,
+      revision,
+      updatedAt,
+    };
   }
 
   function permitOf(contextId: string): PermitRef | null {
@@ -187,13 +229,19 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       const state = executor.outcome(intent.cause);
       if (state.kind !== "queued" && state.kind !== "unknown") continue;
       await executor.withdraw(intent.cause);
-      const request: ContextEffectRequest = contextEffectRequestSchema.parse(intent.request);
+      const request: ContextEffectRequest = contextEffectRequestSchema.parse(
+        intent.request,
+      );
       deps.transaction(() => {
         const record = requireRecord(contextId);
         deps.intents.close(intent.id);
         persist(
           record,
-          advanceContext(record.facts, { kind: "withdrawn", cause: intent.cause, request }),
+          advanceContext(record.facts, {
+            kind: "withdrawn",
+            cause: intent.cause,
+            request,
+          }),
           deps.intents.pending(owner(contextId)),
         );
       });
@@ -206,7 +254,12 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
     }
   }
 
-  function applyControl(contextId: string, expectedRevision: number | null, input: ContextInput, permitChange?: () => void): void {
+  function applyControl(
+    contextId: string,
+    expectedRevision: number | null,
+    input: ContextInput,
+    permitChange?: () => void,
+  ): void {
     let before: ContextRecord | null = null;
     const after = deps.transaction(() => {
       const record = requireRecord(contextId);
@@ -266,16 +319,22 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         progress: record.progress,
         occurrence: record.progressOccurrence,
       };
-      if (!isTerminal(record.progress)) return { kind: "running", progress: report };
+      if (!isTerminal(record.progress))
+        return { kind: "running", progress: report };
       const accepted =
         record.progress.kind === "succeeded"
           ? record.facts.candidates.items.find(
-              (c) => record.progress.kind === "succeeded" && c.id === record.progress.candidateId,
+              (c) =>
+                record.progress.kind === "succeeded" &&
+                c.id === record.progress.candidateId,
             )
           : undefined;
       return {
         kind: "settled",
-        outcome: { ...report, ...(accepted !== undefined ? { output: accepted.output } : {}) },
+        outcome: {
+          ...report,
+          ...(accepted !== undefined ? { output: accepted.output } : {}),
+        },
       };
     },
 
@@ -333,7 +392,10 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         contextId,
         error: getErrorMessage(error),
       });
-      applyControl(contextId, null, { kind: "reconcile_failed", detail: getErrorMessage(error) });
+      applyControl(contextId, null, {
+        kind: "reconcile_failed",
+        detail: getErrorMessage(error),
+      });
     },
 
     observe(contextId) {
@@ -351,33 +413,50 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
 
     applyTaskCommand(contextId, caller, command) {
       const outcome = deps.transaction(
-        (): { result: TaskCommandResult; change: { before: ContextRecord; after: ContextRecord } | null } => {
+        (): {
+          result: TaskCommandResult;
+          change: { before: ContextRecord; after: ContextRecord } | null;
+        } => {
           const record = requireRecord(contextId);
           const facts = record.facts;
           if (
             caller === null ||
             caller.contextId !== contextId ||
             caller.assignmentId !== "implementer" ||
-            caller.replacement !== (facts.seats.replacements[caller.assignmentId] ?? 0)
+            caller.replacement !==
+              (facts.seats.replacements[caller.assignmentId] ?? 0)
           ) {
             return {
-              result: { kind: "refused", reason: "Only this context's current implementer may change its tasks" },
+              result: {
+                kind: "refused",
+                reason:
+                  "Only this context's current implementer may change its tasks",
+              },
               change: null,
             };
           }
           if (isTerminal(record.progress) || facts.control.cancelled) {
             return {
-              result: { kind: "refused", reason: `Context ${contextId} has finished; its tasks no longer change` },
+              result: {
+                kind: "refused",
+                reason: `Context ${contextId} has finished; its tasks no longer change`,
+              },
               change: null,
             };
           }
           const applied = applyTaskCommand(facts, command);
-          if (applied.kind === "refused") return { result: applied, change: null };
-          const after = persist(record, applied.facts, deps.intents.pending(owner(contextId)));
+          if (applied.kind === "refused")
+            return { result: applied, change: null };
+          const after = persist(
+            record,
+            applied.facts,
+            deps.intents.pending(owner(contextId)),
+          );
           return { result: applied, change: { before: record, after } };
         },
       );
-      if (outcome.change !== null) afterCommit(outcome.change.before, outcome.change.after);
+      if (outcome.change !== null)
+        afterCommit(outcome.change.before, outcome.change.after);
       return outcome.result;
     },
 
@@ -409,7 +488,10 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
               `The disposition names occurrence ${disposition.occurrence}, but the context is at ${record.progressOccurrence}`,
             );
           }
-          facts = advanceContext(facts, { kind: "disposition", disposition: disposition.disposition });
+          facts = advanceContext(facts, {
+            kind: "disposition",
+            disposition: disposition.disposition,
+          });
         }
         if (record.facts.control.paused) {
           deps.permits.reopen(contextControllerId(contextId), deps.now());
@@ -434,7 +516,11 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
     },
 
     steer(contextId, expectedRevision, instruction) {
-      applyControl(contextId, expectedRevision, { kind: "steer", id: randomUUID(), instruction });
+      applyControl(contextId, expectedRevision, {
+        kind: "steer",
+        id: randomUUID(),
+        instruction,
+      });
     },
 
     decide(contextId, input) {
@@ -449,13 +535,20 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
 
     async amend(contextId, expectedRevision, contract, reason) {
       const record = requireRecord(contextId);
-      const admitted = effectViews(deps.intents.pending(owner(contextId))).some((e) => e.admitted);
+      const admitted = effectViews(deps.intents.pending(owner(contextId))).some(
+        (e) => e.admitted,
+      );
       if (admitted || !record.facts.control.paused) {
         throw new ContextInputRefusedError(
           `Context ${contextId} must be paused with no admitted effect before amendment`,
         );
       }
-      applyControl(contextId, expectedRevision, { kind: "amend", contract, reason, at: deps.now() });
+      applyControl(contextId, expectedRevision, {
+        kind: "amend",
+        contract,
+        reason,
+        at: deps.now(),
+      });
       // Queued work was composed from the old contract; the next plan uses the new one.
       await withdrawUnadmitted(contextId);
     },

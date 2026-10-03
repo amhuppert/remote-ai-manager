@@ -338,7 +338,8 @@ export function createFakeClaudeTaskPort(
         if (args.prompt.includes(FAKE_CLAUDE_HANGING_PROMPT)) {
           // Hangs until the run's abort fires, then fails the way the SDK does.
           await new Promise<void>((_resolve, reject) => {
-            const fail = () => reject(new Error("Claude Code process aborted by user"));
+            const fail = () =>
+              reject(new Error("Claude Code process aborted by user"));
             if (abortSignal?.aborted) fail();
             else abortSignal?.addEventListener("abort", fail);
           });

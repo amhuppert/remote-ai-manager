@@ -100,18 +100,38 @@ export interface RunsRepo {
 
 export function createRunsRepo(db: Db): RunsRepo {
   const st = {
-    insert: db.prepare(`INSERT OR IGNORE INTO runs (${RUN}) VALUES (@runId, @projectPath, @sessionName, @ownerConversationId, @ownerSessionName, @launchCause, @factsJson, @revision, @progressJson, @invocationsJson, @createdAt, @updatedAt)`),
+    insert: db.prepare(
+      `INSERT OR IGNORE INTO runs (${RUN}) VALUES (@runId, @projectPath, @sessionName, @ownerConversationId, @ownerSessionName, @launchCause, @factsJson, @revision, @progressJson, @invocationsJson, @createdAt, @updatedAt)`,
+    ),
     get: db.prepare(`SELECT ${RUN} FROM runs WHERE run_id = ?`),
     byCause: db.prepare(`SELECT ${RUN} FROM runs WHERE launch_cause = ?`),
-    active: db.prepare(`SELECT ${RUN} FROM runs WHERE json_extract(progress_json, '$.kind') NOT IN ('succeeded','cancelled') ORDER BY created_at, rowid`),
-    byOwner: db.prepare(`SELECT ${RUN} FROM runs WHERE project_path = ? AND owner_conversation_id = ? ORDER BY created_at DESC, rowid DESC`),
-    update: db.prepare(`UPDATE runs SET facts_json = @factsJson, revision = revision + 1, progress_json = @progressJson, invocations_json = @invocationsJson, updated_at = @updatedAt WHERE run_id = @runId AND revision = @expectedRevision`),
-    recordBoundary: db.prepare(`INSERT OR IGNORE INTO run_boundaries (run_id, occurrence, kind, summary, detail_json, recorded_at) VALUES (@runId, @occurrence, @kind, @summary, @detailJson, @recordedAt)`),
-    boundaries: db.prepare(`SELECT ${BOUNDARY} FROM run_boundaries WHERE run_id = ? AND seq > ? ORDER BY seq`),
-    unnotified: db.prepare(`SELECT ${BOUNDARY} FROM run_boundaries WHERE run_id = ? AND notified_at IS NULL ORDER BY seq`),
-    markNotified: db.prepare(`UPDATE run_boundaries SET notified_at = ? WHERE seq = ?`),
-    latestSeq: db.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM run_boundaries WHERE run_id = ?`),
-    unnotifiedRuns: db.prepare(`SELECT DISTINCT run_id FROM run_boundaries WHERE notified_at IS NULL ORDER BY run_id`),
+    active: db.prepare(
+      `SELECT ${RUN} FROM runs WHERE json_extract(progress_json, '$.kind') NOT IN ('succeeded','cancelled') ORDER BY created_at, rowid`,
+    ),
+    byOwner: db.prepare(
+      `SELECT ${RUN} FROM runs WHERE project_path = ? AND owner_conversation_id = ? ORDER BY created_at DESC, rowid DESC`,
+    ),
+    update: db.prepare(
+      `UPDATE runs SET facts_json = @factsJson, revision = revision + 1, progress_json = @progressJson, invocations_json = @invocationsJson, updated_at = @updatedAt WHERE run_id = @runId AND revision = @expectedRevision`,
+    ),
+    recordBoundary: db.prepare(
+      `INSERT OR IGNORE INTO run_boundaries (run_id, occurrence, kind, summary, detail_json, recorded_at) VALUES (@runId, @occurrence, @kind, @summary, @detailJson, @recordedAt)`,
+    ),
+    boundaries: db.prepare(
+      `SELECT ${BOUNDARY} FROM run_boundaries WHERE run_id = ? AND seq > ? ORDER BY seq`,
+    ),
+    unnotified: db.prepare(
+      `SELECT ${BOUNDARY} FROM run_boundaries WHERE run_id = ? AND notified_at IS NULL ORDER BY seq`,
+    ),
+    markNotified: db.prepare(
+      `UPDATE run_boundaries SET notified_at = ? WHERE seq = ?`,
+    ),
+    latestSeq: db.prepare(
+      `SELECT COALESCE(MAX(seq), 0) AS seq FROM run_boundaries WHERE run_id = ?`,
+    ),
+    unnotifiedRuns: db.prepare(
+      `SELECT DISTINCT run_id FROM run_boundaries WHERE notified_at IS NULL ORDER BY run_id`,
+    ),
   };
   return {
     insertIfAbsent(record) {
@@ -154,7 +174,8 @@ export function createRunsRepo(db: Db): RunsRepo {
         invocationsJson: JSON.stringify(change.invocations),
         updatedAt: change.updatedAt,
       });
-      if (result.changes !== 1) throw new RunRevisionConflictError(runId, expectedRevision);
+      if (result.changes !== 1)
+        throw new RunRevisionConflictError(runId, expectedRevision);
       return expectedRevision + 1;
     },
     recordBoundary(boundary) {
@@ -177,10 +198,14 @@ export function createRunsRepo(db: Db): RunsRepo {
       st.markNotified.run(notifiedAt, seq);
     },
     latestBoundarySeq(runId) {
-      return z.object({ seq: z.number().int() }).parse(st.latestSeq.get(runId)).seq;
+      return z.object({ seq: z.number().int() }).parse(st.latestSeq.get(runId))
+        .seq;
     },
     runsWithUnnotifiedBoundaries() {
-      return z.array(z.object({ run_id: z.string() })).parse(st.unnotifiedRuns.all()).map((row) => row.run_id);
+      return z
+        .array(z.object({ run_id: z.string() }))
+        .parse(st.unnotifiedRuns.all())
+        .map((row) => row.run_id);
     },
   };
 }

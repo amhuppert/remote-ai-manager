@@ -3,7 +3,10 @@ import type { ConversationTurnExecution } from "@/lib/workflows/conversation/man
 import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
 import type { ImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import { createActorSeatTurns, type ActorSeatTurnDeps } from "./actor-seat-turns";
+import {
+  createActorSeatTurns,
+  type ActorSeatTurnDeps,
+} from "./actor-seat-turns";
 import type { SeatBindingRecord, SeatTurnRequest } from "./schemas";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -55,12 +58,21 @@ const reviewRequest = (): SeatTurnRequest =>
   request({
     kind: "review",
     workspace: { ...request().workspace, access: "stable_read" },
-    seat: { ...request().seat, assignmentId: "reviewer-a", role: "reviewer", canAsk: false },
+    seat: {
+      ...request().seat,
+      assignmentId: "reviewer-a",
+      role: "reviewer",
+      canAsk: false,
+    },
     outputSchema: { type: "object" },
     message: "Review the candidate",
   });
 
-function harness(answer: (input: ConversationTurnSubmission) => Promise<ConversationTurnExecution>) {
+function harness(
+  answer: (
+    input: ConversationTurnSubmission,
+  ) => Promise<ConversationTurnExecution>,
+) {
   const submissions: ConversationTurnSubmission[] = [];
   const stopped: string[] = [];
   const deps: ActorSeatTurnDeps = {
@@ -73,7 +85,11 @@ function harness(answer: (input: ConversationTurnSubmission) => Promise<Conversa
     },
     getProjectDisplayName: () => "repo",
     composeWriteEnvelope: (input): ImplementerLaneWriteEnvelope => ({
-      policy: { mode: "allowlist", allowWrite: [`${input.worktreePath}/src/api`], denyWrite: [] },
+      policy: {
+        mode: "allowlist",
+        allowWrite: [`${input.worktreePath}/src/api`],
+        denyWrite: [],
+      },
       worktreeRoot: input.worktreePath,
       contextScratchDir: "/scratch/ctx-1",
       contextTmpDir: "/tmp/ctx-1",
@@ -90,7 +106,14 @@ const run = (
   h: ReturnType<typeof harness>,
   req: SeatTurnRequest,
   signal: AbortSignal = new AbortController().signal,
-) => h.turns.run({ conversationId: "conv-1", binding, request: req, attemptId: "attempt-1", signal });
+) =>
+  h.turns.run({
+    conversationId: "conv-1",
+    binding,
+    request: req,
+    attemptId: "attempt-1",
+    signal,
+  });
 
 describe("actor seat turns", () => {
   it("dispatches a work turn on the seat's own conversation and reports its text", async () => {
@@ -115,7 +138,12 @@ describe("actor seat turns", () => {
       kind: "durable",
       address: {
         projectPath: "/repo",
-        target: { scope: "session", projectName: "repo", sessionName: "session", conversationId: "conv-1" },
+        target: {
+          scope: "session",
+          projectName: "repo",
+          sessionName: "session",
+          conversationId: "conv-1",
+        },
       },
       worktreePath: "/repo/.worktrees/session",
     });
@@ -135,13 +163,21 @@ describe("actor seat turns", () => {
   it("asks a review for structured output and releases the reviewer's runtime afterwards", async () => {
     const h = harness(async () =>
       settledConversationTurn({
-        outcome: { kind: "completed", text: "", structuredOutput: { verdict: "pass", findings: [], advisories: [] } },
+        outcome: {
+          kind: "completed",
+          text: "",
+          structuredOutput: { verdict: "pass", findings: [], advisories: [] },
+        },
       }),
     );
     const result = await run(h, reviewRequest());
 
     expect(result.status).toBe("succeeded");
-    expect(result.structuredOutput).toEqual({ verdict: "pass", findings: [], advisories: [] });
+    expect(result.structuredOutput).toEqual({
+      verdict: "pass",
+      findings: [],
+      advisories: [],
+    });
     expect(h.submissions[0]?.turn).toMatchObject({
       outputFormat: { type: "json_schema", schema: { type: "object" } },
       structuredOutputTurns: "work_then_format",
@@ -160,15 +196,21 @@ describe("actor seat turns", () => {
             backend: "claude",
             failureKind: "schema_validation",
             message: "structured output failed validation",
-            backendDetails: { issues: ["/verdict: must be equal to one of the allowed values"] },
+            backendDetails: {
+              issues: ["/verdict: must be equal to one of the allowed values"],
+            },
           },
-          contentBlocks: [{ type: "text", text: "{\"verdict\":\"maybe\"}" }],
+          contentBlocks: [{ type: "text", text: '{"verdict":"maybe"}' }],
         },
       }),
     );
     const result = await run(h, reviewRequest());
 
-    expect(result).toMatchObject({ status: "succeeded", structuredOutput: null, failure: null });
+    expect(result).toMatchObject({
+      status: "succeeded",
+      structuredOutput: null,
+      failure: null,
+    });
     expect(result.outputIssue).toContain("structured output");
   });
 
@@ -176,17 +218,34 @@ describe("actor seat turns", () => {
     const failed = await run(
       harness(async () =>
         settledConversationTurn({
-          outcome: { kind: "failed", error: { backend: "claude", failureKind: "backend_error", message: "SDK transport closed" } },
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "backend_error",
+              message: "SDK transport closed",
+            },
+          },
         }),
       ),
       request(),
     );
-    expect(failed).toMatchObject({ status: "failed", failure: "SDK transport closed" });
+    expect(failed).toMatchObject({
+      status: "failed",
+      failure: "SDK transport closed",
+    });
 
     const aborted = await run(
       harness(async () =>
         settledConversationTurn({
-          outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } },
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "aborted",
+              message: "aborted",
+            },
+          },
         }),
       ),
       request(),
@@ -194,10 +253,17 @@ describe("actor seat turns", () => {
     expect(aborted.status).toBe("cancelled");
 
     const refused = await run(
-      harness(async () => ({ kind: "refused", code: "not_found", message: "Conversation conv-1 not found" })),
+      harness(async () => ({
+        kind: "refused",
+        code: "not_found",
+        message: "Conversation conv-1 not found",
+      })),
       request(),
     );
-    expect(refused).toMatchObject({ status: "failed", failure: "Conversation conv-1 not found" });
+    expect(refused).toMatchObject({
+      status: "failed",
+      failure: "Conversation conv-1 not found",
+    });
   });
 
   it("aborts a turn that outlives its timeout and reports it as failed", async () => {
@@ -207,7 +273,14 @@ describe("actor seat turns", () => {
           input.signal?.addEventListener("abort", () =>
             resolve(
               settledConversationTurn({
-                outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } },
+                outcome: {
+                  kind: "failed",
+                  error: {
+                    backend: "claude",
+                    failureKind: "aborted",
+                    message: "aborted",
+                  },
+                },
               }),
             ),
           );
@@ -224,7 +297,11 @@ describe("actor seat turns", () => {
       (input) =>
         new Promise((resolve) => {
           input.signal?.addEventListener("abort", () =>
-            resolve({ kind: "refused", code: "cancelled", message: "cancelled while waiting for the conversation" }),
+            resolve({
+              kind: "refused",
+              code: "cancelled",
+              message: "cancelled while waiting for the conversation",
+            }),
           );
         }),
     );
@@ -235,12 +312,26 @@ describe("actor seat turns", () => {
   });
 
   it("confines an owned write scope with its write envelope", async () => {
-    const h = harness(async () => settledConversationTurn({ outcome: { kind: "completed", text: "ok" } }));
-    await run(h, request({ workspace: { ...request().workspace, scope: { mode: "owned", paths: ["src/api"] } } }));
+    const h = harness(async () =>
+      settledConversationTurn({ outcome: { kind: "completed", text: "ok" } }),
+    );
+    await run(
+      h,
+      request({
+        workspace: {
+          ...request().workspace,
+          scope: { mode: "owned", paths: ["src/api"] },
+        },
+      }),
+    );
 
     const turn = h.submissions[0]?.turn;
     expect(turn).toMatchObject({
-      fsWritePolicy: { mode: "allowlist", allowWrite: ["/repo/.worktrees/session/src/api"], denyWrite: [] },
+      fsWritePolicy: {
+        mode: "allowlist",
+        allowWrite: ["/repo/.worktrees/session/src/api"],
+        denyWrite: [],
+      },
     });
     expect(turn?.promptText).toContain("Writable repository paths");
     expect(turn?.promptText).toContain("Implement the task");
@@ -253,7 +344,12 @@ describe("actor seat turns", () => {
     const result = await turns.run({
       conversationId: "conv-1",
       binding,
-      request: request({ workspace: { ...request().workspace, scope: { mode: "owned", paths: ["src/api"] } } }),
+      request: request({
+        workspace: {
+          ...request().workspace,
+          scope: { mode: "owned", paths: ["src/api"] },
+        },
+      }),
       attemptId: "attempt-1",
       signal: new AbortController().signal,
     });

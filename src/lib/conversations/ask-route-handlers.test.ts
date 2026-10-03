@@ -284,14 +284,27 @@ describe("POST conversation ask", () => {
   });
 
   describe("supervised seat conversations", () => {
-    function seatDeps(seat: { canAsk: boolean; attemptId: string | null; openQuestionId: string | null }) {
-      const opened: Array<{ conversationId: string; attemptId: string; questionText: string }> = [];
+    function seatDeps(seat: {
+      canAsk: boolean;
+      attemptId: string | null;
+      openQuestionId: string | null;
+    }) {
+      const opened: Array<{
+        conversationId: string;
+        attemptId: string;
+        questionText: string;
+      }> = [];
       const made = makeDeps({
         async getSession() {
-          return { conversations: [conv({ role: "iteration", activeTurnSource: "workflow" })] };
+          return {
+            conversations: [
+              conv({ role: "iteration", activeTurnSource: "workflow" }),
+            ],
+          };
         },
         seatAsk: {
-          seatFor: (conversationId) => (conversationId === "conv-1" ? seat : null),
+          seatFor: (conversationId) =>
+            conversationId === "conv-1" ? seat : null,
           open(input) {
             opened.push(input);
             return "seat-q-1";
@@ -307,10 +320,16 @@ describe("POST conversation ask", () => {
         attemptId: "attempt-1",
         openQuestionId: null,
       });
-      const res = await createAskQuestionHandlers(deps).POST(makeRequest(validBody), { params });
+      const res = await createAskQuestionHandlers(deps).POST(
+        makeRequest(validBody),
+        { params },
+      );
 
       expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toEqual({ ok: true, questionBatchId: "seat-q-1" });
+      await expect(res.json()).resolves.toEqual({
+        ok: true,
+        questionBatchId: "seat-q-1",
+      });
       expect(opened).toEqual([
         expect.objectContaining({
           conversationId: "conv-1",
@@ -323,21 +342,48 @@ describe("POST conversation ask", () => {
     });
 
     it("denies a seat whose contract does not allow owner questions", async () => {
-      const { deps, opened } = seatDeps({ canAsk: false, attemptId: "attempt-1", openQuestionId: null });
-      const res = await createAskQuestionHandlers(deps).POST(makeRequest(validBody), { params });
+      const { deps, opened } = seatDeps({
+        canAsk: false,
+        attemptId: "attempt-1",
+        openQuestionId: null,
+      });
+      const res = await createAskQuestionHandlers(deps).POST(
+        makeRequest(validBody),
+        { params },
+      );
 
       expect(res.status).toBe(403);
       expect(opened).toEqual([]);
     });
 
     it("refuses an ask outside a seat turn and a second ask in the same turn", async () => {
-      const outside = seatDeps({ canAsk: true, attemptId: null, openQuestionId: null });
-      expect((await createAskQuestionHandlers(outside.deps).POST(makeRequest(validBody), { params })).status).toBe(409);
+      const outside = seatDeps({
+        canAsk: true,
+        attemptId: null,
+        openQuestionId: null,
+      });
+      expect(
+        (
+          await createAskQuestionHandlers(outside.deps).POST(
+            makeRequest(validBody),
+            { params },
+          )
+        ).status,
+      ).toBe(409);
 
-      const again = seatDeps({ canAsk: true, attemptId: "attempt-1", openQuestionId: "seat-q-0" });
-      const res = await createAskQuestionHandlers(again.deps).POST(makeRequest(validBody), { params });
+      const again = seatDeps({
+        canAsk: true,
+        attemptId: "attempt-1",
+        openQuestionId: "seat-q-0",
+      });
+      const res = await createAskQuestionHandlers(again.deps).POST(
+        makeRequest(validBody),
+        { params },
+      );
       expect(res.status).toBe(409);
-      await expect(res.json()).resolves.toMatchObject({ code: "question_batch_pending" });
+      await expect(res.json()).resolves.toMatchObject({
+        code: "question_batch_pending",
+      });
       expect([...outside.opened, ...again.opened]).toEqual([]);
     });
   });

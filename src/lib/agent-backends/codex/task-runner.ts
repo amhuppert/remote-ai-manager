@@ -570,7 +570,8 @@ export class CodexTaskRunner implements AgentTaskRunner {
       );
       mcpServersConfig = buildCodexMcpServersConfig({
         managedMcpServers: translated.mcpServers,
-        nativeServers: suppression.kind === "suppress" ? suppression.servers : [],
+        nativeServers:
+          suppression.kind === "suppress" ? suppression.servers : [],
       });
       logger.info("codex-task-runner.mcp_config", {
         serverCount: Object.keys(mcpServersConfig).length,

@@ -24,8 +24,17 @@ import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { ContextInputRefusedError } from "@/lib/execution-context/advance";
 import { haltDispositionSchema } from "@/lib/execution-context/schemas";
 import type { Logger } from "@/lib/logging";
-import { jsonError, notFound, resolveProjectSessionOr404 } from "@/lib/shared/route-resolution";
-import { agentLaunchRequestSchema, resolveAgentLaunch, type AgentLaunchRequest, type ResolvedSeat } from "./launch";
+import {
+  jsonError,
+  notFound,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
+import {
+  agentLaunchRequestSchema,
+  resolveAgentLaunch,
+  type AgentLaunchRequest,
+  type ResolvedSeat,
+} from "./launch";
 import { RunControlRefusedError } from "./host";
 import { describeRun } from "./observation";
 import type { RunRecord } from "./schemas";
@@ -40,28 +49,45 @@ export interface RunRouteDeps {
   getSession(
     projectPath: string,
     sessionName: string,
-  ): Promise<{ sessionName: string; worktreePath: string; conversations: Array<{ id: string }> } | null>;
+  ): Promise<{
+    sessionName: string;
+    worktreePath: string;
+    conversations: Array<{ id: string }>;
+  } | null>;
   supervision(): RunSupervision;
   /** Backend, model selection and admission for every seat the launch names. */
   resolveSeats(input: {
     projectPath: string;
     request: AgentLaunchRequest;
   }): Promise<
-    | { ok: true; seats: { implementer: ResolvedSeat; reviewers: ResolvedSeat[] } }
+    | {
+        ok: true;
+        seats: { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
+      }
     | { ok: false; status: number; error: string; code?: string }
   >;
   newRunId(): string;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
-const answerSchema = z.object({ questionId: z.string().min(1), text: z.string().min(1) }).strict();
+const answerSchema = z
+  .object({ questionId: z.string().min(1), text: z.string().min(1) })
+  .strict();
 const controlSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pause") }).strict(),
   z
     .object({
       action: z.literal("resume"),
       dispositions: z
-        .array(z.object({ contextId: z.string().min(1), occurrence: z.string().min(1), disposition: haltDispositionSchema }).strict())
+        .array(
+          z
+            .object({
+              contextId: z.string().min(1),
+              occurrence: z.string().min(1),
+              disposition: haltDispositionSchema,
+            })
+            .strict(),
+        )
         .optional(),
     })
     .strict(),
@@ -90,7 +116,10 @@ const taskCommandSchema = z.discriminatedUnion("kind", [
 
 /** Refusals the Run or a Context reports without changing anything; anything else is a fault. */
 function isRefusal(error: unknown): error is Error {
-  return error instanceof RunControlRefusedError || error instanceof ContextInputRefusedError;
+  return (
+    error instanceof RunControlRefusedError ||
+    error instanceof ContextInputRefusedError
+  );
 }
 
 interface Caller {
@@ -100,7 +129,11 @@ interface Caller {
   conversationId: string;
 }
 
-async function readBody<T>(request: Request, schema: z.ZodType<T>, what: string): Promise<{ ok: true; value: T } | { ok: false; response: Response }> {
+async function readBody<T>(
+  request: Request,
+  schema: z.ZodType<T>,
+  what: string,
+): Promise<{ ok: true; value: T } | { ok: false; response: Response }> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -114,7 +147,10 @@ async function readBody<T>(request: Request, schema: z.ZodType<T>, what: string)
     response: NextResponse.json(
       {
         error: `Invalid ${what}`,
-        issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
       },
       { status: 400 },
     ),
@@ -123,7 +159,10 @@ async function readBody<T>(request: Request, schema: z.ZodType<T>, what: string)
 
 export function createRunRouteHandlers(
   deps: RunRouteDeps,
-): Record<"launch" | "show" | "answer" | "control" | "decide" | "tasks", Handler> {
+): Record<
+  "launch" | "show" | "answer" | "control" | "decide" | "tasks",
+  Handler
+> {
   /** Token, session and a verified calling conversation of that session. */
   async function resolveCaller(
     request: Request,
@@ -132,14 +171,22 @@ export function createRunRouteHandlers(
     const denied = await deps.auth.requireToken(request);
     if (denied) return { ok: false, response: denied };
     const { name, session } = await context.params;
-    const resolved = await resolveProjectSessionOr404(deps, name ?? "", session ?? "");
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      name ?? "",
+      session ?? "",
+    );
     if (!resolved.ok) return resolved;
     const { projectPath, session: sessionState } = resolved.value;
-    const identity = readConversationIdentity(request.headers.get(CONVERSATION_IDENTITY_HEADER));
+    const identity = readConversationIdentity(
+      request.headers.get(CONVERSATION_IDENTITY_HEADER),
+    );
     if (
       identity.kind !== "valid" ||
       identity.scope.sessionName !== sessionState.sessionName ||
-      !sessionState.conversations.some((conversation) => conversation.id === identity.scope.conversationId)
+      !sessionState.conversations.some(
+        (conversation) => conversation.id === identity.scope.conversationId,
+      )
     ) {
       return {
         ok: false,
@@ -167,12 +214,19 @@ export function createRunRouteHandlers(
   async function resolveOwnedRun(
     request: Request,
     context: RouteContext,
-  ): Promise<{ ok: true; caller: Caller; run: RunRecord } | { ok: false; response: Response }> {
+  ): Promise<
+    | { ok: true; caller: Caller; run: RunRecord }
+    | { ok: false; response: Response }
+  > {
     const resolved = await resolveCaller(request, context);
     if (!resolved.ok) return resolved;
     const { runId } = await context.params;
     const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-    if (run === null || run.projectPath !== resolved.caller.projectPath || run.sessionName !== resolved.caller.sessionName) {
+    if (
+      run === null ||
+      run.projectPath !== resolved.caller.projectPath ||
+      run.sessionName !== resolved.caller.sessionName
+    ) {
       return { ok: false, response: notFound(`Run "${runId}" not found`) };
     }
     if (run.ownerConversationId !== resolved.caller.conversationId) {
@@ -193,7 +247,11 @@ export function createRunRouteHandlers(
     async launch(request, context) {
       const resolved = await resolveCaller(request, context);
       if (!resolved.ok) return resolved.response;
-      const body = await readBody(request, agentLaunchRequestSchema, "agent run launch");
+      const body = await readBody(
+        request,
+        agentLaunchRequestSchema,
+        "agent run launch",
+      );
       if (!body.ok) return body.response;
       if (body.value.humanApproval === true) {
         return jsonError(
@@ -205,10 +263,16 @@ export function createRunRouteHandlers(
         );
       }
       const { caller } = resolved;
-      const seats = await deps.resolveSeats({ projectPath: caller.projectPath, request: body.value });
+      const seats = await deps.resolveSeats({
+        projectPath: caller.projectPath,
+        request: body.value,
+      });
       if (!seats.ok) {
         return NextResponse.json(
-          { error: seats.error, ...(seats.code !== undefined ? { code: seats.code } : {}) },
+          {
+            error: seats.error,
+            ...(seats.code !== undefined ? { code: seats.code } : {}),
+          },
           { status: seats.status },
         );
       }
@@ -218,8 +282,14 @@ export function createRunRouteHandlers(
         runId,
         cause: `launch:${runId}`,
         projectPath: caller.projectPath,
-        session: { sessionName: caller.sessionName, worktreePath: caller.worktreePath },
-        owner: { conversationId: caller.conversationId, sessionName: caller.sessionName },
+        session: {
+          sessionName: caller.sessionName,
+          worktreePath: caller.worktreePath,
+        },
+        owner: {
+          conversationId: caller.conversationId,
+          sessionName: caller.sessionName,
+        },
         seats: seats.seats,
       });
       const record = await deps.supervision().runs.launch(launch);
@@ -232,7 +302,9 @@ export function createRunRouteHandlers(
       return NextResponse.json(
         {
           runId,
-          contextIds: launch.invocations.map((invocation) => invocation.request.contextId),
+          contextIds: launch.invocations.map(
+            (invocation) => invocation.request.contextId,
+          ),
           progress: record.progress,
         },
         { status: 202 },
@@ -246,7 +318,9 @@ export function createRunRouteHandlers(
       const supervision = deps.supervision();
       const run = supervision.runs.observe(runId ?? "")?.record ?? null;
       const inSession =
-        run !== null && run.projectPath === resolved.caller.projectPath && run.sessionName === resolved.caller.sessionName;
+        run !== null &&
+        run.projectPath === resolved.caller.projectPath &&
+        run.sessionName === resolved.caller.sessionName;
       const view = inSession ? describeRun(supervision, run.runId) : null;
       if (view === null) return notFound(`Run "${runId}" not found`);
       return NextResponse.json(view);
@@ -259,13 +333,30 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const supervision = deps.supervision();
       const question = supervision.requests.question(body.value.questionId);
-      const seat = question === null ? null : supervision.core.seatBinding(question.conversationId);
-      const belongs = seat !== null && owned.run.facts.invocations.some((i) => i.contextId === seat.contextId);
-      if (!belongs) return notFound(`Question "${body.value.questionId}" is not open in run ${owned.run.runId}`);
-      if (!supervision.requests.answer(body.value.questionId, body.value.text)) {
-        return jsonError(`Question "${body.value.questionId}" is no longer open`, 409, "question_closed");
+      const seat =
+        question === null
+          ? null
+          : supervision.core.seatBinding(question.conversationId);
+      const belongs =
+        seat !== null &&
+        owned.run.facts.invocations.some((i) => i.contextId === seat.contextId);
+      if (!belongs)
+        return notFound(
+          `Question "${body.value.questionId}" is not open in run ${owned.run.runId}`,
+        );
+      if (
+        !supervision.requests.answer(body.value.questionId, body.value.text)
+      ) {
+        return jsonError(
+          `Question "${body.value.questionId}" is no longer open`,
+          409,
+          "question_closed",
+        );
       }
-      deps.log.info("runs.question_answered", { runId: owned.run.runId, questionId: body.value.questionId });
+      deps.log.info("runs.question_answered", {
+        runId: owned.run.runId,
+        questionId: body.value.questionId,
+      });
       return NextResponse.json({ ok: true });
     },
 
@@ -279,15 +370,26 @@ export function createRunRouteHandlers(
       // The CLI holds no revision, so the act applies to the run as it is now.
       try {
         if (body.value.action === "pause") await runs.pause(runId, null);
-        if (body.value.action === "resume") await runs.resume(runId, null, body.value.dispositions ?? []);
+        if (body.value.action === "resume")
+          await runs.resume(runId, null, body.value.dispositions ?? []);
         if (body.value.action === "cancel") await runs.cancel(runId, null);
       } catch (error) {
         if (!isRefusal(error)) throw error;
-        deps.log.warn("runs.control_refused", { runId, action: body.value.action, error: error.message });
+        deps.log.warn("runs.control_refused", {
+          runId,
+          action: body.value.action,
+          error: error.message,
+        });
         return jsonError(error.message, 409, "run_control_refused");
       }
-      deps.log.info("runs.control_applied", { runId, action: body.value.action });
-      return NextResponse.json({ ok: true, progress: runs.observe(runId)?.record.progress ?? null });
+      deps.log.info("runs.control_applied", {
+        runId,
+        action: body.value.action,
+      });
+      return NextResponse.json({
+        ok: true,
+        progress: runs.observe(runId)?.record.progress ?? null,
+      });
     },
 
     // Human approval is a person's decision: no agent credential may make it,
@@ -309,10 +411,18 @@ export function createRunRouteHandlers(
         );
       }
       const { name, session, runId } = await context.params;
-      const resolved = await resolveProjectSessionOr404(deps, name ?? "", session ?? "");
+      const resolved = await resolveProjectSessionOr404(
+        deps,
+        name ?? "",
+        session ?? "",
+      );
       if (!resolved.ok) return resolved.response;
       const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-      if (run === null || run.projectPath !== resolved.value.projectPath || run.sessionName !== resolved.value.session.sessionName) {
+      if (
+        run === null ||
+        run.projectPath !== resolved.value.projectPath ||
+        run.sessionName !== resolved.value.session.sessionName
+      ) {
         return notFound(`Run "${runId}" not found`);
       }
       const body = await readBody(request, decideSchema, "approval decision");
@@ -322,10 +432,18 @@ export function createRunRouteHandlers(
         deps.supervision().runs.decide(run.runId, contextId, decision);
       } catch (error) {
         if (!isRefusal(error)) throw error;
-        deps.log.warn("runs.decision_refused", { runId: run.runId, contextId, error: error.message });
+        deps.log.warn("runs.decision_refused", {
+          runId: run.runId,
+          contextId,
+          error: error.message,
+        });
         return jsonError(error.message, 409, "decision_refused");
       }
-      deps.log.info("runs.decision_recorded", { runId: run.runId, contextId, decision: decision.decision });
+      deps.log.info("runs.decision_recorded", {
+        runId: run.runId,
+        contextId,
+        decision: decision.decision,
+      });
       return NextResponse.json({ ok: true });
     },
 
@@ -337,10 +455,19 @@ export function createRunRouteHandlers(
       const supervision = deps.supervision();
       const seat = supervision.core.seatBinding(resolved.caller.conversationId);
       if (seat === null) {
-        return jsonError("Only a supervised seat conversation changes its context's tasks", 403, "not_a_seat");
+        return jsonError(
+          "Only a supervised seat conversation changes its context's tasks",
+          403,
+          "not_a_seat",
+        );
       }
-      const result = supervision.contexts.applyTaskCommand(seat.contextId, seat, body.value);
-      if (result.kind === "refused") return jsonError(result.reason, 409, "task_command_refused");
+      const result = supervision.contexts.applyTaskCommand(
+        seat.contextId,
+        seat,
+        body.value,
+      );
+      if (result.kind === "refused")
+        return jsonError(result.reason, 409, "task_command_refused");
       return NextResponse.json({ ok: true, contextId: seat.contextId });
     },
   };

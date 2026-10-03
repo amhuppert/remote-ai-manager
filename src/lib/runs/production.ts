@@ -24,7 +24,10 @@ const logger = createLogger("runs");
  * admission and one set of running turns.
  */
 export function getRunSupervision(): RunSupervision {
-  return getGlobalSingleton("__cc_run_supervision", composeProductionSupervision);
+  return getGlobalSingleton(
+    "__cc_run_supervision",
+    composeProductionSupervision,
+  );
 }
 
 function composeProductionSupervision(): RunSupervision {
@@ -33,15 +36,28 @@ function composeProductionSupervision(): RunSupervision {
     db: getStateDb(),
     seatTurns: createActorSeatTurns({
       async executeConversationTurn(input) {
-        const lifecycle = await import("@/lib/workflows/conversation/lifecycle");
+        const lifecycle =
+          await import("@/lib/workflows/conversation/lifecycle");
         return lifecycle.executeConversationTurn(input);
       },
-      async stopConversationActor(projectPath, sessionName, conversationId, reason) {
-        const lifecycle = await import("@/lib/workflows/conversation/lifecycle");
-        await lifecycle.stopConversationActor(projectPath, sessionName, conversationId, reason);
+      async stopConversationActor(
+        projectPath,
+        sessionName,
+        conversationId,
+        reason,
+      ) {
+        const lifecycle =
+          await import("@/lib/workflows/conversation/lifecycle");
+        await lifecycle.stopConversationActor(
+          projectPath,
+          sessionName,
+          conversationId,
+          reason,
+        );
       },
       getProjectDisplayName,
-      composeWriteEnvelope: (input) => composeImplementerLaneWriteEnvelope(input),
+      composeWriteEnvelope: (input) =>
+        composeImplementerLaneWriteEnvelope(input),
       fsWriteRestriction: getConversationFsWriteRestrictionForBackend,
       log: createLogger("conversation-core"),
     }),
@@ -63,15 +79,22 @@ function composeProductionSupervision(): RunSupervision {
       service: getValidationService(),
       async branchOf(projectPath, sessionName) {
         const session = await getSession(projectPath, sessionName);
-        return { branchName: session?.branchName ?? null, targetBranch: session?.targetBranch ?? null };
+        return {
+          branchName: session?.branchName ?? null,
+          targetBranch: session?.targetBranch ?? null,
+        };
       },
       log: createLogger("workspace"),
     }),
     async notifyOwner({ run, boundary }) {
       const questionId =
-        boundary.kind === "question" ? boundaryDetail(boundary).questionId : undefined;
+        boundary.kind === "question"
+          ? boundaryDetail(boundary).questionId
+          : undefined;
       const question =
-        typeof questionId === "string" && self !== null ? self.requests.question(questionId) : null;
+        typeof questionId === "string" && self !== null
+          ? self.requests.question(questionId)
+          : null;
       await enqueueConversationMessage({
         projectPath: run.projectPath,
         sessionName: storeSessionNameFromScopeRef(
@@ -102,6 +125,9 @@ function composeProductionSupervision(): RunSupervision {
 }
 
 /** Boot: called once after conversation actors rehydrate. */
-export async function bootRunSupervision(): Promise<{ restoredRuns: number; reconciledOwners: number }> {
+export async function bootRunSupervision(): Promise<{
+  restoredRuns: number;
+  reconciledOwners: number;
+}> {
   return getRunSupervision().boot();
 }

@@ -46,7 +46,9 @@ function documentsBlock(facts: ContextFacts): string | null {
 }
 
 function tasksBlock(facts: ContextFacts, onlyOpen: boolean): string {
-  const tasks = facts.ledger.tasks.filter((t) => !onlyOpen || t.status === "open");
+  const tasks = facts.ledger.tasks.filter(
+    (t) => !onlyOpen || t.status === "open",
+  );
   if (tasks.length === 0) return "No tasks remain.";
   return tasks
     .map(
@@ -126,11 +128,17 @@ export function composeRemediation(
     .join("\n\n");
 }
 
-export function composeRework(facts: ContextFacts, notes: string | null): string {
+export function composeRework(
+  facts: ContextFacts,
+  notes: string | null,
+): string {
   return [
     `# ${facts.contract.current.title}: the reviewer declined this result`,
     "A person reviewed the result and asked for changes.",
-    section("Their notes", notes ?? "No notes were given; review the acceptance criteria again."),
+    section(
+      "Their notes",
+      notes ?? "No notes were given; review the acceptance criteria again.",
+    ),
     section("Acceptance criteria", criteriaBlock(facts)),
     section("How to work", workingRules(facts)),
   ].join("\n\n");
@@ -173,7 +181,9 @@ export function composeReview(
   return [
     `# Review: ${facts.contract.current.title}`,
     authority,
-    input.seat.focus !== undefined ? section("Your focus", input.seat.focus) : null,
+    input.seat.focus !== undefined
+      ? section("Your focus", input.seat.focus)
+      : null,
     section("What was asked", facts.contract.current.brief),
     section("Acceptance criteria", criteriaBlock(facts)),
     section(
@@ -196,7 +206,9 @@ export function composeAdvice(items: readonly AdviceItem[]): string {
     "Your work passed review. Reviewers left optional advice. For each item, either act on it or decline it, then report one disposition per advisory id.",
     section(
       "Advice",
-      items.map((item) => `- ${item.id}: ${item.title} — ${item.description}`).join("\n"),
+      items
+        .map((item) => `- ${item.id}: ${item.title} — ${item.description}`)
+        .join("\n"),
     ),
     "Use `addressed` when you changed the work, `declined` with your reason, or `deferred` with what should follow later.",
   ].join("\n\n");

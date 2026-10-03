@@ -33,12 +33,24 @@ describe("execution contexts repository", () => {
       outputSchema: { type: "object" },
       allowTaskAddition: true,
       implementer: { id: "implementer", focus: "Backend", ...seat },
-      reviewers: [{ id: "reviewer-a", authority: "blocking", focus: "Correctness", ...seat }],
+      reviewers: [
+        {
+          id: "reviewer-a",
+          authority: "blocking",
+          focus: "Correctness",
+          ...seat,
+        },
+      ],
       checks: ["typecheck"],
       humanApproval: true,
       ownerQuestions: true,
       documents: [
-        { artifactId: "a-1", path: "docs/x.md", description: "Design", readWhen: "Before editing" },
+        {
+          artifactId: "a-1",
+          path: "docs/x.md",
+          description: "Design",
+          readWhen: "Before editing",
+        },
       ],
     });
     // Deliberately maximal: every optional field set and every array non-empty.
@@ -58,7 +70,13 @@ describe("execution contexts repository", () => {
       contract: {
         revision: 2,
         current: contract,
-        amendments: [{ revision: 2, reason: "Clarified scope", at: "2026-10-03T10:30:00.000Z" }],
+        amendments: [
+          {
+            revision: 2,
+            reason: "Clarified scope",
+            at: "2026-10-03T10:30:00.000Z",
+          },
+        ],
       },
       policy: {
         unfinishedTaskRetries: 2,
@@ -68,10 +86,21 @@ describe("execution contexts repository", () => {
         adviceCorrectionLimit: 1,
         invocationTimeoutMs: 600000,
       },
-      seats: { conversations: { implementer: "conv-impl" }, replacements: { implementer: 1 } },
+      seats: {
+        conversations: { implementer: "conv-impl" },
+        replacements: { implementer: 1 },
+      },
       ledger: {
         revision: 2,
-        tasks: [{ id: "t1", title: "Fix", instructions: "Change notice.ts", source: "contract", status: "done" }],
+        tasks: [
+          {
+            id: "t1",
+            title: "Fix",
+            instructions: "Change notice.ts",
+            source: "contract",
+            status: "done",
+          },
+        ],
         settledWorkTurns: 2,
         lastSummary: "Changed notice.ts",
       },
@@ -101,14 +130,24 @@ describe("execution contexts repository", () => {
             id: "ctx-1:round:1",
             candidateId: "ctx-1:candidate:1",
             kind: "full",
-            checks: [{ command: "typecheck", status: "passed", detail: "clean" }],
+            checks: [
+              { command: "typecheck", status: "passed", detail: "clean" },
+            ],
             seats: [
               {
                 assignmentId: "reviewer-a",
                 authority: "blocking",
                 status: "pass",
-                findings: [{ title: "Nit", description: "Fine", criterionId: "ac-1" }],
-                advisories: [{ title: "Rename", description: "Clearer", criterionId: "ac-1" }],
+                findings: [
+                  { title: "Nit", description: "Fine", criterionId: "ac-1" },
+                ],
+                advisories: [
+                  {
+                    title: "Rename",
+                    description: "Clearer",
+                    criterionId: "ac-1",
+                  },
+                ],
                 detail: "reviewed",
               },
             ],
@@ -117,7 +156,12 @@ describe("execution contexts repository", () => {
         ],
       },
       advice: {
-        dispositions: { "ctx-1:round:1:reviewer-a:1": { disposition: "declined", reason: "Out of scope" } },
+        dispositions: {
+          "ctx-1:round:1:reviewer-a:1": {
+            disposition: "declined",
+            reason: "Out of scope",
+          },
+        },
         correctionFailures: 1,
       },
       approval: {
@@ -132,21 +176,43 @@ describe("execution contexts repository", () => {
         ],
         reworked: ["ctx-1:candidate:1"],
       },
-      acceptance: { receipts: [{ candidateId: "ctx-1:candidate:1", receipt: "snapshot:tree:abc" }] },
+      acceptance: {
+        receipts: [
+          { candidateId: "ctx-1:candidate:1", receipt: "snapshot:tree:abc" },
+        ],
+      },
       allowances: {
         granted: { unfinishedTaskRetries: 1, validationRetries: 2 },
-        charges: [{ cause: "ctx-1:work:2", kind: "unfinishedTaskRetries", state: "charged" }],
+        charges: [
+          {
+            cause: "ctx-1:work:2",
+            kind: "unfinishedTaskRetries",
+            state: "charged",
+          },
+        ],
       },
       control: {
         paused: true,
         cancelled: true,
-        halt: { kind: "turn_failed", detail: "provider error", seat: "implementer" },
-        steers: [{ id: "steer-1", instruction: "Use notice.ts", consumed: true }],
+        halt: {
+          kind: "turn_failed",
+          detail: "provider error",
+          seat: "implementer",
+        },
+        steers: [
+          { id: "steer-1", instruction: "Use notice.ts", consumed: true },
+        ],
       },
       requests: {
         open: [{ questionId: "q-2", seat: "reviewer-a" }],
         answered: [
-          { questionId: "q-1", seat: "implementer", question: "Which file?", answer: "notice.ts", continued: true },
+          {
+            questionId: "q-1",
+            seat: "implementer",
+            question: "Which file?",
+            answer: "notice.ts",
+            continued: true,
+          },
         ],
       },
       effectSequence: 7,
@@ -173,7 +239,10 @@ describe("execution contexts repository", () => {
         revision: 3,
         progress: {
           kind: "paused" as const,
-          next: { kind: "running" as const, obligation: { kind: "work" as const, reason: "initial" as const } },
+          next: {
+            kind: "running" as const,
+            obligation: { kind: "work" as const, reason: "initial" as const },
+          },
           draining: false,
         },
         progressOccurrence: "occ-2",

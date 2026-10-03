@@ -249,7 +249,10 @@ function harness(
     getApiToken: () => null,
     getConfigDir: () => "/config",
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
-    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
+    discoverNativeCodexMcpServers: async () => ({
+      kind: "complete",
+      servers: [],
+    }),
     getCodexPricingOverrides: async () => null,
     readPersistedCostBaseline: async () => null,
     ensureManagedSkillsBridge: async () => ({

@@ -11,7 +11,11 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getSession } from "@/lib/state-store";
 import type { ResolvedSeat } from "./launch";
 import { getRunSupervision } from "./production";
-import { createRunRouteHandlers, newRunId, type RunRouteDeps } from "./route-handlers";
+import {
+  createRunRouteHandlers,
+  newRunId,
+  type RunRouteDeps,
+} from "./route-handlers";
 
 const log = createLogger("runs");
 
@@ -40,7 +44,9 @@ async function resolveSeat(
   const defaults = resolveAgentBackendTurnDefaults({
     backend: resolvedBackend,
     config,
-    ...(explicit !== undefined ? { explicit: { modelSelection: explicit } } : {}),
+    ...(explicit !== undefined
+      ? { explicit: { modelSelection: explicit } }
+      : {}),
   });
   const admission = await admitConfiguredModelSelection({
     backend: resolvedBackend,
@@ -48,16 +54,39 @@ async function resolveSeat(
     modelSelection: defaults.modelSelection,
     config,
   });
-  if (!admission.ok) return { ok: false, status: 400, error: admission.message, code: admission.code };
-  return { ok: true, seat: { backend: resolvedBackend, modelSelection: admission.modelSelection } };
+  if (!admission.ok)
+    return {
+      ok: false,
+      status: 400,
+      error: admission.message,
+      code: admission.code,
+    };
+  return {
+    ok: true,
+    seat: {
+      backend: resolvedBackend,
+      modelSelection: admission.modelSelection,
+    },
+  };
 }
 
-const resolveSeats: RunRouteDeps["resolveSeats"] = async ({ projectPath, request }) => {
-  const implementer = await resolveSeat(projectPath, request.backend, request.modelSelection);
+const resolveSeats: RunRouteDeps["resolveSeats"] = async ({
+  projectPath,
+  request,
+}) => {
+  const implementer = await resolveSeat(
+    projectPath,
+    request.backend,
+    request.modelSelection,
+  );
   if (!implementer.ok) return implementer;
   const reviewers: ResolvedSeat[] = [];
   for (const reviewer of request.reviewers ?? []) {
-    const resolved = await resolveSeat(projectPath, reviewer.backend, reviewer.modelSelection);
+    const resolved = await resolveSeat(
+      projectPath,
+      reviewer.backend,
+      reviewer.modelSelection,
+    );
     if (!resolved.ok) return resolved;
     reviewers.push(resolved.seat);
   }

@@ -604,7 +604,9 @@ describe("CodexConversationRuntime", () => {
       translatePortableMcpToCodex: vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
-      discoverNativeCodexMcpServers: vi.fn().mockResolvedValue({ kind: "complete", servers: [] }),
+      discoverNativeCodexMcpServers: vi
+        .fn()
+        .mockResolvedValue({ kind: "complete", servers: [] }),
       getCodexPricingOverrides: vi.fn().mockResolvedValue(null),
       readPersistedCostBaseline: vi.fn().mockResolvedValue(null),
       mergeNativeSkillSelectors: async (config) => config,

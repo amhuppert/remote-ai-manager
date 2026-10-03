@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createControlPermits, type ControlPermits } from "@/lib/control/permits";
+import {
+  createControlPermits,
+  type ControlPermits,
+} from "@/lib/control/permits";
 import { createIntentLedger, type IntentLedger } from "@/lib/intents/ledger";
 import type { PendingIntent } from "@/lib/intents/schemas";
-import { createFakeExecutor, type FakeExecutor } from "@/lib/intents/testing/fake-executor";
+import {
+  createFakeExecutor,
+  type FakeExecutor,
+} from "@/lib/intents/testing/fake-executor";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -58,7 +64,9 @@ const startIntent: PendingIntent = {
   recordedAt: "2026-10-03T10:00:00.000Z",
 };
 
-function workReport(overrides: Partial<ConversationReport> = {}): ConversationReport {
+function workReport(
+  overrides: Partial<ConversationReport> = {},
+): ConversationReport {
   return {
     status: "succeeded",
     conversationId: "conv-impl",
@@ -103,7 +111,11 @@ beforeEach(() => {
   requests = createFakeExecutor(permits);
   touchedRuns = [];
   released = [];
-  permits.issue({ controllerId: runControllerId("run-1"), parent: null, now: "2026-10-03T10:00:00.000Z" });
+  permits.issue({
+    controllerId: runControllerId("run-1"),
+    parent: null,
+    now: "2026-10-03T10:00:00.000Z",
+  });
 });
 afterEach(() => fixture.close());
 
@@ -126,7 +138,10 @@ describe("execution context host", () => {
     const work = await startContext(host);
 
     expect(work.request).toMatchObject({ kind: "work", reason: "initial" });
-    expect(work.permit).toEqual({ controllerId: "context:ctx-1", generation: 1 });
+    expect(work.permit).toEqual({
+      controllerId: "context:ctx-1",
+      generation: 1,
+    });
     expect(host.outcome(startIntent.cause)).toMatchObject({ kind: "running" });
   });
 
@@ -139,8 +154,17 @@ describe("execution context host", () => {
     await host.reconcile("ctx-1");
     await host.reconcile("ctx-1");
 
-    expect(intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.executor)).toEqual(["conversation"]);
-    expect(conversation.submitted().filter((i) => i.request && (i.request as { reason?: string }).reason === "retry")).toHaveLength(1);
+    expect(
+      intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.executor),
+    ).toEqual(["conversation"]);
+    expect(
+      conversation
+        .submitted()
+        .filter(
+          (i) =>
+            i.request && (i.request as { reason?: string }).reason === "retry",
+        ),
+    ).toHaveLength(1);
     expect(touchedRuns).toContain("run-1");
   });
 
@@ -149,15 +173,29 @@ describe("execution context host", () => {
     const work = await startContext(host);
     conversation.admit(work.cause);
 
-    expect(host.applyTaskCommand("ctx-1", null, { kind: "complete", taskId: "t1" })).toMatchObject({ kind: "refused" });
     expect(
-      host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "reviewer-a", replacement: 0 }, { kind: "complete", taskId: "t1" }),
+      host.applyTaskCommand("ctx-1", null, { kind: "complete", taskId: "t1" }),
     ).toMatchObject({ kind: "refused" });
     expect(
-      host.applyTaskCommand("ctx-1", { contextId: "ctx-2", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" }),
+      host.applyTaskCommand(
+        "ctx-1",
+        { contextId: "ctx-1", assignmentId: "reviewer-a", replacement: 0 },
+        { kind: "complete", taskId: "t1" },
+      ),
     ).toMatchObject({ kind: "refused" });
     expect(
-      host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" }),
+      host.applyTaskCommand(
+        "ctx-1",
+        { contextId: "ctx-2", assignmentId: "implementer", replacement: 0 },
+        { kind: "complete", taskId: "t1" },
+      ),
+    ).toMatchObject({ kind: "refused" });
+    expect(
+      host.applyTaskCommand(
+        "ctx-1",
+        { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+        { kind: "complete", taskId: "t1" },
+      ),
     ).toMatchObject({ kind: "applied" });
   });
 
@@ -165,25 +203,46 @@ describe("execution context host", () => {
     const host = newHost();
     const work = await startContext(host);
     conversation.admit(work.cause);
-    const current = { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 };
+    const current = {
+      contextId: "ctx-1",
+      assignmentId: "implementer",
+      replacement: 0,
+    };
 
     expect(
-      host.applyTaskCommand("ctx-1", { ...current, replacement: 1 }, { kind: "complete", taskId: "t1" }),
+      host.applyTaskCommand(
+        "ctx-1",
+        { ...current, replacement: 1 },
+        { kind: "complete", taskId: "t1" },
+      ),
     ).toMatchObject({ kind: "refused" });
     await host.cancel("ctx-1", host.observe("ctx-1")?.record.revision ?? 0);
     conversation.settle(work.cause, workReport({ status: "cancelled" }));
     await host.reconcile("ctx-1");
-    expect(host.observe("ctx-1")?.record.progress).toEqual({ kind: "cancelled" });
-    expect(host.applyTaskCommand("ctx-1", current, { kind: "complete", taskId: "t1" })).toMatchObject({
+    expect(host.observe("ctx-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
+    expect(
+      host.applyTaskCommand("ctx-1", current, {
+        kind: "complete",
+        taskId: "t1",
+      }),
+    ).toMatchObject({
       kind: "refused",
     });
-    expect(host.observe("ctx-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(host.observe("ctx-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
   });
 
   it("after a restart with the run paused, consumes settled outcomes but submits nothing until resume", async () => {
     const work = await startContext(newHost());
     conversation.admit(work.cause);
-    newHost().applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    newHost().applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
     conversation.settle(work.cause, workReport());
     permits.close(runControllerId("run-1"), "2026-10-03T10:05:00.000Z");
 
@@ -191,12 +250,18 @@ describe("execution context host", () => {
     await restarted.reconcile("ctx-1");
 
     expect(intents.pending({ kind: "context", id: "ctx-1" })).toEqual([]);
-    expect(restarted.observe("ctx-1")?.record.facts.ledger.settledWorkTurns).toBe(1);
-    expect(workspace.submitted().map((i) => (i.request as { kind: string }).kind)).toEqual(["bind"]);
+    expect(
+      restarted.observe("ctx-1")?.record.facts.ledger.settledWorkTurns,
+    ).toBe(1);
+    expect(
+      workspace.submitted().map((i) => (i.request as { kind: string }).kind),
+    ).toEqual(["bind"]);
 
     permits.reopen(runControllerId("run-1"), "2026-10-03T10:06:00.000Z");
     await restarted.reconcile("ctx-1");
-    expect(workspace.submitted().map((i) => (i.request as { kind: string }).kind)).toEqual(["bind", "freeze"]);
+    expect(
+      workspace.submitted().map((i) => (i.request as { kind: string }).kind),
+    ).toEqual(["bind", "freeze"]);
   });
 
   it("shows a settled but unconsumed outcome as stalled until reconcile consumes it", async () => {
@@ -235,11 +300,15 @@ describe("execution context host", () => {
 
     await host.cancel("ctx-1", host.observe("ctx-1")?.record.revision ?? 0);
     expect(conversation.interrupted).toEqual([work.cause]);
-    expect(host.observe("ctx-1")?.record.progress).toEqual({ kind: "stopping" });
+    expect(host.observe("ctx-1")?.record.progress).toEqual({
+      kind: "stopping",
+    });
 
     conversation.settle(work.cause, workReport({ status: "cancelled" }));
     await host.reconcile("ctx-1");
-    expect(host.observe("ctx-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(host.observe("ctx-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
     expect(host.outcome(startIntent.cause)).toMatchObject({ kind: "settled" });
   });
 
@@ -261,29 +330,46 @@ describe("execution context host", () => {
     const host = newHost();
     const work = await startContext(host);
     conversation.admit(work.cause);
-    conversation.settle(work.cause, workReport({ status: "failed", failure: "provider error" }));
+    conversation.settle(
+      work.cause,
+      workReport({ status: "failed", failure: "provider error" }),
+    );
     await host.reconcile("ctx-1");
     expect(host.observe("ctx-1")?.record.progress.kind).toBe("halted");
     expect(released).toEqual([]);
 
     const occurrence = host.observe("ctx-1")?.record.progressOccurrence ?? "";
-    host.resume("ctx-1", host.observe("ctx-1")?.record.revision ?? 0, { occurrence, disposition: { kind: "continue" } });
+    host.resume("ctx-1", host.observe("ctx-1")?.record.revision ?? 0, {
+      occurrence,
+      disposition: { kind: "continue" },
+    });
     await host.reconcile("ctx-1");
     const retry = conversation.submitted().find((i) => i.cause !== work.cause);
     if (retry === undefined) throw new Error("no continued work");
     conversation.admit(retry.cause);
-    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
     conversation.settle(retry.cause, workReport());
     await host.reconcile("ctx-1");
-    const freeze = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "freeze");
+    const freeze = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "freeze");
     if (freeze === undefined) throw new Error("no freeze");
     workspace.admit(freeze.cause);
     workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:a:a" });
     await host.reconcile("ctx-1");
-    const accept = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "accept");
+    const accept = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "accept");
     if (accept === undefined) throw new Error("no accept");
     workspace.admit(accept.cause);
-    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:git:a:a" });
+    workspace.settle(accept.cause, {
+      kind: "accepted",
+      receipt: "snapshot:git:a:a",
+    });
     await host.reconcile("ctx-1");
 
     expect(host.observe("ctx-1")?.record.progress.kind).toBe("succeeded");
@@ -298,9 +384,14 @@ describe("execution context host", () => {
     await host.reconcile("ctx-1");
     const record = host.observe("ctx-1")?.record;
     if (record === undefined) throw new Error("missing context");
-    expect(record.progress).toMatchObject({ kind: "halted", halt: "effect_uncertain" });
+    expect(record.progress).toMatchObject({
+      kind: "halted",
+      halt: "effect_uncertain",
+    });
 
-    expect(() => host.resume("ctx-1", record.revision)).toThrow(/needs a disposition/);
+    expect(() => host.resume("ctx-1", record.revision)).toThrow(
+      /needs a disposition/,
+    );
     expect(() =>
       host.resume("ctx-1", record.revision, {
         occurrence: "stale-occurrence",
@@ -324,7 +415,12 @@ describe("execution context host", () => {
     await expect(host.reconcile("ctx-1")).rejects.toThrow();
     host.recordReconcileFailure("ctx-1", new Error("malformed outcome"));
 
-    expect(host.observe("ctx-1")?.record.progress).toMatchObject({ kind: "halted", halt: "reconcile_failed" });
-    expect(intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.cause)).toEqual([work.cause]);
+    expect(host.observe("ctx-1")?.record.progress).toMatchObject({
+      kind: "halted",
+      halt: "reconcile_failed",
+    });
+    expect(
+      intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.cause),
+    ).toEqual([work.cause]);
   });
 });

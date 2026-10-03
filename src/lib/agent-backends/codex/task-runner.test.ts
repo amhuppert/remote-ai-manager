@@ -70,7 +70,9 @@ describe("CodexTaskRunner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     logState.entries = [];
-    discoverNativeCodexMcpServers = vi.fn().mockResolvedValue({ kind: "complete", servers: [] });
+    discoverNativeCodexMcpServers = vi
+      .fn()
+      .mockResolvedValue({ kind: "complete", servers: [] });
     runner = new CodexTaskRunner({
       createCodex: (options) =>
         new Codex(options) as unknown as ReturnType<
@@ -496,7 +498,10 @@ describe("CodexTaskRunner", () => {
       servers: [
         {
           name: "playwright",
-          configEntry: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
+          configEntry: {
+            command: "npx",
+            args: ["-y", "@playwright/mcp@latest"],
+          },
         },
         {
           name: "test-server",
@@ -581,9 +586,7 @@ describe("CodexTaskRunner", () => {
     discoverNativeCodexMcpServers.mockResolvedValue({
       kind: "incomplete",
       reason: "unreadable native MCP server entries: legacy-sse",
-      reconstructed: [
-        { name: "playwright", configEntry: { command: "npx" } },
-      ],
+      reconstructed: [{ name: "playwright", configEntry: { command: "npx" } }],
     });
 
     const result = await runner.run(
@@ -1654,7 +1657,9 @@ describe("CodexTaskRunner", () => {
       });
       const { runner: restricted, createCodex } = restrictedRunner();
 
-      const result = await restricted.run(makeRequest({ fsWritePolicy: POLICY }));
+      const result = await restricted.run(
+        makeRequest({ fsWritePolicy: POLICY }),
+      );
 
       expect(createCodex).not.toHaveBeenCalled();
       expect(result.text).toBeNull();

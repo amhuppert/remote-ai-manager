@@ -15,7 +15,11 @@ import {
 let fixture: PersistenceFixture;
 let h: ReturnType<typeof createSupervisionHarness>;
 
-async function launch(s: RunSupervision, runId: string, turnsSettle = true): Promise<void> {
+async function launch(
+  s: RunSupervision,
+  runId: string,
+  turnsSettle = true,
+): Promise<void> {
   await s.runs.launch({
     runId,
     cause: `launch-${runId}`,
@@ -40,13 +44,17 @@ describe("run supervision", () => {
     const s = h.compose();
     await launch(s, "run-1");
 
-    expect(s.runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(s.runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(h.notified.map((b) => [b.runId, b.kind, b.detail])).toEqual([
       ["run-1", "succeeded", { outputs: { agent: { summary: "Done." } } }],
     ]);
 
     await launch(s, "run-2");
-    expect(s.runs.observe("run-2")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(s.runs.observe("run-2")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(h.turnMessages).toHaveLength(2);
   });
 
@@ -66,7 +74,9 @@ describe("run supervision", () => {
     const s = h.compose();
     await launch(s, "run-1");
 
-    expect(seen).toEqual([{ canAsk: true, attemptId: expect.any(String), openQuestionId: null }]);
+    expect(seen).toEqual([
+      { canAsk: true, attemptId: expect.any(String), openQuestionId: null },
+    ]);
     expect(s.seatFor("owner-1")).toBeNull();
     const question = h.notified.find((b) => b.kind === "question");
     expect(s.runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
@@ -75,7 +85,9 @@ describe("run supervision", () => {
     await quiesce(s);
 
     expect(h.turnMessages[1]).toContain("notice.ts");
-    expect(s.runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(s.runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
   });
 
   it("restores a run interrupted by a restart paused, with the interrupted turn visible as a halt", async () => {
@@ -83,7 +95,9 @@ describe("run supervision", () => {
     const before = h.compose();
     await launch(before, "run-1", false);
     expect(h.turnMessages).toHaveLength(1);
-    expect(before.runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
+    expect(before.runs.observe("run-1")?.record.progress).toEqual({
+      kind: "running",
+    });
 
     const after = h.compose();
     const booted = await after.boot();
@@ -91,7 +105,9 @@ describe("run supervision", () => {
 
     expect(booted.restoredRuns).toBe(1);
     expect(after.runs.observe("run-1")?.record.progress.kind).toBe("paused");
-    expect(after.contexts.observe("run-1.agent")?.record.progress).toMatchObject({ kind: "halted", halt: "interrupted" });
+    expect(
+      after.contexts.observe("run-1.agent")?.record.progress,
+    ).toMatchObject({ kind: "halted", halt: "interrupted" });
     expect(h.notified.map((b) => b.kind)).toContain("restored_paused");
   });
 });

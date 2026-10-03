@@ -24,9 +24,7 @@ export const runFactsSchema = z
     kind: z.enum(["agent", "workflow"]),
     title: z.string().min(1),
     invocations: z.array(runInvocationSchema),
-    control: z
-      .object({ paused: z.boolean(), cancelled: z.boolean() })
-      .strict(),
+    control: z.object({ paused: z.boolean(), cancelled: z.boolean() }).strict(),
   })
   .strict();
 export type RunFacts = z.infer<typeof runFactsSchema>;
@@ -44,7 +42,9 @@ export const invocationViewSchema = z
 export const runProgressSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("running") }).strict(),
   /** A person or the owner must act: a question, an approval or a halt. */
-  z.object({ kind: z.literal("needs_owner"), reasons: z.array(z.string()) }).strict(),
+  z
+    .object({ kind: z.literal("needs_owner"), reasons: z.array(z.string()) })
+    .strict(),
   z.object({ kind: z.literal("paused"), draining: z.boolean() }).strict(),
   z.object({ kind: z.literal("stopping") }).strict(),
   z.object({ kind: z.literal("succeeded") }).strict(),
@@ -97,7 +97,9 @@ export const runBoundarySchema = z
 export type RunBoundary = z.infer<typeof runBoundarySchema>;
 
 /** Reads a boundary's frozen detail as a field map; any other shape reads as empty. */
-export function boundaryDetail(boundary: Pick<RunBoundary, "detail">): Record<string, unknown> {
+export function boundaryDetail(
+  boundary: Pick<RunBoundary, "detail">,
+): Record<string, unknown> {
   const parsed = z.record(z.string(), z.unknown()).safeParse(boundary.detail);
   return parsed.success ? parsed.data : {};
 }
@@ -117,7 +119,11 @@ export type RunDisposition = z.infer<typeof runDispositionSchema>;
 // ---------------------------------------------------------------------------
 
 export const runLaunchedResponseSchema = z
-  .object({ runId: z.string().min(1), contextIds: z.array(z.string().min(1)), progress: runProgressSchema })
+  .object({
+    runId: z.string().min(1),
+    contextIds: z.array(z.string().min(1)),
+    progress: runProgressSchema,
+  })
   .strict();
 export type RunLaunchedResponse = z.infer<typeof runLaunchedResponseSchema>;
 
@@ -140,11 +146,21 @@ export const runViewSchema = z
           progress: contextProgressSchema.nullable(),
           /** Names the halt a disposition must clear; changes whenever progress does. */
           occurrence: z.string().nullable(),
-          tasks: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() }).strict()),
+          tasks: z.array(
+            z
+              .object({ id: z.string(), title: z.string(), status: z.string() })
+              .strict(),
+          ),
           /** assignment id → seat conversation id */
           seats: z.record(z.string(), z.string()),
           openQuestions: z.array(
-            z.object({ questionId: z.string(), seat: z.string(), text: z.string().nullable() }).strict(),
+            z
+              .object({
+                questionId: z.string(),
+                seat: z.string(),
+                text: z.string().nullable(),
+              })
+              .strict(),
           ),
           lastSummary: z.string().nullable(),
           output: z.unknown(),
@@ -153,7 +169,13 @@ export const runViewSchema = z
     ),
     boundaries: z.array(
       z
-        .object({ seq: z.number().int(), kind: runBoundaryKindSchema, summary: z.string(), recordedAt: z.string(), notified: z.boolean() })
+        .object({
+          seq: z.number().int(),
+          kind: runBoundaryKindSchema,
+          summary: z.string(),
+          recordedAt: z.string(),
+          notified: z.boolean(),
+        })
         .strict(),
     ),
     /** Settled effects nothing has consumed yet; resume reconciles them. */

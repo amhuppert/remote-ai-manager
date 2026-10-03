@@ -436,7 +436,10 @@ export const derivedHaltKindSchema = z.enum([
 ]);
 export type DerivedHaltKind = z.infer<typeof derivedHaltKindSchema>;
 
-export const haltKindSchema = z.union([derivedHaltKindSchema, recordedHaltKindSchema]);
+export const haltKindSchema = z.union([
+  derivedHaltKindSchema,
+  recordedHaltKindSchema,
+]);
 export type HaltKind = z.infer<typeof haltKindSchema>;
 
 export const obligationSchema = z.discriminatedUnion("kind", [
@@ -444,7 +447,14 @@ export const obligationSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("work"),
-      reason: z.enum(["initial", "retry", "steer", "remediate", "rework", "continue"]),
+      reason: z.enum([
+        "initial",
+        "retry",
+        "steer",
+        "remediate",
+        "rework",
+        "continue",
+      ]),
     })
     .strict(),
   z.object({ kind: z.literal("capture_output") }).strict(),
@@ -452,20 +462,39 @@ export const obligationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("certify"), roundKind: roundKindSchema }).strict(),
   z.object({ kind: z.literal("advise") }).strict(),
   z.object({ kind: z.literal("verify") }).strict(),
-  z.object({ kind: z.literal("await_answer"), questionId: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("await_approval"), candidateId: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("accept"), candidateId: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("await_answer"), questionId: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("await_approval"),
+      candidateId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal("accept"), candidateId: z.string().min(1) })
+    .strict(),
 ]);
 export type Obligation = z.infer<typeof obligationSchema>;
 
 const settledProgressSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("running"), obligation: obligationSchema }).strict(),
-  z.object({ kind: z.literal("waiting"), obligation: obligationSchema }).strict(),
   z
-    .object({ kind: z.literal("halted"), halt: haltKindSchema, detail: z.string() })
+    .object({ kind: z.literal("running"), obligation: obligationSchema })
+    .strict(),
+  z
+    .object({ kind: z.literal("waiting"), obligation: obligationSchema })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("halted"),
+      halt: haltKindSchema,
+      detail: z.string(),
+    })
     .strict(),
   z.object({ kind: z.literal("stopping") }).strict(),
-  z.object({ kind: z.literal("succeeded"), candidateId: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("succeeded"), candidateId: z.string().min(1) })
+    .strict(),
   z.object({ kind: z.literal("cancelled") }).strict(),
 ]);
 

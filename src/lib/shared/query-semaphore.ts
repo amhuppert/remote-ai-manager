@@ -190,7 +190,9 @@ export async function acquireQuerySlot(
  * For callers that must acquire several resources together without holding
  * one while waiting for another.
  */
-export async function tryAcquireQuerySlot(label: string): Promise<(() => void) | null> {
+export async function tryAcquireQuerySlot(
+  label: string,
+): Promise<(() => void) | null> {
   await refreshLimit();
   const state = getState();
   if (state.queue.length > 0 || state.active >= state.limit) return null;

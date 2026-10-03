@@ -35,7 +35,12 @@ export type OutcomeState =
   | { kind: "uncertain"; evidence: string };
 
 export type ContextInput =
-  | { kind: "outcome"; cause: string; request: ContextEffectRequest; state: OutcomeState }
+  | {
+      kind: "outcome";
+      cause: string;
+      request: ContextEffectRequest;
+      state: OutcomeState;
+    }
   | { kind: "withdrawn"; cause: string; request: ContextEffectRequest }
   | { kind: "pause" }
   | { kind: "resume" }
@@ -64,7 +69,10 @@ export class ContextInputRefusedError extends Error {
  * none assigns lifecycle or invalidates downstream proof, which lapses by
  * binding to the candidate. Pure: the caller persists the result atomically.
  */
-export function advanceContext(facts: ContextFacts, input: ContextInput): ContextFacts {
+export function advanceContext(
+  facts: ContextFacts,
+  input: ContextInput,
+): ContextFacts {
   switch (input.kind) {
     case "outcome":
       return input.state.kind === "uncertain"
@@ -124,7 +132,11 @@ function applyOutcome(
     case "review":
     case "advise": {
       const report = conversationReportSchema.parse(outcome);
-      const withSeat = recordSeatConversation(facts, request.seat.assignmentId, report);
+      const withSeat = recordSeatConversation(
+        facts,
+        request.seat.assignmentId,
+        report,
+      );
       return applyConversationReport(withSeat, cause, request, report);
     }
     case "bind":
@@ -143,12 +155,16 @@ function recordSeatConversation(
   assignmentId: string,
   report: ConversationReport,
 ): ContextFacts {
-  if (facts.seats.conversations[assignmentId] === report.conversationId) return facts;
+  if (facts.seats.conversations[assignmentId] === report.conversationId)
+    return facts;
   return {
     ...facts,
     seats: {
       ...facts.seats,
-      conversations: { ...facts.seats.conversations, [assignmentId]: report.conversationId },
+      conversations: {
+        ...facts.seats.conversations,
+        [assignmentId]: report.conversationId,
+      },
     },
   };
 }
@@ -156,7 +172,10 @@ function recordSeatConversation(
 function applyConversationReport(
   facts: ContextFacts,
   cause: string,
-  request: Extract<ContextEffectRequest, { kind: "work" | "capture_output" | "review" | "advise" }>,
+  request: Extract<
+    ContextEffectRequest,
+    { kind: "work" | "capture_output" | "review" | "advise" }
+  >,
   report: ConversationReport,
 ): ContextFacts {
   switch (request.kind) {
@@ -202,7 +221,8 @@ function applyWorkReport(
   request: Extract<ContextEffectRequest, { kind: "work" }>,
   report: ConversationReport,
 ): ContextFacts {
-  let facts = request.allowance !== null ? chargeAllowance(initial, cause) : initial;
+  let facts =
+    request.allowance !== null ? chargeAllowance(initial, cause) : initial;
   // Any admitted work turn may have changed files: the candidate it worked on
   // is no longer what was reviewed.
   facts = retireCurrent(facts, "reworked");
@@ -228,7 +248,8 @@ function applyWorkReport(
       },
     };
   }
-  if (request.questionId !== undefined) facts = markContinued(facts, request.questionId);
+  if (request.questionId !== undefined)
+    facts = markContinued(facts, request.questionId);
   if (request.reason === "rework" && request.candidateId !== undefined) {
     facts = {
       ...facts,
@@ -251,17 +272,27 @@ function applyWorkReport(
   return openQuestion(facts, report.openQuestionId, request.seat.assignmentId);
 }
 
-function applyCaptureReport(facts: ContextFacts, report: ConversationReport): ContextFacts {
+function applyCaptureReport(
+  facts: ContextFacts,
+  report: ConversationReport,
+): ContextFacts {
   // A capture turn is read-only: an interruption simply plans it again.
   if (report.status === "interrupted") return facts;
   const ended = unexpectedEnd(facts, report, "implementer");
   if (ended !== null) return ended;
-  if (report.outputIssue === null && report.structuredOutput !== undefined && report.structuredOutput !== null) {
+  if (
+    report.outputIssue === null &&
+    report.structuredOutput !== undefined &&
+    report.structuredOutput !== null
+  ) {
     return {
       ...facts,
       candidates: {
         ...facts.candidates,
-        captured: { output: report.structuredOutput, workTurn: facts.ledger.settledWorkTurns },
+        captured: {
+          output: report.structuredOutput,
+          workTurn: facts.ledger.settledWorkTurns,
+        },
       },
     };
   }
@@ -273,8 +304,13 @@ function applyCaptureReport(facts: ContextFacts, report: ConversationReport): Co
       ...facts.candidates,
       captureFailures: {
         workTurn,
-        count: previous !== null && previous.workTurn === workTurn ? previous.count + 1 : 1,
-        lastIssue: report.outputIssue ?? "The capture turn returned no structured output",
+        count:
+          previous !== null && previous.workTurn === workTurn
+            ? previous.count + 1
+            : 1,
+        lastIssue:
+          report.outputIssue ??
+          "The capture turn returned no structured output",
       },
     },
   };
@@ -285,7 +321,10 @@ function applyReviewReport(
   request: Extract<ContextEffectRequest, { kind: "review" }>,
   report: ConversationReport,
 ): ContextFacts {
-  let facts = request.questionId !== undefined ? markContinued(initial, request.questionId) : initial;
+  let facts =
+    request.questionId !== undefined
+      ? markContinued(initial, request.questionId)
+      : initial;
   const assignmentId = request.seat.assignmentId;
   // Reviews are read-only: an interrupted review is requested again.
   if (report.status === "interrupted") return facts;
@@ -307,7 +346,10 @@ function applyReviewReport(
     assignmentId,
     verdict,
     ...(verdict === null
-      ? { unavailableDetail: report.outputIssue ?? "The reviewer did not return a valid verdict" }
+      ? {
+          unavailableDetail:
+            report.outputIssue ?? "The reviewer did not return a valid verdict",
+        }
       : {}),
   });
   return facts;
@@ -328,13 +370,19 @@ function applyAdviceReport(
   // The response may have changed files; acceptance waits for a comparison.
   return {
     ...recorded.facts,
-    candidates: { ...recorded.facts.candidates, verifyPending: { roundId: request.roundId } },
+    candidates: {
+      ...recorded.facts.candidates,
+      verifyPending: { roundId: request.roundId },
+    },
   };
 }
 
 function applyWorkspaceReport(
   facts: ContextFacts,
-  request: Extract<ContextEffectRequest, { kind: "bind" | "freeze" | "check" | "verify" | "accept" }>,
+  request: Extract<
+    ContextEffectRequest,
+    { kind: "bind" | "freeze" | "check" | "verify" | "accept" }
+  >,
   outcome: unknown,
 ): ContextFacts {
   const report = workspaceReportSchema.parse(outcome);
@@ -388,15 +436,23 @@ function applyWorkspaceReport(
           },
         };
       }
-      return report.kind === "candidate_changed" ? retireCurrent(facts, "changed") : facts;
+      return report.kind === "candidate_changed"
+        ? retireCurrent(facts, "changed")
+        : facts;
   }
 }
 
-function applyAnswer(facts: ContextFacts, questionId: string, outcome: unknown): ContextFacts {
+function applyAnswer(
+  facts: ContextFacts,
+  questionId: string,
+  outcome: unknown,
+): ContextFacts {
   const report = requestsReportSchema.parse(outcome);
   const open = facts.requests.open.find((q) => q.questionId === questionId);
   if (open === undefined) return facts;
-  const remaining = facts.requests.open.filter((q) => q.questionId !== questionId);
+  const remaining = facts.requests.open.filter(
+    (q) => q.questionId !== questionId,
+  );
   if (report.kind === "withdrawn") {
     return { ...facts, requests: { ...facts.requests, open: remaining } };
   }
@@ -418,12 +474,20 @@ function applyAnswer(facts: ContextFacts, questionId: string, outcome: unknown):
   };
 }
 
-function openQuestion(facts: ContextFacts, questionId: string | null, seat: string): ContextFacts {
+function openQuestion(
+  facts: ContextFacts,
+  questionId: string | null,
+  seat: string,
+): ContextFacts {
   if (questionId === null) return facts;
-  if (facts.requests.open.some((q) => q.questionId === questionId)) return facts;
+  if (facts.requests.open.some((q) => q.questionId === questionId))
+    return facts;
   return {
     ...facts,
-    requests: { ...facts.requests, open: [...facts.requests.open, { questionId, seat }] },
+    requests: {
+      ...facts.requests,
+      open: [...facts.requests.open, { questionId, seat }],
+    },
   };
 }
 
@@ -469,7 +533,9 @@ export function currentHalt(facts: ContextFacts): HaltKind | null {
 }
 
 /** Which dispositions clear each halt; owners read it to know their options. */
-export const DISPOSITIONS_BY_HALT: Readonly<Record<HaltKind, ReadonlyArray<HaltDisposition["kind"]>>> = {
+export const DISPOSITIONS_BY_HALT: Readonly<
+  Record<HaltKind, ReadonlyArray<HaltDisposition["kind"]>>
+> = {
   retries_exhausted: ["grant"],
   output_invalid: ["retry_capture"],
   candidate_unstable: ["continue"],
@@ -483,7 +549,10 @@ export const DISPOSITIONS_BY_HALT: Readonly<Record<HaltKind, ReadonlyArray<HaltD
   workspace_refused: ["continue"],
 };
 
-function applyDisposition(facts: ContextFacts, disposition: HaltDisposition): ContextFacts {
+function applyDisposition(
+  facts: ContextFacts,
+  disposition: HaltDisposition,
+): ContextFacts {
   const haltKind = currentHalt(facts);
   if (haltKind === null) {
     throw new ContextInputRefusedError("The context is not halted");
@@ -493,17 +562,24 @@ function applyDisposition(facts: ContextFacts, disposition: HaltDisposition): Co
       `Disposition ${disposition.kind} does not clear a ${haltKind} halt`,
     );
   }
-  const cleared = facts.control.halt !== null
-    ? { ...facts, control: { ...facts.control, halt: null } }
-    : facts;
+  const cleared =
+    facts.control.halt !== null
+      ? { ...facts, control: { ...facts.control, halt: null } }
+      : facts;
   switch (disposition.kind) {
     case "grant":
       return grantAllowance(cleared, disposition.allowance, disposition.count);
     case "retry_capture":
-      return { ...cleared, candidates: { ...cleared.candidates, captureFailures: null } };
+      return {
+        ...cleared,
+        candidates: { ...cleared.candidates, captureFailures: null },
+      };
     case "continue":
       return haltKind === "candidate_unstable"
-        ? { ...cleared, candidates: { ...cleared.candidates, unstableCount: 0 } }
+        ? {
+            ...cleared,
+            candidates: { ...cleared.candidates, unstableCount: 0 },
+          }
         : cleared;
     case "rereview":
     case "retry": {
@@ -512,7 +588,10 @@ function applyDisposition(facts: ContextFacts, disposition: HaltDisposition): Co
       return round === null ? cleared : retireRound(cleared, round.id);
     }
     case "retry_advice":
-      return { ...cleared, advice: { ...cleared.advice, correctionFailures: 0 } };
+      return {
+        ...cleared,
+        advice: { ...cleared.advice, correctionFailures: 0 },
+      };
     case "replace_seat": {
       const seat = facts.control.halt?.seat ?? "implementer";
       const conversations = { ...cleared.seats.conversations };
@@ -544,7 +623,9 @@ function amend(
   const contractTasks: LedgerTask[] = contract.tasks.map((task) => ({
     id: task.id,
     title: task.title,
-    ...(task.instructions !== undefined ? { instructions: task.instructions } : {}),
+    ...(task.instructions !== undefined
+      ? { instructions: task.instructions }
+      : {}),
     source: "contract",
     status: existing.get(task.id)?.status ?? "open",
   }));

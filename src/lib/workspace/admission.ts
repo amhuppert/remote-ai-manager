@@ -26,26 +26,43 @@ export interface Grant extends GrantRequest {
   id: number;
 }
 
-function scopesOverlap(a: string[] | undefined, b: string[] | undefined): boolean {
+function scopesOverlap(
+  a: string[] | undefined,
+  b: string[] | undefined,
+): boolean {
   if (a === undefined || b === undefined) return true;
   return a.some((left) =>
     b.some(
       (right) =>
-        left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`),
+        left === right ||
+        left.startsWith(`${right}/`) ||
+        right.startsWith(`${left}/`),
     ),
   );
 }
 
-const SUPERVISED_WRITES: ReadonlySet<GrantKind> = new Set(["scoped_write", "full_write"]);
+const SUPERVISED_WRITES: ReadonlySet<GrantKind> = new Set([
+  "scoped_write",
+  "full_write",
+]);
 
 /** The conflict relation of design §6.2, symmetric by construction. */
 export function grantsConflict(a: GrantRequest, b: GrantRequest): boolean {
   if (a.worktree !== b.worktree) return false;
   if (a.kind === "observe" || b.kind === "observe") return false;
   if (a.kind === "git" || b.kind === "git") return true;
-  if (a.kind === "interactive_write" || b.kind === "interactive_write") return false;
-  if (a.kind === "full_write" && (SUPERVISED_WRITES.has(b.kind) || b.kind === "stable_read")) return true;
-  if (b.kind === "full_write" && (SUPERVISED_WRITES.has(a.kind) || a.kind === "stable_read")) return true;
+  if (a.kind === "interactive_write" || b.kind === "interactive_write")
+    return false;
+  if (
+    a.kind === "full_write" &&
+    (SUPERVISED_WRITES.has(b.kind) || b.kind === "stable_read")
+  )
+    return true;
+  if (
+    b.kind === "full_write" &&
+    (SUPERVISED_WRITES.has(a.kind) || a.kind === "stable_read")
+  )
+    return true;
   if (a.kind === "stable_read" && b.kind === "stable_read") return false;
   // Remaining pairs: scoped write against scoped write or stable read.
   return scopesOverlap(a.paths, b.paths);
@@ -77,7 +94,9 @@ export function createWorkspaceAdmission(): WorkspaceAdmission {
   let nextId = 1;
 
   function conflictsWithHeld(request: GrantRequest): Grant[] {
-    return [...granted.values()].filter((held) => grantsConflict(held, request));
+    return [...granted.values()].filter((held) =>
+      grantsConflict(held, request),
+    );
   }
 
   function grant(request: GrantRequest): Grant {
@@ -148,7 +167,11 @@ export function createWorkspaceAdmission(): WorkspaceAdmission {
     },
     blockers(request) {
       const ahead = waiters
-        .filter((waiter) => waiter.request !== request && grantsConflict(waiter.request, request))
+        .filter(
+          (waiter) =>
+            waiter.request !== request &&
+            grantsConflict(waiter.request, request),
+        )
         .map((waiter) => waiter.request);
       return [...conflictsWithHeld(request), ...ahead];
     },

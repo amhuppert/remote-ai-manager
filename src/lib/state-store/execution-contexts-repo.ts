@@ -80,8 +80,12 @@ export function createExecutionContextsRepo(db: Db): ExecutionContextsRepo {
              @startCause, @workspaceJson, @factsJson, @revision, @progressJson,
              @progressOccurrence, @createdAt, @updatedAt)`,
   );
-  const getStmt = db.prepare(`SELECT ${COLUMNS} FROM execution_contexts WHERE context_id = ?`);
-  const byCauseStmt = db.prepare(`SELECT ${COLUMNS} FROM execution_contexts WHERE start_cause = ?`);
+  const getStmt = db.prepare(
+    `SELECT ${COLUMNS} FROM execution_contexts WHERE context_id = ?`,
+  );
+  const byCauseStmt = db.prepare(
+    `SELECT ${COLUMNS} FROM execution_contexts WHERE start_cause = ?`,
+  );
   const byRunStmt = db.prepare(
     `SELECT ${COLUMNS} FROM execution_contexts WHERE run_id = ? ORDER BY created_at, rowid`,
   );

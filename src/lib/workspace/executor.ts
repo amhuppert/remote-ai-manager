@@ -58,7 +58,10 @@ function scopesOverlap(a: WorkspaceScope, b: WorkspaceScope): boolean {
   if (a.mode === "full" || b.mode === "full") return true;
   return a.paths.some((left) =>
     b.paths.some(
-      (right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`),
+      (right) =>
+        left === right ||
+        left.startsWith(`${right}/`) ||
+        right.startsWith(`${left}/`),
     ),
   );
 }
@@ -67,25 +70,35 @@ function scopePaths(scope: WorkspaceScope): string[] | undefined {
   return scope.mode === "owned" ? scope.paths : undefined;
 }
 
-export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceExecutor {
+export function createWorkspaceExecutor(
+  deps: WorkspaceExecutorDeps,
+): WorkspaceExecutor {
   const runningBindings = new Set<string>();
   const inFlight = new Set<Promise<void>>();
   const controllers = new Map<string, AbortController>();
 
   function settle(record: WorkspaceOperationRecord, outcome: unknown): void {
     deps.transaction(() =>
-      deps.repo.updateOperation(record.cause, { state: "settled", outcome, updatedAt: deps.now() }),
+      deps.repo.updateOperation(record.cause, {
+        state: "settled",
+        outcome,
+        updatedAt: deps.now(),
+      }),
     );
     deps.touchRequester(record.requester);
   }
 
   function bindingOf(bindingId: string): WorkspaceBindingRecord {
     const binding = deps.repo.getBinding(bindingId);
-    if (binding === null) throw new Error(`Unknown workspace binding ${bindingId}`);
+    if (binding === null)
+      throw new Error(`Unknown workspace binding ${bindingId}`);
     return binding;
   }
 
-  async function withGrant<T>(request: GrantRequest, work: () => Promise<T>): Promise<T> {
+  async function withGrant<T>(
+    request: GrantRequest,
+    work: () => Promise<T>,
+  ): Promise<T> {
     const grant: Grant = await deps.admission.acquire(request);
     try {
       return await work();
@@ -94,11 +107,15 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
     }
   }
 
-  function bindAdmissible(operation: Extract<WorkspaceOperation, { kind: "bind" }>): boolean {
+  function bindAdmissible(
+    operation: Extract<WorkspaceOperation, { kind: "bind" }>,
+  ): boolean {
     const others = deps.repo
       .listBindings(operation.binding.worktreePath, "bound")
       .filter((b) => b.bindingId !== operation.bindingId);
-    return !others.some((other) => scopesOverlap(other.request.scope, operation.binding.scope));
+    return !others.some((other) =>
+      scopesOverlap(other.request.scope, operation.binding.scope),
+    );
   }
 
   async function perform(
@@ -112,7 +129,11 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
         operation.binding.scope,
       );
       deps.transaction(() =>
-        deps.repo.setBindingState(operation.bindingId, { state: "bound", baseline, updatedAt: deps.now() }),
+        deps.repo.setBindingState(operation.bindingId, {
+          state: "bound",
+          baseline,
+          updatedAt: deps.now(),
+        }),
       );
       return { kind: "bound" };
     }
@@ -120,24 +141,38 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
     const stableRead: GrantRequest = {
       worktree: binding.worktreePath,
       kind: "stable_read",
-      ...(scopePaths(binding.scope) !== undefined ? { paths: scopePaths(binding.scope) } : {}),
+      ...(scopePaths(binding.scope) !== undefined
+        ? { paths: scopePaths(binding.scope) }
+        : {}),
       holder: record.cause,
     };
     switch (operation.kind) {
       case "freeze":
         return withGrant(stableRead, async () => ({
           kind: "frozen",
-          evidence: await deps.evidence.capture(binding.worktreePath, binding.scope),
+          evidence: await deps.evidence.capture(
+            binding.worktreePath,
+            binding.scope,
+          ),
         }));
       case "verify":
         return withGrant(stableRead, async () => {
-          const current = await deps.evidence.capture(binding.worktreePath, binding.scope);
-          return { kind: "verified", changed: !deps.evidence.sameContent(current, operation.evidence) };
+          const current = await deps.evidence.capture(
+            binding.worktreePath,
+            binding.scope,
+          );
+          return {
+            kind: "verified",
+            changed: !deps.evidence.sameContent(current, operation.evidence),
+          };
         });
       case "accept":
         // Session placement accepts in place: the receipt names the exact content.
         return withGrant(stableRead, async () => {
-          const current = await deps.evidence.capture(binding.worktreePath, binding.scope);
+          const current = await deps.evidence.capture(
+            binding.worktreePath,
+            binding.scope,
+          );
           return deps.evidence.sameContent(current, operation.evidence)
             ? { kind: "accepted", receipt: `snapshot:${current}` }
             : { kind: "candidate_changed" };
@@ -145,17 +180,28 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
       case "check":
         // Checks read the whole tree, so they exclude every supervised writer.
         return withGrant({ ...stableRead, paths: undefined }, async () => {
-          const before = await deps.evidence.capture(binding.worktreePath, binding.scope);
+          const before = await deps.evidence.capture(
+            binding.worktreePath,
+            binding.scope,
+          );
           const result = await deps.runCheck({
             binding,
             bindingId: operation.bindingId,
             command: operation.command,
             signal,
           });
-          const after = await deps.evidence.capture(binding.worktreePath, binding.scope);
+          const after = await deps.evidence.capture(
+            binding.worktreePath,
+            binding.scope,
+          );
           const wrote = deps.evidence.sameContent(before, after)
             ? []
-            : await deps.evidence.changedPaths(binding.worktreePath, binding.scope, before, after);
+            : await deps.evidence.changedPaths(
+                binding.worktreePath,
+                binding.scope,
+                before,
+                after,
+              );
           return {
             kind: "checked",
             status: result.status,
@@ -166,7 +212,10 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
     }
   }
 
-  async function execute(record: WorkspaceOperationRecord, operation: WorkspaceOperation): Promise<void> {
+  async function execute(
+    record: WorkspaceOperationRecord,
+    operation: WorkspaceOperation,
+  ): Promise<void> {
     const controller = new AbortController();
     controllers.set(record.cause, controller);
     try {
@@ -193,7 +242,10 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
     const admitted = deps.transaction(() => {
       // Admission and its permit check happen together, at the moment of admission.
       if (!deps.permits.admits(record.permit)) return false;
-      deps.repo.updateOperation(record.cause, { state: "running", updatedAt: deps.now() });
+      deps.repo.updateOperation(record.cause, {
+        state: "running",
+        updatedAt: deps.now(),
+      });
       return true;
     });
     if (!admitted) return false;
@@ -211,7 +263,10 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
         if (existing !== null) {
           // A resubmission refreshes the permit of an operation not yet admitted.
           if (existing.state === "queued") {
-            deps.repo.updateOperation(intent.cause, { permit: intent.permit, updatedAt: deps.now() });
+            deps.repo.updateOperation(intent.cause, {
+              permit: intent.permit,
+              updatedAt: deps.now(),
+            });
           }
           return;
         }
@@ -250,7 +305,10 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
         case "settled":
           return { kind: "settled", outcome: record.outcome };
         case "uncertain":
-          return { kind: "uncertain", evidence: JSON.stringify(record.outcome) };
+          return {
+            kind: "uncertain",
+            evidence: JSON.stringify(record.outcome),
+          };
       }
     },
     withdraw(cause) {
@@ -278,7 +336,10 @@ export function createWorkspaceExecutor(deps: WorkspaceExecutorDeps): WorkspaceE
     recover() {
       deps.transaction(() => {
         for (const record of deps.repo.listOperations("running")) {
-          deps.repo.updateOperation(record.cause, { state: "queued", updatedAt: deps.now() });
+          deps.repo.updateOperation(record.cause, {
+            state: "queued",
+            updatedAt: deps.now(),
+          });
         }
       });
     },

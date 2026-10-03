@@ -2210,7 +2210,12 @@ describe("ClaudeConversationRuntime — live content emission", () => {
       uuid: "u-asst-1",
       message: {
         content: [
-          { type: "tool_use", id: "tu-1", name: "Bash", input: { command: "ls" } },
+          {
+            type: "tool_use",
+            id: "tu-1",
+            name: "Bash",
+            input: { command: "ls" },
+          },
         ],
       },
     } as unknown as SDKMessage);
@@ -2221,7 +2226,9 @@ describe("ClaudeConversationRuntime — live content emission", () => {
       parent_tool_use_id: null,
       message: {
         role: "user",
-        content: [{ type: "tool_result", tool_use_id: "tu-1", content: "a\nb" }],
+        content: [
+          { type: "tool_result", tool_use_id: "tu-1", content: "a\nb" },
+        ],
       },
     } as unknown as SDKMessage);
     mock.pushMessage({

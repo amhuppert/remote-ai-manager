@@ -9,8 +9,14 @@ import {
   createConversationRequests,
   type ConversationRequests,
 } from "@/lib/conversation-core/requests";
-import { createControlPermits, type ControlPermits } from "@/lib/control/permits";
-import { createContextHost, type ContextHost } from "@/lib/execution-context/host";
+import {
+  createControlPermits,
+  type ControlPermits,
+} from "@/lib/control/permits";
+import {
+  createContextHost,
+  type ContextHost,
+} from "@/lib/execution-context/host";
 import { createIntentLedger, type IntentLedger } from "@/lib/intents/ledger";
 import {
   createReconcileScheduler,
@@ -68,9 +74,11 @@ export interface RunSupervision {
   boot(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
 }
 
-export function composeRunSupervision(ports: RunSupervisionPorts): RunSupervision {
+export function composeRunSupervision(
+  ports: RunSupervisionPorts,
+): RunSupervision {
   const { db } = ports;
-  const transaction = <T,>(fn: () => T): T => db.transaction(fn)();
+  const transaction = <T>(fn: () => T): T => db.transaction(fn)();
   const permits = createControlPermits(createControlPermitsRepo(db));
   const intents = createIntentLedger(createPendingIntentsRepo(db));
   const scheduler = createReconcileScheduler();
@@ -126,7 +134,8 @@ export function composeRunSupervision(ports: RunSupervisionPorts): RunSupervisio
     intents,
     permits,
     contexts,
-    touchContext: (contextId) => scheduler.touch({ kind: "context", id: contextId }),
+    touchContext: (contextId) =>
+      scheduler.touch({ kind: "context", id: contextId }),
     notifyOwner: ports.notifyOwner,
     now: ports.now,
     log: ports.logger("runs"),
@@ -157,7 +166,10 @@ export function composeRunSupervision(ports: RunSupervisionPorts): RunSupervisio
       return {
         canAsk: context?.record.facts.contract.current.ownerQuestions ?? false,
         attemptId,
-        openQuestionId: attemptId === null ? null : requests.openedDuring(conversationId, attemptId),
+        openQuestionId:
+          attemptId === null
+            ? null
+            : requests.openedDuring(conversationId, attemptId),
       };
     },
     async boot() {

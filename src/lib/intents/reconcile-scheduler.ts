@@ -30,7 +30,11 @@ export function createReconcileScheduler(): ReconcileScheduler {
   const states = new Map<string, OwnerState>();
   const active = new Set<Promise<void>>();
 
-  async function drain(owner: OwnerRef, key: string, handlers: ReconcileHandlers) {
+  async function drain(
+    owner: OwnerRef,
+    key: string,
+    handlers: ReconcileHandlers,
+  ) {
     // Start on a later tick so a touch from inside a caller's transaction
     // never reconciles re-entrantly.
     await Promise.resolve();

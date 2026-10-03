@@ -36,16 +36,27 @@ export interface ConversationRequests extends Executor {
   question(questionId: string): CoreQuestionRecord | null;
 }
 
-export function createConversationRequests(deps: ConversationRequestsDeps): ConversationRequests {
-  function resolve(questionId: string, state: "answered" | "withdrawn", answer: string | null): boolean {
+export function createConversationRequests(
+  deps: ConversationRequestsDeps,
+): ConversationRequests {
+  function resolve(
+    questionId: string,
+    state: "answered" | "withdrawn",
+    answer: string | null,
+  ): boolean {
     const resolved = deps.transaction(() => {
       const question = deps.repo.getQuestion(questionId);
       if (question === null || question.state !== "open") return false;
-      deps.repo.resolveQuestion(questionId, { state, answer, answeredAt: deps.now() });
+      deps.repo.resolveQuestion(questionId, {
+        state,
+        answer,
+        answeredAt: deps.now(),
+      });
       return true;
     });
     if (resolved) {
-      for (const waiter of deps.repo.waitersFor(questionId)) deps.touchRequester(waiter);
+      for (const waiter of deps.repo.waitersFor(questionId))
+        deps.touchRequester(waiter);
     }
     return resolved;
   }
@@ -79,7 +90,9 @@ export function createConversationRequests(deps: ConversationRequestsDeps): Conv
     },
     openedDuring(conversationId, attemptId) {
       const question = deps.repo.questionForAttempt(conversationId, attemptId);
-      return question !== null && question.state === "open" ? question.questionId : null;
+      return question !== null && question.state === "open"
+        ? question.questionId
+        : null;
     },
     submit(intent) {
       const request = answerWaitRequestSchema.parse(intent.request);
@@ -96,14 +109,19 @@ export function createConversationRequests(deps: ConversationRequestsDeps): Conv
       const wait = deps.repo.getWait(cause);
       if (wait === null) return { kind: "unknown" };
       const question = deps.repo.getQuestion(wait.questionId);
-      if (question === null) return { kind: "settled", outcome: { kind: "withdrawn" } };
+      if (question === null)
+        return { kind: "settled", outcome: { kind: "withdrawn" } };
       switch (question.state) {
         case "open":
           return { kind: "running" };
         case "answered":
           return {
             kind: "settled",
-            outcome: { kind: "answered", question: question.questionText, answer: question.answer ?? "" },
+            outcome: {
+              kind: "answered",
+              question: question.questionText,
+              answer: question.answer ?? "",
+            },
           };
         case "withdrawn":
           return { kind: "settled", outcome: { kind: "withdrawn" } };

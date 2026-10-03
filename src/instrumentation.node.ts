@@ -79,7 +79,10 @@ export interface StartupDeps {
    * Run paused, and reconciles owners with open intents. Optional so a test
    * that is not about Runs need not supply it.
    */
-  bootRunSupervision?(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
+  bootRunSupervision?(): Promise<{
+    restoredRuns: number;
+    reconciledOwners: number;
+  }>;
   /**
    * Deletes `refs/cc-merges/` refs no job row still holds. Optional so a test
    * that is not about parked refs need not supply it.

@@ -23,7 +23,9 @@ export const workspaceBindingRequestSchema = z
     scope: workspaceScopeSchema,
   })
   .strict();
-export type WorkspaceBindingRequest = z.infer<typeof workspaceBindingRequestSchema>;
+export type WorkspaceBindingRequest = z.infer<
+  typeof workspaceBindingRequestSchema
+>;
 
 /**
  * Operations Workspace executes. Requesters may carry their own labels on a
@@ -37,7 +39,9 @@ export const workspaceOperationSchema = z.discriminatedUnion("kind", [
       binding: workspaceBindingRequestSchema,
     })
     .passthrough(),
-  z.object({ kind: z.literal("freeze"), bindingId: z.string().min(1) }).passthrough(),
+  z
+    .object({ kind: z.literal("freeze"), bindingId: z.string().min(1) })
+    .passthrough(),
   z
     .object({
       kind: z.literal("check"),
@@ -63,7 +67,11 @@ export const workspaceOperationSchema = z.discriminatedUnion("kind", [
 ]);
 export type WorkspaceOperation = z.infer<typeof workspaceOperationSchema>;
 
-export const workspaceBindingStateSchema = z.enum(["waiting", "bound", "released"]);
+export const workspaceBindingStateSchema = z.enum([
+  "waiting",
+  "bound",
+  "released",
+]);
 
 export const workspaceBindingRecordSchema = z
   .object({
@@ -76,18 +84,30 @@ export const workspaceBindingRecordSchema = z
     updatedAt: z.string().min(1),
   })
   .strict();
-export type WorkspaceBindingRecord = z.infer<typeof workspaceBindingRecordSchema>;
+export type WorkspaceBindingRecord = z.infer<
+  typeof workspaceBindingRecordSchema
+>;
 
-export const workspaceOperationStateSchema = z.enum(["queued", "running", "settled", "uncertain"]);
+export const workspaceOperationStateSchema = z.enum([
+  "queued",
+  "running",
+  "settled",
+  "uncertain",
+]);
 
 export const workspaceOperationRecordSchema = z
   .object({
     cause: z.string().min(1),
     bindingId: z.string().min(1),
-    requester: z.object({ kind: z.enum(["context", "run"]), id: z.string().min(1) }).strict(),
+    requester: z
+      .object({ kind: z.enum(["context", "run"]), id: z.string().min(1) })
+      .strict(),
     request: z.unknown(),
     permit: z
-      .object({ controllerId: z.string().min(1), generation: z.number().int().min(1) })
+      .object({
+        controllerId: z.string().min(1),
+        generation: z.number().int().min(1),
+      })
       .strict()
       .nullable(),
     state: workspaceOperationStateSchema,
@@ -96,7 +116,9 @@ export const workspaceOperationRecordSchema = z
     updatedAt: z.string().min(1),
   })
   .strict();
-export type WorkspaceOperationRecord = z.infer<typeof workspaceOperationRecordSchema>;
+export type WorkspaceOperationRecord = z.infer<
+  typeof workspaceOperationRecordSchema
+>;
 
 /** The settled outcome of a Workspace operation, as requesters consume it. */
 export const workspaceReportSchema = z.discriminatedUnion("kind", [
@@ -111,7 +133,9 @@ export const workspaceReportSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
   z.object({ kind: z.literal("verified"), changed: z.boolean() }).strict(),
-  z.object({ kind: z.literal("accepted"), receipt: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("accepted"), receipt: z.string().min(1) })
+    .strict(),
   z.object({ kind: z.literal("candidate_changed") }).strict(),
   z.object({ kind: z.literal("refused"), detail: z.string().min(1) }).strict(),
 ]);
