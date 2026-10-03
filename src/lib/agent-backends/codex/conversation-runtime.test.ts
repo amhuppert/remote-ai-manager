@@ -604,7 +604,7 @@ describe("CodexConversationRuntime", () => {
       translatePortableMcpToCodex: vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
-      listNativeCodexMcpServers: vi.fn().mockResolvedValue([]),
+      discoverNativeCodexMcpServers: vi.fn().mockResolvedValue({ kind: "complete", servers: [] }),
       getCodexPricingOverrides: vi.fn().mockResolvedValue(null),
       readPersistedCostBaseline: vi.fn().mockResolvedValue(null),
       mergeNativeSkillSelectors: async (config) => config,
@@ -2606,6 +2606,37 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
+    it("fails a confined turn before dispatch when native MCP discovery is incomplete", async () => {
+      deps.translatePortableMcpToCodex = vi.fn().mockReturnValue({
+        mcpServers: {},
+        droppedFields: [],
+      });
+      deps.discoverNativeCodexMcpServers = vi.fn().mockResolvedValue({
+        kind: "incomplete",
+        reason: "codex mcp list failed: spawn ENOENT",
+        reconstructed: [],
+      });
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          fsWritePolicy: {
+            mode: "allowlist",
+            allowWrite: ["/scratch", "/scratch/tmp"],
+            denyWrite: ["/test/worktree"],
+          },
+          tooling: { portableMcp: { servers: [] } },
+        }),
+        deps,
+      );
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.failure?.message).toContain(
+        "codex mcp list failed: spawn ENOENT",
+      );
+      expect(deps.createAppServer).not.toHaveBeenCalled();
+    });
+
     it("adds enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
       deps.translatePortableMcpToCodex = vi.fn().mockReturnValue({
         mcpServers: {
@@ -2614,26 +2645,29 @@ describe("CodexConversationRuntime", () => {
         },
         droppedFields: [],
       });
-      deps.listNativeCodexMcpServers = vi.fn().mockResolvedValue([
-        {
-          name: "playwright",
-          configEntry: {
-            command: "npx",
-            args: ["-y", "@playwright/mcp@latest"],
+      deps.discoverNativeCodexMcpServers = vi.fn().mockResolvedValue({
+        kind: "complete",
+        servers: [
+          {
+            name: "playwright",
+            configEntry: {
+              command: "npx",
+              args: ["-y", "@playwright/mcp@latest"],
+            },
           },
-        },
-        {
-          name: "external-tools",
-          configEntry: { url: "http://localhost/mcp" },
-        },
-        {
-          name: "next-devtools",
-          configEntry: {
-            command: "npx",
-            args: ["-y", "next-devtools-mcp@latest"],
+          {
+            name: "external-tools",
+            configEntry: { url: "http://localhost/mcp" },
           },
-        },
-      ]);
+          {
+            name: "next-devtools",
+            configEntry: {
+              command: "npx",
+              args: ["-y", "next-devtools-mcp@latest"],
+            },
+          },
+        ],
+      });
 
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(
@@ -2661,7 +2695,7 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput());
 
-      expect(deps.listNativeCodexMcpServers).toHaveBeenCalledWith({
+      expect(deps.discoverNativeCodexMcpServers).toHaveBeenCalledWith({
         cwd: "/test/worktree",
         env: expect.any(Object),
       });

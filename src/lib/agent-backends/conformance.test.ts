@@ -214,6 +214,7 @@ describeBackendConformance(claudeDescriptor, {
   },
   task: {
     buildRequest: () => buildTaskRequest(true, CLAUDE_MODEL_SELECTION),
+    hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -301,6 +302,7 @@ describeBackendConformance(codexDescriptor, {
   },
   task: {
     buildRequest: () => buildTaskRequest(true, CODEX_MODEL_SELECTION),
+    hangingPromptText: FAKE_CODEX_HANGING_PROMPT,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,

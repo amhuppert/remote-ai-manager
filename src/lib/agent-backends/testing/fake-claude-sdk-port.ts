@@ -333,7 +333,16 @@ export function createFakeClaudeTaskPort(
         args.options.outputFormat !== undefined
           ? config.structuredOutput
           : undefined;
+      const abortSignal = args.options.abortController?.signal;
       return (async function* (): AsyncGenerator<SDKMessage> {
+        if (args.prompt.includes(FAKE_CLAUDE_HANGING_PROMPT)) {
+          // Hangs until the run's abort fires, then fails the way the SDK does.
+          await new Promise<void>((_resolve, reject) => {
+            const fail = () => reject(new Error("Claude Code process aborted by user"));
+            if (abortSignal?.aborted) fail();
+            else abortSignal?.addEventListener("abort", fail);
+          });
+        }
         yield buildAssistantMessage(FAKE_CLAUDE_TASK_TEXT);
         yield buildResultSuccess(structuredOutput);
       })();

@@ -33,6 +33,17 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl charter write-check` — Validate: Submit the open Alignment charter draft
   - `cctl charter write-check --file <path> [options]`
   - Flags: `--file` (required).
+- `cctl context` — Work inside a supervised context
+  - `cctl context <command> [options]`
+- `cctl context task` — Report progress on your context's tasks
+  - `cctl context task <command> [options]`
+- `cctl context task add` — Add a task your context's work needs
+  - `cctl context task add <task-id> --title <string> [options]`
+  - Flags: `--title` (required), `--instructions` / `--instructions-file`, `--instructions-file`.
+- `cctl context task complete` — Mark one of your context's tasks done
+  - `cctl context task complete <task-id> [options]`
+- `cctl context task reopen` — Reopen one of your context's tasks
+  - `cctl context task reopen <task-id> [options]`
 - `cctl conversation` — Read original history and manage context checkpoints
   - `cctl conversation <command> [options]`
 - `cctl conversation checkpoint` — Manage durable context checkpoints
@@ -226,6 +237,26 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl notify` — Send a push notification to the user
   - `cctl notify <message> [options]`
   - Flags: `--title`.
+- `cctl run` — Launch and steer supervised agent runs
+  - `cctl run <command> [options]`
+- `cctl run answer` — Answer a question an agent in your run asked
+  - `cctl run answer <run-id> --question <string> (--text <string> | --text-file <path>) [options]`
+  - Flags: `--question` (required), `--text` / `--text-file` (required), `--text-file`.
+- `cctl run cancel` — Cancel a run you launched
+  - `cctl run cancel <run-id> [options]`
+- `cctl run launch` — Launch a supervised agent run in this session
+  - `cctl run launch --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl run launch-check` — Validate: Launch a supervised agent run in this session
+  - `cctl run launch-check --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl run pause` — Pause a run you launched
+  - `cctl run pause <run-id> [options]`
+- `cctl run resume` — Resume a paused or halted run
+  - `cctl run resume <run-id> [options]`
+  - Flags: `--context`, `--occurrence`, `--disposition`, `--allowance`, `--count`, `--reason`, `--evidence`.
+- `cctl run show` — Read a run's progress, contexts and boundaries
+  - `cctl run show <run-id> [options]`
 - `cctl spec` — Author and inspect native specifications
   - `cctl spec <command> [options]`
 - `cctl spec abandon` — Abandon one workflow execution or request spec retirement

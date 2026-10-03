@@ -1,0 +1,391 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createControlPermits, type ControlPermits } from "@/lib/control/permits";
+import { createContextHost, type ContextHost } from "@/lib/execution-context/host";
+import {
+  DEFAULT_CONTEXT_POLICY,
+  contextContractSchema,
+  type ContextStartRequest,
+} from "@/lib/execution-context/schemas";
+import { createIntentLedger, type IntentLedger } from "@/lib/intents/ledger";
+import { createReconcileScheduler, type ReconcileScheduler } from "@/lib/intents/reconcile-scheduler";
+import { createFakeExecutor, type FakeExecutor } from "@/lib/intents/testing/fake-executor";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
+import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
+import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo";
+import { createRunsRepo } from "@/lib/state-store/runs-repo";
+import { createRunHost, deriveRunProgress, type RunHost } from "./host";
+import type { RunBoundary } from "./schemas";
+
+const now = "2026-10-03T10:00:00.000Z";
+const silent = { info: () => {}, warn: () => {}, error: () => {} };
+
+let fixture: PersistenceFixture;
+let permits: ControlPermits;
+let intents: IntentLedger;
+let scheduler: ReconcileScheduler;
+let conversation: FakeExecutor;
+let workspace: FakeExecutor;
+let requests: FakeExecutor;
+let contexts: ContextHost;
+let runs: RunHost;
+let notified: RunBoundary[];
+/** Lets a test make delivery fail or stall; the default delivers at once. */
+let deliver: (boundary: RunBoundary) => Promise<void>;
+
+const seat = {
+  profile: { tier: "builtin" as const, id: "standard-agent" },
+  backend: "claude" as const,
+  modelSelection: { modelId: "sonnet", parameters: {} },
+};
+
+function startRequest(contextId: string, humanApproval = false): ContextStartRequest {
+  return {
+    contextId,
+    runId: "run-1",
+    ownerConversationId: "owner-1",
+    workspace: {
+      kind: "session",
+      projectPath: "/repo",
+      sessionName: "session",
+      worktreePath: "/repo/.worktrees/session",
+      scope: { mode: "full" },
+    },
+    contract: contextContractSchema.parse({
+      title: "Fix the notice",
+      brief: "Make the failure notice appear once.",
+      tasks: [],
+      acceptanceCriteria: [],
+      outputSchema: null,
+      allowTaskAddition: false,
+      implementer: { id: "implementer", ...seat },
+      reviewers: [],
+      checks: [],
+      humanApproval,
+      ownerQuestions: true,
+      documents: [],
+    }),
+    policy: DEFAULT_CONTEXT_POLICY,
+  };
+}
+
+const report = (overrides: Record<string, unknown> = {}) => ({
+  status: "succeeded",
+  conversationId: "conv-impl",
+  finalText: "Done.",
+  structuredOutput: null,
+  outputIssue: null,
+  openQuestionId: null,
+  failure: null,
+  ...overrides,
+});
+
+beforeEach(() => {
+  fixture = createPersistenceFixture();
+  const transaction = <T,>(fn: () => T): T => fixture.db.transaction(fn)();
+  permits = createControlPermits(createControlPermitsRepo(fixture.db));
+  intents = createIntentLedger(createPendingIntentsRepo(fixture.db));
+  scheduler = createReconcileScheduler();
+  conversation = createFakeExecutor(permits);
+  workspace = createFakeExecutor(permits);
+  requests = createFakeExecutor(permits);
+  notified = [];
+  deliver = async () => {};
+  contexts = createContextHost({
+    transaction,
+    contexts: createExecutionContextsRepo(fixture.db),
+    intents,
+    permits,
+    executors: { conversation, workspace, requests },
+    touchRun: (runId) => scheduler.touch({ kind: "run", id: runId }),
+    releaseBinding: () => {},
+    now: () => now,
+    log: silent,
+  });
+  runs = createRunHost({
+    transaction,
+    runs: createRunsRepo(fixture.db),
+    intents,
+    permits,
+    contexts,
+    touchContext: (contextId) => scheduler.touch({ kind: "context", id: contextId }),
+    async notifyOwner({ boundary }) {
+      await deliver(boundary);
+      notified.push(boundary);
+    },
+    now: () => now,
+    log: silent,
+  });
+  scheduler.register("context", {
+    reconcile: (id) => contexts.reconcile(id),
+    onFailure: (id, error) => contexts.recordReconcileFailure(id, error),
+  });
+  scheduler.register("run", {
+    reconcile: (id) => runs.reconcile(id),
+    onFailure: (id, error) => runs.recordReconcileFailure(id, error),
+  });
+});
+afterEach(async () => {
+  await scheduler.idle();
+  fixture.close();
+});
+
+/** Settles the single pending operation of `executor` and lets reconciles run. */
+async function settle(executor: FakeExecutor, kind: string, outcome: unknown): Promise<void> {
+  await scheduler.idle();
+  const op = executor
+    .submitted()
+    .find((i) => (i.request as { kind?: string }).kind === kind && executor.outcome(i.cause).kind !== "settled");
+  if (op === undefined) throw new Error(`No pending ${kind}`);
+  executor.admit(op.cause);
+  executor.settle(op.cause, outcome);
+  scheduler.touch(op.requester);
+  await scheduler.idle();
+}
+
+async function launch(humanApproval = false): Promise<void> {
+  await runs.launch({
+    runId: "run-1",
+    cause: "launch-1",
+    kind: "agent",
+    title: "Fix the notice",
+    projectPath: "/repo",
+    sessionName: "session",
+    owner: { conversationId: "owner-1", sessionName: "session" },
+    invocations: [{ key: "agent", request: startRequest("run-1.agent", humanApproval) }],
+  });
+  await scheduler.idle();
+}
+
+describe("run progress", () => {
+  const facts = {
+    runId: "run-1",
+    kind: "workflow" as const,
+    title: "Two lanes",
+    invocations: [],
+    control: { paused: false, cancelled: false },
+  };
+  const question = { kind: "waiting" as const, obligation: { kind: "await_answer" as const, questionId: "q-1" } };
+
+  it("needs the owner only once no other invocation can make progress", () => {
+    expect(
+      deriveRunProgress(facts, [
+        { key: "a", progress: question },
+        { key: "b", progress: { kind: "running", obligation: { kind: "work", reason: "initial" } } },
+      ]),
+    ).toEqual({ kind: "running" });
+    expect(
+      deriveRunProgress(facts, [
+        { key: "a", progress: question },
+        { key: "b", progress: { kind: "succeeded", candidateId: "c-1" } },
+      ]),
+    ).toEqual({ kind: "needs_owner", reasons: ["a: question"] });
+  });
+});
+
+describe("run host", () => {
+  it("runs a standalone context to success and tells the owner once, with its result", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report());
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
+    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
+    expect(notified[0]?.detail).toEqual({ outputs: { agent: { summary: "Done." } } });
+    await runs.reconcile("run-1");
+    expect(notified).toHaveLength(1);
+  });
+
+  it("asks the owner a child's question and continues once it is answered", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report({ openQuestionId: "q-1" }));
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "needs_owner", reasons: ["agent: question"] });
+    expect(notified.map((b) => [b.kind, b.detail])).toEqual([["question", { contextId: "run-1.agent", questionId: "q-1" }]]);
+
+    await settle(requests, "answer", { kind: "answered", question: "Which file?", answer: "notice.ts" });
+    expect(conversation.submitted().map((i) => (i.request as { reason?: string }).reason)).toEqual(["initial", "continue"]);
+  });
+
+  it("admits nothing while paused and continues after resume", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    const record = runs.observe("run-1")?.record;
+    if (record === undefined) throw new Error("no run");
+    await runs.pause("run-1", record.revision);
+
+    const work = conversation.submitted()[0];
+    if (work === undefined) throw new Error("no work order");
+    expect(conversation.admit(work.cause)).toBe(false);
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
+
+    await runs.resume("run-1", runs.observe("run-1")?.record.revision ?? 0);
+    await scheduler.idle();
+    expect(conversation.admit(work.cause)).toBe(true);
+  });
+
+  it("restores active runs paused after a restart and tells their owners", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await runs.restoreAfterRestart();
+
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
+    expect(notified.map((b) => b.kind)).toContain("restored_paused");
+    const work = conversation.submitted()[0];
+    if (work === undefined) throw new Error("no work order");
+    expect(conversation.admit(work.cause)).toBe(false);
+  });
+
+  it("passes a halt disposition to its context through resume", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report({ status: "failed", failure: "provider error" }));
+    const halted = notified.find((b) => b.kind === "halted");
+    expect(halted?.summary).toContain("turn_failed");
+    expect(conversation.submitted()).toHaveLength(1);
+    const occurrence = (halted?.detail as { occurrence: string }).occurrence;
+
+    await runs.resume("run-1", runs.observe("run-1")?.record.revision ?? 0, [
+      { contextId: "run-1.agent", occurrence, disposition: { kind: "continue" } },
+    ]);
+    await scheduler.idle();
+    expect(conversation.submitted()).toHaveLength(2);
+    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe("running");
+  });
+
+  it("asks the owner for a human decision and accepts the approved candidate", async () => {
+    await launch(true);
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report());
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
+
+    const approval = notified.find((b) => b.kind === "approval");
+    const detail = approval?.detail as { contextId: string; candidateId: string };
+    expect(detail.contextId).toBe("run-1.agent");
+    expect(() => runs.decide("run-1", "other.context", { candidateId: detail.candidateId, decision: "approved" })).toThrow(
+      /does not belong/,
+    );
+    runs.decide("run-1", detail.contextId, { candidateId: detail.candidateId, decision: "approved" });
+    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+  });
+
+  it("redelivers a notice that failed, at the next boot, even after the run finished", async () => {
+    deliver = async () => {
+      throw new Error("owner conversation unavailable");
+    };
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report());
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
+    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(notified).toEqual([]);
+
+    deliver = async () => {};
+    await runs.restoreAfterRestart();
+    expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+  });
+
+  it("delivers each boundary once when reconciles overlap", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    deliver = () => gate;
+    conversation.admit(conversation.submitted()[0]?.cause ?? "");
+    conversation.settle(conversation.submitted()[0]?.cause ?? "", report({ openQuestionId: "q-1" }));
+    await contexts.reconcile("run-1.agent");
+    const first = runs.reconcile("run-1");
+    const second = runs.reconcile("run-1");
+    release();
+    await Promise.all([first, second]);
+    await scheduler.idle();
+
+    expect(notified.map((b) => b.kind)).toEqual(["question"]);
+  });
+
+  it("restores every active run paused even when a restore notice cannot be delivered", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    deliver = async () => {
+      throw new Error("owner conversation unavailable");
+    };
+    await runs.restoreAfterRestart();
+
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
+    const work = conversation.submitted()[0];
+    if (work === undefined) throw new Error("no work order");
+    expect(conversation.admit(work.cause)).toBe(false);
+  });
+
+  it("refuses a stale or foreign disposition and leaves the run exactly as it was", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report({ status: "failed", failure: "provider error" }));
+    await runs.pause("run-1", null);
+    const occurrence = runs.observe("run-1")?.record.invocations[0]?.occurrence ?? "";
+
+    await expect(
+      runs.resume("run-1", null, [{ contextId: "run-1.agent", occurrence: "stale", disposition: { kind: "continue" } }]),
+    ).rejects.toThrow(/occurrence/);
+    await expect(
+      runs.resume("run-1", null, [{ contextId: "elsewhere", occurrence, disposition: { kind: "continue" } }]),
+    ).rejects.toThrow(/does not belong/);
+    await scheduler.idle();
+
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
+    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe("halted");
+    expect(conversation.submitted()).toHaveLength(1);
+  });
+
+  it("refuses to pause, resume or cancel a run that already finished", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report());
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
+    await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot:git:a:a" });
+
+    await expect(runs.cancel("run-1", null)).rejects.toThrow(/already finished/);
+    await expect(runs.pause("run-1", null)).rejects.toThrow(/already finished/);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
+  });
+
+  it("reports success when the last admitted effect settles while the run is paused", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report());
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
+    const accept = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "accept");
+    if (accept === undefined) throw new Error("no accept");
+    workspace.admit(accept.cause);
+    await runs.pause("run-1", null);
+    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:git:a:a" });
+    scheduler.touch(accept.requester);
+    await scheduler.idle();
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(notified.map((b) => b.kind)).toEqual(["succeeded"]);
+  });
+
+  it("cancels its contexts and reports cancellation", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await runs.cancel("run-1", runs.observe("run-1")?.record.revision ?? 0);
+    await scheduler.idle();
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(notified.map((b) => b.kind)).toContain("cancelled");
+  });
+});

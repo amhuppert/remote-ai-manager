@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { SUPERVISION_SCHEMA_DDL } from "./supervision-schema";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -3112,6 +3113,8 @@ const SCHEMA_DDL = `
   ${GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL}
 
   ${GRAPH_PLAN_REVIEWS_SCHEMA_DDL}
+
+  ${SUPERVISION_SCHEMA_DDL}
 
   ${NOTEPADS_SCHEMA_DDL}
 

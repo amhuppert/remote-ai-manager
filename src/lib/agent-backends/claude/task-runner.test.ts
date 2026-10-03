@@ -563,6 +563,58 @@ describe("ClaudeTaskRunner", () => {
     expect(capturedController?.signal.aborted).toBe(true);
   });
 
+  it("reports an external cancellation as cancelled when the stream ends quietly", async () => {
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            resolve(),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    const external = new AbortController();
+    const runPromise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    external.abort();
+    const result = await runPromise;
+
+    expect(result.timedOut).toBe(true);
+    expect(result.error).toBe("Task cancelled");
+  });
+
+  it("reports an external cancellation as cancelled when the stream throws", async () => {
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      return (async function* () {
+        await new Promise<void>((_resolve, reject) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            reject(new Error("Claude Code process aborted by user")),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    const external = new AbortController();
+    const runPromise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    external.abort();
+    const result = await runPromise;
+
+    expect(result.timedOut).toBe(true);
+    expect(result.error).toBe("Task cancelled");
+  });
+
   it("tears down immediately when the external signal is already aborted", async () => {
     let capturedController: AbortController | undefined;
 

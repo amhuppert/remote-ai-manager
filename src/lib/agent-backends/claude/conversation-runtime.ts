@@ -471,10 +471,6 @@ class ClaudeConversationRuntime
         interpreter.emitEvent({ type: "backend_init", backendRef });
       }
 
-      for (const block of turnResult.contentBlocks) {
-        interpreter.emitEvent({ type: "content", block });
-      }
-
       // Drain barrier: every emitted event's handler (queued-user acceptance,
       // transcript appends) must settle before the turn is reported complete,
       // so a reader observing completion sees the full ordered transcript.

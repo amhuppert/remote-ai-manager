@@ -23,7 +23,7 @@ function fakeServer(
   options: {
     forkResult?: () => Promise<unknown>;
     nativeServers?: NativeCodexMcpServer[];
-    listNativeMcpServers?: CodexThreadForkDeps["listNativeMcpServers"];
+    discoverNativeMcpServers?: CodexThreadForkDeps["discoverNativeMcpServers"];
     close?: () => Promise<void>;
     failTransport?: Error;
   } = {},
@@ -33,8 +33,9 @@ function fakeServer(
   let closed = 0;
   const deps: CodexThreadForkDeps = {
     buildEnv: () => ({ PATH: "/bin" }),
-    listNativeMcpServers:
-      options.listNativeMcpServers ?? (async () => options.nativeServers ?? []),
+    discoverNativeMcpServers:
+      options.discoverNativeMcpServers ??
+      (async () => ({ kind: "complete", servers: options.nativeServers ?? [] })),
     createAppServer(launch) {
       launches.push(launch);
       const client: AppServerClient = {
@@ -159,15 +160,32 @@ describe("forkCodexThread", () => {
     expect(server.closed()).toBe(1);
   });
 
-  it("rejects without launching when native MCP servers cannot be listed", async () => {
+  it("rejects without launching when native MCP discovery is incomplete", async () => {
     const server = fakeServer({
-      listNativeMcpServers: async () => {
-        throw new Error("codex mcp list failed");
-      },
+      discoverNativeMcpServers: async () => ({
+        kind: "incomplete",
+        reason: "codex mcp list failed: spawn ENOENT",
+        reconstructed: [],
+      }),
     });
 
     await expect(forkCodexThread(INPUT, server.deps)).rejects.toThrow(
-      "codex mcp list failed",
+      "codex mcp list failed: spawn ENOENT",
+    );
+    expect(server.launches).toHaveLength(0);
+  });
+
+  it("rejects even when part of an incomplete discovery could be reconstructed", async () => {
+    const server = fakeServer({
+      discoverNativeMcpServers: async () => ({
+        kind: "incomplete",
+        reason: "unreadable native MCP server entries: legacy-sse",
+        reconstructed: [{ name: "github", configEntry: { url: "https://x" } }],
+      }),
+    });
+
+    await expect(forkCodexThread(INPUT, server.deps)).rejects.toThrow(
+      "legacy-sse",
     );
     expect(server.launches).toHaveLength(0);
   });

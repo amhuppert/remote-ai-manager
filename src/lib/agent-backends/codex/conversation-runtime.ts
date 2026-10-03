@@ -93,7 +93,10 @@ import { appendStructuredOutputInstruction } from "../structured-output-prompt";
 import { translatePortableMcpToCodex } from "../mcp-translation";
 import {
   buildCodexMcpServersConfig,
-  listNativeCodexMcpServers,
+  discoverNativeCodexMcpServers,
+  NativeMcpSuppressionRefusedError,
+  resolveNativeMcpSuppression,
+  type NativeCodexMcpDiscovery,
   type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
 import { withCodexFastMode } from "./fast-mode-config";
@@ -266,10 +269,10 @@ export interface CodexConversationRuntimeDeps {
   translatePortableMcpToCodex(
     config: PortableMcpConfig,
   ): PortableMcpToCodexResult;
-  listNativeCodexMcpServers(input: {
+  discoverNativeCodexMcpServers(input: {
     cwd: string;
     env: Record<string, string>;
-  }): Promise<NativeCodexMcpServer[]>;
+  }): Promise<NativeCodexMcpDiscovery>;
   /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
   /**
@@ -305,7 +308,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   getApiToken: getCachedInstanceToken,
   getConfigDir: getConfigDirPath,
   translatePortableMcpToCodex,
-  listNativeCodexMcpServers,
+  discoverNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
     resolveConfiguredCodexPricingOverrides(await readConfig()),
   readPersistedCostBaseline: readCodexPersistedCostBaseline,
@@ -1774,7 +1777,10 @@ export class CodexConversationRuntime
 
     if (portableMcp !== null) {
       const { mcpServers } = this.deps.translatePortableMcpToCodex(portableMcp);
-      const nativeServers = await this.listNativeMcpServers(env);
+      const nativeServers = await this.nativeServersToSuppress(
+        env,
+        writeEnvelope !== undefined,
+      );
       configMerged.mcp_servers = buildCodexMcpServersConfig({
         managedMcpServers: mcpServers,
         nativeServers,
@@ -1812,26 +1818,38 @@ export class CodexConversationRuntime
     return options;
   }
 
-  private async listNativeMcpServers(
+  /**
+   * A confined turn may reach only servers CC composed, so it needs a complete
+   * discovery and fails the turn otherwise; an unconfined turn suppresses what
+   * could be reconstructed.
+   */
+  private async nativeServersToSuppress(
     env: Record<string, string>,
+    confined: boolean,
   ): Promise<NativeCodexMcpServer[]> {
-    try {
-      const servers = await this.deps.listNativeCodexMcpServers({
-        cwd: this.worktreePath,
-        env,
-      });
+    const requirement = confined ? "required" : "best_effort";
+    const discovery = await this.deps.discoverNativeCodexMcpServers({
+      cwd: this.worktreePath,
+      env,
+    });
+    if (discovery.kind === "complete") {
       logger.info("codex-runtime.mcp_native_servers_listed", {
         conversationId: this.conversationId,
-        nativeServerCount: servers.length,
+        nativeServerCount: discovery.servers.length,
       });
-      return servers;
-    } catch (err) {
-      logger.warn("codex-runtime.mcp_native_server_list_failed", {
+    } else {
+      logger.warn("codex-runtime.mcp_native_discovery_incomplete", {
         conversationId: this.conversationId,
-        error: getErrorMessage(err),
+        requirement,
+        reason: discovery.reason,
+        reconstructedServerCount: discovery.reconstructed.length,
       });
-      return [];
     }
+    const suppression = resolveNativeMcpSuppression(discovery, requirement);
+    if (suppression.kind === "refused") {
+      throw new NativeMcpSuppressionRefusedError(suppression.reason);
+    }
+    return suppression.servers;
   }
 
   private buildThreadOptions(): ThreadOptions {

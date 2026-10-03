@@ -330,3 +330,42 @@ it("returns a simultaneously cancelled grant and advances the next FIFO waiter o
   releaseNext();
   expect(getQuerySemaphoreStatus().active).toBe(0);
 });
+
+describe("tryAcquireQuerySlot", () => {
+  it("takes a free slot without waiting and refuses when the semaphore is full", async () => {
+    const { tryAcquireQuerySlot } = await import("./query-semaphore");
+    const first = await tryAcquireQuerySlot("a");
+    const second = await tryAcquireQuerySlot("b");
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(await tryAcquireQuerySlot("c")).toBeNull();
+    first?.();
+    expect(await tryAcquireQuerySlot("c")).not.toBeNull();
+  });
+
+  it("does not overtake a caller already queued for a slot", async () => {
+    const { acquireQuerySlot, tryAcquireQuerySlot } = await import("./query-semaphore");
+    const a = await acquireQuerySlot("a");
+    await acquireQuerySlot("b");
+    const queued = acquireQuerySlot("queued");
+    await flushMicrotasks();
+    a();
+    await queued;
+    expect(await tryAcquireQuerySlot("late")).toBeNull();
+  });
+
+  it("signals waiters when a slot is released", async () => {
+    const { tryAcquireQuerySlot, waitForQuerySlotRelease } = await import("./query-semaphore");
+    const a = await tryAcquireQuerySlot("a");
+    await tryAcquireQuerySlot("b");
+    let woke = false;
+    const wait = waitForQuerySlotRelease().then(() => {
+      woke = true;
+    });
+    await flushMicrotasks();
+    expect(woke).toBe(false);
+    a?.();
+    await wait;
+    expect(woke).toBe(true);
+  });
+});

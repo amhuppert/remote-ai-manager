@@ -110,6 +110,7 @@ function makeDeps(overrides: Partial<AskRouteDeps> = {}): {
     },
     registerConversationQuestion: send,
     resolveLaneAskPermission,
+    seatAsk: { seatFor: () => null, open: () => "unused" },
     generateQuestionBatchId: () => "q_test1234",
     log: createCapturingLogger(),
     ...overrides,
@@ -280,6 +281,65 @@ describe("POST conversation ask", () => {
     });
     expect(resolveLaneAskPermission).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  describe("supervised seat conversations", () => {
+    function seatDeps(seat: { canAsk: boolean; attemptId: string | null; openQuestionId: string | null }) {
+      const opened: Array<{ conversationId: string; attemptId: string; questionText: string }> = [];
+      const made = makeDeps({
+        async getSession() {
+          return { conversations: [conv({ role: "iteration", activeTurnSource: "workflow" })] };
+        },
+        seatAsk: {
+          seatFor: (conversationId) => (conversationId === "conv-1" ? seat : null),
+          open(input) {
+            opened.push(input);
+            return "seat-q-1";
+          },
+        },
+      });
+      return { ...made, opened };
+    }
+
+    it("opens the question in the seat's Context instead of parking the conversation", async () => {
+      const { deps, send, resolveLaneAskPermission, opened } = seatDeps({
+        canAsk: true,
+        attemptId: "attempt-1",
+        openQuestionId: null,
+      });
+      const res = await createAskQuestionHandlers(deps).POST(makeRequest(validBody), { params });
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ ok: true, questionBatchId: "seat-q-1" });
+      expect(opened).toEqual([
+        expect.objectContaining({
+          conversationId: "conv-1",
+          attemptId: "attempt-1",
+          questionText: "Which order?\nNamed one?",
+        }),
+      ]);
+      expect(send).not.toHaveBeenCalled();
+      expect(resolveLaneAskPermission).not.toHaveBeenCalled();
+    });
+
+    it("denies a seat whose contract does not allow owner questions", async () => {
+      const { deps, opened } = seatDeps({ canAsk: false, attemptId: "attempt-1", openQuestionId: null });
+      const res = await createAskQuestionHandlers(deps).POST(makeRequest(validBody), { params });
+
+      expect(res.status).toBe(403);
+      expect(opened).toEqual([]);
+    });
+
+    it("refuses an ask outside a seat turn and a second ask in the same turn", async () => {
+      const outside = seatDeps({ canAsk: true, attemptId: null, openQuestionId: null });
+      expect((await createAskQuestionHandlers(outside.deps).POST(makeRequest(validBody), { params })).status).toBe(409);
+
+      const again = seatDeps({ canAsk: true, attemptId: "attempt-1", openQuestionId: "seat-q-0" });
+      const res = await createAskQuestionHandlers(again.deps).POST(makeRequest(validBody), { params });
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({ code: "question_batch_pending" });
+      expect([...outside.opened, ...again.opened]).toEqual([]);
+    });
   });
 
   it("turn gate: 409 when no turn is running", async () => {

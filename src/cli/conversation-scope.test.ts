@@ -475,6 +475,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
     dev: ["dev", "list"],
     docs: ["docs", "list"],
     fixture: ["fixture", "session", "create", "cc"],
+    run: ["run", "show", "run-1"],
     // Exercises the group default through the EXECUTION verbs, and each lane
     // entry point, rather than one representative — a single sample let the
     // project-supported definition verbs hide inside a session-only group.

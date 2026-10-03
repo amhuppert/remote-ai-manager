@@ -214,7 +214,7 @@ export function createFakeCodexProvider(
     ensureManagedSkillsBridge: async () =>
       ({ status: "skipped", reason: "no_bundle" }) as const,
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
-    listNativeCodexMcpServers: async () => [],
+    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
     getCodexPricingOverrides: async () => null,
     readPersistedCostBaseline: async () => null,
     now: () => Date.now(),
@@ -268,6 +268,19 @@ export function createFakeCodexTaskPort(
             thread.id = thread.id ?? FAKE_CODEX_TASK_THREAD_ID;
             lastOutputSchema = options?.outputSchema;
             lastPrompt = extractInputText(input);
+            if (lastPrompt.includes(FAKE_CODEX_HANGING_PROMPT)) {
+              // Hangs until the run's signal aborts, then rejects as the SDK does.
+              const signal = options?.signal;
+              await new Promise<void>((_resolve, reject) => {
+                const fail = () => {
+                  const error = new Error("This operation was aborted");
+                  error.name = "AbortError";
+                  reject(error);
+                };
+                if (signal?.aborted) fail();
+                else signal?.addEventListener("abort", fail);
+              });
+            }
             const finalResponse =
               lastPrompt.includes(
                 "Your final message must be a single JSON object",
@@ -296,7 +309,7 @@ export function createFakeCodexTaskPort(
       };
     },
     buildChildEnv: () => ({ NODE_ENV: "test" }),
-    listNativeCodexMcpServers: async () => [],
+    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
     getCodexPricingOverrides: async () => null,
     // Conformance runs carry no `ccSessionScope`, so no session env contract
     // is ever built from these.
@@ -364,7 +377,7 @@ export function createEnvCapturingCodexTaskRunner(config: {
       return { startThread: () => thread, resumeThread: () => thread };
     },
     buildChildEnv: () => ({ ...config.ambientEnv }),
-    listNativeCodexMcpServers: async () => [],
+    discoverNativeCodexMcpServers: async () => ({ kind: "complete", servers: [] }),
     getCodexPricingOverrides: async () => null,
     getServerUrl: () => config.serverUrl ?? null,
     getApiToken: () => config.apiToken ?? null,

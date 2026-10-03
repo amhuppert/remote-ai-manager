@@ -25,8 +25,12 @@ import {
 import { translatePortableMcpToCodex } from "../mcp-translation";
 import {
   buildCodexMcpServersConfig,
-  listNativeCodexMcpServers,
-  type NativeCodexMcpServer,
+  discoverNativeCodexMcpServers,
+  NativeMcpSuppressionRefusedError,
+  resolveNativeMcpSuppression,
+  type NativeCodexMcpDiscovery,
+  type NativeMcpSuppression,
+  type NativeMcpSuppressionRequirement,
 } from "./native-mcp-suppression";
 import { type CodexPricingTable } from "@/lib/agent-backends/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
@@ -150,10 +154,10 @@ interface CodexTaskRunnerClient {
 export interface CodexTaskRunnerDeps {
   createCodex(options: CodexOptions): CodexTaskRunnerClient;
   buildChildEnv(): NodeJS.ProcessEnv;
-  listNativeCodexMcpServers(input: {
+  discoverNativeCodexMcpServers(input: {
     cwd: string;
     env: Record<string, string>;
-  }): Promise<NativeCodexMcpServer[]>;
+  }): Promise<NativeCodexMcpDiscovery>;
   /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
   /**
@@ -174,7 +178,7 @@ const defaultDeps: CodexTaskRunnerDeps = {
   createCodex: (options) =>
     new Codex(options) as unknown as CodexTaskRunnerClient,
   buildChildEnv,
-  listNativeCodexMcpServers,
+  discoverNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
     resolveConfiguredCodexPricingOverrides(await readConfig()),
   getServerUrl: getServerBaseUrl,
@@ -521,16 +525,30 @@ export class CodexTaskRunner implements AgentTaskRunner {
     let mcpServersConfig: Record<string, unknown> | undefined;
     // A restricted lane gets the same treatment as the isolated profile: only
     // servers CC composed are reachable, so nothing the machine happens to have
-    // configured can hand the lane a tool outside the envelope.
+    // configured can hand the lane a tool outside the envelope. That promise
+    // needs a complete discovery; anything less refuses the run.
     if (isolatedOneShot || restricted) {
-      const nativeServers = await listNativeMcpServers(
+      const suppression = await resolveTaskMcpSuppression(
         input.workingDirectory,
         env,
         this.deps,
+        "required",
       );
+      if (suppression.kind === "refused") {
+        externalSignal?.removeEventListener("abort", onExternalAbort);
+        const error = new NativeMcpSuppressionRefusedError(suppression.reason)
+          .message;
+        return {
+          ...classifiedContinuation(null, error),
+          text: null,
+          usage: null,
+          error,
+          timedOut: false,
+        };
+      }
       mcpServersConfig = buildCodexMcpServersConfig({
         managedMcpServers: {},
-        nativeServers,
+        nativeServers: suppression.servers,
       });
       logger.info("codex-task-runner.mcp_config", {
         serverCount: Object.keys(mcpServersConfig).length,
@@ -544,14 +562,15 @@ export class CodexTaskRunner implements AgentTaskRunner {
           droppedFields: translated.droppedFields,
         });
       }
-      const nativeServers = await listNativeMcpServers(
+      const suppression = await resolveTaskMcpSuppression(
         input.workingDirectory,
         env,
         this.deps,
+        "best_effort",
       );
       mcpServersConfig = buildCodexMcpServersConfig({
         managedMcpServers: translated.mcpServers,
-        nativeServers,
+        nativeServers: suppression.kind === "suppress" ? suppression.servers : [],
       });
       logger.info("codex-task-runner.mcp_config", {
         serverCount: Object.keys(mcpServersConfig).length,
@@ -818,25 +837,27 @@ export class CodexTaskRunner implements AgentTaskRunner {
   }
 }
 
-async function listNativeMcpServers(
+async function resolveTaskMcpSuppression(
   cwd: string,
   env: Record<string, string>,
-  deps: Pick<CodexTaskRunnerDeps, "listNativeCodexMcpServers">,
-): Promise<NativeCodexMcpServer[]> {
-  try {
-    const servers = await deps.listNativeCodexMcpServers({ cwd, env });
+  deps: Pick<CodexTaskRunnerDeps, "discoverNativeCodexMcpServers">,
+  requirement: NativeMcpSuppressionRequirement,
+): Promise<NativeMcpSuppression> {
+  const discovery = await deps.discoverNativeCodexMcpServers({ cwd, env });
+  if (discovery.kind === "complete") {
     logger.info("codex-task-runner.mcp_native_servers_listed", {
       workingDirectory: cwd,
-      nativeServerCount: servers.length,
+      nativeServerCount: discovery.servers.length,
     });
-    return servers;
-  } catch (err) {
-    logger.warn("codex-task-runner.mcp_native_server_list_failed", {
+  } else {
+    logger.warn("codex-task-runner.mcp_native_discovery_incomplete", {
       workingDirectory: cwd,
-      error: getErrorMessage(err),
+      requirement,
+      reason: discovery.reason,
+      reconstructedServerCount: discovery.reconstructed.length,
     });
-    return [];
   }
+  return resolveNativeMcpSuppression(discovery, requirement);
 }
 
 export const codexTaskRunner = new CodexTaskRunner();

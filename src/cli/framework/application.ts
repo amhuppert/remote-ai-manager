@@ -29,6 +29,7 @@ import {
   conversationGroups,
 } from "../commands/conversation/definitions";
 import { agentCommands, agentGroups } from "../commands/agent/definitions";
+import { runCommands, runGroups } from "../commands/run/definitions";
 import {
   validateCommands,
   validateGroups,
@@ -77,6 +78,7 @@ export function createCommandCenterCli(
       ...ticketCommands,
       ...conversationCommands,
       ...agentCommands,
+      ...runCommands,
       ...validateCommands,
       ...specCommands,
       ...specWriteCommands,
@@ -94,6 +96,7 @@ export function createCommandCenterCli(
       ...ticketGroups,
       ...conversationGroups,
       ...agentGroups,
+      ...runGroups,
       ...validateGroups,
       ...specGroups,
       ...specWriteGroups,

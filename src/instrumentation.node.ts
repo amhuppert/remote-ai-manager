@@ -75,6 +75,12 @@ export interface StartupDeps {
   /** Starts active wait reconciliation after source recovery and actor rehydration. */
   startActiveSubscriptionWakes?(): Promise<void>;
   /**
+   * Settles seat turns the last process left running, restores every active
+   * Run paused, and reconciles owners with open intents. Optional so a test
+   * that is not about Runs need not supply it.
+   */
+  bootRunSupervision?(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
+  /**
    * Deletes `refs/cc-merges/` refs no job row still holds. Optional so a test
    * that is not about parked refs need not supply it.
    */
@@ -153,6 +159,10 @@ const defaultStartupDeps: StartupDeps = {
       repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
       now: () => new Date().toISOString(),
     }),
+  bootRunSupervision: async () => {
+    const { bootRunSupervision } = await import("./lib/runs/production");
+    return bootRunSupervision();
+  },
   recoverInterruptedSubscriptionDeliveries: async () => {
     const { recoverInterruptedSubscriptionDeliveries } =
       await import("./lib/subscriptions/service-factory");
@@ -377,6 +387,19 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.conversation_rehydration_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // Runs restore after seat conversations rehydrate: a restored Run is paused,
+    // so nothing it owns starts until someone resumes it.
+    try {
+      const booted = await deps.bootRunSupervision?.();
+      if (booted !== undefined && booted.restoredRuns > 0) {
+        logger.info("startup.runs_restored_paused", { ...booted });
+      }
+    } catch (err) {
+      logger.error("startup.run_supervision_boot_failed", {
         error: getErrorMessage(err),
       });
     }

@@ -414,11 +414,16 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         : null;
 
     // Fold an external cancellation signal into the same abort path so a
-    // job-shaped caller can cancel a live run.
+    // job-shaped caller can cancel a live run. Provenance is recorded here
+    // because the SDK may end the stream quietly or throw after an abort.
     const externalSignal = input.signal;
-    const onExternalAbort = () => abortController.abort();
+    let cancelled = false;
+    const onExternalAbort = () => {
+      cancelled = true;
+      abortController.abort();
+    };
     if (externalSignal) {
-      if (externalSignal.aborted) abortController.abort();
+      if (externalSignal.aborted) onExternalAbort();
       else externalSignal.addEventListener("abort", onExternalAbort);
     }
 
@@ -565,7 +570,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         }
       }
     } catch (err) {
-      if (!timedOut && !stallWatchdog.fired()) {
+      if (!timedOut && !cancelled && !stallWatchdog.fired()) {
         error = getErrorMessage(err);
         logger.error("claude-task-runner.query_error", {
           workingDirectory: input.workingDirectory,
@@ -587,10 +592,14 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         ? input.resumeRef
         : null;
     const stalled = stallWatchdog.fired();
-    if (stalled) timedOut = true;
+    // The task port reports every torn-down run through `timedOut`; callers
+    // tell cancellation from a deadline by their own signal's reason.
+    if (stalled || cancelled) timedOut = true;
     const finalError = stalled
       ? `Task stalled: no backend activity for ${stallTimeoutMs}ms`
-      : (error ?? (timedOut ? "Task timed out" : null));
+      : cancelled
+        ? "Task cancelled"
+        : (error ?? (timedOut ? "Task timed out" : null));
     const continuation = resolveTaskContinuation(
       observedBackendRef ?? priorBackendRef,
       finalError,

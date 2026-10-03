@@ -151,7 +151,9 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep");
         return 0;
       },
-      initializeValidationService: async () => {},
+      initializeValidationService: async () => {
+        calls.push("validation");
+      },
       recoverInterruptedConversationSnapshots: async () => {
         calls.push("conversation-snapshot-recovery");
         return 0;
@@ -162,6 +164,10 @@ describe("createStartupRegistrar", () => {
       },
       startActiveSubscriptionWakes: async () => {
         calls.push("subscription-wakes");
+      },
+      bootRunSupervision: async () => {
+        calls.push("runs");
+        return { restoredRuns: 0, reconciledOwners: 0 };
       },
     });
 
@@ -201,6 +207,8 @@ describe("createStartupRegistrar", () => {
     expect(calls.indexOf("subscription-wakes")).toBeGreaterThan(
       calls.indexOf("envelope-recovery"),
     );
+    expect(calls.indexOf("runs")).toBeGreaterThan(calls.indexOf("rehydrate"));
+    expect(calls.indexOf("runs")).toBeGreaterThan(calls.indexOf("validation"));
   });
 
   it("runs rehydrate and envelope recovery inside distinct startup traces", async () => {

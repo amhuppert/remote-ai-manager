@@ -56,6 +56,7 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
 import {
@@ -403,4 +404,40 @@ export async function resolveImplementerContinuationWriteEnvelope(
       worktreePath,
     };
   }
+}
+
+/**
+ * What the agent needs to know about its assigned paths and scratch space.
+ *
+ * Two facts are not discoverable from inside a confined turn. The repository is
+ * no longer necessarily the working directory — a sandbox that makes its cwd
+ * writable by construction (Codex) has to be moved out of the worktree, so the
+ * repository is reached by absolute path. And the payload directory the `cctl
+ * … --file` guidance depends on is injected per context, so an agent writing
+ * to the `.cc/temp` path it would otherwise guess is writing somewhere else.
+ */
+export function renderWriteEnvelopeBriefing(
+  envelope: ImplementerLaneWriteEnvelope,
+  restriction: FsWriteRestrictionSupport,
+): string {
+  const owned =
+    envelope.ownedPrefixes.length > 0
+      ? envelope.ownedPrefixes.map((prefix) => `- ${prefix}`).join("\n")
+      : "- (none — this context writes no repository files)";
+  return [
+    "# Filesystem write envelope",
+    "",
+    `Repository: ${envelope.worktreeRoot}`,
+    `Scratch directory: ${envelope.contextScratchDir}`,
+    `Payload directory (write \`--file\` JSON and scratch files here): ${envelope.payloadDir}`,
+    "",
+    "Use the Scratch directory for temporary files.",
+    "Treat every relative repository path in the task as relative to Repository above and address it by absolute path.",
+    "",
+    restriction === "instruction-only"
+      ? "Filesystem limits are instruction-only; they are not enforced isolation. Do not write outside the allowed paths or modify repository metadata."
+      : "Filesystem write limits are enforced by the OS.",
+    "Writable repository paths (everything else in the repository is read-only):",
+    owned,
+  ].join("\n");
 }

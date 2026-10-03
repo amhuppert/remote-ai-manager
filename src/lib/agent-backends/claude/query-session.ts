@@ -23,10 +23,7 @@ import type {
   Settings,
   SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
-import type {
-  MessageContentBlock,
-  ToolResultMetrics,
-} from "@/lib/conversations/schemas";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
@@ -45,8 +42,10 @@ import {
   extractContextTokens,
   extractContextWindow,
 } from "@/lib/conversations/context-fill";
-import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
-import { mapAssistantContentBlocks } from "./map-content-blocks";
+import {
+  mapAssistantContentBlocks,
+  mapToolResultBlocks,
+} from "./map-content-blocks";
 import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
@@ -1433,25 +1432,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
       case "user": {
         const userMsg = message as SDKUserMessage;
-        const content = userMsg.message.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              block != null &&
-              typeof block === "object" &&
-              "type" in block &&
-              block.type === "tool_result" &&
-              "tool_use_id" in block &&
-              typeof block.tool_use_id === "string"
-            ) {
-              const resultBlock = buildToolResultBlock(
-                block as SdkToolResultBlock,
-                turn.toolNamesById,
-              );
-              turn.contentBlocks.push(resultBlock);
-            }
-          }
-        }
+        turn.contentBlocks.push(
+          ...mapToolResultBlocks(userMsg.message.content, turn.toolNamesById),
+        );
         break;
       }
 
@@ -1639,52 +1622,6 @@ function buildTurnResult(
     aborted: outcome.aborted,
     compacted: turn.compacted,
     error: outcome.error,
-  };
-}
-
-interface SdkToolResultBlock {
-  type: "tool_result";
-  tool_use_id: string;
-  is_error?: boolean;
-  content?:
-    | string
-    | Array<{ type: string; text?: string; [k: string]: unknown }>;
-}
-
-function extractToolResultText(
-  content: SdkToolResultBlock["content"],
-): string | undefined {
-  if (typeof content === "string") return content || undefined;
-  if (!Array.isArray(content)) return undefined;
-  const textParts: string[] = [];
-  for (const block of content) {
-    if (
-      block != null &&
-      typeof block === "object" &&
-      block.type === "text" &&
-      typeof block.text === "string"
-    ) {
-      textParts.push(block.text);
-    }
-  }
-  return textParts.length > 0 ? textParts.join("\n") : undefined;
-}
-
-function buildToolResultBlock(
-  block: SdkToolResultBlock,
-  toolNamesById: Map<string, string>,
-): MessageContentBlock {
-  const text = extractToolResultText(block.content);
-  const toolName = toolNamesById.get(block.tool_use_id);
-  const metrics: ToolResultMetrics = toolName
-    ? parseToolResultMetrics(toolName, text)
-    : {};
-  return {
-    type: "tool_result",
-    tool_use_id: block.tool_use_id,
-    ...(text ? { content: text } : {}),
-    ...(block.is_error ? { isError: true } : {}),
-    ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
   };
 }
 
