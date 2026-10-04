@@ -7,11 +7,17 @@ import {
   BackendMismatchError,
   ModelSelectionValidationError,
 } from "@/lib/prompt/sdk-driver";
-import { ProjectCollaborationUnsupportedError } from "./prompt-entry";
+import { ProjectCollaborationUnsupportedError } from "./collaboration-refusal";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import {
+  promptCoreConversation,
+  type CoreConversationPrompt,
+} from "@/lib/conversation-core/prompt-route";
+import type { UserMessageAdmission } from "@/lib/conversation-core/executor";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 function makeConv(
   overrides: Partial<ConversationState> & { id: string },
@@ -97,6 +103,14 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
       };
     },
     isConversationBusy: () => false,
+    coreConversations: {
+      owns: () => false,
+      prompt: async () => {
+        throw new Error("No conversation here runs on the shared core");
+      },
+      admitCollaboration: async () => null,
+    },
+    enrollInCore: () => {},
     changeConversationProfile: async () => {
       throw new Error("not used");
     },
@@ -716,5 +730,152 @@ describe("project conversation route handlers", () => {
       ctx({ name: "demo", conversationId: "missing" }),
     );
     expect(unknownConvo.status).toBe(404);
+  });
+});
+
+describe("a project conversation the shared core runs", () => {
+  /** The route over the real core prompt route; only the core's mailbox is answered here. */
+  function coreHarness(admission: UserMessageAdmission) {
+    const prompts: CoreConversationPrompt[] = [];
+    const sent: unknown[] = [];
+    const lockChecks: string[] = [];
+    const legacyTurns: string[] = [];
+    const h = harness({
+      isConversationBusy: (_projectPath, _storeSessionName, conversationId) => {
+        lockChecks.push(conversationId);
+        return false;
+      },
+      executeProjectPromptStream: async (input) => {
+        legacyTurns.push(input.promptText);
+        throw new Error("a core conversation's prompt must not reach the conversation actor");
+      },
+      coreConversations: {
+        owns: (conversationId) => conversationId === "c1",
+        admitCollaboration: async () => null,
+        prompt(input) {
+          prompts.push(input);
+          return promptCoreConversation(
+            {
+              async sendUserMessage(message) {
+                sent.push(message);
+                return admission;
+              },
+              isBusy: () => false,
+              holdRefusal: async () => null,
+              async adoptBackend() {},
+              clearPendingPromptText: async () => true,
+              dispatchCommand: async () => {
+                throw new Error("not used");
+              },
+              commandRefusal: async () => null,
+              log: createCapturingLogger(),
+            },
+            input,
+          );
+        },
+      },
+    });
+    h.store.set("c1", makeConv({ id: "c1" }));
+    const prompt = (body: unknown) =>
+      h.handlers.promptPOST(jsonRequest(body), ctx({ name: "demo", conversationId: "c1" }));
+    return { prompt, prompts, sent, lockChecks, legacyTurns };
+  }
+
+  it("takes the person's prompt to the core as the project conversation, never through the actor's lock", async () => {
+    const h = coreHarness({
+      kind: "accepted",
+      cause: "user:c1:1",
+      settled: Promise.resolve({
+        status: "succeeded",
+        conversationId: "c1",
+        finalText: "Hi",
+        structuredOutput: null,
+        outputIssue: null,
+        openQuestionId: null,
+        failure: null,
+      }),
+    });
+    const res = await h.prompt({ prompt: "Hello" });
+
+    expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+    expect(await readStream(res)).toContain("event: done");
+    expect(h.prompts[0]).toMatchObject({
+      projectPath: "/repo",
+      target: { scope: "project", projectName: "demo", conversationId: "c1" },
+    });
+    expect(h.sent).toEqual([expect.objectContaining({ conversationId: "c1", text: "Hello" })]);
+    expect(h.lockChecks).toEqual([]);
+    expect(h.legacyTurns).toEqual([]);
+  });
+
+  it("answers a core conversation that is already running a turn with CONVERSATION_BUSY", async () => {
+    const h = coreHarness({ kind: "refused", code: "busy", message: "Conversation is busy — a turn is already running" });
+    const res = await h.prompt({ prompt: "Hello" });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "CONVERSATION_BUSY" });
+    expect(h.lockChecks).toEqual([]);
+  });
+
+  it("refuses /collab with the project conversation's own refusal, as JSON", async () => {
+    const h = coreHarness({ kind: "refused", code: "busy", message: "unused" });
+    const res = await h.prompt({ prompt: "/collab redesign the sidebar" });
+
+    expect(res.status).toBe(400);
+    const refusal = new ProjectCollaborationUnsupportedError();
+    expect(await res.json()).toEqual({ error: refusal.message, code: refusal.code });
+    expect(h.sent).toEqual([]);
+  });
+
+  it("creates a conversation the core runs when asked, enrolled before anyone hears of it", async () => {
+    const order: string[] = [];
+    const enrolled: unknown[] = [];
+    const created: unknown[] = [];
+    const h = harness({
+      enrollInCore: (input) => {
+        order.push("enrolled");
+        enrolled.push(input);
+      },
+      broadcast: (event) => {
+        order.push(event.type);
+        return { delivered: true };
+      },
+    });
+    const create = h.deps.createProjectConversation;
+    h.deps.createProjectConversation = async (projectPath, opts) => {
+      created.push(opts);
+      return create(projectPath, opts);
+    };
+
+    const res = await h.handlers.createPOST(jsonRequest({ engine: "core", name: "Core chat" }), ctx({ name: "demo" }));
+
+    expect(res.status).toBe(201);
+    expect(enrolled).toEqual([{ conversationId: "new-1", projectPath: "/repo", scope: { scope: "project" } }]);
+    expect(order).toEqual(["enrolled", "conversation-created"]);
+    // The engine is how the route hands the conversation over, not a property of the conversation.
+    expect(created).toEqual([{ name: "Core chat" }]);
+  });
+
+  it("leaves an ordinary project conversation to the conversation actor", async () => {
+    const enrolled: unknown[] = [];
+    const h = harness({ enrollInCore: (input) => enrolled.push(input) });
+
+    expect((await h.handlers.createPOST(jsonRequest({}), ctx({ name: "demo" }))).status).toBe(201);
+    expect(enrolled).toEqual([]);
+  });
+
+  it("archives a conversation it could not enroll and answers 500, rather than handing out a half-made one", async () => {
+    const h = harness({
+      enrollInCore: () => {
+        throw new Error("database is locked");
+      },
+    });
+
+    const res = await h.handlers.createPOST(jsonRequest({ engine: "core" }), ctx({ name: "demo" }));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("database is locked") });
+    expect(h.store.get("new-1")?.archived).toBe(true);
+    expect(h.broadcasts).toEqual([]);
   });
 });

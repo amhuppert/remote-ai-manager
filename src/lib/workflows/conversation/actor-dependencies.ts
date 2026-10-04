@@ -168,6 +168,9 @@ export interface TurnExecutionDependencies {
 export interface TranscriptDependencies {
   getTranscriptPath(conversationId: string): Promise<string>;
 
+  /** The latest total the transcript records for a cost lineage, or null (a task that resumed a session is charged against it). */
+  readLineageCumulativeCost?(conversationId: string, lineageId: string): Promise<number | null>;
+
   /** Durable queue handoff: deduplicate by message id and propagate disk errors. */
   appendTranscriptEntryOnce(
     conversationId: string,

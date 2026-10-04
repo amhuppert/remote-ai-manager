@@ -116,6 +116,29 @@ export function buildQueueContent(args: {
   return content;
 }
 
+/**
+ * Turn input that never ran (a message a restart withdrew before it started),
+ * as the queue keeps it for review: content the next-turn drain reads back
+ * into the same input. Feedback keeps its structured blocks, from which the
+ * turn derives its prose again.
+ */
+export function queueContentOfTurnInput(input: {
+  text: string;
+  images?: readonly ImagePayload[];
+  documentFeedback?: DocumentFeedbackPayload;
+  notepadFeedback?: readonly NotepadFeedbackPayload[];
+}): MessageContentBlock[] {
+  const feedback = input.documentFeedback !== undefined || input.notepadFeedback !== undefined;
+  return [
+    ...buildQueueContent({
+      ...(feedback ? {} : { text: input.text }),
+      ...(input.images !== undefined ? { images: input.images } : {}),
+      ...(input.documentFeedback !== undefined ? { documentFeedback: input.documentFeedback } : {}),
+    }),
+    ...(input.notepadFeedback ?? []).flatMap((notepadFeedback) => buildQueueContent({ notepadFeedback })),
+  ];
+}
+
 interface ConversationKey {
   projectPath: string;
   sessionName: string;

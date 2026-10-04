@@ -63,6 +63,7 @@ function makeDeps(overrides: Partial<ConversationRouteDeps> = {}) {
     generateAndApplyConversationName: vi.fn(async () => "Generated Name"),
     setConversationArchived: vi.fn(async () => {}),
     deleteConversation: vi.fn(async () => {}),
+    enrollInCore: vi.fn(),
     broadcast: vi.fn(),
     ...overrides,
   };
@@ -359,6 +360,46 @@ describe("POST_CREATE — conversation-created broadcast", () => {
     );
 
     expect(response.status).toBe(500);
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST_CREATE — a conversation the shared core runs", () => {
+  it("enrolls the new conversation before its id is returned to anyone", async () => {
+    const { deps, conversation } = makeDeps();
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    const response = await POST_CREATE(jsonRequest({ engine: "core" }), context({ name: "demo", session: "s1" }));
+
+    expect(response.status).toBe(201);
+    expect(deps.enrollInCore).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      projectPath: "/repos/demo",
+      sessionName: "s1",
+    });
+  });
+
+  it("leaves an ordinary conversation to the conversation actor", async () => {
+    const { deps } = makeDeps();
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    await POST_CREATE(jsonRequest(), context({ name: "demo", session: "s1" }));
+
+    expect(deps.enrollInCore).not.toHaveBeenCalled();
+  });
+
+  it("removes the conversation again when it cannot be enrolled, rather than handing out a half-made one", async () => {
+    const { deps, conversation } = makeDeps({
+      enrollInCore: vi.fn(() => {
+        throw new Error("database is locked");
+      }),
+    });
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    const response = await POST_CREATE(jsonRequest({ engine: "core" }), context({ name: "demo", session: "s1" }));
+
+    expect(response.status).toBe(500);
+    expect(deps.deleteConversation).toHaveBeenCalledWith("/repos/demo", "s1", conversation.id);
     expect(deps.broadcast).not.toHaveBeenCalled();
   });
 });

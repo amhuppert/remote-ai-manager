@@ -205,6 +205,14 @@ function projectRouteDeps(
       };
     },
     isConversationBusy: () => false,
+    coreConversations: {
+      owns: () => false,
+      admitCollaboration: async () => null,
+      prompt: async () => {
+        throw new Error("No conversation here runs on the shared core");
+      },
+    },
+    enrollInCore: () => {},
     changeConversationProfile: async () => {
       throw new Error("not used");
     },

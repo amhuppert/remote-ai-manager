@@ -84,17 +84,23 @@ export const SUPERVISION_SCHEMA_DDL = `
     project_path TEXT NOT NULL,
     session_name TEXT NOT NULL,
     backend TEXT NOT NULL,
-    backend_ref TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (context_id, assignment_id, replacement)
   );
 
+  CREATE TABLE IF NOT EXISTS core_interactive_conversations (
+    conversation_id TEXT PRIMARY KEY,
+    project_path TEXT NOT NULL,
+    session_name TEXT NOT NULL,
+    enrolled_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS core_mailbox (
     cause TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
-    requester_kind TEXT NOT NULL CHECK (requester_kind IN ('context','run')),
-    requester_id TEXT NOT NULL,
+    requester_kind TEXT CHECK (requester_kind IN ('context','run')),
+    requester_id TEXT,
     request_json TEXT NOT NULL,
     permit_controller_id TEXT,
     permit_generation INTEGER,

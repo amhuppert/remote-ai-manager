@@ -64,6 +64,12 @@ interface EnqueueQueuedMessageInput extends ConversationKey {
   content: MessageContentBlock[];
   metadata?: QueuedMessageMetadata;
   modelSelection?: BackendModelSelection;
+  /**
+   * Input that already failed to run (a restart withdrew it before it
+   * started): kept as a `failed` row with this reason, for the person to
+   * retry or discard. Never delivered automatically.
+   */
+  failure?: string;
 }
 
 interface ConsumingEnqueueQueuedMessageInput extends EnqueueQueuedMessageInput {
@@ -219,6 +225,49 @@ export function coalesceContent(
  * queue and the claimed row (or `null` if
  * the id is absent, not pending, or refused). Pure.
  */
+/** For a conversation runner that holds its queue while debug mode is active. */
+interface DebugHoldOption {
+  /**
+   * A debug session takes only the person's own debug turns: hold every batch
+   * except the answer to the agent's own question, which continues the
+   * session's work. The conversation actor holds its queue by its own state.
+   */
+  debugHold?: boolean;
+}
+
+/**
+ * A debug session's question answer, claimed alone wherever it waits in the
+ * queue; every other row stays pending. Nothing is claimed while another row
+ * is being delivered. Pure.
+ */
+export function claimDebugAnswerTransform(
+  queue: readonly PendingQueuedMessage[],
+  attemptId: string,
+  now: string,
+): {
+  queue: PendingQueuedMessage[];
+  claimed: PendingQueuedMessage | null;
+  refused: PendingQueuedMessage | null;
+} {
+  const answer = queue.find((entry) => entry.status === "pending" && entry.metadata?.kind === "question_answers");
+  if (answer === undefined || queue.some((entry) => entry.status === "delivering")) {
+    return { queue: [...queue], claimed: null, refused: null };
+  }
+  if (isAttemptLimitReached(answer)) {
+    const refused = refuseAttemptLimitEntry(answer, now);
+    return { queue: queue.map((entry) => (entry.id === answer.id ? refused : entry)), claimed: null, refused };
+  }
+  const claimed: PendingQueuedMessage = {
+    ...answer,
+    status: "delivering",
+    deliveryAttemptId: attemptId,
+    deliveryStartedAt: now,
+    updatedAt: now,
+    attemptCount: answer.attemptCount + 1,
+  };
+  return { queue: queue.map((entry) => (entry.id === answer.id ? claimed : entry)), claimed, refused: null };
+}
+
 export function claimLiveDeliveryTransform(
   queue: readonly PendingQueuedMessage[],
   id: string,
@@ -688,7 +737,7 @@ export interface MessageQueueService {
     input: ConversationKey & { id: string },
   ): Promise<PendingQueuedMessage | null>;
   claimNextTurnBatch(
-    input: ConversationKey,
+    input: ConversationKey & DebugHoldOption,
   ): Promise<ClaimedQueuedBatch | null>;
   markDelivered(
     input: ConversationKey & { ids: string[]; deliveryAttemptId: string },
@@ -766,7 +815,7 @@ export function createMessageQueueService(
     } = input;
     const id = input.id ?? deps.newId();
     const now = deps.now();
-    const entry = createPendingEntry({
+    const pending = createPendingEntry({
       inputOrigin:
         metadata?.kind === "subscription_update"
           ? "generated"
@@ -777,6 +826,10 @@ export function createMessageQueueService(
       metadata,
       modelSelection,
     });
+    const entry: PendingQueuedMessage =
+      input.failure === undefined
+        ? pending
+        : { ...pending, status: "failed", failedAt: now, error: input.failure };
 
     // The store's serialized write queue makes the check-consume-append
     // race-free: a concurrent duplicate sees `committed: false`.
@@ -860,7 +913,7 @@ export function createMessageQueueService(
       sessionName,
       conversationId,
       messageIds: [id],
-      status: "pending",
+      status: entry.status,
     });
 
     return entry;
@@ -975,7 +1028,7 @@ export function createMessageQueueService(
   }
 
   async function claimNextTurnBatch(
-    input: ConversationKey,
+    input: ConversationKey & DebugHoldOption,
   ): Promise<ClaimedQueuedBatch | null> {
     const { projectPath, sessionName, conversationId } = input;
     const attemptId = deps.newId();
@@ -989,6 +1042,16 @@ export function createMessageQueueService(
       conversationId,
       "claimNextTurnBatch",
       (conversation) => {
+        if (input.debugHold === true && conversation.debugMode?.active === true) {
+          const answer = claimDebugAnswerTransform(conversation.pendingQueue, attemptId, now);
+          conversation.pendingQueue = answer.queue;
+          return {
+            claimed: answer.claimed === null ? [] : [answer.claimed],
+            command: null,
+            refused: answer.refused === null ? [] : [answer.refused],
+            needsExternalWakeHold: false,
+          };
+        }
         const wakeHold = subscriptionWakeHold({
           conversation,
           sessionArchived: false,

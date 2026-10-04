@@ -38,6 +38,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
+import { attributeTaskRunCost } from "./task-run-cost";
 import {
   costSettlementFrame,
   recordConversationCostSettlement,
@@ -63,8 +64,10 @@ import type {
 } from "@/lib/prompt/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
-import { recordMcpConfigReceipt } from "@/lib/mcp/runtime-apply";
-import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
+import {
+  recordMcpConfigReceipt,
+  seedMcpRuntimeState,
+} from "@/lib/mcp/runtime-apply";
 import {
   conversationRuntimeKey,
   getConversationRuntime,
@@ -886,29 +889,11 @@ async function executePromptForMachine(
     portableMcp: PortableMcpConfig,
     delivery: ConversationBackendRuntime["mcpConfigDelivery"],
   ) {
-    const hash = computeEffectiveConfigHash(portableMcp);
-    await deps.policy.state.mcp.update(
+    await seedMcpRuntimeState(
+      deps.policy.state.mcp,
       { projectPath: input.projectPath, target: input.target },
-      "prompt.seedMcpRuntime",
-      (state) => {
-        if (delivery === "input-accepted")
-          return {
-            ...state,
-            pendingConfigHash: hash,
-            lastApplyDisposition: "deferred_to_next_turn" as const,
-          };
-        const next = {
-          ...(state ?? {}),
-          lastAppliedConfigHash: hash,
-          lastApplyDisposition: "applied_now" as const,
-        };
-        delete next.lastApplyError;
-        if (next.pendingConfigHash === hash) {
-          delete next.pendingConfigHash;
-          delete next.pendingServerKeys;
-        }
-        return next;
-      },
+      portableMcp,
+      delivery,
     );
     deps.log.info("prompt.mcp_seeded", {
       ...scopeRef,
@@ -1973,23 +1958,30 @@ async function executePromptForMachine(
  * accounting; this frame only makes the transcript agree. Each run is its own
  * lineage: sharing the live session's would read as a restart of that lineage.
  */
+/** Records the task run's cost frame; returns the run's own cost (a resumed session's history excluded). */
 async function recordTaskRunCost(
   deps: ConversationActorDependencies,
   input: RunTaskRunInput,
   result: AgentCallResult,
   meta: TranscriptBroadcastMeta,
-): Promise<void> {
-  const costUsd = result.usage.costUsd;
-  if (typeof costUsd !== "number" || !(costUsd > 0)) return;
+): Promise<number | null> {
+  const sessionRef = result.backendRef ?? null;
+  const cost = attributeTaskRunCost({
+    usage: result.usage,
+    sessionRef,
+    runLineageId: `task_run:${input.executionAttemptId ?? randomUUID()}`,
+    previousCumulativeUsd:
+      sessionRef === null
+        ? null
+        : ((await deps.transcript.readLineageCumulativeCost?.(input.target.conversationId, sessionRef.ref)) ?? null),
+  });
+  if (cost === null) return null;
   await deps.transcript.safeAppendTranscriptEntryOnce(
     input.target.conversationId,
-    costSettlementFrame(input.target.conversationId, {
-      lineageId: `task_run:${input.executionAttemptId ?? randomUUID()}`,
-      cumulativeCostUsd: costUsd,
-      costUsdDelta: costUsd,
-    }),
+    costSettlementFrame(input.target.conversationId, cost.settlement),
     meta,
   );
+  return cost.costUsd;
 }
 
 async function runTaskRunTurnForMachine(
@@ -2256,7 +2248,9 @@ async function runTaskRunTurnForMachine(
     });
   }
 
-  await recordTaskRunCost(deps, input, result, broadcastMeta);
+  const charged = await recordTaskRunCost(deps, input, result, broadcastMeta);
+  // The conversation's totals add the run's own spend, not a resumed session's whole history.
+  if (charged !== null) result = { ...result, usage: { ...result.usage, costUsd: charged } };
 
   const projected = toPromptActorResult(
     { kind: "call_result", result },

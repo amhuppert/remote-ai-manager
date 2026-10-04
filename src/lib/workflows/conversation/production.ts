@@ -26,7 +26,18 @@ import {
 } from "./runtime-policy";
 import { createConversationPolicyState } from "./policy-state";
 import { conversationRuntimeKey } from "./runtime-state";
+import { readLineageCumulativeCost } from "./task-run-cost";
 import type { ConversationActorDependencies } from "./actor-dependencies";
+import {
+  coreCheckpoints,
+  coreDebugCommand,
+  coreOwnsConversation,
+  coreQuestionCommand,
+  drainCoreConversation,
+  runCoreTask,
+  retireCoreConversation,
+  stopCoreConversation,
+} from "@/lib/runs/handles";
 const logger = createLogger("conversation-actor");
 
 type ProductionActorDependencies = Omit<
@@ -153,6 +164,7 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     },
     transcript: {
       getTranscriptPath: transcriptMod.getTranscriptPath,
+      readLineageCumulativeCost,
       appendTranscriptEntryOnce: (cid, entry, meta) =>
         transcriptMod.appendTranscriptEntryOnce(cid, entry, undefined, meta),
       safeAppendTranscriptEntry: (
@@ -342,6 +354,14 @@ async function hydrateProductionCheckpointAuthority(
 export function createProductionConversationManagerDependencies(): ConversationManagerDependencies {
   let actorDependencies: Promise<ProductionActorDependencies> | undefined;
   return {
+    isCoreOwnedConversation: coreOwnsConversation,
+    stopCoreConversation,
+    retireCoreConversation,
+    drainCoreConversation,
+    coreQuestionCommand,
+    coreDebugCommand,
+    coreCheckpoints,
+    runCoreTask,
     readSubscriptionWakeHold: createSubscriptionWakeAdmissionReader({
       async isBatchCurrent(batchId) {
         const { getSubscriptionRuntime } =

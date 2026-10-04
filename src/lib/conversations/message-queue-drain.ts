@@ -30,8 +30,10 @@ import {
 } from "@/lib/conversations/conversation-target";
 import type {
   ConversationTurnSubmission,
+  QueuedDeliveryMetadata,
   TurnAdmission,
 } from "@/lib/workflows/conversation/turn-spec";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 // The `conversation-manager` module key is a stable log-query key: queue.*
@@ -55,6 +57,8 @@ export interface ConversationQueueDeps {
     projectPath: string;
     sessionName: string;
     conversationId: string;
+    /** Hold a debug session's queue except the answer to its agent's question (the core's runner). */
+    debugHold?: boolean;
   }): Promise<ClaimedQueuedBatch | null>;
   markPending(input: {
     projectPath: string;
@@ -208,7 +212,7 @@ async function runQueuedCommand(
   batch: ClaimedQueuedBatch,
   command: ParsedConversationCommand,
   context: ConversationAddress,
-  deps: ConversationQueueDeps,
+  deps: Omit<ConversationQueueDeps, "submitTurn">,
 ): Promise<void> {
   const { projectPath, sessionName, conversationId } =
     conversationStoreIdentity(context);
@@ -321,49 +325,7 @@ export async function drainConversationQueue(
 ): Promise<void> {
   const { projectPath, sessionName, conversationId } =
     conversationStoreIdentity(context);
-  const scopeRef = scopeRefFromStoreSessionName(sessionName);
-  // Transient lanes have no message-queue rows; claiming against the absent
-  // conversation record would throw and log `queue.drain_failed`.
-  if (context.transient === true) {
-    logger.debug("queue.drain_skipped_transient", {
-      conversationId,
-      ...scopeRef,
-    });
-    return;
-  }
-  let batch: ClaimedQueuedBatch | null = null;
-  try {
-    batch = await deps.claimNextTurnBatch({
-      projectPath,
-      sessionName,
-      conversationId,
-    });
-    if (!batch) return;
-
-    if (batch.command) {
-      await runQueuedCommand(batch, batch.command, context, deps);
-      return;
-    }
-
-    const { promptText, images, documentFeedback, notepadFeedback } =
-      queuedBatchToSubmitPrompt(batch.content);
-
-    const turn: ConversationTurnSubmission["turn"] = {
-      promptText,
-      inputOrigin: batch.hasUserMessage === true ? "user" : "generated",
-      ...(images.length ? { images } : {}),
-      ...(documentFeedback ? { documentFeedback } : {}),
-      ...(notepadFeedback ? { notepadFeedback } : {}),
-      ...(batch.modelSelection ? { modelSelection: batch.modelSelection } : {}),
-      queuedDelivery: {
-        messageIds: batch.messageIds,
-        deliveryAttemptId: batch.deliveryAttemptId,
-        ...(batch.subscriptionBatchId
-          ? { subscriptionBatchId: batch.subscriptionBatchId }
-          : {}),
-      },
-    };
-
+  await drainConversationQueueInto(context, deps, async (turn, batch) => {
     // The queue owes the same pre-send profile admission as the interactive
     // producer (R8/D21); the lifecycle performs it before accepting the turn.
     const admission = await deps.submitTurn({
@@ -384,14 +346,97 @@ export async function drainConversationQueue(
       },
       turn,
     });
-    if (admission.kind === "accepted") {
+    return admission.kind === "accepted" ? "accepted" : "refused";
+  });
+}
+
+/** One claimed batch as the input of the turn that delivers it. */
+export interface QueuedTurnInput {
+  promptText: string;
+  inputOrigin: "user" | "generated";
+  images?: ImagePayload[];
+  documentFeedback?: DocumentFeedbackPayload;
+  notepadFeedback?: NotepadFeedbackPayload[];
+  modelSelection?: BackendModelSelection;
+  queuedDelivery: QueuedDeliveryMetadata;
+}
+
+/** Where a claimed batch's turn goes: the conversation actor or the shared conversation core. */
+export type QueuedTurnSubmit = (
+  turn: QueuedTurnInput,
+  batch: ClaimedQueuedBatch,
+) => Promise<"accepted" | "refused">;
+
+/**
+ * The drain itself, for any engine that runs the conversation's turns: claim
+ * one batch, run a single command through the command service, otherwise
+ * submit one turn; a refused or failed submission returns the rows to pending.
+ */
+/**
+ * What one drain did: `idle` claimed nothing, `turn` handed a batch to a turn,
+ * `command` ran a conversation command to completion (no turn holds the
+ * conversation; a runner may drain again), `returned` gave the batch back.
+ */
+export type QueueDrainProgress = "idle" | "turn" | "command" | "returned";
+
+export async function drainConversationQueueInto(
+  context: ConversationQueueContext,
+  deps: Omit<ConversationQueueDeps, "submitTurn">,
+  submit: QueuedTurnSubmit,
+): Promise<QueueDrainProgress> {
+  const { projectPath, sessionName, conversationId } =
+    conversationStoreIdentity(context);
+  const scopeRef = scopeRefFromStoreSessionName(sessionName);
+  // Transient lanes have no message-queue rows; claiming against the absent
+  // conversation record would throw and log `queue.drain_failed`.
+  if (context.transient === true) {
+    logger.debug("queue.drain_skipped_transient", {
+      conversationId,
+      ...scopeRef,
+    });
+    return "idle";
+  }
+  let batch: ClaimedQueuedBatch | null = null;
+  try {
+    batch = await deps.claimNextTurnBatch({
+      projectPath,
+      sessionName,
+      conversationId,
+    });
+    if (!batch) return "idle";
+
+    if (batch.command) {
+      await runQueuedCommand(batch, batch.command, context, deps);
+      return "command";
+    }
+
+    const { promptText, images, documentFeedback, notepadFeedback } =
+      queuedBatchToSubmitPrompt(batch.content);
+
+    const turn: QueuedTurnInput = {
+      promptText,
+      inputOrigin: batch.hasUserMessage === true ? "user" : "generated",
+      ...(images.length ? { images } : {}),
+      ...(documentFeedback ? { documentFeedback } : {}),
+      ...(notepadFeedback ? { notepadFeedback } : {}),
+      ...(batch.modelSelection ? { modelSelection: batch.modelSelection } : {}),
+      queuedDelivery: {
+        messageIds: batch.messageIds,
+        deliveryAttemptId: batch.deliveryAttemptId,
+        ...(batch.subscriptionBatchId
+          ? { subscriptionBatchId: batch.subscriptionBatchId }
+          : {}),
+      },
+    };
+
+    if ((await submit(turn, batch)) === "accepted") {
       logger.info("queue.drain_dispatched", {
         conversationId,
         ...scopeRef,
         messageIds: batch.messageIds,
         deliveryAttemptId: batch.deliveryAttemptId,
       });
-      return;
+      return "turn";
     }
 
     await deps.markPending({
@@ -400,7 +445,7 @@ export async function drainConversationQueue(
       conversationId,
       ids: batch.messageIds,
       deliveryAttemptId: batch.deliveryAttemptId,
-      error: "actor not accepting prompt",
+      error: "conversation not accepting a turn",
     });
     logger.warn("queue.drain_returned_pending", {
       conversationId,
@@ -408,6 +453,7 @@ export async function drainConversationQueue(
       messageIds: batch.messageIds,
       deliveryAttemptId: batch.deliveryAttemptId,
     });
+    return "returned";
   } catch (err) {
     logger.error("queue.drain_failed", {
       conversationId,
@@ -434,4 +480,5 @@ export async function drainConversationQueue(
       }
     }
   }
+  return "returned";
 }

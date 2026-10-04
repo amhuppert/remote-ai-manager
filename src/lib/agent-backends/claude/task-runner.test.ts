@@ -341,13 +341,15 @@ describe("ClaudeTaskRunner", () => {
       ref: "session-abc",
     });
     expect(result.text).toBe("Hello world");
-    // The SDK's total is this subprocess's whole run, which is exactly one
-    // task run, so it is the run's cost rather than a lineage counter.
+    // The SDK's total is the session's running total: a fresh session's is
+    // this run's cost, a resumed one's carries its earlier spend, which the
+    // caller measures the run against.
     expect(result.usage).toEqual({
       inputTokens: 100,
       cachedInputTokens: 50,
       outputTokens: 30,
       costUsd: 0.01,
+      cumulativeCostUsd: 0.01,
     });
     expect(result.error).toBeNull();
     expect(result.timedOut).toBe(false);

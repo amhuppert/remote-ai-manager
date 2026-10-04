@@ -9,6 +9,7 @@ import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 
 import { getStateStore } from "@/lib/state-store";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import { withCoreRuntimes } from "@/lib/conversation-core/runtime-application-state";
 import { createLogger } from "@/lib/logging";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import type { McpOverrides, McpToolInventoryResult } from "@/lib/mcp/schemas";
@@ -169,10 +170,15 @@ const defaultResolvePortableForConversation =
     },
   });
 
+// A change saved while a core turn runs reports that it applies next turn, as
+// one saved beside a live actor runtime does. Core runtimes answer with their
+// status only, so nothing here can apply to them.
+const runtimeStatus = withCoreRuntimes(getRuntime);
+
 export const defaultMcpRuntimeApplyService: McpRuntimeApplyService =
   createMcpRuntimeApplyService({
     applicationState: createMcpRuntimeApplicationStore(defaultStateManager),
-    getRuntime,
+    getRuntime: runtimeStatus,
     resolvePortableForConversation: defaultResolvePortableForConversation,
   });
 
@@ -186,7 +192,7 @@ export const defaultMcpConfigMutationService: McpConfigMutationService =
   });
 
 function runtimeStatusFor(conversationId: string) {
-  const runtime = getRuntime(conversationId);
+  const runtime = runtimeStatus(conversationId);
   return runtime
     ? { status: runtime.status, backend: runtime.backend }
     : undefined;

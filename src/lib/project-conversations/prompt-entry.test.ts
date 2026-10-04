@@ -3,9 +3,9 @@ import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-resul
 import { describe, it, expect } from "vitest";
 import {
   createProjectPromptExecutor,
-  ProjectCollaborationUnsupportedError,
   type ExecuteProjectPromptStreamDeps,
 } from "./prompt-entry";
+import { ProjectCollaborationUnsupportedError } from "./collaboration-refusal";
 import {
   BackendMismatchError,
   ModelSelectionValidationError,

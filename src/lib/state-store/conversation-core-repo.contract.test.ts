@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -8,6 +8,7 @@ import {
   attemptRecordSchema,
   coreQuestionRecordSchema,
   mailboxItemRecordSchema,
+  interactiveEnrollmentRecordSchema,
   seatBindingRecordSchema,
 } from "@/lib/conversation-core/schemas";
 import { createConversationCoreRepo } from "./conversation-core-repo";
@@ -33,7 +34,6 @@ describe("conversation core repository", () => {
         projectPath: "/repo",
         sessionName: "session",
         backend: "codex" as const,
-        backendRef: "thread-9",
         createdAt: at,
         updatedAt: later,
       }),
@@ -44,6 +44,36 @@ describe("conversation core repository", () => {
       reload: (value) =>
         createConversationCoreRepo(db).getSeat(value.conversationId),
     });
+  });
+
+  it("round-trips an interactive conversation's enrollment and reports the core owns it", async () => {
+    fixture = createPersistenceFixture();
+    const db = fixture.db;
+    await assertRoundTripDurability({
+      label: "interactive enrollment",
+      schema: interactiveEnrollmentRecordSchema,
+      buildMaximalFixture: () => ({
+        conversationId: "conv-9",
+        projectPath: "/repo",
+        sessionName: "session",
+        enrolledAt: at,
+      }),
+      persist: (value) => {
+        createConversationCoreRepo(db).enrollInteractive(value);
+        return value;
+      },
+      reload: (value) => createConversationCoreRepo(db).getInteractive(value.conversationId),
+    });
+    const repo = createConversationCoreRepo(db);
+    expect(repo.ownsConversation("conv-9")).toBe(true);
+    expect(repo.ownsConversation("conv-unknown")).toBe(false);
+    expect(repo.listInteractive().map((enrollment) => enrollment.conversationId)).toEqual(["conv-9"]);
+
+    // A deleted conversation leaves the core's list, so nothing recovers or drains it at boot.
+    repo.unenrollInteractive("conv-9");
+    expect(createConversationCoreRepo(db).getInteractive("conv-9")).toBeNull();
+    expect(repo.ownsConversation("conv-9")).toBe(false);
+    expect(repo.listInteractive()).toEqual([]);
   });
 
   it("round-trips a consumed mailbox item with its permit", async () => {
@@ -69,6 +99,56 @@ describe("conversation core repository", () => {
       },
       reload: (value) => createConversationCoreRepo(db).getMailbox(value.cause),
     });
+  });
+
+  it("persists a user message, which has no supervising requester or permit", () => {
+    fixture = createPersistenceFixture();
+    const item = {
+      cause: "user:conv-9:1",
+      conversationId: "conv-9",
+      requester: null,
+      request: { kind: "user_message", text: "Hello" },
+      permit: null,
+      state: "queued" as const,
+      attemptId: null,
+      createdAt: at,
+      updatedAt: later,
+    };
+    createConversationCoreRepo(fixture.db).insertMailboxIfAbsent(item);
+    expect(createConversationCoreRepo(fixture.db).getMailbox(item.cause)).toEqual(item);
+  });
+
+  it("lists a conversation's queued items in arrival order, and refuses a malformed one rather than dropping it", () => {
+    const persistence = createPersistenceFixture();
+    fixture = persistence;
+    const repo = createConversationCoreRepo(persistence.db);
+    const item = (cause: string, createdAt: string) => ({
+      cause,
+      conversationId: "conv-9",
+      requester: null,
+      request: { kind: "user_message", text: cause },
+      permit: null,
+      state: "queued" as const,
+      attemptId: null,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    repo.insertMailboxIfAbsent(item("second", later));
+    repo.insertMailboxIfAbsent(item("first", at));
+    repo.insertMailboxIfAbsent(item("first", at));
+    expect(createConversationCoreRepo(persistence.db).queuedFor("conv-9").map((queued) => queued.cause)).toEqual([
+      "first",
+      "second",
+    ]);
+
+    // Only a duplicate cause is ignored: a row the table refuses (here, a table
+    // still requiring a requester) must not pass as accepted.
+    persistence.db.exec(`DROP TABLE core_mailbox;
+      CREATE TABLE core_mailbox (cause TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+        requester_kind TEXT NOT NULL, requester_id TEXT NOT NULL, request_json TEXT NOT NULL,
+        permit_controller_id TEXT, permit_generation INTEGER, state TEXT NOT NULL, attempt_id TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`);
+    expect(() => createConversationCoreRepo(persistence.db).insertMailboxIfAbsent(item("third", later))).toThrow(/NOT NULL/);
   });
 
   it("round-trips a settled attempt with its report", async () => {

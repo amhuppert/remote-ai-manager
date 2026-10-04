@@ -5,10 +5,12 @@ import {
   attemptRecordSchema,
   coreQuestionRecordSchema,
   mailboxItemRecordSchema,
+  interactiveEnrollmentRecordSchema,
   seatBindingRecordSchema,
   type AttemptRecord,
   type CoreQuestionRecord,
   type MailboxItemRecord,
+  type InteractiveEnrollmentRecord,
   type SeatBindingRecord,
 } from "@/lib/conversation-core/schemas";
 
@@ -23,15 +25,20 @@ const seatRow = z.object({
   project_path: z.string(),
   session_name: z.string(),
   backend: z.string(),
-  backend_ref: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+const enrollmentRow = z.object({
+  conversation_id: z.string(),
+  project_path: z.string(),
+  session_name: z.string(),
+  enrolled_at: z.string(),
 });
 const mailboxRow = z.object({
   cause: z.string(),
   conversation_id: z.string(),
-  requester_kind: z.string(),
-  requester_id: z.string(),
+  requester_kind: z.string().nullable(),
+  requester_id: z.string().nullable(),
   request_json: z.string(),
   permit_controller_id: z.string().nullable(),
   permit_generation: z.number().int().nullable(),
@@ -78,7 +85,6 @@ function seatFromRow(raw: unknown): SeatBindingRecord {
     projectPath: r.project_path,
     sessionName: r.session_name,
     backend: r.backend,
-    backendRef: r.backend_ref,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   });
@@ -89,7 +95,10 @@ function mailboxFromRow(raw: unknown): MailboxItemRecord {
   return mailboxItemRecordSchema.parse({
     cause: r.cause,
     conversationId: r.conversation_id,
-    requester: { kind: r.requester_kind, id: r.requester_id },
+    requester:
+      r.requester_kind === null || r.requester_id === null
+        ? null
+        : { kind: r.requester_kind, id: r.requester_id },
     request: JSON.parse(r.request_json),
     permit:
       r.permit_controller_id === null || r.permit_generation === null
@@ -135,6 +144,12 @@ function questionFromRow(raw: unknown): CoreQuestionRecord {
 
 /** Sole writer of the Conversation core's seat, mailbox, attempt and question tables. */
 export interface ConversationCoreRepo {
+  enrollInteractive(record: InteractiveEnrollmentRecord): void;
+  getInteractive(conversationId: string): InteractiveEnrollmentRecord | null;
+  listInteractive(): InteractiveEnrollmentRecord[];
+  unenrollInteractive(conversationId: string): void;
+  /** Whether the core runs this conversation's turns, as a seat or an enrolled interactive conversation. */
+  ownsConversation(conversationId: string): boolean;
   insertSeat(record: SeatBindingRecord): void;
   getSeat(conversationId: string): SeatBindingRecord | null;
   findSeat(
@@ -142,15 +157,14 @@ export interface ConversationCoreRepo {
     assignmentId: string,
     replacement: number,
   ): SeatBindingRecord | null;
-  setSeatBackendRef(
-    conversationId: string,
-    backendRef: string | null,
-    updatedAt: string,
-  ): void;
 
   insertMailboxIfAbsent(record: MailboxItemRecord): void;
   getMailbox(cause: string): MailboxItemRecord | null;
   nextQueued(conversationId: string): MailboxItemRecord | null;
+  /** The conversation's most recently consumed person's message (kind user_message), or null. */
+  lastConsumedMessage(conversationId: string): MailboxItemRecord | null;
+  /** The conversation's queued items, in arrival order. */
+  queuedFor(conversationId: string): MailboxItemRecord[];
   conversationsWithQueued(): string[];
   refreshMailboxPermit(
     cause: string,
@@ -196,13 +210,29 @@ export interface ConversationCoreRepo {
 }
 
 export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
-  const SEAT = `conversation_id, context_id, assignment_id, replacement, role, project_path, session_name, backend, backend_ref, created_at, updated_at`;
+  const SEAT = `conversation_id, context_id, assignment_id, replacement, role, project_path, session_name, backend, created_at, updated_at`;
   const MAILBOX = `cause, conversation_id, requester_kind, requester_id, request_json, permit_controller_id, permit_generation, state, attempt_id, created_at, updated_at`;
   const ATTEMPT = `attempt_id, conversation_id, cause, state, outcome_json, opened_at, settled_at`;
   const QUESTION = `question_id, conversation_id, attempt_id, question_text, questions_json, state, answer, created_at, answered_at`;
   const st = {
+    enroll: db.prepare(
+      `INSERT OR IGNORE INTO core_interactive_conversations (conversation_id, project_path, session_name, enrolled_at) VALUES (@conversationId, @projectPath, @sessionName, @enrolledAt)`,
+    ),
+    getEnrollment: db.prepare(
+      `SELECT conversation_id, project_path, session_name, enrolled_at FROM core_interactive_conversations WHERE conversation_id = ?`,
+    ),
+    unenroll: db.prepare(`DELETE FROM core_interactive_conversations WHERE conversation_id = ?`),
+    lastConsumedMessage: db.prepare(
+      `SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'consumed' AND json_extract(request_json, '$.kind') = 'user_message' ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+    ),
+    listEnrollments: db.prepare(
+      `SELECT conversation_id, project_path, session_name, enrolled_at FROM core_interactive_conversations ORDER BY enrolled_at, conversation_id`,
+    ),
+    owns: db.prepare(
+      `SELECT 1 FROM core_seat_bindings WHERE conversation_id = @id UNION ALL SELECT 1 FROM core_interactive_conversations WHERE conversation_id = @id LIMIT 1`,
+    ),
     insertSeat: db.prepare(
-      `INSERT OR IGNORE INTO core_seat_bindings (${SEAT}) VALUES (@conversationId, @contextId, @assignmentId, @replacement, @role, @projectPath, @sessionName, @backend, @backendRef, @createdAt, @updatedAt)`,
+      `INSERT OR IGNORE INTO core_seat_bindings (${SEAT}) VALUES (@conversationId, @contextId, @assignmentId, @replacement, @role, @projectPath, @sessionName, @backend, @createdAt, @updatedAt)`,
     ),
     getSeat: db.prepare(
       `SELECT ${SEAT} FROM core_seat_bindings WHERE conversation_id = ?`,
@@ -210,17 +240,17 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     findSeat: db.prepare(
       `SELECT ${SEAT} FROM core_seat_bindings WHERE context_id = ? AND assignment_id = ? AND replacement = ?`,
     ),
-    setSeatRef: db.prepare(
-      `UPDATE core_seat_bindings SET backend_ref = ?, updated_at = ? WHERE conversation_id = ?`,
-    ),
     insertMailbox: db.prepare(
-      `INSERT OR IGNORE INTO core_mailbox (${MAILBOX}) VALUES (@cause, @conversationId, @requesterKind, @requesterId, @requestJson, @permitControllerId, @permitGeneration, @state, @attemptId, @createdAt, @updatedAt)`,
+      `INSERT INTO core_mailbox (${MAILBOX}) VALUES (@cause, @conversationId, @requesterKind, @requesterId, @requestJson, @permitControllerId, @permitGeneration, @state, @attemptId, @createdAt, @updatedAt) ON CONFLICT(cause) DO NOTHING`,
     ),
     getMailbox: db.prepare(
       `SELECT ${MAILBOX} FROM core_mailbox WHERE cause = ?`,
     ),
     nextQueued: db.prepare(
       `SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'queued' ORDER BY created_at, rowid LIMIT 1`,
+    ),
+    queuedFor: db.prepare(
+      `SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'queued' ORDER BY created_at, rowid`,
     ),
     withQueued: db.prepare(
       `SELECT DISTINCT conversation_id AS id FROM core_mailbox WHERE state = 'queued'`,
@@ -275,6 +305,38 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     ),
   };
   return {
+    enrollInteractive(record) {
+      const p = interactiveEnrollmentRecordSchema.parse(record);
+      st.enroll.run(p);
+    },
+    getInteractive(conversationId) {
+      const raw: unknown = st.getEnrollment.get(conversationId);
+      if (raw === undefined) return null;
+      const r = enrollmentRow.parse(raw);
+      return interactiveEnrollmentRecordSchema.parse({
+        conversationId: r.conversation_id,
+        projectPath: r.project_path,
+        sessionName: r.session_name,
+        enrolledAt: r.enrolled_at,
+      });
+    },
+    listInteractive() {
+      return st.listEnrollments.all().map((raw: unknown) => {
+        const r = enrollmentRow.parse(raw);
+        return interactiveEnrollmentRecordSchema.parse({
+          conversationId: r.conversation_id,
+          projectPath: r.project_path,
+          sessionName: r.session_name,
+          enrolledAt: r.enrolled_at,
+        });
+      });
+    },
+    unenrollInteractive(conversationId) {
+      st.unenroll.run(conversationId);
+    },
+    ownsConversation(conversationId) {
+      return st.owns.get({ id: conversationId }) !== undefined;
+    },
     insertSeat(record) {
       st.insertSeat.run(seatBindingRecordSchema.parse(record));
     },
@@ -290,16 +352,13 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
       );
       return raw === undefined ? null : seatFromRow(raw);
     },
-    setSeatBackendRef(conversationId, backendRef, updatedAt) {
-      st.setSeatRef.run(backendRef, updatedAt, conversationId);
-    },
     insertMailboxIfAbsent(record) {
       const p = mailboxItemRecordSchema.parse(record);
       st.insertMailbox.run({
         cause: p.cause,
         conversationId: p.conversationId,
-        requesterKind: p.requester.kind,
-        requesterId: p.requester.id,
+        requesterKind: p.requester?.kind ?? null,
+        requesterId: p.requester?.id ?? null,
         requestJson: JSON.stringify(p.request),
         permitControllerId: p.permit?.controllerId ?? null,
         permitGeneration: p.permit?.generation ?? null,
@@ -316,6 +375,13 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     nextQueued(conversationId) {
       const raw: unknown = st.nextQueued.get(conversationId);
       return raw === undefined ? null : mailboxFromRow(raw);
+    },
+    lastConsumedMessage(conversationId) {
+      const raw: unknown = st.lastConsumedMessage.get(conversationId);
+      return raw === undefined ? null : mailboxFromRow(raw);
+    },
+    queuedFor(conversationId) {
+      return st.queuedFor.all(conversationId).map((raw: unknown) => mailboxFromRow(raw));
     },
     conversationsWithQueued() {
       return z

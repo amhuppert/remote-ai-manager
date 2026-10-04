@@ -1,9 +1,23 @@
+import type { InteractiveEnrollmentRecord } from "@/lib/conversation-core/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
+import { createCoreQueueBridge } from "@/lib/conversation-core/queue-bridge";
+import { createCoreDebugMode, type CoreDebugMode, type CoreDebugModeDeps } from "@/lib/conversation-core/debug-mode";
+import {
+  createCoreCheckpoints,
+  type CoreCheckpointPorts,
+  type CoreCheckpoints,
+} from "@/lib/conversation-core/checkpoints";
+import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
+import type { ConversationRecordPort } from "@/lib/conversation-core/conversation-record";
 import type Database from "better-sqlite3";
 import {
   createConversationCore,
   type ConversationCore,
   type ConversationCoreDeps,
   type SeatTurnPort,
+  type TaskTurnPort,
+  type UserTurnPort,
 } from "@/lib/conversation-core/executor";
 import {
   createConversationRequests,
@@ -41,17 +55,48 @@ import { createRunHost, type RunHost, type RunHostDeps } from "./host";
 
 type Db = InstanceType<typeof Database>;
 
+type HoldSource = NonNullable<ConversationCoreDeps["holds"]>;
+
+/** The first durable hold any source reports, asked in order. */
+function firstHold(sources: readonly HoldSource[]): HoldSource {
+  return {
+    async refusal(conversationId, turn, options) {
+      for (const source of sources) {
+        const refusal = await source.refusal(conversationId, turn, options);
+        if (refusal !== null) return refusal;
+      }
+      return null;
+    },
+  };
+}
+
 /** The edges of the supervision graph that reach outside CC's own state. */
 export interface RunSupervisionPorts {
   db: Db;
   seatTurns: SeatTurnPort;
+  userTurns: UserTurnPort;
+  taskTurns: TaskTurnPort;
+  records: Pick<
+    ConversationRecordPort,
+    "recordInterrupted" | "recordWithdrawn" | "hasPendingQuestion" | "withdrawQuestion" | "claimTurn" | "endClaim"
+  >;
+  /** The conversation message queue (the rows clients show) that feeds enrolled interactive conversations. */
+  queue: Omit<ConversationQueueDeps, "submitTurn">;
+  getProjectDisplayName(projectPath: string): string;
+  readConversation(enrollment: InteractiveEnrollmentRecord): Promise<ConversationState | null>;
+  /** Debug mode on enrolled conversations' rows, and the debug workflow's cleanup verification. */
+  debug: Pick<CoreDebugModeDeps, "records" | "verify">;
+  /** Checkpoints of enrolled conversations: durable state, the archive, generation and the core's runtimes. */
+  checkpoints: CoreCheckpointPorts;
+  /** What a conversation's row holds: a collaboration's claim on its turns, and a new claim while the row forbids one. */
+  conversationHold: HoldSource;
   createSeatConversation: ConversationCoreDeps["createSeatConversation"];
   slots: ConversationCoreDeps["slots"];
   evidence: WorkspaceEvidence;
   runCheck: WorkspaceExecutorDeps["runCheck"];
   notifyOwner: RunHostDeps["notifyOwner"];
   now(): string;
-  logger(name: string): Pick<Logger, "info" | "warn" | "error">;
+  logger(name: string): Logger;
 }
 
 /** One supervision graph: Run over Context over Conversation, Requests and Workspace. */
@@ -70,6 +115,14 @@ export interface RunSupervision {
     attemptId: string | null;
     openQuestionId: string | null;
   } | null;
+  /** Hands an enrolled interactive conversation's next queued message to the core when it is idle. */
+  drainConversationQueue(conversationId: string): Promise<void>;
+  /** Debug mode on enrolled interactive conversations. */
+  debug: CoreDebugMode;
+  /** The durable holds on a conversation (a collaboration's claim, checkpoint maintenance); null when work may start. */
+  holdRefusal: HoldSource["refusal"];
+  /** Checkpoints of enrolled interactive conversations. */
+  checkpoints: CoreCheckpoints;
   /** Boot: settle what the last process left running, restore runs paused, reconcile. */
   boot(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
 }
@@ -103,17 +156,61 @@ export function composeRunSupervision(
     touchRequester,
     now: ports.now,
   });
+  const queueLog = ports.logger("conversation-core");
+  const queueBridge = createCoreQueueBridge({
+    queue: ports.queue,
+    enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
+    isBusy: (conversationId) => core.isBusy(conversationId),
+    send: (input) => core.sendUserMessage(input),
+    getProjectDisplayName: ports.getProjectDisplayName,
+    log: queueLog,
+  });
+  const checkpoints = createCoreCheckpoints({
+    ...ports.checkpoints,
+    core: {
+      hold: (conversationId, holder) => core.hold(conversationId, holder),
+      isBusy: (conversationId) => core.isBusy(conversationId),
+      runningAttempt: (conversationId) => core.runningAttempt(conversationId),
+    },
+    enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
+    log: ports.logger("conversation-core"),
+  });
+  const holds = firstHold([
+    ports.conversationHold,
+    checkpoints,
+  ]);
+  // A held conversation's batch stays in its queue rather than being claimed only to be refused.
+  const drainQueue = async (conversationId: string): Promise<void> => {
+    try {
+      if ((await holds.refusal(conversationId, "message")) !== null) return;
+      await queueBridge.drain(conversationId);
+    } catch (error) {
+      queueLog.error("conversation_core.queue_drain_failed", { conversationId, error: getErrorMessage(error) });
+    }
+  };
   const core = createConversationCore({
     transaction,
     repo: coreRepo,
+    holds,
+    onConversationIdle: (conversationId) => void drainQueue(conversationId),
     permits,
     admission,
     createSeatConversation: ports.createSeatConversation,
     turns: ports.seatTurns,
+    userTurns: ports.userTurns,
+    taskTurns: ports.taskTurns,
+    records: ports.records,
     slots: ports.slots,
     questions: requests,
     touchRequester,
     now: ports.now,
+    log: ports.logger("conversation-core"),
+  });
+  const debug = createCoreDebugMode({
+    core,
+    enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
+    records: ports.debug.records,
+    verify: ports.debug.verify,
     log: ports.logger("conversation-core"),
   });
   const runsRepo = createRunsRepo(db);
@@ -172,8 +269,28 @@ export function composeRunSupervision(
             : requests.openedDuring(conversationId, attemptId),
       };
     },
+    drainConversationQueue: drainQueue,
+    debug,
+    holdRefusal: (conversationId, turn, options) => holds.refusal(conversationId, turn, options),
+    checkpoints,
     async boot() {
-      core.recover();
+      await core.recover();
+      // Rows the last process claimed go back to the queue's own rules before anything drains.
+      for (const enrollment of coreRepo.listInteractive()) {
+        const { conversationId } = enrollment;
+        // A conversation deleted while the core still listed it has nothing to recover.
+        if ((await ports.readConversation(enrollment)) === null) {
+          coreRepo.unenrollInteractive(conversationId);
+          queueLog.info("conversation_core.enrollment_dropped", { conversationId });
+          continue;
+        }
+        await queueBridge.recover(conversationId).catch((error: unknown) =>
+          queueLog.error("conversation_core.queue_recover_failed", { conversationId, error: getErrorMessage(error) }),
+        );
+        // A checkpoint the last process left in flight is settled before the queue may drain.
+        await checkpoints.recover(enrollment);
+        void drainQueue(conversationId);
+      }
       workspace.recover();
       const restoredRuns = runsRepo.listActive().length;
       await runs.restoreAfterRestart();

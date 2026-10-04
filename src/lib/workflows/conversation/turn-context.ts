@@ -102,10 +102,16 @@ export async function prepareTaskPrompt(
   }
 }
 
+/** The parts of a turn the context contributions read. */
+export type TurnContextExecution = Pick<
+  ExecutePromptInput,
+  "projectPath" | "target" | "worktreePath" | "role" | "persistence" | "executionAttemptId" | "debugMode"
+> & { turn: Pick<ExecutePromptInput["turn"], "inputOrigin" | "promptText"> };
+
 export async function prepareConversationTurnContext(
   deps: TurnContextDependencies,
   input: {
-    execution: ExecutePromptInput;
+    execution: TurnContextExecution;
     promptText: string;
     /** The one continuation this turn runs under; see `resolveContinuationSeed`. */
     continuation: ContinuationSeed;

@@ -188,6 +188,12 @@ const defaultStartupDeps: StartupDeps = {
       const { stopActiveSubscriptionWakes } =
         await import("./lib/subscriptions/active-wait-production");
       await stopActiveSubscriptionWakes();
+      try {
+        const { shutdownRunSupervision } = await import("./lib/runs/production");
+        await shutdownRunSupervision();
+      } catch (error) {
+        logger.error("shutdown.run_supervision_failed", { error: getErrorMessage(error) });
+      }
       await stopAllConversationActors();
     });
   },

@@ -65,26 +65,20 @@ interface SemaphoreState {
   active: number;
   queue: Waiter[];
   limit: number;
-  /** Callers of `waitForQuerySlotRelease`, woken on the next release. */
-  releaseListeners: Set<() => void>;
 }
 
 const GLOBAL_KEY = "__cc_query_semaphore" as const;
 
 function getState(): SemaphoreState {
-  const state = getGlobalSingleton(
+  return getGlobalSingleton(
     GLOBAL_KEY,
     () =>
       ({
         active: 0,
         queue: [] as Waiter[],
         limit: DEFAULT_MAX_CONCURRENT,
-        releaseListeners: new Set<() => void>(),
       }) satisfies SemaphoreState,
   );
-  // A singleton created by an earlier module version (hot reload) lacks the set.
-  state.releaseListeners ??= new Set<() => void>();
-  return state;
 }
 
 /**
@@ -185,42 +179,6 @@ export async function acquireQuerySlot(
   return release;
 }
 
-/**
- * Takes a slot only when one is free and nobody is queued ahead; never waits.
- * For callers that must acquire several resources together without holding
- * one while waiting for another.
- */
-export async function tryAcquireQuerySlot(
-  label: string,
-): Promise<(() => void) | null> {
-  await refreshLimit();
-  const state = getState();
-  if (state.queue.length > 0 || state.active >= state.limit) return null;
-  state.active++;
-  logger.info("semaphore.acquired", {
-    label,
-    active: state.active,
-    limit: state.limit,
-    waiting: state.queue.length,
-  });
-  return createRelease(label);
-}
-
-/** Resolves on the next slot release, or when `signal` aborts. */
-export function waitForQuerySlotRelease(signal?: AbortSignal): Promise<void> {
-  const state = getState();
-  return new Promise<void>((resolve) => {
-    const listener = () => {
-      state.releaseListeners.delete(listener);
-      signal?.removeEventListener("abort", listener);
-      resolve();
-    };
-    state.releaseListeners.add(listener);
-    signal?.addEventListener("abort", listener, { once: true });
-    if (signal?.aborted) listener();
-  });
-}
-
 function createRelease(label: string): () => void {
   let released = false;
   return () => {
@@ -229,7 +187,6 @@ function createRelease(label: string): () => void {
 
     const state = getState();
     state.active--;
-    for (const listener of [...state.releaseListeners]) listener();
 
     logger.info("semaphore.released", {
       label,

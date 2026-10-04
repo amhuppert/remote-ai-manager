@@ -130,6 +130,7 @@ import {
   describeResumeRefusal,
   type ResumeRefusal,
 } from "./resume-eligibility";
+import { drainCoreConversation, holdCoreConversationWhileIdle } from "@/lib/runs/handles";
 import {
   reclaimConversationOwnership,
   releaseConversationOwnership,
@@ -168,19 +169,22 @@ function extractCompletedRounds(snapshot: Record<string, unknown>): number {
     : 0;
 }
 
+/**
+ * A slice that threw finalized nothing: the conversation is marked awaiting and
+ * then handed back (fenced on this attempt), or its owner would hold it for good.
+ */
 async function markConversationAwaitingAfterSliceThrow(input: {
   sliceDeps: AsymmetricCollaborationSliceDeps;
   projectPath: string;
   sessionName: string;
   workflowId: string;
   conversationId: string;
+  attemptEpoch: number | undefined;
   timestamp: string;
   error: unknown;
 }): Promise<void> {
-  if (!input.sliceDeps.markConversationAwaiting) return;
-
   try {
-    await input.sliceDeps.markConversationAwaiting(input.conversationId, {
+    await input.sliceDeps.markConversationAwaiting?.(input.conversationId, {
       workflowId: input.workflowId,
       timestamp: input.timestamp,
     });
@@ -191,6 +195,22 @@ async function markConversationAwaitingAfterSliceThrow(input: {
       workflowId: input.workflowId,
       conversationId: input.conversationId,
       sliceError: getErrorMessage(input.error),
+      error: getErrorMessage(err),
+    });
+  }
+  // Released whatever the mark did: an owner left behind would hold the conversation for good.
+  if (input.attemptEpoch === undefined) return;
+  try {
+    await input.sliceDeps.releaseConversationOwner?.(input.conversationId, {
+      workflowId: input.workflowId,
+      attemptEpoch: input.attemptEpoch,
+    });
+  } catch (err) {
+    logger.warn("collaboration.manager.slice_throw_release_failed", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
       error: getErrorMessage(err),
     });
   }
@@ -374,9 +394,15 @@ interface CollaborationStartPersisterDeps {
 }
 
 export class CollaborationStartConflictError extends Error {
-  constructor(public readonly conversationId: string) {
+  constructor(
+    public readonly conversationId: string,
+    /** What holds the conversation, when its holder said. */
+    reason?: string,
+  ) {
     super(
-      `Conversation "${conversationId}" is no longer idle for this collaboration start`,
+      reason === undefined
+        ? `Conversation "${conversationId}" is no longer idle for this collaboration start`
+        : `Conversation "${conversationId}" cannot start a collaboration now: ${reason}`,
     );
     this.name = "CollaborationStartConflictError";
   }
@@ -914,6 +940,17 @@ export interface CollaborationManagerDeps {
   readArtifactStream(
     workflowId: string,
   ): Promise<CollaborationArtifactStreamRead<CollaborationArtifact>>;
+  /**
+   * Runs a claim (start or reclaim) on the conversation exclusively: on a
+   * conversation the shared core runs, only while it runs nothing and with
+   * new turns held off meanwhile; `busy` when it is not free.
+   */
+  claimConversation<T>(
+    input: { projectPath: string; sessionName: string; conversationId: string },
+    work: () => Promise<T>,
+  ): Promise<{ kind: "ran"; value: T } | { kind: "busy"; reason: string }>;
+  /** The conversation was handed back: what waited for it (its queue) may run. */
+  conversationReleased(input: { projectPath: string; sessionName: string; conversationId: string }): void;
   /** Hands the originating conversation back, fenced on the exact attempt.
    *  Stop needs its own path to this: a paused run has no live slice to do it,
    *  and an owner nothing ever clears locks the user out of the conversation. */
@@ -1192,6 +1229,14 @@ const defaultDeps: CollaborationManagerDeps = {
       workflowId,
       collaborationArtifactSchema,
     );
+  },
+  async claimConversation(input, work) {
+    const held = await holdCoreConversationWhileIdle(input.conversationId, { kind: "collaboration_claim" }, work);
+    return held.kind === "not_core" ? { kind: "ran", value: await work() } : held;
+  },
+  conversationReleased(input) {
+    // A core conversation's queue waited for the collaboration; an actor's drains on its own.
+    void drainCoreConversation(input.conversationId);
   },
   releaseConversationOwner({
     projectPath,
@@ -1621,16 +1666,24 @@ export function createCollaborationManager(
 
       let startClaim: CollaborationStartClaim;
       try {
-        startClaim = await deps.persistStart({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          workflowId,
-          conversationId: parsed.conversationId,
-          expectedPromptCount: conversation.promptCount,
-          brief,
-          imageRefs,
-          modelSelection: agents.agent_one.modelSelection,
-        });
+        // On a conversation the shared core runs, the claim waits for nothing: it is
+        // taken while no turn runs or waits, and refused (a start conflict) otherwise.
+        const claimed = await deps.claimConversation(
+          { projectPath: input.projectPath, sessionName: input.sessionName, conversationId: parsed.conversationId },
+          () =>
+            deps.persistStart({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              workflowId,
+              conversationId: parsed.conversationId,
+              expectedPromptCount: conversation.promptCount,
+              brief,
+              imageRefs,
+              modelSelection: agents.agent_one.modelSelection,
+            }),
+        );
+        if (claimed.kind === "busy") throw new CollaborationStartConflictError(parsed.conversationId, claimed.reason);
+        startClaim = claimed.value;
       } catch (error) {
         deps.stopRegistry.release(workflowId);
         throw error;
@@ -1721,12 +1774,18 @@ export function createCollaborationManager(
             sessionName: input.sessionName,
             workflowId,
             conversationId: parsed.conversationId,
+            attemptEpoch: sliceInput.attemptEpoch,
             timestamp: deps.now(),
             error: err,
           });
         })
         .finally(() => {
           deps.stopRegistry.release(workflowId);
+          deps.conversationReleased({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId: parsed.conversationId,
+          });
         });
 
       return { workflowId, status: "started" };
@@ -1902,12 +1961,12 @@ export function createCollaborationManager(
 
         // Take the conversation back before the envelope moves. A refusal here
         // must leave a failed envelope failed, not a running one with no worker.
-        const reclaim = await deps.reclaimConversationOwner({
+        const reclaimRequest = {
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           conversationId,
           owner: {
-            kind: "collaboration",
+            kind: "collaboration" as const,
             workflowId: input.workflowId,
             attemptEpoch: resumeAttemptEpoch,
           },
@@ -1915,7 +1974,15 @@ export function createCollaborationManager(
             workflowId: input.workflowId,
             claimedTurnGeneration,
           },
-        });
+        };
+        const reclaimed = await deps.claimConversation(
+          { projectPath: input.projectPath, sessionName: input.sessionName, conversationId },
+          () => deps.reclaimConversationOwner(reclaimRequest),
+        );
+        const reclaim: OwnershipReclaimDecision =
+          reclaimed.kind === "busy"
+            ? { kind: "refuse", reason: "turn_intervened", detail: reclaimed.reason }
+            : reclaimed.value;
         if (reclaim.kind === "refuse") {
           throw new CollaborationConversationOwnershipError(
             input.workflowId,
@@ -2097,12 +2164,18 @@ export function createCollaborationManager(
             sessionName: input.sessionName,
             workflowId: input.workflowId,
             conversationId,
+            attemptEpoch: resumeAttemptEpoch,
             timestamp: deps.now(),
             error: err,
           });
         })
         .finally(() => {
           deps.stopRegistry.release(input.workflowId);
+          deps.conversationReleased({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId,
+          });
         });
 
       return { workflowId: input.workflowId, status: "resumed" as const };
@@ -2133,7 +2206,9 @@ export function createCollaborationManager(
           parsed.conversationId,
         );
       }
-      if (envelope.status !== "running" && envelope.status !== "paused") {
+      // A failed run can be stopped too: it gives up the resume and hands the
+      // conversation back, which a restart that failed the run never does.
+      if (envelope.status !== "running" && envelope.status !== "paused" && envelope.status !== "failed") {
         throw new CollaborationNotStoppableError(
           input.workflowId,
           envelope.status,
@@ -2163,7 +2238,11 @@ export function createCollaborationManager(
       await repo.update(input.workflowId, {
         status: "completed",
         phase: "asymmetric_user_stopped",
-        errorSummary: "Run stopped by user before convergence",
+        // A failed run keeps why it failed; stopping it only gives up the resume.
+        errorSummary:
+          envelope.status === "failed" && envelope.errorSummary
+            ? envelope.errorSummary
+            : "Run stopped by user before convergence",
         featureSnapshot: nextSnapshot,
         ...(envelope.pause !== undefined ? { pause: undefined } : {}),
       });
@@ -2173,7 +2252,9 @@ export function createCollaborationManager(
       // owner nobody clears would refuse every future prompt in that
       // conversation. Idempotent — a live slice that also releases is a no-op.
       const stoppedEpoch = existingSnapshot["attemptEpoch"];
-      if (input.conversationId) {
+      // A live slice may still be in an agent call on the conversation's session:
+      // it keeps the conversation until it ends, and its own ending hands it back.
+      if (input.conversationId && !signaled) {
         try {
           await deps.releaseConversationOwner({
             projectPath: input.projectPath,
@@ -2196,6 +2277,11 @@ export function createCollaborationManager(
             error: getErrorMessage(err),
           });
         }
+        deps.conversationReleased({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+        });
       }
 
       try {

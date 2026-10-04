@@ -50,6 +50,7 @@ export const updateDebugMode = withTracing(async (request, { params }) => {
   }
 
   try {
+    // Hosts (and repairs) an actor conversation's actor; nothing to do for one the core runs.
     await ensureConversationLifecycle({
       kind: "durable",
       address: {

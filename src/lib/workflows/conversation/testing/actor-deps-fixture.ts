@@ -315,6 +315,9 @@ export function groupActorFixtureDependencies(
       saveTranscriptImage: deps.saveTranscriptImage,
       getNextImageIndex: deps.getNextImageIndex,
       readConversationMessages: deps.readConversationMessages,
+      ...(deps.readLineageCumulativeCost !== undefined
+        ? { readLineageCumulativeCost: deps.readLineageCumulativeCost }
+        : {}),
     },
     policy: {
       state: createConversationPolicyState({

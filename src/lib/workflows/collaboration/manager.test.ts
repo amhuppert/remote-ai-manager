@@ -3288,3 +3288,141 @@ describe("collaboration manager — stopping releases the conversation", () => {
     ]);
   });
 });
+
+describe("collaboration on a conversation the shared core runs", () => {
+  const start = (manager: ReturnType<typeof createCollaborationManager>) =>
+    manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 2,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+  it("claims the conversation only while the core runs nothing in it", async () => {
+    const { deps, persistedStarts } = buildScriptedDeps();
+    const manager = createCollaborationManager({
+      ...deps,
+      claimConversation: async () => ({ kind: "busy", reason: "The conversation is running a turn" }),
+    });
+    await expect(start(manager)).rejects.toBeInstanceOf(CollaborationStartConflictError);
+    await expect(start(manager)).rejects.toThrow("The conversation is running a turn");
+    expect(persistedStarts).toEqual([]);
+  });
+
+  it("hands the conversation back, and lets its held work run, when the background slice throws", async () => {
+    const released: unknown[] = [];
+    let handedBack: () => void = () => undefined;
+    const handed = new Promise<void>((resolve) => (handedBack = resolve));
+    const { deps } = buildScriptedDeps({
+      runSliceError: new Error("synthetic slice failure"),
+      sliceDepsOverride: {
+        ...makeStubSliceDeps(),
+        releaseConversationOwner: async (conversationId, owner) => {
+          released.push({ conversationId, ...owner });
+          return true;
+        },
+      },
+    });
+    const manager = createCollaborationManager({
+      ...deps,
+      conversationReleased: (input) => {
+        released.push(`released:${input.conversationId}`);
+        handedBack();
+      },
+    });
+    const started = await start(manager);
+    await handed;
+    expect(released).toEqual([
+      { conversationId: "conv-1", workflowId: started.workflowId, attemptEpoch: 1 },
+      "released:conv-1",
+    ]);
+  });
+
+  it("leaves a live run's conversation owned until its slice ends, which hands it back", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-live",
+        status: "running",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1", attemptEpoch: 1 },
+      }),
+    );
+    const stopRegistry = createInMemoryCollaborationStopRegistry();
+    const sliceSignal = stopRegistry.register("wf-live").signal;
+    const released: unknown[] = [];
+    const scripted = buildScriptedDeps({ envelopeStoreOverride: envelopeStore, stopRegistryOverride: stopRegistry });
+    const manager = createCollaborationManager({
+      ...scripted.deps,
+      releaseConversationOwner: async (input) => {
+        released.push(input.owner);
+        return true;
+      },
+      conversationReleased: (input) => released.push(`released:${input.conversationId}`),
+    });
+
+    await manager.stop({ projectPath: "/p", sessionName: "s", workflowId: "wf-live", conversationId: "conv-1" });
+    // Its agent call may still be running in the conversation's session: nothing else may start there yet.
+    expect(sliceSignal.aborted).toBe(true);
+    expect(released).toEqual([]);
+  });
+
+  it("hands the conversation back after a thrown slice even when marking it awaiting fails", async () => {
+    const released: string[] = [];
+    let handedBack: () => void = () => undefined;
+    const handed = new Promise<void>((resolve) => (handedBack = resolve));
+    const { deps } = buildScriptedDeps({
+      runSliceError: new Error("synthetic slice failure"),
+      sliceDepsOverride: {
+        ...makeStubSliceDeps(),
+        markConversationAwaiting: async () => {
+          throw new Error("database is locked");
+        },
+        releaseConversationOwner: async (conversationId) => {
+          released.push(conversationId);
+          return true;
+        },
+      },
+    });
+    const manager = createCollaborationManager({ ...deps, conversationReleased: () => handedBack() });
+    await start(manager);
+    await handed;
+    expect(released).toEqual(["conv-1"]);
+  });
+
+  it("lets a failed run be stopped, handing its conversation back for good", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-failed",
+        status: "failed",
+        errorSummary: "Run interrupted by a server restart",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1", attemptEpoch: 2 },
+      }),
+    );
+    const released: unknown[] = [];
+    const scripted = buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const manager = createCollaborationManager({
+      ...scripted.deps,
+      releaseConversationOwner: async (input) => {
+        released.push(input.owner);
+        return true;
+      },
+      conversationReleased: (input) => released.push(`released:${input.conversationId}`),
+    });
+
+    await manager.stop({ projectPath: "/p", sessionName: "s", workflowId: "wf-failed", conversationId: "conv-1" });
+    expect(released).toEqual([
+      { kind: "collaboration", workflowId: "wf-failed", attemptEpoch: 2 },
+      "released:conv-1",
+    ]);
+    expect((await repo.get("wf-failed"))).toMatchObject({
+      status: "completed",
+      // Why it failed stays on record; stopping only gave up the resume.
+      errorSummary: "Run interrupted by a server restart",
+    });
+  });
+});

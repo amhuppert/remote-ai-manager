@@ -5,6 +5,12 @@ import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import { ownerRefSchema } from "@/lib/intents/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { workspaceScopeSchema } from "@/lib/workspace/schemas";
+import { imagePayloadSchema } from "@/lib/images/schemas";
+import {
+  documentFeedbackPayloadSchema,
+  notepadFeedbackPayloadSchema,
+} from "@/lib/conversations/message-content-schemas";
+import { queuedDeliveryMetadataSchema } from "@/lib/workflows/conversation/turn-spec";
 
 /**
  * A turn a supervisor asks a seat conversation to take. Requesters may carry
@@ -47,6 +53,32 @@ export const seatTurnRequestSchema = z
   .passthrough();
 export type SeatTurnRequest = z.infer<typeof seatTurnRequestSchema>;
 
+/** A person's message to an interactive conversation the core runs, or a queued batch of them. */
+export const userTurnRequestSchema = z
+  .object({
+    kind: z.literal("user_message"),
+    text: z.string(),
+    images: z.array(imagePayloadSchema).optional(),
+    documentFeedback: documentFeedbackPayloadSchema.optional(),
+    notepadFeedback: z.array(notepadFeedbackPayloadSchema).optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    /** The backend the sender chose; adopted only by a conversation that has not run yet. */
+    backend: agentBackendSchema.optional(),
+    inputOrigin: z.enum(["user", "generated"]),
+    /** Rows of the conversation's message queue this turn delivers; the queue owns them until accepted. */
+    queuedDelivery: queuedDeliveryMetadataSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (request) =>
+      request.text.trim().length > 0 ||
+      (request.images?.length ?? 0) > 0 ||
+      request.documentFeedback !== undefined ||
+      (request.notepadFeedback?.length ?? 0) > 0,
+    { message: "A message needs text, an image or feedback" },
+  );
+export type UserTurnRequest = z.infer<typeof userTurnRequestSchema>;
+
 /** The settled outcome of a seat turn, as every requester consumes it. */
 export const seatTurnReportSchema = z
   .object({
@@ -74,13 +106,22 @@ export const seatBindingRecordSchema = z
     projectPath: z.string().min(1),
     sessionName: z.string().min(1),
     backend: agentBackendSchema,
-    /** Opaque continuity handle from the last settled turn. */
-    backendRef: z.string().min(1).nullable(),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
   .strict();
 export type SeatBindingRecord = z.infer<typeof seatBindingRecordSchema>;
+
+/** An interactive conversation the core runs instead of the conversation actor. */
+export const interactiveEnrollmentRecordSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    projectPath: z.string().min(1),
+    sessionName: z.string().min(1),
+    enrolledAt: z.string().min(1),
+  })
+  .strict();
+export type InteractiveEnrollmentRecord = z.infer<typeof interactiveEnrollmentRecordSchema>;
 
 export const mailboxItemStateSchema = z.enum(["queued", "consumed"]);
 
@@ -88,7 +129,8 @@ export const mailboxItemRecordSchema = z
   .object({
     cause: z.string().min(1),
     conversationId: z.string().min(1),
-    requester: ownerRefSchema,
+    /** The supervisor to hint when the turn settles; null for a person's own message. */
+    requester: ownerRefSchema.nullable(),
     request: z.unknown(),
     permit: permitRefSchema.nullable(),
     state: mailboxItemStateSchema,

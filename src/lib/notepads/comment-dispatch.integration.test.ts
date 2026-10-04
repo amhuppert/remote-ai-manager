@@ -207,6 +207,13 @@ describe("notepad comment dispatch (real store)", () => {
       getCollaborationManager: () => ({}) as unknown as CollaborationManager,
       setConversationPendingPromptText: async () => {},
       clearConversationPendingPromptTextIfMatches: async () => false,
+      coreConversations: {
+        owns: () => false,
+        admitCollaboration: async () => null,
+        prompt: async () => {
+          throw new Error("No conversation here runs on the shared core");
+        },
+      },
     };
     const handlers = createPromptRouteHandlers(promptDeps);
 

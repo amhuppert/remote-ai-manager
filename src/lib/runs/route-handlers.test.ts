@@ -188,6 +188,13 @@ describe("run routes", () => {
     expect(shown.status).toBe(404);
   });
 
+  it("refuses a launch from a supervised seat, whose child would wait on the seat's own workspace", async () => {
+    await launch();
+    const response = await routes.launch(request({ brief: "Nested work" }, identity("conv-1")), params());
+    expect(response.status).toBe(403);
+    expect(await json(response)).toMatchObject({ code: "seat_cannot_launch" });
+  });
+
   it("refuses a launch without a verified calling conversation, and an unknown option", async () => {
     expect(
       (await routes.launch(request({ brief: "x" }, {}), params())).status,

@@ -31,7 +31,10 @@ import type {
   PendingQueuedMessage,
   PendingQueuedMessageStatus,
 } from "@/lib/conversations/message-queue-schemas";
-import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
+import {
+  pendingQueuedMessageSchema,
+  queuedMessageBlocksOrdinaryAdmission,
+} from "@/lib/conversations/message-queue-schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 
 import {
@@ -768,6 +771,62 @@ function makeDeps(store: FakeStore): {
   return { deps, broadcasts };
 }
 
+describe("messageQueueService.claimNextTurnBatch", () => {
+  const debugging = (): ConversationState => {
+    const conversation = makeConversation();
+    conversation.debugMode = {
+      active: true,
+      recording: true,
+      logFilePath: "/w/.cc/debug/conv.ndjson",
+      enteredAt: NOW,
+      hypotheses: [],
+      reproductionSteps: [],
+      fixSummary: null,
+      verificationSteps: [],
+      instructionsDelivered: true,
+      phase: "awaiting_reproduction",
+      lastTurnFailed: false,
+      debugSessionId: "dbg-1",
+    };
+    return conversation;
+  };
+
+  it("holds a debug session's queue for the core, which takes only the answer to its agent's question", async () => {
+    const conversation = debugging();
+    const store: FakeStore = { conversation };
+    const { deps } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+    const key = { projectPath: "/project", sessionName: "session", conversationId: conversation.id };
+    await service.enqueue({ ...key, content: [textBlock("Run notice")], inputOrigin: "generated" });
+
+    expect(await service.claimNextTurnBatch({ ...key, debugHold: true })).toBeNull();
+    expect(conversation.pendingQueue[0]?.status).toBe("pending");
+
+    conversation.pendingQuestionId = "q-1";
+    const answer = await service.enqueue({
+      ...key,
+      content: [textBlock("<cc-question-answers batch=\"q-1\">{}</cc-question-answers>")],
+      inputOrigin: "generated",
+      metadata: { kind: "question_answers", questionBatchId: "q-1" },
+      consumePendingQuestionId: "q-1",
+    });
+    // Its answer continues the debug turn's work, ahead of the notice it holds.
+    expect(await service.claimNextTurnBatch({ ...key, debugHold: true })).toMatchObject({ messageIds: [answer?.id] });
+    expect(conversation.pendingQueue.map((row) => row.status)).toEqual(["pending", "delivering"]);
+  });
+
+  it("leaves the conversation actor's own debug state to decide when its queue drains", async () => {
+    const conversation = debugging();
+    const store: FakeStore = { conversation };
+    const { deps } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+    const key = { projectPath: "/project", sessionName: "session", conversationId: conversation.id };
+    await service.enqueue({ ...key, content: [textBlock("Queued")], inputOrigin: "user" });
+    // The actor drains on leaving debug mode, possibly before the row's debug state is written.
+    expect(await service.claimNextTurnBatch(key)).toMatchObject({ messageIds: [conversation.pendingQueue[0]?.id] });
+  });
+});
+
 describe("messageQueueService.enqueue", () => {
   it("pins the checkpoint fork backend with the queued submission even after that message is cancelled", async () => {
     const conversation = makeConversation();
@@ -841,6 +900,37 @@ describe("messageQueueService.enqueue", () => {
     expect(event.text).toBe("queued message");
     expect(event.message?.id).toBe("id-1");
     expect(event.message?.status).toBe("pending");
+  });
+
+  it("keeps input that never ran for the person's review, once per identity", async () => {
+    const store: FakeStore = { conversation: makeConversation() };
+    const { deps, broadcasts } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+    const input = {
+      projectPath: "/repos/my-project",
+      sessionName: "csm/feature",
+      conversationId: "conv-1",
+      id: "unsent:user:conv-1:1",
+      inputOrigin: "user" as const,
+      content: [textBlock("lost"), { type: "image" as const, mediaType: "image/png", base64Data: "aGk=" }],
+      failure: "The server restarted before this message could start, so it was not sent",
+    };
+
+    const entry = await service.enqueue(input);
+    expect(entry).toMatchObject({
+      status: "failed",
+      failedAt: NOW,
+      error: "The server restarted before this message could start, so it was not sent",
+      content: input.content,
+    });
+    expect(queuedMessageBlocksOrdinaryAdmission(entry)).toBe(true);
+    expect(broadcasts).toEqual([
+      expect.objectContaining({ type: "message-queued", message: expect.objectContaining({ status: "failed" }) }),
+    ]);
+
+    // A recovery replayed after a crash finds the row it already kept.
+    await service.enqueue(input);
+    expect(store.conversation?.pendingQueue).toHaveLength(1);
   });
 
   it("persists and broadcasts the complete enqueue-time model selection", async () => {

@@ -6,27 +6,111 @@ import type { OwnerRef, PendingIntent } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
+import type { ConversationRecordPort } from "./conversation-record";
 import type {
   Grant,
   GrantRequest,
   WorkspaceAdmission,
 } from "@/lib/workspace/admission";
+import type { z } from "zod";
+import { taskTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
+import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
 import {
   seatTurnRequestSchema,
+  userTurnRequestSchema,
+  type InteractiveEnrollmentRecord,
+  type UserTurnRequest,
   type MailboxItemRecord,
   type SeatBindingRecord,
   type SeatTurnReport,
   type SeatTurnRequest,
 } from "./schemas";
 
-/** What one admitted seat turn produced, before settlement records it. */
-export interface SeatTurnResult {
+/** What one admitted turn produced, before settlement records it. */
+export interface CoreTurnResult {
   status: "succeeded" | "failed" | "cancelled" | "interrupted";
   finalText: string | null;
   structuredOutput: unknown;
   outputIssue: string | null;
   failure: string | null;
-  backendRef: string | null;
+  /** The turn's runtime could not be confirmed stopped; its processes may still act. */
+  runtimeUncollected?: string;
+}
+
+/** A live listener for one turn's progress, such as the prompt request's own event stream. */
+export interface TurnStream {
+  emit(event: string, data: unknown): void;
+}
+
+/** Dispatch for one admitted turn of an interactive conversation. */
+export interface UserTurnPort {
+  /** A message that never started: stopped by the person, or refused while the server stops. */
+  notStarted?(input: {
+    conversationId: string;
+    enrollment: InteractiveEnrollmentRecord;
+    request: UserTurnRequest;
+    cause: string;
+    reason: string;
+    /** Who ended it: the person's stop, the server stopping or restarting, or a failure of the core itself. */
+    endedBy: "person" | "server" | "failure";
+  }): Promise<void> | void;
+  run(input: {
+    conversationId: string;
+    enrollment: InteractiveEnrollmentRecord;
+    request: UserTurnRequest;
+    attemptId: string;
+    signal: AbortSignal;
+    stream: TurnStream | null;
+  }): Promise<CoreTurnResult>;
+}
+
+export type UserMessageAdmission =
+  | { kind: "accepted"; cause: string; settled: Promise<SeatTurnReport> }
+  | { kind: "refused"; code: "not_enrolled" | "busy" | "owned" | "stopping"; message: string };
+
+/** Who holds a conversation's slot for exclusive maintenance (design §4.9). */
+export type HoldHolder = { kind: "checkpoint"; requestId: string } | { kind: "debug_command" } | { kind: "collaboration_claim" };
+
+/** An exclusive lease on a conversation's slot; `signal` aborts when the server stops or the conversation goes away. */
+export type HoldAcquisition =
+  | { kind: "held"; signal: AbortSignal; release(): void }
+  | { kind: "busy"; reason: string };
+
+/**
+ * What is asking past the durable holds: a person's message, a workflow's
+ * task, or a claim on the conversation (a collaboration taking it over).
+ */
+export type HoldTurn = "message" | "task" | "claim";
+
+/** An owner's durable holds on conversations, read before work starts. */
+export interface HoldSource {
+  /**
+   * Null when work of this kind may start. `betweenTurns` says no turn runs
+   * now (the caller holds the conversation between two turns), so what an
+   * earlier turn left behind may be repaired before the answer.
+   */
+  refusal(conversationId: string, turn: HoldTurn, options?: { betweenTurns: boolean }): Promise<HoldRefusal | null>;
+}
+
+/** A durable hold another owner keeps (a checkpoint in progress, a collaboration's claim). */
+export interface HoldRefusal {
+  /** `owned`: a collaboration owns the conversation's turns; `busy`: maintenance is in progress. */
+  code: "busy" | "owned";
+  message: string;
+}
+
+/** A workflow's task turn (a commit message, a merge's conflict resolution) on an interactive conversation. */
+export type TaskTurn = z.output<typeof taskTurnRequestSchema>;
+
+/** Dispatch for one admitted task turn: the AgentCall task protocol in the conversation's own session. */
+export interface TaskTurnPort {
+  run(input: {
+    conversationId: string;
+    enrollment: InteractiveEnrollmentRecord;
+    request: TaskTurn;
+    attemptId: string;
+    signal: AbortSignal;
+  }): Promise<{ result: CoreTurnResult; outcome: TurnExecutionOutcome }>;
 }
 
 /** Runtime binding and dispatch for one admitted seat turn. */
@@ -37,7 +121,7 @@ export interface SeatTurnPort {
     request: SeatTurnRequest;
     attemptId: string;
     signal: AbortSignal;
-  }): Promise<SeatTurnResult>;
+  }): Promise<CoreTurnResult>;
 }
 
 export interface ConversationCoreDeps {
@@ -52,15 +136,28 @@ export interface ConversationCoreDeps {
     request: SeatTurnRequest;
   }): Promise<string>;
   turns: SeatTurnPort;
-  /** Model capacity, taken together with the workspace grant and never waited on while holding it. */
+  userTurns: UserTurnPort;
+  taskTurns: TaskTurnPort;
+  /** The conversation row: a turn the last process left running, and the question a stop withdraws. */
+  records: Pick<
+    ConversationRecordPort,
+    "recordInterrupted" | "recordWithdrawn" | "hasPendingQuestion" | "withdrawQuestion" | "claimTurn" | "endClaim"
+  >;
+  /**
+   * Model capacity: waits in line (first come, first served, shared with every
+   * other turn) and resolves with the release; rejects when `signal` aborts.
+   */
   slots: {
-    tryAcquire(label: string): Promise<(() => void) | null>;
-    waitForRelease(signal?: AbortSignal): Promise<void>;
+    acquire(label: string, signal: AbortSignal): Promise<() => void>;
   };
   questions: {
     openedDuring(conversationId: string, attemptId: string): string | null;
   };
   touchRequester(owner: OwnerRef): void;
+  /** An interactive conversation has nothing left to run: its message queue may hold the next turn. */
+  onConversationIdle?(conversationId: string): void;
+  /** Durable holds other owners keep; null when work of this kind may start. */
+  holds?: HoldSource;
   now(): string;
   /** How often a blocked acquisition re-checks its permit; permits carry no change signal. */
   permitPollMs?: number;
@@ -68,24 +165,82 @@ export interface ConversationCoreDeps {
 }
 
 /**
- * The Conversation core for supervised seat conversations. Every requested turn
- * enters the mailbox; one turn lifetime per conversation selects it, opens an
- * attempt, acquires permit, workspace grant and model capacity together, runs
- * it, and settles it through the single terminal recorder.
+ * The Conversation core for supervised seats and enrolled interactive
+ * conversations. Every requested turn enters the mailbox; one turn lifetime
+ * per conversation selects it, opens an attempt, acquires its permit, model
+ * capacity and workspace grant, runs it, and settles it through the single
+ * terminal recorder.
  */
 export interface ConversationCore extends Executor {
-  /** Boot: admitted attempts settle as interrupted; unadmitted ones return to the queue. */
-  recover(): void;
+  /** Server stop: aborts running turns as interrupted and waits for them to settle. */
+  shutdown(): Promise<void>;
+  /**
+   * Boot: admitted attempts settle as interrupted and their conversations
+   * return to idle with a notice; unadmitted ones return to the queue.
+   */
+  recover(): Promise<void>;
   /** Resolves once no turn is running or waiting to start. */
   idle(): Promise<void>;
   seatBinding(conversationId: string): SeatBindingRecord | null;
+  /**
+   * A person's message to an enrolled interactive conversation. While a turn
+   * runs the message is refused as busy: input sent meanwhile belongs on the
+   * conversation's message queue, which hands it over once the turn ends.
+   */
+  sendUserMessage(
+    input: { conversationId: string; stream?: TurnStream } & Omit<UserTurnRequest, "kind">,
+  ): Promise<UserMessageAdmission>;
+  /**
+   * Stops the conversation's turn, running or still acquiring. `settled`
+   * resolves when that turn has ended; anything queued behind it still runs.
+   */
+  stopConversation(conversationId: string): { requested: boolean; settled: Promise<void> };
+  /** The conversation is going away: what waits is withdrawn, what runs is stopped, and it runs nothing more. */
+  retireConversation(conversationId: string): Promise<void>;
+  /** Resolves once the conversation runs no turn and has none waiting to start. */
+  conversationIdle(conversationId: string): Promise<void>;
+  /** The conversation runs a turn or has one waiting to start. */
+  isBusy(conversationId: string): boolean;
+  /**
+   * A workflow's task turn on an enrolled conversation, run in the
+   * conversation's own turn order (after a turn already running). Resolves with
+   * its outcome; the caller's cancellation withdraws or stops it.
+   */
+  runTask(input: { conversationId: string; turn: TaskTurn; signal?: AbortSignal }): Promise<TurnExecutionOutcome>;
   /** The attempt a conversation is running now, for questions it asks. */
   runningAttempt(conversationId: string): string | null;
+  /**
+   * Runs `work` (a debug command) only while the conversation runs and waits
+   * for nothing, holding new turns off until it is done; the conversation's
+   * idle hook runs afterwards.
+   */
+  whileIdle<T>(
+    conversationId: string,
+    work: () => Promise<T>,
+    holder?: HoldHolder,
+    /** `holds`: the durable holds to ask first, as this kind of work (none when absent). */
+    options?: { holds?: HoldTurn },
+  ): Promise<{ kind: "ran"; value: T } | { kind: "busy"; reason?: string }>;
+  /**
+   * Exclusive maintenance on the conversation's slot (design §4.9):
+   * synchronous, refused while a turn runs or waits. Until released, no
+   * message, task or command starts, and the conversation reads as busy.
+   */
+  hold(conversationId: string, holder: HoldHolder): HoldAcquisition;
+  /** The request of the conversation's latest message turn, as a new message (no queue delivery), or null. */
+  lastMessageRequest(conversationId: string): UserTurnRequest | null;
+}
+
+/** Read at call time: a signal can abort across an await. */
+function wasAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 type Acquired =
   | { kind: "admitted"; grant: Grant | null; releaseSlot: () => void }
-  | { kind: "not_admitted"; reason: string };
+  | { kind: "not_admitted"; reason: string }
+  /** The workspace is held for processes that could not be confirmed stopped; waiting would never end. */
+  | { kind: "blocked"; reason: string };
 
 function grantFor(
   request: SeatTurnRequest,
@@ -119,64 +274,101 @@ export function createConversationCore(
   const rerun = new Set<string>();
   const controllers = new Map<string, AbortController>();
   const runningAttempts = new Map<string, string>();
+  /** Set at server stop: no new turn starts; queued work waits for the next boot. */
+  let stopping = false;
+  /** The mailbox cause each conversation is running or acquiring for now, for stop. */
+  const activeCauses = new Map<string, string>();
+  /** Live listeners and settlement waiters of a person's messages, by cause. */
+  const streams = new Map<string, TurnStream>();
+  const waiters = new Map<string, (report: SeatTurnReport) => void>();
+  /** Callers waiting on a task turn's outcome, by cause, and the outcomes its port produced. */
+  const taskWaiters = new Map<string, (outcome: TurnExecutionOutcome) => void>();
+  const taskOutcomes = new Map<string, TurnExecutionOutcome>();
   const pollMs = deps.permitPollMs ?? 1000;
+  /** Conversations going away: they start nothing more. */
+  const retired = new Set<string>();
+  /** Resolves when each running or acquiring turn has ended, by cause. */
+  const turnsEnded = new Map<string, Promise<void>>();
+  /** Grants kept for turns whose processes could not be confirmed stopped, by holder, with the reason. */
+  const quarantined = new Map<string, string>();
 
   function sleep(ms: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true },
-      );
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      signal.addEventListener("abort", onAbort, { once: true });
     });
   }
 
+  /** Waits for a workspace change or the poll interval, leaving no listener behind. */
+  async function waitForGrantChange(signal: AbortSignal): Promise<void> {
+    const wait = new AbortController();
+    const forward = () => wait.abort();
+    signal.addEventListener("abort", forward, { once: true });
+    try {
+      await Promise.race([deps.admission.waitForChange(wait.signal), sleep(pollMs, wait.signal)]);
+    } finally {
+      wait.abort();
+      signal.removeEventListener("abort", forward);
+    }
+  }
+
+  /**
+   * Permit, model capacity and workspace grant, together. Capacity is waited
+   * for in line with every other turn; the grant is only ever tried, so a turn
+   * never holds capacity while waiting for a grant or a grant while waiting
+   * for capacity.
+   */
   async function acquire(
     item: MailboxItemRecord,
-    request: SeatTurnRequest,
+    grantRequest: GrantRequest | null,
     signal: AbortSignal,
   ): Promise<Acquired> {
-    const grantRequest = grantFor(request, item.cause);
+    const permitOf = (): PermitRef | null => deps.repo.getMailbox(item.cause)?.permit ?? item.permit;
     for (;;) {
-      if (signal.aborted)
-        return { kind: "not_admitted", reason: "cancelled before admission" };
-      const current = deps.repo.getMailbox(item.cause);
-      const permit: PermitRef | null = current?.permit ?? item.permit;
-      if (!deps.permits.admits(permit)) {
-        return { kind: "not_admitted", reason: "the permit is closed" };
-      }
-      const grant =
-        grantRequest === null ? null : deps.admission.tryAcquire(grantRequest);
-      if (grantRequest !== null && grant === null) {
-        await Promise.race([
-          deps.admission.waitForChange(signal),
-          sleep(pollMs, signal),
-        ]);
+      if (stopping) return { kind: "not_admitted", reason: "the server is stopping" };
+      if (signal.aborted) return { kind: "not_admitted", reason: "cancelled before admission" };
+      if (!deps.permits.admits(permitOf())) return { kind: "not_admitted", reason: "the permit is closed" };
+      let releaseSlot: () => void;
+      try {
+        releaseSlot = await deps.slots.acquire(`turn:${item.conversationId}`, signal);
+      } catch (error) {
+        if (signal.aborted) return { kind: "not_admitted", reason: "cancelled before admission" };
+        // A capacity wait can time out; the turn keeps its intent and tries again.
+        deps.log.warn("conversation_core.capacity_wait_failed", {
+          conversationId: item.conversationId,
+          cause: item.cause,
+          error: getErrorMessage(error),
+        });
         continue;
       }
-      const releaseSlot = await deps.slots.tryAcquire(
-        `seat:${item.conversationId}`,
-      );
-      if (releaseSlot === null) {
-        // Never hold a workspace grant while waiting for model capacity.
-        if (grant !== null) deps.admission.release(grant);
-        await Promise.race([
-          deps.slots.waitForRelease(signal),
-          sleep(pollMs, signal),
-        ]);
+      const grant = grantRequest === null ? null : deps.admission.tryAcquire(grantRequest);
+      if (grantRequest !== null && grant === null) {
+        releaseSlot();
+        const stuck = deps.admission.blockers(grantRequest).find((blocker) => quarantined.has(blocker.holder));
+        if (stuck !== undefined) {
+          return {
+            kind: "blocked",
+            reason: `The workspace is held for an earlier turn whose agent processes could not be confirmed stopped (${quarantined.get(stuck.holder) ?? "unknown"}); restart the server once they are gone`,
+          };
+        }
+        await waitForGrantChange(signal);
         continue;
       }
       // Re-check the permit at the moment of admission, with the bundle in hand.
-      if (
-        !deps.permits.admits(deps.repo.getMailbox(item.cause)?.permit ?? permit)
-      ) {
+      if (stopping || !deps.permits.admits(permitOf())) {
         releaseSlot();
         if (grant !== null) deps.admission.release(grant);
-        return { kind: "not_admitted", reason: "the permit is closed" };
+        return {
+          kind: "not_admitted",
+          reason: stopping ? "the server is stopping" : "the permit is closed",
+        };
       }
       return { kind: "admitted", grant, releaseSlot };
     }
@@ -208,7 +400,6 @@ export function createConversationCore(
         projectPath: workspace.projectPath,
         sessionName: workspace.sessionName,
         backend: seat.assignment.backend,
-        backendRef: null,
         createdAt: deps.now(),
         updatedAt: deps.now(),
       }),
@@ -229,8 +420,8 @@ export function createConversationCore(
   function settleAttempt(
     item: MailboxItemRecord,
     attemptId: string,
-    result: SeatTurnResult,
-  ): void {
+    result: CoreTurnResult,
+  ): SeatTurnReport {
     const report: SeatTurnReport = {
       status: result.status,
       conversationId: item.conversationId,
@@ -246,21 +437,61 @@ export function createConversationCore(
     deps.transaction(() => {
       deps.repo.settleAttempt(attemptId, report, deps.now());
       deps.repo.consumeMailbox(item.cause, attemptId, deps.now());
-      if (result.backendRef !== null) {
-        deps.repo.setSeatBackendRef(
-          item.conversationId,
-          result.backendRef,
-          deps.now(),
-        );
-      }
     });
+    return report;
+  }
+
+  function resolveWaiters(cause: string, report: SeatTurnReport): void {
+    const resolve = waiters.get(cause);
+    waiters.delete(cause);
+    resolve?.(report);
+  }
+
+  function resolveTask(cause: string, outcome: TurnExecutionOutcome): void {
+    const resolve = taskWaiters.get(cause);
+    taskWaiters.delete(cause);
+    taskOutcomes.delete(cause);
+    resolve?.(outcome);
+  }
+
+  /** The turn a mailbox item asks for: a seat's work order, a person's message or a workflow's task. */
+  function turnOf(
+    item: MailboxItemRecord,
+  ):
+    | { kind: "seat"; request: SeatTurnRequest; grant: GrantRequest | null }
+    | { kind: "user"; request: UserTurnRequest; enrollment: InteractiveEnrollmentRecord }
+    | { kind: "task"; request: TaskTurn; enrollment: InteractiveEnrollmentRecord } {
+    const user = userTurnRequestSchema.safeParse(item.request);
+    const task = user.success ? null : taskTurnRequestSchema.safeParse(item.request);
+    if (user.success || task?.success === true) {
+      const enrollment = deps.repo.getInteractive(item.conversationId);
+      if (enrollment === null) throw new Error(`Conversation ${item.conversationId} is not run by the core`);
+      if (user.success) return { kind: "user", request: user.data, enrollment };
+      if (task?.success === true) return { kind: "task", request: task.data, enrollment };
+    }
+    const request = seatTurnRequestSchema.parse(item.request);
+    // Interactive writes are cooperative; only supervised seats take workspace grants.
+    return { kind: "seat", request, grant: grantFor(request, item.cause) };
   }
 
   /** One turn lifetime: every exit after `open` records exactly one terminal. */
   async function runTurn(
     item: MailboxItemRecord,
   ): Promise<"settled" | "not_admitted"> {
-    const request = seatTurnRequestSchema.parse(item.request);
+    const turn = turnOf(item);
+    if (turn.kind === "task" && deps.holds !== undefined) {
+      // Its turn has come: the turn before it may have left a hold (a lost checkpoint continuation).
+      const held = await deps.holds.refusal(item.conversationId, "task", { betweenTurns: true });
+      if (held !== null) {
+        deps.transaction(() => deps.repo.deleteMailbox(item.cause));
+        resolveTask(item.cause, { kind: "not_started", reason: "configuration", message: held.message });
+        return "not_admitted";
+      }
+      // Its caller, a retirement or a stop may have withdrawn it during the read (answering it already).
+      if (deps.repo.getMailbox(item.cause)?.state !== "queued" || retired.has(item.conversationId) || stopping) {
+        return "not_admitted";
+      }
+    }
     const attemptId = randomUUID();
     deps.transaction(() =>
       deps.repo.insertAttempt({
@@ -275,8 +506,40 @@ export function createConversationCore(
     );
     const controller = new AbortController();
     controllers.set(item.cause, controller);
+    activeCauses.set(item.conversationId, item.cause);
+    let endTurn: () => void = () => {};
+    turnsEnded.set(item.cause, new Promise<void>((resolve) => (endTurn = resolve)));
+    // An interactive conversation shows running from here, while its turn may
+    // still wait for model capacity: its person's next message is queued, not refused.
+    const claimed =
+      turn.kind === "seat"
+        ? null
+        : {
+            projectPath: turn.enrollment.projectPath,
+            storeSessionName: turn.enrollment.sessionName,
+            conversationId: item.conversationId,
+          };
+    if (claimed !== null) {
+      await deps.records.claimTurn(claimed).catch((error: unknown) =>
+        deps.log.error("conversation_core.claim_failed", { conversationId: item.conversationId, error: getErrorMessage(error) }),
+      );
+    }
     try {
-      const acquired = await acquire(item, request, controller.signal);
+      const acquired = await acquire(item, turn.kind === "seat" ? turn.grant : null, controller.signal);
+      if (acquired.kind === "blocked") {
+        resolveWaiters(
+          item.cause,
+          settleAttempt(item, attemptId, {
+            status: "failed",
+            finalText: null,
+            structuredOutput: null,
+            outputIssue: null,
+            failure: acquired.reason,
+          }),
+        );
+        if (item.requester !== null) deps.touchRequester(item.requester);
+        return "settled";
+      }
       if (acquired.kind === "not_admitted") {
         deps.transaction(() =>
           deps.repo.settleAttempt(
@@ -285,48 +548,232 @@ export function createConversationCore(
             deps.now(),
           ),
         );
+        // A person's message has no permit to reopen: stopped before it began, it
+        // is withdrawn, and its port settles what it owes (such as queue rows).
+        if (turn.kind === "task") {
+          deps.transaction(() => deps.repo.deleteMailbox(item.cause));
+          resolveTask(item.cause, {
+            kind: "not_started",
+            reason: "cancelled",
+            message: acquired.reason,
+            ...(stopping ? { interruption: { reason: "shutdown" as const } } : {}),
+          });
+        }
+        if (turn.kind === "user" && (stopping || controller.signal.reason === "shutdown")) {
+          // The mailbox keeps the only copy: the next boot hands it back to its owner
+          // (a direct message to its sender for review, a queued batch to the queue).
+          resolveWaiters(item.cause, {
+            status: "interrupted",
+            conversationId: item.conversationId,
+            finalText: null,
+            structuredOutput: null,
+            outputIssue: null,
+            openQuestionId: null,
+            failure: "The server stopped before this message could start",
+          });
+          return "not_admitted";
+        }
+        if (turn.kind === "user") {
+          // A direct message stays on record as consumed (a debug retry sends it again);
+          // a queued batch's content belongs to the queue, which notStarted settles.
+          deps.transaction(() =>
+            turn.request.queuedDelivery === undefined
+              ? deps.repo.consumeMailbox(item.cause, attemptId, deps.now())
+              : deps.repo.deleteMailbox(item.cause),
+          );
+          await Promise.resolve(
+            deps.userTurns.notStarted?.({
+              conversationId: item.conversationId,
+              enrollment: turn.enrollment,
+              request: turn.request,
+              cause: item.cause,
+              reason: acquired.reason,
+              endedBy: "person",
+            }),
+          ).catch((error: unknown) =>
+            deps.log.error("conversation_core.not_started_settle_failed", {
+              conversationId: item.conversationId,
+              cause: item.cause,
+              error: getErrorMessage(error),
+            }),
+          );
+          resolveWaiters(item.cause, {
+            status: "cancelled",
+            conversationId: item.conversationId,
+            finalText: null,
+            structuredOutput: null,
+            outputIssue: null,
+            openQuestionId: null,
+            failure: acquired.reason,
+          });
+        }
         return "not_admitted";
       }
       deps.transaction(() => deps.repo.admitAttempt(attemptId));
       runningAttempts.set(item.conversationId, attemptId);
-      let result: SeatTurnResult;
+      let result: CoreTurnResult;
       try {
-        const binding = deps.repo.getSeat(item.conversationId);
-        if (binding === null)
-          throw new Error(
-            `Seat conversation ${item.conversationId} has no binding`,
-          );
-        result = await deps.turns.run({
-          conversationId: item.conversationId,
-          binding,
-          request,
-          attemptId,
-          signal: controller.signal,
-        });
+        if (turn.kind === "user") {
+          result = await deps.userTurns.run({
+            conversationId: item.conversationId,
+            enrollment: turn.enrollment,
+            request: turn.request,
+            attemptId,
+            signal: controller.signal,
+            stream: streams.get(item.cause) ?? null,
+          });
+        } else if (turn.kind === "task") {
+          const ran = await deps.taskTurns.run({
+            conversationId: item.conversationId,
+            enrollment: turn.enrollment,
+            request: turn.request,
+            attemptId,
+            signal: controller.signal,
+          });
+          taskOutcomes.set(item.cause, ran.outcome);
+          result = ran.result;
+        } else {
+          const binding = deps.repo.getSeat(item.conversationId);
+          if (binding === null)
+            throw new Error(
+              `Seat conversation ${item.conversationId} has no binding`,
+            );
+          result = await deps.turns.run({
+            conversationId: item.conversationId,
+            binding,
+            request: turn.request,
+            attemptId,
+            signal: controller.signal,
+          });
+        }
       } catch (error) {
         result = {
-          status: controller.signal.aborted ? "cancelled" : "failed",
+          status: !controller.signal.aborted
+            ? "failed"
+            : controller.signal.reason === "shutdown"
+              ? "interrupted"
+              : "cancelled",
           finalText: null,
           structuredOutput: null,
           outputIssue: null,
           failure: getErrorMessage(error),
-          backendRef: null,
         };
       } finally {
         runningAttempts.delete(item.conversationId);
         acquired.releaseSlot();
-        if (acquired.grant !== null) deps.admission.release(acquired.grant);
       }
-      settleAttempt(item, attemptId, result);
-      deps.touchRequester(item.requester);
+      if (result.runtimeUncollected !== undefined) {
+        // Processes that may still write keep the workspace they were granted;
+        // a conflicting turn waits rather than run beside them.
+        deps.log.error("conversation_core.runtime_uncollected", {
+          conversationId: item.conversationId,
+          cause: item.cause,
+          grantHeld: acquired.grant !== null,
+          error: result.runtimeUncollected,
+        });
+        if (acquired.grant !== null) quarantined.set(item.cause, result.runtimeUncollected);
+        if (result.status === "succeeded") {
+          result = {
+            ...result,
+            status: "failed",
+            failure: `The agent's processes could not be confirmed stopped: ${result.runtimeUncollected}`,
+          };
+        }
+      } else if (acquired.grant !== null) {
+        deps.admission.release(acquired.grant);
+      }
+      resolveWaiters(item.cause, settleAttempt(item, attemptId, result));
+      if (turn.kind === "task") {
+        resolveTask(
+          item.cause,
+          taskOutcomes.get(item.cause) ?? {
+            kind: "not_started",
+            reason: "configuration",
+            message: result.failure ?? "The task did not run",
+          },
+        );
+      }
+      if (item.requester !== null) deps.touchRequester(item.requester);
       return "settled";
     } finally {
       controllers.delete(item.cause);
+      activeCauses.delete(item.conversationId);
+      streams.delete(item.cause);
+      turnsEnded.delete(item.cause);
+      if (claimed !== null) {
+        await deps.records.endClaim(claimed).catch((error: unknown) =>
+          deps.log.error("conversation_core.claim_end_failed", { conversationId: item.conversationId, error: getErrorMessage(error) }),
+        );
+      }
+      endTurn();
     }
+  }
+
+  /**
+   * A person's message whose turn failed before it could settle: its sender is
+   * answered and it leaves the mailbox, which would otherwise hold the
+   * conversation busy. Nothing resubmits it, unlike a supervised request.
+   */
+  function abandonMessage(item: MailboxItemRecord, failure: string): void {
+    if (taskWaiters.has(item.cause)) {
+      try {
+        deps.transaction(() => deps.repo.deleteMailbox(item.cause));
+      } catch (error) {
+        deps.log.error("conversation_core.task_withdraw_failed", {
+          conversationId: item.conversationId,
+          cause: item.cause,
+          error: getErrorMessage(error),
+        });
+      }
+      resolveTask(item.cause, { kind: "not_started", reason: "configuration", message: failure });
+      return;
+    }
+    const message = userTurnRequestSchema.safeParse(item.request);
+    if (!message.success) return;
+    streams.delete(item.cause);
+    const enrollment = deps.repo.getInteractive(item.conversationId);
+    if (message.data.queuedDelivery !== undefined && enrollment !== null) {
+      // The queue still holds the batch as delivering; a failure it never hears of would block it until restart.
+      void Promise.resolve(
+        deps.userTurns.notStarted?.({
+          conversationId: item.conversationId,
+          enrollment,
+          request: message.data,
+          cause: item.cause,
+          reason: failure,
+          endedBy: "failure",
+        }),
+      ).catch((error: unknown) =>
+        deps.log.error("conversation_core.not_started_settle_failed", {
+          conversationId: item.conversationId,
+          cause: item.cause,
+          error: getErrorMessage(error),
+        }),
+      );
+    }
+    try {
+      deps.transaction(() => deps.repo.deleteMailbox(item.cause));
+    } catch (error) {
+      deps.log.error("conversation_core.message_withdraw_failed", {
+        conversationId: item.conversationId,
+        cause: item.cause,
+        error: getErrorMessage(error),
+      });
+    }
+    resolveWaiters(item.cause, {
+      status: "failed",
+      conversationId: item.conversationId,
+      finalText: null,
+      structuredOutput: null,
+      outputIssue: null,
+      openQuestionId: null,
+      failure,
+    });
   }
 
   async function drainConversation(conversationId: string): Promise<void> {
     for (;;) {
+      if (stopping) return;
       rerun.delete(conversationId);
       const item = deps.repo.nextQueued(conversationId);
       if (item === null) return;
@@ -336,14 +783,87 @@ export function createConversationCore(
           cause: item.cause,
           error: getErrorMessage(error),
         });
+        abandonMessage(item, getErrorMessage(error));
         return "not_admitted" as const;
       });
-      // An unadmitted item waits for a resubmission under a fresh permit.
-      if (result === "not_admitted" && !rerun.has(conversationId)) return;
+      // An unadmitted item still queued waits for a resubmission under a fresh
+      // permit; one that left the mailbox (withdrawn or abandoned) makes way for the next.
+      if (result === "not_admitted" && !rerun.has(conversationId) && deps.repo.getMailbox(item.cause)?.state === "queued")
+        return;
     }
   }
 
+  /** Conversations held for exclusive maintenance, with what to tell their holder when they must stop. */
+  const leases = new Map<string, { holder: HoldHolder; controller: AbortController }>();
+  /** Bumped by every lease, so an admission that read the holds can tell a claim came and went meanwhile. */
+  const leaseEpochs = new Map<string, number>();
+
+  function hold(conversationId: string, holder: HoldHolder): HoldAcquisition {
+    if (stopping) return { kind: "busy", reason: "The server is stopping" };
+    if (retired.has(conversationId) || deps.repo.getInteractive(conversationId) === null) {
+      return { kind: "busy", reason: `Conversation ${conversationId} is not run by the core` };
+    }
+    if (runners.has(conversationId) || deps.repo.nextQueued(conversationId) !== null) {
+      return { kind: "busy", reason: "The conversation is running a turn or has one waiting to start" };
+    }
+    const controller = new AbortController();
+    leaseEpochs.set(conversationId, (leaseEpochs.get(conversationId) ?? 0) + 1);
+    let release: () => void = () => {};
+    // Registered as the conversation's runner: a message, a task or a wake meanwhile finds it busy.
+    const runner = new Promise<void>((resolve) => (release = resolve));
+    runners.set(conversationId, runner);
+    leases.set(conversationId, { holder, controller });
+    void runner.then(() => {
+      if (runners.get(conversationId) !== runner) return;
+      runners.delete(conversationId);
+      leases.delete(conversationId);
+      if (rerun.has(conversationId)) wake(conversationId);
+      else if (!stopping && !retired.has(conversationId) && deps.repo.getInteractive(conversationId) !== null)
+        deps.onConversationIdle?.(conversationId);
+    });
+    deps.log.info("conversation_core.hold_acquired", { conversationId, holder: holder.kind });
+    return { kind: "held", signal: controller.signal, release };
+  }
+
+  /**
+   * The durable holds' answer for new work, fenced against leases: a claim
+   * that began and ended while the read was pending (taking the conversation
+   * durably) makes the read start over. `local` re-checks what the core
+   * itself knows after each read.
+   */
+  async function readHolds(
+    conversationId: string,
+    turn: HoldTurn,
+    local: () => Extract<UserMessageAdmission, { kind: "refused" }> | null,
+  ): Promise<Extract<UserMessageAdmission, { kind: "refused" }> | null> {
+    if (deps.holds === undefined) return local();
+    for (let read = 0; read < 3; read += 1) {
+      const epoch = leaseEpochs.get(conversationId) ?? 0;
+      const held = await deps.holds.refusal(conversationId, turn);
+      if (held !== null) return { kind: "refused", code: held.code, message: held.message };
+      const since = local();
+      if (since !== null) return since;
+      if ((leaseEpochs.get(conversationId) ?? 0) === epoch) return null;
+    }
+    return { kind: "refused", code: "busy", message: "The conversation is being taken over; try again" };
+  }
+
+  /** Why a person's message cannot be taken now, or null. */
+  function messageRefusal(conversationId: string): Extract<UserMessageAdmission, { kind: "refused" }> | null {
+    if (stopping) {
+      return { kind: "refused", code: "stopping", message: "The server is stopping; send the message again once it is back" };
+    }
+    if (deps.repo.getInteractive(conversationId) === null || retired.has(conversationId)) {
+      return { kind: "refused", code: "not_enrolled", message: `Conversation ${conversationId} is not run by the core` };
+    }
+    if (runners.has(conversationId) || deps.repo.nextQueued(conversationId) !== null) {
+      return { kind: "refused", code: "busy", message: "Conversation is busy — a turn is already running" };
+    }
+    return null;
+  }
+
   function wake(conversationId: string): void {
+    if (stopping) return;
     if (runners.has(conversationId)) {
       rerun.add(conversationId);
       return;
@@ -351,6 +871,8 @@ export function createConversationCore(
     const runner = drainConversation(conversationId).finally(() => {
       runners.delete(conversationId);
       if (rerun.has(conversationId)) wake(conversationId);
+      else if (!stopping && !retired.has(conversationId) && deps.repo.getInteractive(conversationId) !== null)
+        deps.onConversationIdle?.(conversationId);
     });
     runners.set(conversationId, runner);
   }
@@ -410,8 +932,9 @@ export function createConversationCore(
     interrupt(cause) {
       controllers.get(cause)?.abort();
     },
-    recover() {
-      deps.transaction(() => {
+    async recover() {
+      const { interrupted, claimed, unsent } = deps.transaction(() => {
+        const conversations = new Set<string>();
         for (const attempt of deps.repo.attemptsInState("admitted")) {
           const report: SeatTurnReport = {
             status: "interrupted",
@@ -428,21 +951,283 @@ export function createConversationCore(
             attempt.attemptId,
             deps.now(),
           );
+          conversations.add(attempt.conversationId);
         }
+        const claimed = new Set<string>();
         for (const attempt of deps.repo.attemptsInState("open")) {
           deps.repo.settleAttempt(
             attempt.attemptId,
             { notAdmitted: "the server restarted before admission" },
             deps.now(),
           );
+          claimed.add(attempt.conversationId);
         }
+        // A message still waiting to start lost its sender with the process;
+        // left queued, it would hold the conversation busy for good. Each goes
+        // back to its owner below (a queued batch to the queue, a direct
+        // message to its sender for review) before its mailbox copy goes.
+        const unsent: { conversationId: string; cause: string; request: UserTurnRequest }[] = [];
+        for (const conversationId of deps.repo.conversationsWithQueued()) {
+          for (const item of deps.repo.queuedFor(conversationId)) {
+            // A task's caller went with the process; nothing would collect its outcome.
+            if (taskTurnRequestSchema.safeParse(item.request).success) {
+              deps.repo.deleteMailbox(item.cause);
+              continue;
+            }
+            const message = userTurnRequestSchema.safeParse(item.request);
+            if (!message.success) continue;
+            unsent.push({ conversationId, cause: item.cause, request: message.data });
+          }
+        }
+        return { interrupted: [...conversations], claimed: [...claimed], unsent };
       });
+      // A turn that was still waiting to start left its conversation claimed (running).
+      for (const conversationId of claimed) {
+        const enrollment = deps.repo.getInteractive(conversationId);
+        if (enrollment === null) continue;
+        await deps.records
+          .endClaim({ projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId })
+          .catch((error: unknown) =>
+            deps.log.error("conversation_core.claim_end_failed", { conversationId, error: getErrorMessage(error) }),
+          );
+      }
+      for (const { conversationId, cause, request } of unsent) {
+        const enrollment = deps.repo.getInteractive(conversationId);
+        if (enrollment !== null) {
+          const returned =
+            request.queuedDelivery !== undefined
+              ? Promise.resolve(
+                  deps.userTurns.notStarted?.({
+                    conversationId,
+                    enrollment,
+                    request,
+                    cause,
+                    reason: "the server restarted before it started",
+                    endedBy: "server",
+                  }),
+                )
+              : deps.records.recordWithdrawn(
+                  { projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId },
+                  { cause, request },
+                );
+          await returned.catch((error: unknown) =>
+            // Still removed: run on a later boot, it would send what its sender never saw go.
+            deps.log.error("conversation_core.withdrawn_message_lost", { conversationId, error: getErrorMessage(error) }),
+          );
+        }
+        deps.transaction(() => deps.repo.deleteMailbox(cause));
+      }
+      for (const conversationId of interrupted) {
+        const owner = deps.repo.getSeat(conversationId) ?? deps.repo.getInteractive(conversationId);
+        if (owner === null) continue;
+        await deps.records
+          .recordInterrupted({
+            projectPath: owner.projectPath,
+            storeSessionName: owner.sessionName,
+            conversationId,
+          })
+          .catch((error: unknown) =>
+            deps.log.error("conversation_core.recover_row_failed", {
+              conversationId,
+              error: getErrorMessage(error),
+            }),
+          );
+      }
+    },
+    async shutdown() {
+      stopping = true;
+      for (const controller of controllers.values()) controller.abort("shutdown");
+      for (const lease of leases.values()) lease.controller.abort("shutdown");
+      while (runners.size > 0) await Promise.all([...runners.values()]);
+      // Tasks still waiting behind a turn never start; their callers are answered (the next boot drops them).
+      for (const cause of [...taskWaiters.keys()]) {
+        resolveTask(cause, {
+          kind: "not_started",
+          reason: "cancelled",
+          message: "The server stopped before the task could start",
+          interruption: { reason: "shutdown" },
+        });
+      }
     },
     async idle() {
       while (runners.size > 0) await Promise.all([...runners.values()]);
     },
+    async sendUserMessage(input) {
+      const refused = messageRefusal(input.conversationId);
+      if (refused !== null) return refused;
+      if (deps.holds !== undefined) {
+        const holdRefused = await readHolds(input.conversationId, "message", () => messageRefusal(input.conversationId));
+        if (holdRefused !== null) return holdRefused;
+      }
+      const { conversationId: _conversationId, stream: _stream, ...message } = input;
+      const request: UserTurnRequest = userTurnRequestSchema.parse({ kind: "user_message", ...message });
+      // A queued delivery's cause names its claim, correlating the turn with the queue rows it delivers.
+      const cause =
+        request.queuedDelivery !== undefined
+          ? `queue:${input.conversationId}:${request.queuedDelivery.deliveryAttemptId}`
+          : `user:${input.conversationId}:${randomUUID()}`;
+      deps.transaction(() =>
+        deps.repo.insertMailboxIfAbsent({
+          cause,
+          conversationId: input.conversationId,
+          requester: null,
+          request,
+          permit: null,
+          state: "queued",
+          attemptId: null,
+          createdAt: deps.now(),
+          updatedAt: deps.now(),
+        }),
+      );
+      // Registered once the message is durable, so a refused write leaves nothing behind.
+      const settled = new Promise<SeatTurnReport>((resolve) => waiters.set(cause, resolve));
+      if (input.stream !== undefined) streams.set(cause, input.stream);
+      wake(input.conversationId);
+      return { kind: "accepted", cause, settled };
+    },
+    async runTask({ conversationId, turn, signal }) {
+      if (stopping) {
+        return {
+          kind: "not_started",
+          reason: "cancelled",
+          message: "The server is stopping",
+          interruption: { reason: "shutdown" },
+        };
+      }
+      if (deps.repo.getInteractive(conversationId) === null || retired.has(conversationId)) {
+        return {
+          kind: "not_started",
+          reason: "configuration",
+          message: `Conversation ${conversationId} is not run by the core`,
+        };
+      }
+      if (signal?.aborted === true) {
+        return { kind: "not_started", reason: "cancelled", message: "The task was cancelled before it started" };
+      }
+      if (leases.has(conversationId)) {
+        return { kind: "not_started", reason: "configuration", message: "The conversation is held for maintenance" };
+      }
+      if (deps.holds !== undefined) {
+        const held = await readHolds(conversationId, "task", () =>
+          leases.has(conversationId) || retired.has(conversationId) || stopping
+            ? { kind: "refused", code: "busy", message: "The conversation is held for maintenance" }
+            : null,
+        );
+        if (held !== null) return { kind: "not_started", reason: "configuration", message: held.message };
+      }
+      // A cancellation during the read fired before any listener could hear it.
+      if (wasAborted(signal)) {
+        return { kind: "not_started", reason: "cancelled", message: "The task was cancelled before it started" };
+      }
+      const cause = `task:${conversationId}:${randomUUID()}`;
+      deps.transaction(() =>
+        deps.repo.insertMailboxIfAbsent({
+          cause,
+          conversationId,
+          requester: null,
+          request: turn,
+          permit: null,
+          state: "queued",
+          attemptId: null,
+          createdAt: deps.now(),
+          updatedAt: deps.now(),
+        }),
+      );
+      const outcome = new Promise<TurnExecutionOutcome>((resolve) => taskWaiters.set(cause, resolve));
+      const cancel = () => {
+        const controller = controllers.get(cause);
+        if (controller !== undefined) {
+          controller.abort("user");
+          return;
+        }
+        // Still waiting behind another turn: it never starts.
+        deps.transaction(() => deps.repo.deleteMailbox(cause));
+        resolveTask(cause, { kind: "not_started", reason: "cancelled", message: "The task was cancelled before it started" });
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      wake(conversationId);
+      try {
+        return await outcome;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
+    },
+    isBusy(conversationId) {
+      return runners.has(conversationId) || deps.repo.nextQueued(conversationId) !== null;
+    },
+    async conversationIdle(conversationId) {
+      while (runners.has(conversationId)) await runners.get(conversationId);
+    },
+    stopConversation(conversationId) {
+      const cause = activeCauses.get(conversationId);
+      const enrollment = deps.repo.getInteractive(conversationId);
+      const identity =
+        enrollment === null
+          ? null
+          : { projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId };
+      const asked = identity !== null && deps.records.hasPendingQuestion(identity);
+      if (cause === undefined && !asked) return { requested: false, settled: Promise.resolve() };
+      if (cause !== undefined) controllers.get(cause)?.abort("user");
+      const turnEnded = (cause !== undefined ? turnsEnded.get(cause) : undefined) ?? Promise.resolve();
+      if (identity === null) return { requested: true, settled: turnEnded };
+      // After a stop the next input comes from the person: a question the
+      // stopped turn left (or asked while stopping) is moot.
+      const settled = turnEnded.then(async () => {
+        if (!(await deps.records.withdrawQuestion(identity))) return;
+        // Work held behind the question (subscription wakes) may run now.
+        if (!stopping && !retired.has(conversationId) && !runners.has(conversationId))
+          deps.onConversationIdle?.(conversationId);
+      });
+      return { requested: true, settled };
+    },
+    async retireConversation(conversationId) {
+      retired.add(conversationId);
+      leases.get(conversationId)?.controller.abort("user");
+      const running = activeCauses.get(conversationId);
+      const withdrawn = deps.transaction(() => {
+        const queued = deps.repo.queuedFor(conversationId).filter((item) => item.cause !== running);
+        for (const item of queued) deps.repo.deleteMailbox(item.cause);
+        return queued;
+      });
+      for (const item of withdrawn) {
+        resolveTask(item.cause, { kind: "not_started", reason: "cancelled", message: "The conversation was removed" });
+        resolveWaiters(item.cause, {
+          status: "cancelled",
+          conversationId,
+          finalText: null,
+          structuredOutput: null,
+          outputIssue: null,
+          openQuestionId: null,
+          failure: "The conversation was removed",
+        });
+      }
+      if (running !== undefined) controllers.get(running)?.abort("user");
+      while (runners.has(conversationId)) await runners.get(conversationId);
+      deps.transaction(() => deps.repo.unenrollInteractive(conversationId));
+    },
     seatBinding(conversationId) {
       return deps.repo.getSeat(conversationId);
+    },
+    hold,
+    async whileIdle(conversationId, work, holder = { kind: "debug_command" }, options = {}) {
+      const lease = hold(conversationId, holder);
+      if (lease.kind === "busy") return { kind: "busy" };
+      try {
+        // Held, nothing runs: the durable holds answer for this conversation between turns.
+        if (options.holds !== undefined && deps.holds !== undefined) {
+          const held = await deps.holds.refusal(conversationId, options.holds, { betweenTurns: true });
+          if (held !== null) return { kind: "busy", reason: held.message };
+        }
+        return { kind: "ran", value: await work() };
+      } finally {
+        lease.release();
+      }
+    },
+    lastMessageRequest(conversationId) {
+      const item = deps.repo.lastConsumedMessage(conversationId);
+      if (item === null) return null;
+      const { queuedDelivery: _delivered, ...request } = userTurnRequestSchema.parse(item.request);
+      return request;
     },
     runningAttempt(conversationId) {
       return runningAttempts.get(conversationId) ?? null;

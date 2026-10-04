@@ -35,13 +35,21 @@ import type {
 
 const logger = createLogger("validation-fix-actors");
 
+/** The first conversation, most recently active first, that takes task turns: any but a run's seat. */
+export function pickSessionConversation(
+  conversations: readonly { id: string }[],
+  isRunSeat: (conversationId: string) => boolean,
+): string | null {
+  return conversations.find((conversation) => !isRunSeat(conversation.id))?.id ?? null;
+}
+
 /**
  * Fallback conversation for conflict-resolution and validation-fix turns
  * when the machine input carries no explicit `conversationId`: the session's
- * most-recently-active conversation. Only safe when every session
+ * most-recently-active conversation that takes task turns. Only safe when every session
  * conversation shares the session worktree (user-driven Smart Merge and
  * Smart Commit); graph joins must pass the source lane's conversation
- * explicitly instead. Throws when the session has no conversation so the
+ * explicitly instead. Throws when the session has no such conversation so the
  * workflow fails loudly rather than dispatching against an undefined
  * identifier.
  */
@@ -50,11 +58,13 @@ export async function resolveSessionConversationId(
   sessionName: string,
 ): Promise<string> {
   const { getSessionConversations } = await import("@/lib/state-store");
+  const { coreRunsSeat } = await import("@/lib/runs/handles");
   const conversations = await getSessionConversations(projectPath, sessionName);
-  const id = conversations[0]?.id;
+  // A run's seat takes work only from its run; any other conversation, on either engine, takes task turns.
+  const id = pickSessionConversation(conversations, coreRunsSeat);
   if (!id) {
     throw new Error(
-      `No conversation found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,
+      `No conversation that takes task turns found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,
     );
   }
   return id;

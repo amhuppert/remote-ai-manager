@@ -51,6 +51,7 @@ import {
   type QuerySessionOptions,
   type TurnResult,
 } from "./query-session";
+import { readClaudePersistedCostBaseline } from "./cost-baseline";
 import { getWaitableInFlightTaskIds } from "./background-task-tracker";
 import {
   isUndeliveredQuerySessionError,
@@ -1005,6 +1006,13 @@ const claudeConversationBackendFactory = {
       input.persistedRef?.backend === "claude"
         ? input.persistedRef.ref
         : undefined;
+    const costBaseline =
+      resumeSessionId === undefined
+        ? null
+        : await readClaudePersistedCostBaseline(
+            input.conversationId,
+            resumeSessionId,
+          );
 
     // External MCP servers share one mutable SDK set for launch and updates.
     let translatedServers: Record<string, McpServerConfig> = {};
@@ -1039,6 +1047,7 @@ const claudeConversationBackendFactory = {
             : undefined,
       },
       resume: resumeSessionId,
+      ...(costBaseline !== null ? { costBaseline } : {}),
       forkSession: undefined,
       // Static SDK entries cannot be removed by setMcpServers; all managed
       // servers enter through the mutable set before the first prompt.

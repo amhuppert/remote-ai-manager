@@ -553,9 +553,10 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
             inputTokens: usage.input_tokens,
             cachedInputTokens: usage.cache_read_input_tokens,
             outputTokens: usage.output_tokens,
-            // A task run is one fresh SDK subprocess, whose cumulative cost
-            // counter starts at zero, so the final total is this run's cost.
+            // The session's running total: a resumed session continues from the
+            // total its transcript saved, so the caller measures the run against it.
             costUsd: resultMsg.total_cost_usd,
+            cumulativeCostUsd: resultMsg.total_cost_usd,
           };
 
           if (resultMsg.subtype === "success") {

@@ -179,6 +179,30 @@ function buildArtifactContext(
 }
 
 describe("collaboration route handlers — START", () => {
+  it("starts a collaboration on any conversation, the shared core's included", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design X",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startCalls).toHaveLength(1);
+  });
+
   it("returns 404 when the project cannot be resolved", async () => {
     const { manager } = buildScriptedManager();
     const handlers = createCollaborationRouteHandlers({

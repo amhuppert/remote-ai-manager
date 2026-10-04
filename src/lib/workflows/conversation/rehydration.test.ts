@@ -454,6 +454,30 @@ describe("rehydrateConversationActors (project conversations)", () => {
     expect(count).toBe(0);
   });
 
+  it("leaves a conversation the shared core runs to the core: no restart rules and no actor", async () => {
+    const hydrated: string[] = [];
+    const validate = vi.fn(() => null);
+    const count = await runRehydration({
+      ...makeDeps(
+        [
+          { projectPath: "/repo", conversation: conv({ id: "core-chat", scope: "project" }) },
+          { projectPath: "/repo", conversation: conv({ id: "actor-chat", scope: "project" }) },
+        ],
+        validate,
+        { "core-chat": { marker: "core" }, "actor-chat": { marker: "actor" } },
+      ),
+      isCoreOwnedConversation: (conversationId) => conversationId === "core-chat",
+      async hydrateCheckpointAuthority(key) {
+        hydrated.push(key.conversationId);
+        return NO_AUTHORITY;
+      },
+    });
+    expect(count).toBe(0);
+    expect(hydrated).toEqual(["actor-chat"]);
+    expect(validate).toHaveBeenCalledTimes(1);
+    expect(validate).toHaveBeenCalledWith({ marker: "actor" }, "actor-chat", 1);
+  });
+
   it("does not validate a project conversation with no persisted sidecar snapshot", async () => {
     const projConv = conv({ id: "p1", scope: "project" });
     const validate = vi.fn(() => null);

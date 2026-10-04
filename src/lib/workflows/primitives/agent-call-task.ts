@@ -422,6 +422,9 @@ function buildUsageMetrics(result: AgentTaskResult): AgentCallUsageMetrics {
     if (runnerUsage.costUsd != null) {
       usage.costUsd = runnerUsage.costUsd;
     }
+    if (runnerUsage.cumulativeCostUsd != null) {
+      usage.cumulativeCostUsd = runnerUsage.cumulativeCostUsd;
+    }
   }
   return usage;
 }

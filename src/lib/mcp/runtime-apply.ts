@@ -56,7 +56,12 @@ export interface ResolvedPortableForConversation {
 
 export interface McpRuntimeApplyDeps {
   applicationState: McpRuntimeApplicationStore;
-  getRuntime(conversationId: string): ConversationBackendRuntime | undefined;
+  /** A runtime without `applyPortableMcpConfig` is only reported on, never applied to. */
+  getRuntime(
+    conversationId: string,
+  ):
+    | Pick<ConversationBackendRuntime, "status" | "applyPortableMcpConfig">
+    | undefined;
   resolvePortableForConversation(input: {
     projectPath: string;
     target: ConversationTarget;
@@ -511,6 +516,41 @@ function redactSecrets(text: string): string {
   return text
     .replace(/Bearer\s+\S+/gi, "[redacted]")
     .replace(/\b(?:TOKEN|KEY|SECRET|PASSWORD|PASS)=\S+/gi, "[redacted]");
+}
+
+/**
+ * Persist the baseline a newly created runtime's delivery is compared
+ * against. A runtime that acknowledges its config on input acceptance keeps
+ * it pending under the hash it was created with, replacing an older pending
+ * hash, so its acceptance receipt settles it. Any other runtime counts as
+ * applied at creation and settles only a pending entry its config matches.
+ */
+export async function seedMcpRuntimeState(
+  applicationState: McpRuntimeApplicationStore,
+  identity: McpRuntimeIdentity,
+  portableMcp: PortableMcpConfig,
+  delivery: ConversationBackendRuntime["mcpConfigDelivery"],
+): Promise<void> {
+  const hash = computeEffectiveConfigHash(portableMcp);
+  await applicationState.update(identity, "prompt.seedMcpRuntime", (state) => {
+    if (delivery === "input-accepted")
+      return {
+        ...state,
+        pendingConfigHash: hash,
+        lastApplyDisposition: "deferred_to_next_turn" as const,
+      };
+    const next = {
+      ...(state ?? {}),
+      lastAppliedConfigHash: hash,
+      lastApplyDisposition: "applied_now" as const,
+    };
+    delete next.lastApplyError;
+    if (next.pendingConfigHash === hash) {
+      delete next.pendingConfigHash;
+      delete next.pendingServerKeys;
+    }
+    return next;
+  });
 }
 
 export async function recordMcpConfigReceipt(

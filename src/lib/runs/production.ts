@@ -1,17 +1,43 @@
-import { getConversationFsWriteRestrictionForBackend } from "@/lib/agent-backends/catalog";
-import { createActorSeatTurns } from "@/lib/conversation-core/actor-seat-turns";
-import { storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
+import { getConversationQueueDeps } from "@/lib/conversations/message-queue-production";
+import {
+  conversationCapabilitiesForBackend,
+  getConversationFsWriteRestrictionForBackend,
+} from "@/lib/agent-backends/catalog";
+import type { CoreCheckpointPorts } from "@/lib/conversation-core/checkpoints";
+import { createProductionConversationHold } from "@/lib/conversation-core/production-holds";
+import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
+import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
+import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
+import type { SeatTurnPort } from "@/lib/conversation-core/executor";
+import { createNativeSeatTurns } from "@/lib/conversation-core/native-seat-turns";
+import {
+  createProductionTurnRuntime,
+  type CoreTurnRuntime,
+} from "@/lib/conversation-core/production-engine";
+import {
+  createProductionConversationRecords,
+  createProductionDebugRecords,
+} from "@/lib/conversation-core/production-records";
+import { scopeRefFromStoreSessionName, storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
 import { createConversation } from "@/lib/conversations/service";
 import { createLogger } from "@/lib/logging";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { enqueueConversationMessage } from "@/lib/prompt/enqueue-conversation-message";
-import { getGlobalSingleton } from "@/lib/shared/global-singleton";
-import { getSession } from "@/lib/state-store";
+import {
+  deleteGlobalValue,
+  getGlobalSingleton,
+  getGlobalValue,
+  setGlobalValue,
+} from "@/lib/shared/global-singleton";
+import { acquireQuerySlot } from "@/lib/shared/query-semaphore";
+import { getConversation, getProjectConversation, getSession } from "@/lib/state-store";
 import { getStateDb } from "@/lib/state-store/store";
 import { getValidationService } from "@/lib/validation/singleton";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkspaceEvidence } from "@/lib/workspace/evidence";
 import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
+import { composedRunSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, RUN_SUPERVISION_KEY } from "./handles";
+import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import { composeBoundaryNotice } from "./notices";
 import { boundaryDetail } from "./schemas";
 import { composeRunSupervision, type RunSupervision } from "./supervision";
@@ -24,43 +50,170 @@ const logger = createLogger("runs");
  * admission and one set of running turns.
  */
 export function getRunSupervision(): RunSupervision {
-  return getGlobalSingleton(
-    "__cc_run_supervision",
-    composeProductionSupervision,
-  );
+  return getGlobalSingleton(RUN_SUPERVISION_KEY, composeProductionSupervision);
+}
+
+
+/** The core's turn engine, loaded once on first use; a failed load is retried on the next turn. */
+function coreTurnRuntime(): Promise<CoreTurnRuntime> {
+  const cached = getGlobalValue<Promise<CoreTurnRuntime>>(CORE_TURN_RUNTIME_KEY);
+  if (cached !== undefined) return cached;
+  const created = createProductionTurnRuntime({
+    // Resolved when a cleanup turn ends: by then the supervision that owns debug mode is composed.
+    startDebugVerification: (input) => composedRunSupervision()?.debug.startVerification(input),
+  }).catch((error: unknown) => {
+    deleteGlobalValue(CORE_TURN_RUNTIME_KEY);
+    throw error;
+  });
+  setGlobalValue(CORE_TURN_RUNTIME_KEY, created);
+  return created;
+}
+
+async function nativeSeatTurns(): Promise<SeatTurnPort> {
+  const { engine, host } = await coreTurnRuntime();
+  return createNativeSeatTurns({
+    engine,
+    records: createProductionConversationRecords(),
+    host,
+    getProjectDisplayName,
+    composeWriteEnvelope: (input) => composeImplementerLaneWriteEnvelope(input),
+    fsWriteRestriction: getConversationFsWriteRestrictionForBackend,
+    log: createLogger("conversation-core"),
+  });
+}
+
+/** The core's runtime host, when a core turn has loaded it; nothing is hosted before. */
+async function loadedRuntimeHost() {
+  const runtime = loadedCoreTurnRuntime();
+  return runtime === undefined ? undefined : (await runtime).host;
+}
+
+function productionCheckpointPorts(): CoreCheckpointPorts {
+  return {
+    repo: () => getConversationCheckpointsRepo(),
+    readConversation(identity) {
+      const scope = scopeRefFromStoreSessionName(identity.sessionName);
+      return scope.scope === "project"
+        ? getProjectConversation(identity.projectPath, identity.conversationId)
+        : getConversation(identity.projectPath, scope.sessionName, identity.conversationId);
+    },
+    async readEntries(transcriptPath) {
+      const { readTranscriptEntriesWithSeq } = await import("@/lib/prompt/transcript");
+      return readTranscriptEntriesWithSeq(transcriptPath);
+    },
+    async findArtifact(conversationId) {
+      const { getContextArtifactsRepo } = await import("@/lib/context-artifacts/repo-production");
+      return (
+        getContextArtifactsRepo()
+          .findByConversation(conversationId)
+          .find((row) => row.kind === "conversation_compaction") ?? null
+      );
+    },
+    async resolveConfig(projectPath) {
+      const [{ readConfig }, { resolveCompactionConfig }, { readRepoConfig }] = await Promise.all([
+        import("@/lib/config/loader"),
+        import("@/lib/config/cascade"),
+        import("@/lib/projects/repo-config"),
+      ]);
+      return resolveCompactionConfig(await readConfig(), await readRepoConfig(projectPath));
+    },
+    async executeTaskRun(input) {
+      const { executeWorkflowTaskRun } = await import("@/lib/workflows/conversation/lifecycle");
+      return executeWorkflowTaskRun(input);
+    },
+    generate: (input, deps) => generateCheckpoint(input, deps),
+    async resolveCaptureModel({ agentBackend, transcriptPath }) {
+      const [{ loadConversationTurnDependencies }, { resolveTurnModelSelection }] = await Promise.all([
+        import("@/lib/workflows/conversation/core-coexistence"),
+        import("@/lib/workflows/conversation/pre-turn/resolve-model-effort"),
+      ]);
+      const deps = await loadConversationTurnDependencies();
+      const [config, priorMessages] = await Promise.all([
+        deps.execution.readConfig(),
+        deps.transcript.readConversationMessages(transcriptPath),
+      ]);
+      return resolveTurnModelSelection({ backend: agentBackend, config, priorMessages, explicitModelSelection: null });
+    },
+    backendSupportsCheckpoint: (backend) => conversationCapabilitiesForBackend(backend).checkpoint,
+    background: {
+      activity: (conversationId) => getBackgroundActivityChannel().get(conversationId),
+      epoch: (conversationId) => getBackgroundActivityChannel().epoch(conversationId),
+    },
+    async confirmQueuedDelivery(input) {
+      const { messageQueueService } = await import("@/lib/conversations/message-queue-service");
+      return messageQueueService.confirmDelivery(input);
+    },
+    async appendUserEntryOnce(conversationId, entry) {
+      const { appendTranscriptEntryOnce } = await import("@/lib/prompt/transcript");
+      await appendTranscriptEntryOnce(conversationId, entry);
+    },
+    async worktreeOf(identity) {
+      const scope = scopeRefFromStoreSessionName(identity.sessionName);
+      if (scope.scope === "project") return identity.projectPath;
+      const session = await getSession(identity.projectPath, scope.sessionName);
+      if (session === null) throw new Error(`Session ${scope.sessionName} no longer exists`);
+      return session.worktreePath;
+    },
+    runtime: {
+      async release(conversationId) {
+        await (await loadedRuntimeHost())?.release(conversationId);
+      },
+      async retryRelease(conversationId) {
+        await (await loadedRuntimeHost())?.retryRelease(conversationId);
+      },
+      async closeFailure(conversationId) {
+        return (await loadedRuntimeHost())?.closeFailure(conversationId) ?? null;
+      },
+    },
+    async settleTurnReceipts(conversationId) {
+      const runtime = loadedCoreTurnRuntime();
+      if (runtime !== undefined) await (await runtime).interactiveTurns.settleRetained(conversationId);
+    },
+    now: () => new Date().toISOString(),
+  };
 }
 
 function composeProductionSupervision(): RunSupervision {
   let self: RunSupervision | null = null;
   const composed = composeRunSupervision({
     db: getStateDb(),
-    seatTurns: createActorSeatTurns({
-      async executeConversationTurn(input) {
-        const lifecycle =
-          await import("@/lib/workflows/conversation/lifecycle");
-        return lifecycle.executeConversationTurn(input);
+    seatTurns: {
+      async run(input) {
+        return (await nativeSeatTurns()).run(input);
       },
-      async stopConversationActor(
-        projectPath,
-        sessionName,
-        conversationId,
-        reason,
-      ) {
-        const lifecycle =
-          await import("@/lib/workflows/conversation/lifecycle");
-        await lifecycle.stopConversationActor(
-          projectPath,
-          sessionName,
-          conversationId,
-          reason,
-        );
+    },
+    records: createProductionConversationRecords(),
+    queue: {
+      // The core holds a debug session's queue; the conversation actor holds its own by state.
+      claimNextTurnBatch: (input) => getConversationQueueDeps().claimNextTurnBatch({ ...input, debugHold: true }),
+      markPending: (input) => getConversationQueueDeps().markPending(input),
+      markDelivered: (input) => getConversationQueueDeps().markDelivered(input),
+      markFailed: (input) => getConversationQueueDeps().markFailed(input),
+      recoverAbandonedDeliveries: (input) => getConversationQueueDeps().recoverAbandonedDeliveries(input),
+      runConversationCommand: (input) => getConversationQueueDeps().runConversationCommand(input),
+    },
+    getProjectDisplayName,
+    readConversation: (enrollment) =>
+      getConversation(enrollment.projectPath, enrollment.sessionName, enrollment.conversationId),
+    debug: {
+      records: createProductionDebugRecords(),
+      verify: (request) => runDebugCleanupVerification(request),
+    },
+    checkpoints: productionCheckpointPorts(),
+    conversationHold: createProductionConversationHold(),
+    userTurns: {
+      async notStarted(input) {
+        await (await coreTurnRuntime()).interactiveTurns.notStarted?.(input);
       },
-      getProjectDisplayName,
-      composeWriteEnvelope: (input) =>
-        composeImplementerLaneWriteEnvelope(input),
-      fsWriteRestriction: getConversationFsWriteRestrictionForBackend,
-      log: createLogger("conversation-core"),
-    }),
+      async run(input) {
+        return (await coreTurnRuntime()).interactiveTurns.run(input);
+      },
+    },
+    taskTurns: {
+      async run(input) {
+        return (await coreTurnRuntime()).taskTurns.run(input);
+      },
+    },
     async createSeatConversation({ projectPath, sessionName, role, request }) {
       const conversation = await createConversation(projectPath, sessionName, {
         role: role === "implementer" ? "iteration" : "validator",
@@ -69,11 +222,7 @@ function composeProductionSupervision(): RunSupervision {
       });
       return conversation.id;
     },
-    // Seat turns run through the conversation actor, which takes the model slot
-    // itself; taking a second one here could exhaust capacity with half-started
-    // turns. A slot holder never waits on a workspace grant, so the actor's
-    // wait cannot deadlock against the grant the core already holds.
-    slots: { tryAcquire: async () => () => {}, waitForRelease: async () => {} },
+    slots: { acquire: (label, signal) => acquireQuerySlot(label, { signal }) },
     evidence: createWorkspaceEvidence(),
     runCheck: createValidationCheckRunner({
       service: getValidationService(),
@@ -130,4 +279,16 @@ export async function bootRunSupervision(): Promise<{
   reconciledOwners: number;
 }> {
   return getRunSupervision().boot();
+}
+
+/**
+ * Server stop: running seat turns abort as interrupted (boot finds them
+ * settled that way rather than cancelled by a user), then every runtime the
+ * core hosts closes. Composes nothing that was never used.
+ */
+export async function shutdownRunSupervision(): Promise<void> {
+  const supervision = getGlobalValue<RunSupervision>(RUN_SUPERVISION_KEY);
+  if (supervision !== undefined) await supervision.core.shutdown();
+  const runtime = getGlobalValue<Promise<CoreTurnRuntime>>(CORE_TURN_RUNTIME_KEY);
+  if (runtime !== undefined) await (await runtime).host.releaseAll();
 }

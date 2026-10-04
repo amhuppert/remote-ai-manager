@@ -465,10 +465,15 @@ function ConversationSidebar({
   // hotkey stay one action, and the picker beside the button supplies a
   // reference when the author wants a specialist.
   const handleNewConversation = useCallback(
-    (profile?: AgentProfileRef) => {
+    (profile?: AgentProfileRef, engine?: "core") => {
       if (createConvoMutation.isPending) return;
       createConvoMutation.mutate(
-        profile === undefined ? undefined : { profile },
+        profile === undefined && engine === undefined
+          ? undefined
+          : {
+              ...(profile !== undefined ? { profile } : {}),
+              ...(engine !== undefined ? { engine } : {}),
+            },
         {
           onSuccess: (convo) => {
             openSessionScopedConversation(
@@ -1064,6 +1069,7 @@ function ConversationSidebar({
                 projectName={projectName}
                 pending={createConvoMutation.isPending}
                 onCreate={handleNewConversation}
+                onCreateCore={(profile) => handleNewConversation(profile, "core")}
               />
             )}
             {showNewConversationButton && (

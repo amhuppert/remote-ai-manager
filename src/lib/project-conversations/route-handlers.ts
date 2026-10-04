@@ -58,6 +58,14 @@ import {
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
+  projectConversationTarget,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
+import type { CoreConversationPrompts } from "@/lib/conversation-core/prompt-route";
+import { productionCoreConversationPrompts } from "@/lib/prompt/route-handlers";
+import { enrollInCore as defaultEnrollInCore } from "@/lib/runs/handles";
+import { getErrorMessage } from "@/lib/shared/errors";
+import {
   publishEvent,
   publishEventBestEffort,
   type PublishFn,
@@ -78,10 +86,8 @@ import {
 } from "./schemas";
 import { createProjectConversationService } from "./service";
 import { buildProjectConversationCreatedEvent } from "./events";
-import {
-  executeProjectPromptStream as defaultExecuteProjectPromptStream,
-  ProjectCollaborationUnsupportedError,
-} from "./prompt-entry";
+import { executeProjectPromptStream as defaultExecuteProjectPromptStream } from "./prompt-entry";
+import { ProjectCollaborationUnsupportedError } from "./collaboration-refusal";
 import type {
   ConversationState,
   TranscriptMessage,
@@ -159,6 +165,14 @@ export interface ProjectConversationRouteDeps {
     sessionName: string,
     conversationId: string,
   ): boolean;
+  /** Conversations the shared core runs take their prompts there, not to the actor. */
+  coreConversations: CoreConversationPrompts;
+  /** Hands a new conversation's turns to the shared conversation core. */
+  enrollInCore(input: {
+    conversationId: string;
+    projectPath: string;
+    scope: ConversationScopeRef;
+  }): void;
   broadcast: PublishFn;
 }
 
@@ -199,6 +213,8 @@ function defaultDeps(): ProjectConversationRouteDeps {
       ),
     executeProjectPromptStream: defaultExecuteProjectPromptStream,
     isConversationBusy: defaultIsConversationBusy,
+    coreConversations: productionCoreConversationPrompts(logger),
+    enrollInCore: defaultEnrollInCore,
     broadcast: publishEvent,
   };
 }
@@ -339,11 +355,46 @@ export function createProjectConversationRouteHandlers(
     );
     if (!parsed.ok) return parsed.response;
 
+    const { engine, ...options } = parsed.value;
     const conversation = await deps.createProjectConversation(
       projectPath,
-      parsed.value,
+      options,
     );
     const projectName = deps.getProjectDisplayName(projectPath);
+
+    // Enrolled before the id leaves this request, so no turn can reach the
+    // actor first.
+    if (engine === "core") {
+      try {
+        deps.enrollInCore({
+          conversationId: conversation.id,
+          projectPath,
+          scope: { scope: "project" },
+        });
+      } catch (err) {
+        logger.error("conversation_core.enrollment_failed", {
+          projectName,
+          conversationId: conversation.id,
+          error: getErrorMessage(err),
+        });
+        // A project conversation cannot be deleted, so the half-made one is
+        // archived out of sight instead.
+        await deps
+          .setProjectConversationArchived(projectPath, conversation.id, true)
+          .catch((archiveError: unknown) =>
+            logger.error("conversation_core.enrollment_cleanup_failed", {
+              projectName,
+              conversationId: conversation.id,
+              error: getErrorMessage(archiveError),
+            }),
+          );
+        return jsonError(
+          `Failed to create a core conversation: ${getErrorMessage(err)}`,
+          500,
+        );
+      }
+    }
+
     publishEventBestEffort({
       publish: deps.broadcast,
       logger,
@@ -419,7 +470,26 @@ export function createProjectConversationRouteHandlers(
   ): Promise<Response> {
     const resolved = await resolveProjectConversationRoute(deps, context);
     if (!resolved.ok) return resolved.response;
-    const { projectPath, conversationId } = resolved.value;
+    const { projectPath, conversationId, conversation } = resolved.value;
+
+    // The core answers its own busy conversation; the actor's lock is not its.
+    if (deps.coreConversations.owns(conversationId)) {
+      const parsed = await parseJsonBody(
+        request,
+        projectFirstPromptRequestSchema,
+        "prompt or images required",
+      );
+      if (!parsed.ok) return parsed.response;
+      return deps.coreConversations.prompt({
+        projectPath,
+        target: projectConversationTarget(
+          deps.getProjectDisplayName(projectPath),
+          conversationId,
+        ),
+        conversation,
+        body: parsed.value,
+      });
+    }
 
     if (
       deps.isConversationBusy(

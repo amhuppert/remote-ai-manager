@@ -79,6 +79,8 @@ function handlers() {
     markProjectConversationRead: unused,
     executeProjectPromptStream: unused,
     isConversationBusy: unused,
+    coreConversations: { owns: unused, prompt: unused, admitCollaboration: unused },
+    enrollInCore: unused,
     // The production change operation, bound to the real store. Its session
     // argument is the project sentinel, which is how a session-keyed store API
     // addresses the project repository.

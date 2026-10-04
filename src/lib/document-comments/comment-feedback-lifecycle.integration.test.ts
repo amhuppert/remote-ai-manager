@@ -611,6 +611,13 @@ describe("document comment + feedback lifecycle (real store)", () => {
             return true;
           },
         ),
+      coreConversations: {
+        owns: () => false,
+        admitCollaboration: async () => null,
+        prompt: async () => {
+          throw new Error("No conversation here runs on the shared core");
+        },
+      },
     };
     const handlers = createPromptRouteHandlers(promptDeps);
 

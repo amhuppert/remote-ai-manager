@@ -745,7 +745,8 @@ function modelSelectionErrorDetails(
   };
 }
 
-async function admitExplicitModelSelection(input: {
+/** Validates a model selection for the project and returns its canonical form. */
+export async function admitExplicitModelSelection(input: {
   projectPath: string;
   backend: AgentBackendId;
   selection: BackendModelSelection;

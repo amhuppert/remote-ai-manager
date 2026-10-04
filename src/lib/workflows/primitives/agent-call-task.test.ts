@@ -615,6 +615,7 @@ describe("dispatchTaskRun", () => {
           outputTokens: 75,
           cachedInputTokens: 10,
           costUsd: 0.25,
+          cumulativeCostUsd: 1.25,
         },
       },
     });
@@ -636,6 +637,8 @@ describe("dispatchTaskRun", () => {
       outputTokens: 75,
       cachedInputTokens: 10,
       costUsd: 0.25,
+      // A resumed session's running total, which the run's own cost is measured against.
+      cumulativeCostUsd: 1.25,
     });
   });
 

@@ -263,6 +263,17 @@ export function createRunRouteHandlers(
         );
       }
       const { caller } = resolved;
+      // A seat's child would bind the workspace the seat's own context holds and
+      // wait for it, while the seat waits for the child.
+      if (deps.supervision().core.seatBinding(caller.conversationId) !== null) {
+        return jsonError(
+          "A supervised seat cannot launch runs",
+          403,
+          "seat_cannot_launch",
+          undefined,
+          "Finish your assigned work, or ask your owner with cctl ask.",
+        );
+      }
       const seats = await deps.resolveSeats({
         projectPath: caller.projectPath,
         request: body.value,

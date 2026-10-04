@@ -43,6 +43,11 @@ function createTestDeps(): PromptRouteDeps {
     clearConversationPendingPromptTextIfMatches: vi
       .fn()
       .mockResolvedValue(true),
+    coreConversations: {
+      owns: vi.fn().mockReturnValue(false),
+      prompt: vi.fn(async () => new Response("core")),
+      admitCollaboration: vi.fn(async () => null),
+    },
   };
 }
 
@@ -473,6 +478,62 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(startMock).not.toHaveBeenCalled();
     const body = await response.json();
     expect(body.code).toBe("COLLAB_BRIEF_REQUIRED");
+  });
+
+  it("hands a prompt for a conversation the shared core runs to the core, not the conversation actor", async () => {
+    vi.mocked(deps.coreConversations.owns).mockReturnValue(true);
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
+      makeConvParams(),
+    );
+
+    expect(await response.text()).toBe("core");
+    expect(deps.coreConversations.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: "/projects/my-project",
+        target: {
+          scope: "session",
+          projectName: "my-project",
+          sessionName: "test-session",
+          conversationId: "conv-1",
+        },
+        body: expect.objectContaining({ prompt: "Hello" }),
+      }),
+    );
+    expect(deps.executePromptStream).not.toHaveBeenCalled();
+    expect(deps.isConversationBusy).not.toHaveBeenCalled();
+  });
+
+  it("starts Collaboration Mode from a /collab prompt on a conversation the shared core runs", async () => {
+    vi.mocked(deps.coreConversations.owns).mockReturnValue(true);
+    const startMock = vi.fn().mockResolvedValue({ workflowId: "wf-core", status: "started" });
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(makeMockManager({ start: startMock }));
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab design the cache" }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ workflowId: "wf-core" });
+    expect(startMock).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv-1", brief: "design the cache" }),
+    );
+    expect(deps.coreConversations.prompt).not.toHaveBeenCalled();
+  });
+
+  it("holds /collab on a core conversation where the core would hold a claim", async () => {
+    vi.mocked(deps.coreConversations.owns).mockReturnValue(true);
+    vi.mocked(deps.coreConversations.admitCollaboration).mockResolvedValue(
+      Response.json({ error: "Exit debug mode first", code: "DEBUG_MODE_ACTIVE" }, { status: 409 }),
+    );
+    const startMock = vi.fn();
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(makeMockManager({ start: startMock }));
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "/collab design the cache" }),
+      makeConvParams(),
+    );
+    expect(response.status).toBe(409);
+    expect(startMock).not.toHaveBeenCalled();
   });
 
   it("returns 409 with CONVERSATION_BUSY code when conversation has an in-flight prompt", async () => {

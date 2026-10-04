@@ -137,15 +137,21 @@ export default function ConversationList({
   // hotkey) stays on the Standard Agent the server resolves for an omitted
   // selection, and the picker beside it names one when the user wants one.
   const handleNewConversation = useCallback(
-    (profile?: AgentProfileRef) => {
+    (profile?: AgentProfileRef, engine?: "core") => {
       if (createConvoMutation.isPending || !session) return;
       log.info("session_overview.conversation_create", {
         projectName,
         sessionName,
         profile,
+        engine: engine ?? "actor",
       });
       createConvoMutation.mutate(
-        profile === undefined ? undefined : { profile },
+        profile === undefined && engine === undefined
+          ? undefined
+          : {
+              ...(profile !== undefined ? { profile } : {}),
+              ...(engine !== undefined ? { engine } : {}),
+            },
         {
           onSuccess: (conversation) =>
             router.push(
@@ -319,6 +325,7 @@ export default function ConversationList({
                   <NewConversationProfileButton
                     projectName={projectName}
                     onCreate={handleNewConversation}
+                    onCreateCore={(profile) => handleNewConversation(profile, "core")}
                     pending={createConvoMutation.isPending}
                   />
                 </div>

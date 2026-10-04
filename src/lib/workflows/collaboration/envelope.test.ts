@@ -2260,6 +2260,32 @@ describe("runAsymmetricCollaborationSlice — handing the conversation back", ()
     ]);
   });
 
+  // Released last: a prompt admitted the moment the conversation is free must
+  // find it awaiting and resuming the session the collaboration advanced.
+  it("hands the conversation back only after marking it awaiting and advancing its session", async () => {
+    const programmed = completingCalls();
+    const releasesSeen: string[] = [];
+    let built: Awaited<ReturnType<typeof buildDeps>> | null = null;
+    built = await buildDeps(programmed, {
+      markConversationAwaiting: async () => {
+        releasesSeen.push(`awaiting:${built?.releasedOwners.length ?? -1}`);
+      },
+      updateConversationBackendRef: async () => {
+        releasesSeen.push(`backendRef:${built?.releasedOwners.length ?? -1}`);
+      },
+    });
+
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput({ primaryAgentBackend: "claude", conversationId: "conv-1", attemptEpoch: 3 }),
+      built.deps,
+    );
+
+    expect(result.kind).toBe("completed_final");
+    expect(releasesSeen.length).toBeGreaterThan(0);
+    expect(releasesSeen.every((seen) => seen.endsWith(":0"))).toBe(true);
+    expect(built.releasedOwners).toHaveLength(1);
+  });
+
   it("releases the conversation when the run fails", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [makeFailedResult("claude", "provider down")],
