@@ -8,16 +8,25 @@ import type { OwnerRef } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { RunsRepo } from "@/lib/state-store/runs-repo";
-import { decideNext, deriveRunProgress, type ObservedContexts } from "./schedule";
-import type {
-  RunBoundary,
-  RunBoundaryKind,
-  RunDefinitionContext,
-  RunDisposition,
-  RunFacts,
-  RunInvocation,
-  RunProgress,
-  RunRecord,
+import {
+  decideNext,
+  deriveRunProgress,
+  onlyHaltsRemain,
+  planRun,
+  type ObservedContexts,
+  type RunPlan,
+} from "./schedule";
+import {
+  boundaryDetail,
+  type RunBoundary,
+  type RunBoundaryKind,
+  type RunDefinitionContext,
+  type RunDisposition,
+  type RunFacts,
+  type RunInvocation,
+  type RunLoop,
+  type RunProgress,
+  type RunRecord,
 } from "./schemas";
 
 export interface RunLaunchInput {
@@ -30,9 +39,11 @@ export interface RunLaunchInput {
   owner: { conversationId: string; sessionName: string | null };
   /**
    * Every context the run may start, each with its frozen start request; a
-   * context starts once every context it depends on has succeeded.
+   * context starts once the routes from the contexts it depends on are decided
+   * and taken.
    */
   contexts: RunDefinitionContext[];
+  loops?: RunLoop[];
 }
 
 export interface RunHostDeps {
@@ -52,6 +63,12 @@ export interface RunHostDeps {
 export interface RunObservation {
   record: RunRecord;
   boundaries: RunBoundary[];
+}
+
+/** What a Run's Contexts say about it; reading them can fail where the record cannot. */
+export interface RunInspection {
+  /** Where each defined context, loop and route stands. */
+  plan: RunPlan;
   /** Pending start intents whose Context already settled: a stalled host. */
   stalled: string[];
 }
@@ -60,7 +77,10 @@ export interface RunHost {
   launch(input: RunLaunchInput): Promise<RunRecord>;
   reconcile(runId: string): Promise<void>;
   recordReconcileFailure(runId: string, error: unknown): void;
+  /** The record and ledger only; it reads no Context, so ownership checks never depend on one. */
   observe(runId: string): RunObservation | null;
+  /** Reads every started Context and pending start. */
+  inspect(runId: string): RunInspection | null;
   /** `expectedRevision` null skips the optimistic check for callers that hold no revision. */
   pause(runId: string, expectedRevision: number | null): Promise<void>;
   resume(
@@ -189,7 +209,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
   ): ObservedContexts {
     return new Map(
       views.map((v) => [
-        v.key,
+        v.invocation.contextId,
         {
           progress: v.context?.progress ?? null,
           output: v.context?.accepted?.output,
@@ -214,13 +234,14 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         throw new Error(`Run ${record.runId} has no context ${start.key}`);
       const request = {
         ...defined.request,
+        contextId: start.contextId,
         contract: { ...defined.request.contract, inputs: start.inputs },
       };
       const invocation: RunInvocation = {
         key: start.key,
-        pass: 0,
-        contextId: request.contextId,
-        startCause: `${record.runId}:start:${start.key}:0`,
+        pass: start.pass,
+        contextId: start.contextId,
+        startCause: `${record.runId}:start:${start.key}:${start.pass}`,
         request,
       };
       deps.intents.record({
@@ -234,6 +255,52 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       return invocation;
     });
     return { ...facts, invocations: [...facts.invocations, ...started] };
+  }
+
+  /**
+   * Route and loop halts reach the owner at once. Only a definition change
+   * clears them, so a halt reported while other work remains (moving, held by
+   * a pause or fault, or waiting on the owner) promises one more notice, and
+   * the run records it once the halts are all that stands.
+   */
+  function projectRunHalts(
+    record: RunRecord,
+    observed: ObservedContexts,
+    plan: RunPlan,
+  ): void {
+    if (plan.halts.length === 0) return;
+    const otherWorkRemains = !onlyHaltsRemain(record.facts, observed, plan);
+    for (const halt of plan.halts) {
+      recordBoundary(record, {
+        occurrence: halt.occurrence,
+        kind: "halted",
+        summary: `${record.facts.title}: ${halt.reason}.`,
+        detail: { runHalt: halt.kind, otherWorkRemains },
+      });
+    }
+    if (otherWorkRemains) return;
+    const boundaries = deps.runs.boundaries(record.runId);
+    // A promise counts until a follow-up answers it.
+    const answered = Math.max(
+      0,
+      ...boundaries
+        .filter((boundary) => boundaryDetail(boundary).runHalt === "stalled")
+        .map((boundary) => boundary.seq),
+    );
+    const occurrences = new Set(plan.halts.map((halt) => halt.occurrence));
+    const promised = boundaries.some(
+      (boundary) =>
+        boundary.seq > answered &&
+        occurrences.has(boundary.occurrence) &&
+        boundaryDetail(boundary).otherWorkRemains === true,
+    );
+    if (!promised) return;
+    recordBoundary(record, {
+      occurrence: `run:stalled:${[...occurrences].sort().join(",")}`,
+      kind: "halted",
+      summary: `${record.facts.title}: only halted routes or loops remain. ${plan.halts.map((halt) => halt.reason).join("; ")}.`,
+      detail: { runHalt: "stalled", otherWorkRemains: false },
+    });
   }
 
   /** Projects and persists in the caller's transaction. */
@@ -254,7 +321,9 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       });
     }
     const observed = observedOf(views);
+    const plan = planRun(facts, observed);
     const progress = deriveRunProgress(facts, observed);
+    if (!facts.control.cancelled) projectRunHalts(record, observed, plan);
     if (progress.kind === "succeeded") {
       recordBoundary(record, {
         occurrence: "run:succeeded",
@@ -262,10 +331,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         summary: `${facts.title}: finished.`,
         detail: {
           outputs: Object.fromEntries(
-            facts.definition.contexts.map((c) => [
-              c.key,
-              observed.get(c.key)?.output ?? null,
-            ]),
+            facts.definition.contexts.flatMap((c) => {
+              const state = plan.keys.get(c.key);
+              if (state?.kind !== "started") return [];
+              return [[c.key, observed.get(state.contextId)?.output ?? null]];
+            }),
           ),
         },
       });
@@ -382,7 +452,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           runId: input.runId,
           kind: input.kind,
           title: input.title,
-          definition: { revision: 1, contexts: input.contexts },
+          definition: {
+            revision: 1,
+            contexts: input.contexts,
+            ...(input.loops !== undefined ? { loops: input.loops } : {}),
+          },
           invocations: [],
           control: { paused: false, cancelled: false, fault: null },
         };
@@ -452,13 +526,23 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     observe(runId) {
       const record = deps.runs.get(runId);
       if (record === null) return null;
+      return { record, boundaries: deps.runs.boundaries(runId) };
+    },
+
+    inspect(runId) {
+      const record = deps.runs.get(runId);
+      if (record === null) return null;
       const stalled = deps.intents
         .pending(owner(runId))
         .filter(
           (intent) => deps.contexts.outcome(intent.cause).kind === "settled",
         )
         .map((intent) => intent.cause);
-      return { record, boundaries: deps.runs.boundaries(runId), stalled };
+      const plan = planRun(
+        record.facts,
+        observedOf(observeInvocations(record.facts)),
+      );
+      return { plan, stalled };
     },
 
     async pause(runId, expectedRevision) {

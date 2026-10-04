@@ -104,6 +104,12 @@ export interface RouteProjectionInput<
   >;
   readonly contextOutputs: Readonly<Record<string, TOutput | undefined>>;
   readonly loops?: readonly RouteProjectionLoop[] | undefined;
+  /**
+   * Settled sources whose choice the caller does not commit, such as one whose
+   * result broke its cardinality: every edge from them, guarded or not, stays
+   * unresolved, so nothing downstream starts or skips on that choice.
+   */
+  readonly uncommittedSourceIds?: readonly string[] | undefined;
 }
 
 // ============================================================
@@ -247,6 +253,7 @@ export function projectRoutes<
   const loopByExitId = new Map(
     (input.loops ?? []).map((loop) => [loop.exitContextId, loop]),
   );
+  const uncommitted = new Set(input.uncommittedSourceIds ?? []);
 
   const incoming = groupBy(input.edges, (edge) => edge.targetContextId);
   const outgoing = groupBy(input.edges, (edge) => edge.sourceContextId);
@@ -297,7 +304,12 @@ export function projectRoutes<
     settlementByContextId: settlement,
     verdictByContextId: verdicts,
     cardinality: computeCardinality(),
-    mustRunContextIds: computeMustRun(),
+    mustRunContextIds: inductMustRun(
+      dependencyOrder,
+      incoming,
+      input.loops ?? [],
+      undefined,
+    ),
     publish: settlePublish(),
   };
 
@@ -380,6 +392,15 @@ export function projectRoutes<
     settlement: RouteContextSettlement;
     policy: RouteCardinalityPolicy;
   } {
+    if (uncommitted.has(edge.sourceContextId)) {
+      return {
+        effectiveSourceId: edge.sourceContextId,
+        settlement: "unsettled",
+        policy:
+          contextById.get(edge.sourceContextId)?.routing?.cardinality ??
+          "independent",
+      };
+    }
     const external =
       loop !== undefined && !loop.bodyContextIds.includes(edge.targetContextId);
     if (!external) {
@@ -568,43 +589,6 @@ export function projectRoutes<
   }
 
   /**
-   * The inductive must-run set, run to a fixpoint so a loop can bridge it.
-   *
-   * A loop's declared exit has no incoming edge in the scheduled graph — the
-   * body's internal edges were minted into pass instances — so the ordinary
-   * "no incoming edges means entry context" rule would call every loop exit
-   * unconditional and drag its whole downstream into the must-run set even when
-   * the loop sits behind a guard. The exit is must-run exactly when the loop's
-   * ACTIVATION is: accept-time reconvergence guarantees the exit runs on every
-   * pass the loop takes.
-   */
-  function computeMustRun(): ReadonlySet<string> {
-    const mustRun = new Set<string>();
-    const loops = input.loops ?? [];
-    let grew = true;
-    while (grew) {
-      grew = false;
-      for (const contextId of dependencyOrder) {
-        if (mustRun.has(contextId) || loopExitIds.has(contextId)) continue;
-        const edges = incoming.get(contextId) ?? [];
-        if (edges.some((edge) => guardKind(edge) !== "none")) continue;
-        const entry = edges.length === 0;
-        if (entry || edges.some((edge) => mustRun.has(edge.sourceContextId))) {
-          mustRun.add(contextId);
-          grew = true;
-        }
-      }
-      for (const loop of loops) {
-        if (mustRun.has(loop.exitContextId)) continue;
-        if (!mustRun.has(loop.activationContextId)) continue;
-        mustRun.add(loop.exitContextId);
-        grew = true;
-      }
-    }
-    return mustRun;
-  }
-
-  /**
    * An UNSETTLED loop is outstanding work even when every pass instance it has
    * materialized so far is completed: settlement has not yet decided whether the
    * loop concludes or unrolls again, and the contexts that next pass would
@@ -666,18 +650,97 @@ export function projectRoutes<
  * membership is decided by guards and edges alone — never by what has run — so
  * this is the same computation, called with no states rather than a second one.
  */
-export function projectMustRunContextIds(topology: {
+export function projectMustRunContextIds(
+  topology: {
+    readonly executionContexts: readonly RouteProjectionContext[];
+    readonly edges: readonly RouteProjectionEdge[];
+    readonly loops?: readonly RouteProjectionLoop[] | undefined;
+  },
+  options: {
+    /**
+     * Ask instead which contexts run on every path on which `given` runs: a
+     * compiler proving that a later context certifies `given`'s work.
+     */
+    readonly given?: string;
+  } = {},
+): ReadonlySet<string> {
+  const loops = topology.loops ?? [];
+  const contextIds = topology.executionContexts.map((context) => context.id);
+  const known = new Set(contextIds);
+  const walkIds = [
+    ...contextIds,
+    ...loops.map((loop) => loop.exitContextId).filter((id) => !known.has(id)),
+  ];
+  return inductMustRun(
+    orderTopologically(walkIds, topology.edges),
+    groupBy(topology.edges, (edge) => edge.targetContextId),
+    loops,
+    options.given,
+  );
+}
+
+/**
+ * Whether two contexts can never both run, from the topology alone. Each needs
+ * a different route from one source, and that source takes at most one of the
+ * two: an else and a guarded sibling, or two routes under `exactlyOne` (a
+ * result that takes both breaks the cardinality, and its source commits
+ * neither: see `uncommittedSourceIds`). A context needs a route when it is its
+ * target, has a guarded edge from a context that needs it (a guard over a
+ * skipped source is inactive), or has edges only from contexts that need it
+ * (all omitted means skipped). Loops are not modelled. The `exactlyOne` case
+ * is sound only for a scheduler that withholds every route of a source whose
+ * result breaks its cardinality; one that admits work before halting must not
+ * use it.
+ */
+export function projectRouteExclusion(topology: {
   readonly executionContexts: readonly RouteProjectionContext[];
   readonly edges: readonly RouteProjectionEdge[];
-  readonly loops?: readonly RouteProjectionLoop[] | undefined;
-}): ReadonlySet<string> {
-  return projectRoutes({
-    executionContexts: topology.executionContexts,
-    edges: topology.edges,
-    contextStates: {},
-    contextOutputs: {},
-    loops: topology.loops,
-  }).mustRunContextIds;
+}): (a: string, b: string) => boolean {
+  const order = orderTopologically(
+    topology.executionContexts.map((context) => context.id),
+    topology.edges,
+  );
+  const incoming = groupBy(topology.edges, (edge) => edge.targetContextId);
+  const policyOf = new Map(
+    topology.executionContexts.map((context) => [
+      context.id,
+      context.routing?.cardinality ?? "independent",
+    ]),
+  );
+  function needing(route: RouteProjectionEdge): Set<string> {
+    const needs = new Set([route.targetContextId]);
+    for (const contextId of order) {
+      if (needs.has(contextId)) continue;
+      const edges = incoming.get(contextId) ?? [];
+      const vetoed = edges.some(
+        (edge) => guardKind(edge) !== "none" && needs.has(edge.sourceContextId),
+      );
+      const starved =
+        edges.length > 0 && edges.every((edge) => needs.has(edge.sourceContextId));
+      if (vetoed || starved) needs.add(contextId);
+    }
+    return needs;
+  }
+  const pairs: Array<readonly [Set<string>, Set<string>]> = [];
+  for (const [source, edges] of groupBy(
+    topology.edges,
+    (edge) => edge.sourceContextId,
+  )) {
+    const routes = edges.filter((edge) => guardKind(edge) !== "none");
+    const exactlyOne = policyOf.get(source) === "exactlyOne";
+    routes.forEach((first, index) => {
+      for (const second of routes.slice(index + 1)) {
+        const oneElse =
+          guardKind(first) === "else" || guardKind(second) === "else";
+        if (exactlyOne || oneElse) pairs.push([needing(first), needing(second)]);
+      }
+    });
+  }
+  return (a, b) =>
+    pairs.some(
+      ([one, other]) =>
+        (one.has(a) && other.has(b)) || (one.has(b) && other.has(a)),
+    );
 }
 
 export function resolvedRouteEdge(
@@ -727,6 +790,50 @@ export function activeDependencySourceIds(
 // ============================================================
 // Internals
 // ============================================================
+
+/**
+ * The inductive must-run set, run to a fixpoint so a loop can bridge it: entry
+ * contexts (and `given`, when asked about the paths it runs on), then every
+ * context with no guarded edge reached by an edge from one already in the set.
+ *
+ * A loop's declared exit has no incoming edge in the scheduled graph — the
+ * body's internal edges were minted into pass instances — so the ordinary
+ * "no incoming edges means entry context" rule would call every loop exit
+ * unconditional and drag its whole downstream into the must-run set even when
+ * the loop sits behind a guard. The exit is must-run exactly when the loop's
+ * ACTIVATION is: accept-time reconvergence guarantees the exit runs on every
+ * pass the loop takes.
+ */
+function inductMustRun(
+  order: readonly string[],
+  incoming: ReadonlyMap<string, readonly RouteProjectionEdge[]>,
+  loops: readonly RouteProjectionLoop[],
+  given: string | undefined,
+): Set<string> {
+  const loopExitIds = new Set(loops.map((loop) => loop.exitContextId));
+  const mustRun = new Set<string>(given === undefined ? [] : [given]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const contextId of order) {
+      if (mustRun.has(contextId) || loopExitIds.has(contextId)) continue;
+      const edges = incoming.get(contextId) ?? [];
+      if (edges.some((edge) => guardKind(edge) !== "none")) continue;
+      const entry = edges.length === 0;
+      if (entry || edges.some((edge) => mustRun.has(edge.sourceContextId))) {
+        mustRun.add(contextId);
+        grew = true;
+      }
+    }
+    for (const loop of loops) {
+      if (mustRun.has(loop.exitContextId)) continue;
+      if (!mustRun.has(loop.activationContextId)) continue;
+      mustRun.add(loop.exitContextId);
+      grew = true;
+    }
+  }
+  return mustRun;
+}
 
 function guardKind(edge: RouteProjectionEdge): "none" | "schema" | "else" {
   if (edge.when === undefined) return "none";

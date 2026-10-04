@@ -64,6 +64,7 @@ function startRequest(
   contextId: string,
   humanApproval = false,
   title = "Fix the notice",
+  outputSchema: Record<string, unknown> | null = null,
 ): ContextStartRequest {
   return {
     contextId,
@@ -81,7 +82,7 @@ function startRequest(
       brief: "Make the failure notice appear once.",
       tasks: [],
       acceptanceCriteria: [],
-      outputSchema: null,
+      outputSchema,
       allowTaskAddition: false,
       implementer: { id: "implementer", ...seat },
       reviewers: [],
@@ -141,6 +142,10 @@ beforeEach(() => {
       describe(contextId) {
         if (contextsUnreadable) throw new Error(`Context ${contextId} could not be read`);
         return contextHost.describe(contextId);
+      },
+      outcome(cause) {
+        if (contextsUnreadable) throw new Error(`Context for ${cause} could not be read`);
+        return contextHost.outcome(cause);
       },
       async submit(intent) {
         beforeContextSubmit();
@@ -248,6 +253,172 @@ async function succeedActiveContext(summary: string): Promise<void> {
     receipt: `snapshot:${summary}`,
   });
 }
+
+/** Settles the pending operation of `kind` one context requested, when several contexts run. */
+async function settleFor(
+  contextId: string,
+  executor: FakeExecutor,
+  kind: string,
+  outcome: unknown,
+): Promise<void> {
+  await scheduler.idle();
+  const op = executor
+    .submitted()
+    .find(
+      (i) =>
+        i.requester.id === contextId &&
+        (i.request as { kind?: string }).kind === kind &&
+        executor.outcome(i.cause).kind !== "settled",
+    );
+  if (op === undefined) throw new Error(`No pending ${kind} for ${contextId}`);
+  executor.admit(op.cause);
+  executor.settle(op.cause, outcome);
+  scheduler.touch(op.requester);
+  await scheduler.idle();
+}
+
+/** Drives the single active context with an output schema through work, capture and acceptance. */
+async function succeedWithOutput(output: Record<string, unknown>): Promise<void> {
+  await settle(workspace, "bind", { kind: "bound" });
+  await settle(conversation, "work", report());
+  await settle(conversation, "capture_output", report({ structuredOutput: output }));
+  await settle(workspace, "freeze", { kind: "frozen", evidence: `git:${JSON.stringify(output)}` });
+  await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot" });
+}
+
+const verdictSchema = {
+  type: "object",
+  properties: { approved: { type: "boolean" } },
+  required: ["approved"],
+};
+
+describe("routes and loops", () => {
+  it("runs a loop's body again in fresh Contexts until its exit condition holds, then starts what follows with the final result", async () => {
+    await runs.launch({
+      runId: "run-1",
+      cause: "launch-1",
+      kind: "workflow",
+      title: "Polish",
+      projectPath: "/repo",
+      sessionName: "session",
+      owner: { conversationId: "owner-1", sessionName: "session" },
+      contexts: [
+        { key: "implement", dependsOn: [], request: startRequest("run-1.implement", false, "Implement") },
+        {
+          key: "review",
+          dependsOn: ["implement"],
+          request: startRequest("run-1.review", false, "Review", verdictSchema),
+        },
+        { key: "ship", dependsOn: ["review"], request: startRequest("run-1.ship", false, "Ship") },
+      ],
+      loops: [
+        {
+          key: "polish",
+          body: ["implement", "review"],
+          entry: "implement",
+          exit: "review",
+          until: { schema: { type: "object", properties: { approved: { const: true } } } },
+          maxPasses: 2,
+        },
+      ],
+    });
+    await scheduler.idle();
+
+    await succeedActiveContext("First try.");
+    await succeedWithOutput({ approved: false });
+    expect(contexts.observe("run-1.ship")).toBeNull();
+    expect(contexts.observe("run-1.implement.pass2")?.record.facts.contract.current.inputs).toEqual([
+      { key: "review", title: "Review (pass 1)", output: { approved: false } },
+    ]);
+
+    await succeedActiveContext("Second try.");
+    expect(contexts.observe("run-1.review.pass2")?.record.facts.contract.current.inputs).toEqual([
+      { key: "implement", title: "Implement", output: { summary: "Second try." } },
+    ]);
+    await succeedWithOutput({ approved: true });
+    expect(contexts.observe("run-1.ship")?.record.facts.contract.current.inputs).toEqual([
+      { key: "review", title: "Review", output: { approved: true } },
+    ]);
+    expect(runs.observe("run-1")?.record.facts.invocations.map((i) => i.startCause)).toEqual([
+      "run-1:start:implement:0",
+      "run-1:start:review:0",
+      "run-1:start:implement:1",
+      "run-1:start:review:1",
+      "run-1:start:ship:0",
+    ]);
+
+    await succeedActiveContext("Shipped.");
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(notified.map((b) => [b.kind, b.detail])).toEqual([
+      [
+        "succeeded",
+        {
+          outputs: {
+            implement: { summary: "Second try." },
+            review: { approved: true },
+            ship: { summary: "Shipped." },
+          },
+        },
+      ],
+    ]);
+  });
+
+  it("tells the owner at once when a choice takes too many routes, and once more when only the halt remains", async () => {
+    const takesBoth = { schema: { type: "object", properties: { approved: { const: false } } } };
+    await runs.launch({
+      runId: "run-1",
+      cause: "launch-1",
+      kind: "workflow",
+      title: "Routed",
+      projectPath: "/repo",
+      sessionName: "session",
+      owner: { conversationId: "owner-1", sessionName: "session" },
+      contexts: [
+        {
+          key: "triage",
+          dependsOn: [],
+          routing: { cardinality: "exactlyOne" },
+          request: startRequest("run-1.triage", false, "Triage", verdictSchema),
+        },
+        { key: "fix", dependsOn: ["triage"], when: { triage: takesBoth }, request: startRequest("run-1.fix", false, "Fix") },
+        { key: "ship", dependsOn: ["triage"], when: { triage: takesBoth }, request: startRequest("run-1.ship", false, "Ship") },
+        { key: "docs", dependsOn: [], request: startRequest("run-1.docs", false, "Docs") },
+      ],
+    });
+    await scheduler.idle();
+    await settleFor("run-1.triage", workspace, "bind", { kind: "bound" });
+    await settleFor("run-1.triage", conversation, "work", report());
+    await settleFor("run-1.triage", conversation, "capture_output", report({ structuredOutput: { approved: false } }));
+    await settleFor("run-1.triage", workspace, "freeze", { kind: "frozen", evidence: "git:triage" });
+    await settleFor("run-1.triage", workspace, "accept", { kind: "accepted", receipt: "snapshot:triage" });
+
+    expect(contexts.observe("run-1.fix")).toBeNull();
+    expect(contexts.observe("run-1.ship")).toBeNull();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
+    const promised = ["halted", "route:triage:cardinality", { runHalt: "route_cardinality", otherWorkRemains: true }];
+    expect(notified.map((b) => [b.kind, b.occurrence, b.detail])).toEqual([promised]);
+
+    // Work that waits on the owner is not finished: the follow-up waits for it.
+    await settleFor("run-1.docs", workspace, "bind", { kind: "bound" });
+    await settleFor("run-1.docs", conversation, "work", report({ openQuestionId: "q-1" }));
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
+    expect(notified.map((b) => b.kind)).toEqual(["halted", "question"]);
+
+    await settleFor("run-1.docs", requests, "answer", { kind: "answered", question: "Which?", answer: "This." });
+    await settleFor("run-1.docs", conversation, "work", report({ finalText: "Docs." }));
+    await settleFor("run-1.docs", workspace, "freeze", { kind: "frozen", evidence: "git:docs" });
+    await settleFor("run-1.docs", workspace, "accept", { kind: "accepted", receipt: "snapshot:docs" });
+
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
+    expect(notified.map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
+      promised,
+      ["question", expect.any(String), expect.anything()],
+      ["halted", "run:stalled:route:triage:cardinality", { runHalt: "stalled", otherWorkRemains: false }],
+    ]);
+    await runs.reconcile("run-1");
+    expect(notified).toHaveLength(3);
+  });
+});
 
 describe("workflow runs", () => {
   it("starts a dependent context only after its dependency succeeded, with the accepted result as its input", async () => {
@@ -461,6 +632,14 @@ describe("run host", () => {
     scheduler.touch(work.requester);
     await scheduler.idle();
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: false });
+  });
+
+  it("reads a run for its owner without reading its Contexts, even with a start still pending", async () => {
+    dropContextSubmits = true;
+    await launch();
+    contextsUnreadable = true;
+    expect(runs.observe("run-1")?.record.runId).toBe("run-1");
+    contextsUnreadable = false;
   });
 
   it("records a run's fault even when its contexts cannot be read", async () => {

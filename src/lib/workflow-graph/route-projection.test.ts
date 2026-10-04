@@ -3,6 +3,8 @@ import type { EdgeGuardDeclaration } from "@/lib/workflow-graph/edge-guard-valid
 import {
   activeDependencySourceIds,
   incomingRoutes,
+  projectMustRunContextIds,
+  projectRouteExclusion,
   projectRoutes,
   resolvedRouteEdge,
   routeVerdict,
@@ -53,13 +55,33 @@ interface EdgeSpec {
   when?: EdgeGuardDeclaration;
 }
 
+function topologyOf(spec: { contexts: ContextSpec[]; edges: EdgeSpec[] }) {
+  return {
+    executionContexts: spec.contexts.map((context) => ({
+      id: context.id,
+      ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
+      ...(context.cardinality
+        ? { routing: { cardinality: context.cardinality } }
+        : {}),
+    })),
+    edges: spec.edges.map((edge) => ({
+      id: edge.id ?? `${edge.from}__${edge.to}`,
+      sourceContextId: edge.from,
+      targetContextId: edge.to,
+      ...(edge.when ? { when: edge.when } : {}),
+    })),
+  };
+}
+
 function project(spec: {
   contexts: ContextSpec[];
   edges: EdgeSpec[];
   outputs?: Record<string, Record<string, unknown>>;
   loops?: RouteProjectionLoop[];
+  uncommitted?: string[];
 }): RouteProjection {
   return projectRoutes<TestOutput>({
+    ...(spec.uncommitted ? { uncommittedSourceIds: spec.uncommitted } : {}),
     executionContexts: spec.contexts.map((context) => ({
       id: context.id,
       ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
@@ -661,6 +683,91 @@ describe("the transitive must-run set", () => {
     });
 
     expect(projection.mustRunContextIds.has("merge")).toBe(true);
+  });
+});
+
+describe("a source whose choice is not committed", () => {
+  it("decides none of its routes, guarded or not, while its other routes' sources still decide theirs", () => {
+    const projection = project({
+      contexts: [
+        { id: "classify", status: "completed", outputSchema: VERDICT_SCHEMA, cardinality: "exactlyOne" },
+        { id: "plan", status: "completed" },
+        { id: "fix" },
+        { id: "other" },
+        { id: "log" },
+        { id: "notes" },
+      ],
+      edges: [
+        { from: "classify", to: "fix", when: verdictIs("bug") },
+        { from: "classify", to: "other", when: ELSE },
+        { from: "classify", to: "log" },
+        { from: "plan", to: "notes" },
+      ],
+      outputs: { classify: { verdict: "bug" } },
+      uncommitted: ["classify"],
+    });
+
+    expect(["fix", "other", "log"].map((id) => routeVerdict(projection, id).kind)).toEqual([
+      "waiting",
+      "waiting",
+      "waiting",
+    ]);
+    expect(routeVerdict(projection, "notes").kind).toBe("eligible");
+  });
+});
+
+describe("static route relations", () => {
+  const branches = (cardinality?: RouteCardinalityPolicy, second: EdgeGuardDeclaration = ELSE) =>
+    topologyOf({
+      contexts: [
+        { id: "plan" },
+        { id: "classify", outputSchema: VERDICT_SCHEMA, ...(cardinality ? { cardinality } : {}) },
+        { id: "fix" },
+        { id: "design" },
+        { id: "after-fix" },
+        { id: "mixed" },
+        { id: "checked" },
+      ],
+      edges: [
+        { from: "plan", to: "classify" },
+        { from: "classify", to: "fix", when: verdictIs("bug") },
+        { from: "classify", to: "design", when: second },
+        { from: "fix", to: "after-fix" },
+        // Runs without fix when fix is skipped: plan alone satisfies it.
+        { from: "fix", to: "mixed" },
+        { from: "plan", to: "mixed" },
+        // A guard over a skipped fix is inactive, so it cannot run without fix.
+        { from: "fix", to: "checked", when: verdictIs("ok") },
+        { from: "plan", to: "checked" },
+      ],
+    });
+
+  it("knows which contexts a route never runs together", () => {
+    const withElse = projectRouteExclusion(branches());
+    expect(withElse("fix", "design")).toBe(true);
+    expect(withElse("after-fix", "design")).toBe(true);
+    expect(withElse("checked", "design")).toBe(true);
+    expect(withElse("mixed", "design")).toBe(false);
+    expect(withElse("plan", "design")).toBe(false);
+
+    expect(projectRouteExclusion(branches("exactlyOne", verdictIs("feature")))("fix", "design")).toBe(true);
+    expect(projectRouteExclusion(branches("independent", verdictIs("feature")))("fix", "design")).toBe(false);
+  });
+
+  it("names the contexts that run whenever a given context runs", () => {
+    const topology = topologyOf({
+      contexts: [{ id: "plan" }, { id: "classify", outputSchema: VERDICT_SCHEMA }, { id: "fix" }, { id: "report" }, { id: "notes" }],
+      edges: [
+        { from: "plan", to: "classify" },
+        { from: "classify", to: "fix", when: verdictIs("bug") },
+        { from: "fix", to: "report" },
+        { from: "fix", to: "notes", when: verdictIs("ok") },
+      ],
+    });
+    expect(projectMustRunContextIds(topology).has("report")).toBe(false);
+    const whenFixRuns = projectMustRunContextIds(topology, { given: "fix" });
+    expect(whenFixRuns.has("report")).toBe(true);
+    expect(whenFixRuns.has("notes")).toBe(false);
   });
 });
 

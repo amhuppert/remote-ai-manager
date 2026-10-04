@@ -267,3 +267,296 @@ describe("workflow definition compiler (W2)", () => {
     expect(refused[0]?.message).toMatch(/depends on "api"/);
   });
 });
+
+describe("routes (W3)", () => {
+  const triageSchema = {
+    type: "object",
+    properties: { kind: { type: "string", enum: ["bug", "feature"] } },
+    required: ["kind"],
+  };
+  const isBug = { schema: { type: "object", properties: { kind: { const: "bug" } } } };
+  const isFeature = { schema: { type: "object", properties: { kind: { const: "feature" } } } };
+  const triage = (extra: Record<string, unknown> = {}) => ({
+    key: "triage",
+    brief: "Triage",
+    scope: readOnly,
+    outputSchema: triageSchema,
+    ...extra,
+  });
+
+  it("freezes guarded dependencies and cardinality, and lets branches that never run together share files", () => {
+    const launch = launched({
+      title: "Routed",
+      contexts: [
+        triage({ routing: { cardinality: "exactlyOne" } }),
+        { key: "fix", brief: "Fix", dependsOn: [{ key: "triage", when: isBug }] },
+        { key: "design", brief: "Design", dependsOn: [{ key: "triage", when: { else: true } }] },
+        { key: "notes", brief: "Notes", dependsOn: ["fix"] },
+      ],
+    });
+    expect(launch.contexts.map((c) => [c.key, c.dependsOn, c.when ?? null, c.routing ?? null])).toEqual([
+      ["triage", [], null, { cardinality: "exactlyOne" }],
+      ["fix", ["triage"], { triage: isBug }, null],
+      ["design", ["triage"], { triage: { else: true } }, null],
+      ["notes", ["fix"], null, null],
+    ]);
+  });
+
+  it("still refuses overlapping branches that could both be taken", () => {
+    expect(
+      issues({
+        title: "Independent branches",
+        contexts: [
+          triage(),
+          { key: "fix", brief: "Fix", dependsOn: [{ key: "triage", when: isBug }] },
+          { key: "design", brief: "Design", dependsOn: [{ key: "triage", when: isFeature }] },
+        ],
+      }).map((e) => e.path),
+    ).toEqual(["contexts.2.scope"]);
+  });
+
+  it("refuses guards that could never be evaluated or never match, each at its location", () => {
+    const refused = issues({
+      title: "Bad guards",
+      contexts: [
+        triage(),
+        { key: "plain", brief: "No schema", scope: owned("src/plain"), dependsOn: ["triage"] },
+        {
+          key: "a",
+          brief: "A",
+          scope: owned("src/a"),
+          dependsOn: [{ key: "plain", when: isBug }, { key: "triage", when: { schema: { type: "object", properties: { kind: { const: "urgent" } } } } }],
+        },
+        { key: "b", brief: "B", scope: owned("src/b"), dependsOn: [{ key: "triage", when: { schema: { type: "object", not: {} } } }] },
+        { key: "c", brief: "C", scope: owned("src/c"), dependsOn: [{ key: "triage", when: { else: true } }] },
+        { key: "d", brief: "D", scope: owned("src/d"), dependsOn: [{ key: "triage", when: { else: true } }] },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual([
+      "contexts.2.dependsOn.0.when",
+      "contexts.2.dependsOn.1.when.schema",
+      "contexts.3.dependsOn.0.when.schema",
+      "contexts.5.dependsOn.0.when",
+    ]);
+    expect(refused[0]?.message).toMatch(/"plain" declares no outputSchema/);
+    expect(refused[1]?.message).toMatch(/urgent/);
+    expect(refused[3]?.message).toMatch(/second else/);
+  });
+
+  it("refuses an else with nothing to fall back from, routing with no guarded routes, and a guarded dependency listed twice", () => {
+    expect(
+      issues({
+        title: "Odd routes",
+        contexts: [
+          triage({ routing: { cardinality: "atLeastOne" } }),
+          { key: "only", brief: "Only", dependsOn: [{ key: "triage", when: { else: true } }] },
+        ],
+      }).map((e) => e.path),
+    ).toEqual(["contexts.1.dependsOn.0.when", "contexts.0.routing"]);
+    expect(
+      issues({
+        title: "Twice",
+        contexts: [triage(), { key: "twice", brief: "Twice", dependsOn: ["triage", { key: "triage", when: isBug }] }],
+      }).map((e) => e.path),
+    ).toEqual(["contexts.1.dependsOn.1"]);
+  });
+
+  it("reports a source without an outputSchema once, not again as lacking routes", () => {
+    expect(
+      issues({
+        title: "Unusable source",
+        contexts: [
+          { key: "triage", brief: "Triage", scope: readOnly, routing: { cardinality: "exactlyOne" } },
+          { key: "fix", brief: "Fix", dependsOn: [{ key: "triage", when: isBug }] },
+          { key: "design", brief: "Design", dependsOn: [{ key: "triage", when: { else: true } }] },
+        ],
+      }).map((e) => e.path),
+    ).toEqual(["contexts.1.dependsOn.0.when", "contexts.2.dependsOn.0.when"]);
+  });
+
+  it("lets branches share files only when one route excludes the other", () => {
+    const definition = (routing: Record<string, unknown>, second: unknown, join: unknown[]) => ({
+      title: "Exclusive branches",
+      contexts: [
+        { key: "plan", brief: "Plan", scope: readOnly },
+        triage({ dependsOn: ["plan"], ...routing }),
+        { key: "fix", brief: "Fix", dependsOn: [{ key: "triage", when: isBug }], outputSchema: { type: "object" } },
+        { key: "design", brief: "Design", dependsOn: [{ key: "triage", when: second }] },
+        { key: "after", brief: "After", dependsOn: join },
+      ],
+    });
+    // exactlyOne alone, and else alone, each keep fix and design apart; a context needing fix stays apart too.
+    expect(() => launched(definition({ routing: { cardinality: "exactlyOne" } }, isFeature, ["fix"]))).not.toThrow();
+    expect(() => launched(definition({}, { else: true }, [{ key: "fix", when: { schema: { type: "object" } } }, "plan"]))).not.toThrow();
+    // A context fix's skip does not stop (plan alone satisfies it) can run beside design.
+    expect(issues(definition({}, { else: true }, ["fix", "plan"])).map((e) => e.path)).toEqual(["contexts.4.scope"]);
+  });
+
+  it("does not count a coverer a route can skip further upstream", () => {
+    const refused = issues({
+      title: "Transitively skippable coverage",
+      contexts: [
+        {
+          key: "a",
+          brief: "A",
+          scope: owned("src/a"),
+          checks: ["typecheck"],
+          outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+        },
+        { key: "b", brief: "B", scope: owned("src/b") },
+        { key: "gate", brief: "Gate", scope: readOnly, dependsOn: [{ key: "a", when: { schema: { type: "object", properties: { ok: { const: true } } } } }, "b"] },
+        { key: "final", brief: "Final", scope: readOnly, checks: ["typecheck"], dependsOn: ["gate"] },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual(["contexts.0.checks.0"]);
+
+    // An unguarded path from a to the coverer keeps the coverage.
+    expect(() =>
+      launched({
+        title: "Guaranteed path",
+        contexts: [
+          {
+            key: "a",
+            brief: "A",
+            scope: owned("src/a"),
+            checks: ["typecheck"],
+            outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+          },
+          { key: "b", brief: "B", scope: owned("src/b") },
+          { key: "final", brief: "Final", scope: readOnly, checks: ["typecheck"], dependsOn: ["a", "b"] },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("does not count a context a route can skip as covering a deferred check", () => {
+    const refused = issues({
+      title: "Conditional coverage",
+      contexts: [
+        {
+          key: "a",
+          brief: "A",
+          scope: owned("src/a"),
+          checks: ["typecheck"],
+          outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+        },
+        { key: "b", brief: "B", scope: owned("src/b") },
+        {
+          key: "final",
+          brief: "Final",
+          scope: readOnly,
+          checks: ["typecheck"],
+          dependsOn: [{ key: "a", when: { schema: { type: "object", properties: { ok: { const: true } } } } }, "b"],
+        },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual(["contexts.0.checks.0"]);
+    expect(refused[0]?.message).toMatch(/a route can skip "final"/);
+  });
+});
+
+describe("loops (W3)", () => {
+  const reviewSchema = {
+    type: "object",
+    properties: { approved: { type: "boolean" } },
+    required: ["approved"],
+  };
+  const contexts = [
+    { key: "plan", brief: "Plan" },
+    { key: "implement", brief: "Implement", dependsOn: ["plan"] },
+    { key: "review", brief: "Review", dependsOn: ["implement"], outputSchema: reviewSchema },
+    { key: "ship", brief: "Ship", dependsOn: ["review"] },
+  ];
+  const loop = {
+    key: "polish",
+    body: ["implement", "review"],
+    entry: "implement",
+    exit: "review",
+    until: { schema: { type: "object", properties: { approved: { const: true } } } },
+    maxPasses: 3,
+  };
+
+  it("freezes a loop into the definition", () => {
+    expect(launched({ title: "Loop", contexts, loops: [loop] }).loops).toEqual([loop]);
+  });
+
+  it("refuses a loop body that is not one region with a single entry and exit", () => {
+    expect(
+      issues({
+        title: "Shapes",
+        contexts,
+        loops: [
+          { ...loop, body: ["implement", "review", "ghost"], entry: "plan" },
+          { ...loop, key: "again", body: ["review"], entry: "review" },
+        ],
+      }).map((e) => e.path),
+    ).toEqual(["loops.0.body.2", "loops.0.entry", "loops.1.body.0"]);
+
+    expect(
+      issues({
+        title: "Leaks",
+        contexts: [
+          { key: "plan", brief: "Plan" },
+          { key: "spec", brief: "Spec", scope: readOnly, dependsOn: ["plan"] },
+          { key: "implement", brief: "Implement", dependsOn: ["plan", "spec"] },
+          { key: "review", brief: "Review", dependsOn: ["implement", "spec"], outputSchema: reviewSchema },
+          { key: "watch", brief: "Watch", dependsOn: ["implement", "review"], scope: readOnly },
+        ],
+        loops: [loop],
+      }).map((e) => e.path),
+    ).toEqual(["contexts.3.dependsOn.1", "contexts.4.dependsOn.0"]);
+
+    expect(
+      issues({
+        title: "Disconnected",
+        contexts: [
+          { key: "plan", brief: "Plan" },
+          { key: "implement", brief: "Implement", dependsOn: ["plan"] },
+          { key: "side", brief: "Side", dependsOn: ["implement"], scope: owned("docs") },
+          { key: "review", brief: "Review", dependsOn: ["implement"], scope: owned("src"), outputSchema: reviewSchema },
+        ],
+        loops: [{ ...loop, body: ["implement", "side", "review"] }],
+      }).map((e) => e.path),
+    ).toEqual(["loops.0.body.1"]);
+  });
+
+  it("refuses routes inside a loop and an exit condition that cannot be evaluated", () => {
+    const refused = issues({
+      title: "Loop routes",
+      contexts: [
+        {
+          key: "plan",
+          brief: "Plan",
+          outputSchema: { type: "object", properties: { go: { type: "boolean" } }, required: ["go"] },
+        },
+        {
+          key: "implement",
+          brief: "Implement",
+          dependsOn: [{ key: "plan", when: { schema: { type: "object", properties: { go: { const: true } } } } }],
+          outputSchema: reviewSchema,
+        },
+        {
+          key: "review",
+          brief: "Review",
+          dependsOn: [{ key: "implement", when: { schema: { type: "object", properties: { approved: { const: false } } } } }],
+        },
+      ],
+      loops: [
+        { ...loop, until: { schema: { type: "object", properties: { verdict: { const: "ok" } } } } },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual(["contexts.2.dependsOn.0.when", "loops.0.exit"]);
+    expect(refused[1]?.message).toMatch(/declares no outputSchema/);
+
+    expect(
+      issues({
+        title: "Unmatched exit",
+        contexts,
+        loops: [{ ...loop, until: { schema: { type: "object", properties: { verdict: { const: "ok" } } } } }],
+      }).map((e) => e.path),
+    ).toEqual(["loops.0.until.schema"]);
+    expect(
+      issues({ title: "No passes", contexts, loops: [{ ...loop, maxPasses: 0 }] }).map((e) => e.path),
+    ).toEqual(["loops.0.maxPasses"]);
+  });
+});

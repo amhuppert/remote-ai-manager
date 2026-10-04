@@ -19,6 +19,9 @@ const view = {
       dependsOn: [],
       waitingOn: [],
       started: true,
+      skipped: false,
+      loop: null,
+      pass: 1,
       progress: {
         kind: "halted",
         halt: "turn_failed",
@@ -44,6 +47,8 @@ const view = {
     },
   ],
   stalled: [],
+  halts: [],
+  loops: [],
 };
 
 function bodyOf(init: { body?: unknown }): unknown {
@@ -161,6 +166,9 @@ describe("run commands", () => {
               dependsOn: ["agent", "schema"],
               waitingOn: ["agent"],
               started: false,
+              skipped: false,
+              loop: null,
+              pass: 1,
               progress: null,
               occurrence: null,
               tasks: [],
@@ -178,6 +186,72 @@ describe("run commands", () => {
     expect(result.stdout).toContain("- docs [run-1.docs]: not started, waits on agent");
   });
 
+  it("shows a skipped branch, a loop's pass, and what cannot proceed", async () => {
+    const row = (key: string, extra: Record<string, unknown>) => ({
+      key,
+      contextId: `run-1.${key}`,
+      dependsOn: [],
+      waitingOn: [],
+      started: false,
+      skipped: false,
+      loop: null,
+      pass: 1,
+      progress: null,
+      occurrence: null,
+      tasks: [],
+      seats: {},
+      openQuestions: [],
+      lastSummary: null,
+      output: null,
+      ...extra,
+    });
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () =>
+        jsonReply({
+          ...view,
+          kind: "workflow",
+          progress: { kind: "running" },
+          contexts: [
+            row("fix", { skipped: true }),
+            row("review", {
+              contextId: "run-1.review.pass2",
+              loop: "polish",
+              pass: 2,
+              started: true,
+              progress: { kind: "succeeded", candidateId: "c-2" },
+            }),
+          ],
+          halts: ['loop "polish": "review" did not meet the exit condition in 2 passes'],
+          loops: [{ key: "polish", pass: 2, maxPasses: 2, state: "exhausted" }],
+        }),
+    });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("- fix [run-1.fix]: skipped (its route was not taken)");
+    expect(result.stdout).toContain("- review [run-1.review.pass2] (loop polish, pass 2): succeeded");
+    expect(result.stdout).toContain("loop polish: pass 2 of 2, exhausted");
+    expect(result.stdout).toContain('cannot proceed: loop "polish": "review" did not meet the exit condition in 2 passes');
+  });
+
+  it("names a halt once when it is also why the run needs its owner", async () => {
+    const reason = 'loop "polish": "review" did not meet the exit condition in 2 passes';
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () =>
+        jsonReply({
+          ...view,
+          progress: { kind: "needs_owner", reasons: [reason] },
+          halts: [reason],
+        }),
+    });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.split(reason)).toHaveLength(2);
+  });
+
   it("names the run's own state, not finished dependencies, for a context that will not start yet", async () => {
     const docs = {
       key: "docs",
@@ -185,6 +259,9 @@ describe("run commands", () => {
       dependsOn: ["agent"],
       waitingOn: [],
       started: false,
+      skipped: false,
+      loop: null,
+      pass: 1,
       progress: null,
       occurrence: null,
       tasks: [],

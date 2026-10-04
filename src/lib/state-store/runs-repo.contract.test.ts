@@ -90,11 +90,25 @@ describe("runs repository", () => {
           definition: {
             revision: 2,
             contexts: [
-              { key: "plan", dependsOn: [], request: request("run-1.plan") },
               {
                 key: "implement",
-                dependsOn: ["plan"],
+                dependsOn: ["plan", "review"],
+                when: {
+                  plan: { schema: { type: "object", properties: { go: { const: true } } } },
+                  review: { else: true as const },
+                },
+                routing: { cardinality: "exactlyOne" as const },
                 request: request("run-1.implement.1"),
+              },
+            ],
+            loops: [
+              {
+                key: "polish",
+                body: ["implement"],
+                entry: "implement",
+                exit: "implement",
+                until: { schema: { type: "object", properties: { done: { const: true } } } },
+                maxPasses: 3,
               },
             ],
           },

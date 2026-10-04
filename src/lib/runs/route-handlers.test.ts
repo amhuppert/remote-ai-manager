@@ -490,6 +490,139 @@ describe("run routes", () => {
     ]);
   });
 
+  it("shows a branch a route did not take as skipped", async () => {
+    h.script = async () => ({ ...done("Triaged."), structuredOutput: { kind: "feature" } });
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Routed",
+          contexts: [
+            {
+              key: "triage",
+              brief: "Triage the report",
+              scope: { mode: "readOnly" },
+              outputSchema: { type: "object", properties: { kind: { type: "string", enum: ["bug", "feature"] } }, required: ["kind"] },
+              routing: { cardinality: "exactlyOne" },
+            },
+            { key: "fix", brief: "Fix it", dependsOn: [{ key: "triage", when: { schema: { type: "object", properties: { kind: { const: "bug" } } } } }] },
+            { key: "design", brief: "Design it", dependsOn: [{ key: "triage", when: { else: true } }] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(runViewSchema.safeParse(view).success).toBe(true);
+    expect(view.progress).toEqual({ kind: "succeeded" });
+    expect(view.contexts).toEqual([
+      expect.objectContaining({ key: "triage", started: true, skipped: false }),
+      expect.objectContaining({ key: "fix", started: false, skipped: true, waitingOn: [] }),
+      expect.objectContaining({ key: "design", started: true, skipped: false }),
+    ]);
+  });
+
+  it("shows a loop's current pass and why the run halted when the loop ran out of passes", async () => {
+    h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Polish",
+          contexts: [
+            { key: "implement", brief: "Implement it" },
+            {
+              key: "review",
+              brief: "Review it",
+              dependsOn: ["implement"],
+              outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+            },
+          ],
+          loops: [
+            {
+              key: "polish",
+              body: ["implement", "review"],
+              entry: "implement",
+              exit: "review",
+              until: { schema: { type: "object", properties: { approved: { const: true } } } },
+              maxPasses: 2,
+            },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(runViewSchema.safeParse(view).success).toBe(true);
+    expect(view.contexts).toEqual([
+      expect.objectContaining({ key: "implement", contextId: "run-1.implement.pass2", loop: "polish", pass: 2 }),
+      expect.objectContaining({ key: "review", contextId: "run-1.review.pass2", loop: "polish", pass: 2 }),
+    ]);
+    expect(view.loops).toEqual([{ key: "polish", pass: 2, maxPasses: 2, state: "exhausted" }]);
+    expect(view.progress).toEqual({
+      kind: "needs_owner",
+      reasons: ['loop "polish": "review" did not meet the exit condition in 2 passes'],
+    });
+    expect(view.halts).toEqual(['loop "polish": "review" did not meet the exit condition in 2 passes']);
+  });
+
+  it("shows a loop whose entry route was not taken as skipped", async () => {
+    h.script = async () => ({ ...done("Gated."), structuredOutput: { go: false } });
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Gated loop",
+          contexts: [
+            {
+              key: "gate",
+              brief: "Decide",
+              scope: { mode: "readOnly" },
+              outputSchema: { type: "object", properties: { go: { type: "boolean" } }, required: ["go"] },
+            },
+            {
+              key: "implement",
+              brief: "Implement it",
+              dependsOn: [{ key: "gate", when: { schema: { type: "object", properties: { go: { const: true } } } } }],
+            },
+            {
+              key: "review",
+              brief: "Review it",
+              dependsOn: ["implement"],
+              outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+            },
+          ],
+          loops: [
+            {
+              key: "polish",
+              body: ["implement", "review"],
+              entry: "implement",
+              exit: "review",
+              until: { schema: { type: "object", properties: { approved: { const: true } } } },
+              maxPasses: 2,
+            },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(view.progress).toEqual({ kind: "succeeded" });
+    expect(view.loops).toEqual([{ key: "polish", pass: 0, maxPasses: 2, state: "skipped" }]);
+  });
+
   it("refuses an invalid workflow definition with every located problem, launching nothing", async () => {
     const response = await routes.launchWorkflow(
       request(

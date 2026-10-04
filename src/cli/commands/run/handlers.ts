@@ -139,6 +139,9 @@ interface RunViewData {
     dependsOn: string[];
     waitingOn: string[];
     started: boolean;
+    skipped: boolean;
+    loop: string | null;
+    pass: number;
     progress: string | null;
     halt: string | null;
     occurrence: string | null;
@@ -161,6 +164,8 @@ interface RunViewData {
     notified: boolean;
   }>;
   stalled: string[];
+  halts: string[];
+  loops: Array<{ key: string; pass: number; maxPasses: number; state: string }>;
 }
 
 function toViewData(view: RunView): RunViewData {
@@ -179,6 +184,9 @@ function toViewData(view: RunView): RunViewData {
       dependsOn: context.dependsOn,
       waitingOn: context.waitingOn,
       started: context.started,
+      skipped: context.skipped,
+      loop: context.loop,
+      pass: context.pass,
       progress: context.progress?.kind ?? null,
       halt:
         context.progress?.kind === "halted"
@@ -196,6 +204,8 @@ function toViewData(view: RunView): RunViewData {
     })),
     boundaries: view.boundaries,
     stalled: view.stalled,
+    halts: view.halts,
+    loops: view.loops,
   };
 }
 
@@ -205,8 +215,9 @@ function toViewData(view: RunView): RunViewData {
  */
 function notStartedState(
   runProgress: string,
-  context: { started: boolean; waitingOn: readonly string[] },
+  context: { started: boolean; skipped: boolean; waitingOn: readonly string[] },
 ): string {
+  if (context.skipped) return "skipped (its route was not taken)";
   if (runProgress === "cancelled" || runProgress === "stopping")
     return "not started (run cancelled)";
   if (runProgress === "paused") return "not started (run paused)";
@@ -228,7 +239,11 @@ function viewText(view: JsonData<RunViewData>): string {
         : "";
     const state =
       context.progress ?? notStartedState(view.progress, context);
-    lines.push(`- ${context.key} [${context.contextId}]: ${state}${halt}`);
+    const pass =
+      context.loop === null ? "" : ` (loop ${context.loop}, pass ${context.pass})`;
+    lines.push(
+      `- ${context.key} [${context.contextId}]${pass}: ${state}${halt}`,
+    );
     for (const task of context.tasks)
       lines.push(`  task ${task.id} ${task.status}: ${task.title}`);
     for (const question of context.openQuestions) {
@@ -240,6 +255,12 @@ function viewText(view: JsonData<RunViewData>): string {
       lines.push(`  last summary: ${context.lastSummary}`);
     if (context.output !== null) lines.push(`  result: ${context.output}`);
   }
+  for (const loop of view.loops)
+    lines.push(
+      `loop ${loop.key}: pass ${loop.pass} of ${loop.maxPasses}, ${loop.state}`,
+    );
+  for (const halt of view.halts)
+    if (!view.needsOwner.includes(halt)) lines.push(`cannot proceed: ${halt}`);
   for (const boundary of view.boundaries.slice(-5)) {
     lines.push(
       `boundary ${boundary.seq} ${boundary.kind}: ${boundary.summary}`,

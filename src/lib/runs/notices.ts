@@ -24,6 +24,14 @@ function actionLine(
     case "approval":
       return `Only Alex can decide this; agents cannot approve it. Tell Alex that run ${id}, context ${String(detail.contextId)}, candidate ${String(detail.candidateId)} awaits approval.`;
     case "halted":
+      // Only a definition change clears a route or loop halt, and the Run has
+      // no amend operation, so stopping the run is the only remedy.
+      if (typeof detail.runHalt === "string") {
+        const remedy = `Resuming does not clear it and the definition cannot be amended, so the remedy is to cancel the run and relaunch a corrected workflow: cctl run cancel ${id}`;
+        return detail.otherWorkRemains === true
+          ? `Inspect: cctl run show ${id}. Other work in this run is not finished; another notice follows once only halted routes or loops remain. ${remedy}`
+          : `Inspect: cctl run show ${id}. ${remedy}`;
+      }
       // A run-level halt (its own reconcile failed) clears with a plain resume.
       if (
         typeof detail.contextId !== "string" ||

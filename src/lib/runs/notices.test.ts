@@ -54,4 +54,22 @@ describe("run boundary notices", () => {
     expect(notice).toContain("Only Alex can decide this");
     expect(notice).not.toContain("cctl run decide");
   });
+
+  it("does not offer resume for a route or loop halt, and says whether another notice follows", () => {
+    const waiting = composeBoundaryNotice(
+      run,
+      boundary("halted", { runHalt: "loop_exhausted", otherWorkRemains: true }),
+    );
+    expect(waiting).not.toContain("cctl run resume");
+    expect(waiting).toContain("cctl run cancel run-1");
+    expect(waiting).toContain("another notice follows once only halted routes or loops remain");
+
+    const stalled = composeBoundaryNotice(
+      run,
+      boundary("halted", { runHalt: "stalled", otherWorkRemains: false }),
+    );
+    expect(stalled).not.toContain("cctl run resume");
+    expect(stalled).not.toContain("another notice follows");
+    expect(stalled).toContain("cctl run cancel run-1");
+  });
 });
