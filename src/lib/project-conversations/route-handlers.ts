@@ -63,7 +63,7 @@ import {
 } from "@/lib/conversations/conversation-target";
 import type { CoreConversationPrompts } from "@/lib/conversation-core/prompt-route";
 import { productionCoreConversationPrompts } from "@/lib/prompt/route-handlers";
-import { enrollInCore as defaultEnrollInCore } from "@/lib/runs/handles";
+import { enrollInCore as defaultEnrollInCore } from "@/lib/supervision/handles";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   publishEvent,

@@ -23,14 +23,13 @@ import { toPromptActorResult, type TurnExecutionOutcome, type TurnInterruption }
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
 import {
-  QUEUE_REVIEW_REQUIRED_MESSAGE,
   runtimeDebugMode,
   settlementOf,
   type ConversationIdentity,
   type ConversationRecordPort,
 } from "./conversation-record";
 import type { TurnStream, UserTurnPort } from "./executor";
-import { failedTurn, runRecordedTurn, turnResultOf, withCollection } from "./recorded-turn";
+import { failedTurn, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
 import type { TurnEngine } from "./turn-engine";
 
@@ -324,17 +323,13 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           stream?.emit("error", { message: failure });
           return failedTurn(failure);
         }
-        if (delivery === undefined && row.queueReviewRequired) {
-          deps.log.warn("conversation_core.prompt_held_for_queue_review", { conversationId });
-          stream?.emit("error", { message: QUEUE_REVIEW_REQUIRED_MESSAGE, code: "QUEUE_REVIEW_REQUIRED" });
-          return failedTurn(QUEUE_REVIEW_REQUIRED_MESSAGE);
-        }
         // In debug mode the session's phase decides the turn's context and the report it asks for.
         const debugMode = runtimeDebugMode(row.debugMode);
         const outputFormat = debugMode === null ? undefined : resolveDebugOutputFormat(debugMode.phase);
-        const { outcome, uncollected, debug } = await runRecordedTurn(deps, identity, "user", () =>
+        const recorded = await runRecordedTurn(deps, identity, "user", () =>
           runMessage(row, debugMode, outputFormat),
         );
+        const { outcome, debug } = recorded;
         ran = outcome;
         if (debug?.kind === "verify_cleanup" && turnWorktree !== null) {
           deps.startDebugVerification({
@@ -347,7 +342,7 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           });
         }
         reportEnding(stream, outcome, streamedErrors);
-        return withCollection(turnResultOf(outcome, outputFormat, null), uncollected);
+        return recordedResult(turnResultOf(outcome, outputFormat, null), recorded);
       } catch (error) {
         ran = { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
         throw error;

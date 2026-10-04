@@ -10,7 +10,7 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getSession } from "@/lib/state-store";
 import type { ResolvedSeat } from "./launch";
-import { getRunSupervision } from "./production";
+import { getSupervision } from "@/lib/supervision/production";
 import {
   createRunRouteHandlers,
   newRunId,
@@ -97,13 +97,14 @@ const handlers = createRunRouteHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
-  supervision: getRunSupervision,
+  supervision: getSupervision,
   resolveSeats,
   newRunId,
   log,
 });
 
 export const launchRunPOST = withTracing(handlers.launch);
+export const launchWorkflowRunPOST = withTracing(handlers.launchWorkflow);
 export const showRunGET = withTracing(handlers.show);
 export const answerRunPOST = withTracing(handlers.answer);
 export const controlRunPOST = withTracing(handlers.control);

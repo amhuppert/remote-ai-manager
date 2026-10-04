@@ -29,7 +29,7 @@ import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo
 import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo";
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
-import { createRunHost, deriveRunProgress, type RunHost } from "./host";
+import { createRunHost, type RunHost } from "./host";
 import type { RunBoundary } from "./schemas";
 
 const now = "2026-10-03T10:00:00.000Z";
@@ -47,6 +47,12 @@ let runs: RunHost;
 let notified: RunBoundary[];
 /** Lets a test make delivery fail or stall; the default delivers at once. */
 let deliver: (boundary: RunBoundary) => Promise<void>;
+/** Drops Context submissions, as a crash between recording a start and submitting it would. */
+let dropContextSubmits: boolean;
+/** Runs as each Context submission begins. */
+let beforeContextSubmit: () => void;
+/** Makes reading a Context fail, as unreadable stored data would. */
+let contextsUnreadable: boolean;
 
 const seat = {
   profile: { tier: "builtin" as const, id: "standard-agent" },
@@ -57,6 +63,7 @@ const seat = {
 function startRequest(
   contextId: string,
   humanApproval = false,
+  title = "Fix the notice",
 ): ContextStartRequest {
   return {
     contextId,
@@ -70,7 +77,7 @@ function startRequest(
       scope: { mode: "full" },
     },
     contract: contextContractSchema.parse({
-      title: "Fix the notice",
+      title,
       brief: "Make the failure notice appear once.",
       tasks: [],
       acceptanceCriteria: [],
@@ -109,6 +116,9 @@ beforeEach(() => {
   requests = createFakeExecutor(permits);
   notified = [];
   deliver = async () => {};
+  dropContextSubmits = false;
+  beforeContextSubmit = () => {};
+  contextsUnreadable = false;
   contexts = createContextHost({
     transaction,
     contexts: createExecutionContextsRepo(fixture.db),
@@ -120,12 +130,24 @@ beforeEach(() => {
     now: () => now,
     log: silent,
   });
+  const contextHost = contexts;
   runs = createRunHost({
     transaction,
     runs: createRunsRepo(fixture.db),
     intents,
     permits,
-    contexts,
+    contexts: {
+      ...contextHost,
+      describe(contextId) {
+        if (contextsUnreadable) throw new Error(`Context ${contextId} could not be read`);
+        return contextHost.describe(contextId);
+      },
+      async submit(intent) {
+        beforeContextSubmit();
+        if (dropContextSubmits) return;
+        await contextHost.submit(intent);
+      },
+    },
     touchContext: (contextId) =>
       scheduler.touch({ kind: "context", id: contextId }),
     async notifyOwner({ boundary }) {
@@ -179,45 +201,203 @@ async function launch(humanApproval = false): Promise<void> {
     projectPath: "/repo",
     sessionName: "session",
     owner: { conversationId: "owner-1", sessionName: "session" },
-    invocations: [
-      { key: "agent", request: startRequest("run-1.agent", humanApproval) },
+    contexts: [
+      {
+        key: "agent",
+        dependsOn: [],
+        request: startRequest("run-1.agent", humanApproval),
+      },
     ],
   });
   await scheduler.idle();
 }
 
-describe("run progress", () => {
-  const facts = {
+/** api builds first; docs builds on its accepted result. */
+async function launchChain(): Promise<void> {
+  await runs.launch({
     runId: "run-1",
-    kind: "workflow" as const,
-    title: "Two lanes",
-    invocations: [],
-    control: { paused: false, cancelled: false },
-  };
-  const question = {
-    kind: "waiting" as const,
-    obligation: { kind: "await_answer" as const, questionId: "q-1" },
-  };
+    cause: "launch-1",
+    kind: "workflow",
+    title: "API then docs",
+    projectPath: "/repo",
+    sessionName: "session",
+    owner: { conversationId: "owner-1", sessionName: "session" },
+    contexts: [
+      {
+        key: "api",
+        dependsOn: [],
+        request: startRequest("run-1.api", false, "Build the API"),
+      },
+      {
+        key: "docs",
+        dependsOn: ["api"],
+        request: startRequest("run-1.docs", false, "Document the API"),
+      },
+    ],
+  });
+  await scheduler.idle();
+}
 
-  it("needs the owner only once no other invocation can make progress", () => {
-    expect(
-      deriveRunProgress(facts, [
-        { key: "a", progress: question },
+/** Drives the single active context through bind, work, freeze and accept. */
+async function succeedActiveContext(summary: string): Promise<void> {
+  await settle(workspace, "bind", { kind: "bound" });
+  await settle(conversation, "work", report({ finalText: summary }));
+  await settle(workspace, "freeze", { kind: "frozen", evidence: `git:${summary}` });
+  await settle(workspace, "accept", {
+    kind: "accepted",
+    receipt: `snapshot:${summary}`,
+  });
+}
+
+describe("workflow runs", () => {
+  it("starts a dependent context only after its dependency succeeded, with the accepted result as its input", async () => {
+    await launchChain();
+    expect(contexts.observe("run-1.docs")).toBeNull();
+
+    await succeedActiveContext("API built.");
+    const docs = contexts.observe("run-1.docs")?.record;
+    expect(docs?.facts.contract.current.inputs).toEqual([
+      { key: "api", title: "Build the API", output: { summary: "API built." } },
+    ]);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
+    expect(notified).toEqual([]);
+
+    await succeedActiveContext("Docs written.");
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(notified.map((b) => [b.kind, b.detail])).toEqual([
+      [
+        "succeeded",
         {
-          key: "b",
-          progress: {
-            kind: "running",
-            obligation: { kind: "work", reason: "initial" },
+          outputs: {
+            api: { summary: "API built." },
+            docs: { summary: "Docs written." },
           },
         },
-      ]),
-    ).toEqual({ kind: "running" });
-    expect(
-      deriveRunProgress(facts, [
-        { key: "a", progress: question },
-        { key: "b", progress: { kind: "succeeded", candidateId: "c-1" } },
-      ]),
-    ).toEqual({ kind: "needs_owner", reasons: ["a: question"] });
+      ],
+    ]);
+  });
+
+  it("leaves dependents of a halted context unstarted and asks the owner", async () => {
+    await launchChain();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(
+      conversation,
+      "work",
+      report({ status: "failed", failure: "The provider failed." }),
+    );
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "needs_owner",
+      reasons: ["api: halted (turn_failed)"],
+    });
+    expect(contexts.observe("run-1.docs")).toBeNull();
+    expect(notified.map((b) => b.kind)).toEqual(["halted"]);
+  });
+
+  it("holds a context that became eligible during a pause until resume", async () => {
+    await launchChain();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report({ finalText: "API built." }));
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:api" });
+    const accept = workspace
+      .submitted()
+      .find((i) => (i.request as { kind?: string }).kind === "accept");
+    if (accept === undefined) throw new Error("no accept");
+    expect(workspace.admit(accept.cause)).toBe(true);
+    await runs.pause("run-1", null);
+    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:api" });
+    scheduler.touch(accept.requester);
+    await scheduler.idle();
+
+    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("succeeded");
+    expect(contexts.observe("run-1.docs")).toBeNull();
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
+
+    await runs.resume("run-1", null);
+    await scheduler.idle();
+    expect(contexts.observe("run-1.docs")?.record.facts.contract.current.inputs).toEqual([
+      { key: "api", title: "Build the API", output: { summary: "API built." } },
+    ]);
+  });
+
+  it("restores a workflow paused after a restart and starts its waiting context only once resumed", async () => {
+    await launchChain();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report({ finalText: "API built." }));
+    await settle(workspace, "freeze", { kind: "frozen", evidence: "git:api" });
+    const accept = workspace
+      .submitted()
+      .find((i) => (i.request as { kind?: string }).kind === "accept");
+    if (accept === undefined) throw new Error("no accept");
+    expect(workspace.admit(accept.cause)).toBe(true);
+
+    await runs.restoreAfterRestart();
+    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:api" });
+    scheduler.touch(accept.requester);
+    await scheduler.idle();
+    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("succeeded");
+    expect(contexts.observe("run-1.docs")).toBeNull();
+    expect(notified.map((b) => b.kind)).toEqual(["restored_paused"]);
+
+    await runs.resume("run-1", null);
+    await scheduler.idle();
+    expect(contexts.observe("run-1.docs")?.record.facts.contract.current.inputs).toEqual([
+      { key: "api", title: "Build the API", output: { summary: "API built." } },
+    ]);
+  });
+
+  it("stops submitting starts once a pause lands between two of them", async () => {
+    let paused = false;
+    beforeContextSubmit = () => {
+      if (paused) return;
+      paused = true;
+      void runs.pause("run-1", null);
+    };
+    await runs.launch({
+      runId: "run-1",
+      cause: "launch-1",
+      kind: "workflow",
+      title: "Two roots",
+      projectPath: "/repo",
+      sessionName: "session",
+      owner: { conversationId: "owner-1", sessionName: "session" },
+      contexts: [
+        { key: "a", dependsOn: [], request: startRequest("run-1.a", false, "A") },
+        { key: "b", dependsOn: [], request: startRequest("run-1.b", false, "B") },
+      ],
+    });
+    await scheduler.idle();
+
+    expect([contexts.observe("run-1.a"), contexts.observe("run-1.b")].filter((c) => c !== null)).toHaveLength(1);
+
+    await runs.resume("run-1", null);
+    await scheduler.idle();
+    expect(contexts.observe("run-1.b")).not.toBeNull();
+  });
+
+  it("finishes cancelling a context whose start was recorded but never reached its host", async () => {
+    dropContextSubmits = true;
+    await launchChain();
+    expect(contexts.observe("run-1.api")).toBeNull();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
+
+    await runs.cancel("run-1", null);
+    await scheduler.idle();
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(intents.pending({ kind: "run", id: "run-1" })).toEqual([]);
+    expect(notified.map((b) => b.kind)).toEqual(["cancelled"]);
+  });
+
+  it("cancels what started and never starts the rest", async () => {
+    await launchChain();
+    await settle(workspace, "bind", { kind: "bound" });
+    await runs.cancel("run-1", null);
+    await scheduler.idle();
+
+    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("cancelled");
+    expect(contexts.observe("run-1.docs")).toBeNull();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
   });
 });
 
@@ -266,6 +446,55 @@ describe("run host", () => {
         .submitted()
         .map((i) => (i.request as { reason?: string }).reason),
     ).toEqual(["initial", "continue"]);
+  });
+
+  it("reports a paused run as draining while a child's admitted turn runs, and drained once it settles", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    const work = conversation.submitted()[0];
+    if (work === undefined) throw new Error("no work order");
+    expect(conversation.admit(work.cause)).toBe(true);
+    await runs.pause("run-1", null);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: true });
+
+    conversation.settle(work.cause, report());
+    scheduler.touch(work.requester);
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: false });
+  });
+
+  it("records a run's fault even when its contexts cannot be read", async () => {
+    await launch();
+    contextsUnreadable = true;
+    runs.recordReconcileFailure("run-1", new Error("Context run-1.agent could not be read"));
+
+    const record = runs.observe("run-1")?.record;
+    expect(record?.facts.control.fault?.detail).toBe("Context run-1.agent could not be read");
+    expect(record?.progress).toEqual({ kind: "needs_owner", reasons: ["run: Context run-1.agent could not be read"] });
+    const bind = workspace.submitted()[0];
+    if (bind === undefined) throw new Error("no bind");
+    expect(workspace.admit(bind.cause)).toBe(false);
+    contextsUnreadable = false;
+  });
+
+  it("stops a run whose own reconcile failed, and tells its owner, until the owner resumes it", async () => {
+    await launch();
+    runs.recordReconcileFailure("run-1", new Error("The definition could not be read"));
+    await scheduler.idle();
+
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "needs_owner",
+      reasons: ["run: The definition could not be read"],
+    });
+    expect(notified.map((b) => b.kind)).toEqual(["halted"]);
+    const bind = workspace.submitted()[0];
+    if (bind === undefined) throw new Error("no bind");
+    expect(workspace.admit(bind.cause)).toBe(false);
+
+    await runs.resume("run-1", null);
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
+    expect(workspace.admit(bind.cause)).toBe(true);
   });
 
   it("admits nothing while paused and continues after resume", async () => {
@@ -427,8 +656,7 @@ describe("run host", () => {
       report({ status: "failed", failure: "provider error" }),
     );
     await runs.pause("run-1", null);
-    const occurrence =
-      runs.observe("run-1")?.record.invocations[0]?.occurrence ?? "";
+    const occurrence = contexts.describe("run-1.agent")?.occurrence ?? "";
 
     await expect(
       runs.resume("run-1", null, [

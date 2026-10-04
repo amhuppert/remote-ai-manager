@@ -257,6 +257,12 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--context`, `--occurrence`, `--disposition`, `--allowance`, `--count`, `--reason`, `--evidence`.
 - `cctl run show` — Read a run's progress, contexts and boundaries
   - `cctl run show <run-id> [options]`
+- `cctl run workflow` — Launch a supervised workflow of several contexts in this session
+  - `cctl run workflow --file <path> [options]`
+  - Flags: `--file` (required).
+- `cctl run workflow-check` — Validate: Launch a supervised workflow of several contexts in this session
+  - `cctl run workflow-check --file <path> [options]`
+  - Flags: `--file` (required).
 - `cctl spec` — Author and inspect native specifications
   - `cctl spec <command> [options]`
 - `cctl spec abandon` — Abandon one workflow execution or request spec retirement

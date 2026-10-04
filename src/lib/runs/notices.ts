@@ -1,5 +1,4 @@
-import { DISPOSITIONS_BY_HALT } from "@/lib/execution-context/advance";
-import { haltKindSchema } from "@/lib/execution-context/schemas";
+import { z } from "zod";
 import { boundaryDetail, type RunBoundary, type RunRecord } from "./schemas";
 
 /** What the owner needs beyond the boundary record to act without another read. */
@@ -7,11 +6,10 @@ export interface BoundaryNoticeExtras {
   questionText?: string;
 }
 
-function dispositionsFor(halt: unknown): ReadonlyArray<string> {
-  const parsed = haltKindSchema.safeParse(halt);
-  return parsed.success
-    ? DISPOSITIONS_BY_HALT[parsed.data]
-    : ["see cctl run show"];
+/** The dispositions the Context named for its halt when the boundary was recorded. */
+function dispositionsFor(detail: Record<string, unknown>): ReadonlyArray<string> {
+  const parsed = z.array(z.string()).min(1).safeParse(detail.dispositions);
+  return parsed.success ? parsed.data : ["see cctl run show"];
 }
 
 function actionLine(
@@ -35,7 +33,7 @@ function actionLine(
       }
       return [
         `Inspect: cctl run show ${id}.`,
-        `Resume with one of (${dispositionsFor(detail.halt).join(", ")}): cctl run resume ${id} --context ${detail.contextId} --occurrence ${detail.occurrence} --disposition <kind>`,
+        `Resume with one of (${dispositionsFor(detail).join(", ")}): cctl run resume ${id} --context ${detail.contextId} --occurrence ${detail.occurrence} --disposition <kind>`,
       ].join(" ");
     case "restored_paused":
       return `Inspect: cctl run show ${id}. Continue: cctl run resume ${id}. Stop: cctl run cancel ${id}`;

@@ -21,6 +21,18 @@ Revision 1's four services (Conversation, Execution Context, Run, Workspace) and
 11. **Owners for read models and client state** (§9).
 12. **Checks that keep the lower levels honest** (§11): historical change scenarios, the limits of static enforcement, test layers and a split rule.
 
+## Amendments from implementation (2026-10-04)
+
+The partial implementation (core turn lifetime, interactive conversations on the core, Run, Context, Workspace, one-context and multi-context session workflows) confirmed the four domains and the cross-domain protocol. These amendments record what it corrected; the sections named carry the detail.
+
+1. **A read-only binding overlaps every writer** (§6.1). Its evidence and stable reads cover the whole tree, so a writer beside it would retire its candidate until `candidate_unstable`. Readers may share a workspace with each other.
+2. **Every registered check is a whole-tree check** (§7.4). Whether it is an integration check depends only on whether another writer can run alongside the Context.
+3. **Owned-scope evidence covers the owned paths** (§6.3, §17). Whole-tree review evidence would make concurrent reviewed writers retire each other's candidates.
+4. **A standalone run is internally a one-entry definition** (§12, §16). Standalone callers author no topology and inherit no workflow-only obligations; the scheduler serves both forms.
+5. **Context's observation is semantic** (§5.1) and a **Run fault is a control fact** (§7.8).
+6. **The conversation row's admission rules form one table** (§4.5), evaluated for every entry.
+7. **Decisions** (§17): live input stays; reviewer seats are not write-confined.
+
 ## 1. Envelope, decisions and scope
 
 **Operating envelope** (from `ENVELOPE.md`). One operator. One always-on server process and one SQLite database per machine. Many concurrent conversations, child processes, model calls and worktree writers. Rebuilds restart the server mid-flight. Agents are trusted; restrictions keep them from clobbering each other and are not a security boundary. This warrants local serialization, durable intent identities, explicit settlement and checked Git effects. It does not warrant distributed actors, event sourcing, leases, leader election, or retries with backoff around local calls.
@@ -364,6 +376,8 @@ One Conversation-owned module of pure predicates decides admission. The rest of 
 
 A rule added to admission changes this module only. Each surface maps a refusal to its own form.
 
+The conversation row's part is one table, evaluated for every entry (a person's message, a queued delivery, a workflow task, a conversation command, a claim): a collaboration owner holds every turn but its own claim; queued deliveries awaiting review hold everything but the queue's own deliveries; debug mode lets the person keep talking and holds tasks, commands and claims. The queue decides which of its own deliveries review and debug mode hold. Entering debug mode counts as a message, so queued deliveries awaiting review hold it too. In-process facts answer first: a stopping server, maintenance or a running turn refuses before the row's rules are read, so a command sent while a turn runs is refused as busy. A direct prompt admitted alongside another turn rechecks the row's rules when its turn comes, and goes back to the person for review if they hold it. Until live input reaches the core (§4.4), a direct prompt to a busy core conversation is still refused and belongs on the message queue.
+
 ### 4.6 Runtime binding, configuration and the backend port
 
 **The port input is carried whole.** Turn input produces the backend port's own input type once. AgentCall receives it, owns the work → format → repair transformation, and passes it to the adapter. The facade and dispatcher relay types that restate port fields are deleted. A new per-turn field changes its port type, its producer in Turn input and its consumers in adapters. A layer that genuinely changes abstraction may define its own narrow value; a layer that only forwards may not copy fields. The normalized outcome carries the delivery and cleanup facts the lifetime needs, so no caller observes raw retry callbacks.
@@ -422,6 +436,8 @@ interface Contexts extends Executor<ResolvedContextRequest, ContextProgress> {
   cancel(id: ContextId, expected: Revision): ControlReceipt;
 }
 ```
+
+`describe` returns a semantic summary, not the record (the record stays readable for diagnostics only): progress and its occurrence, whether an effect is admitted and running, the accepted result, the Context's own pause, the dispositions that clear its halt, and task, seat and question summaries. Run and its clients read only this; parent pause and Context pause are distinct facts, and a paused Run is draining exactly while some Context has an admitted effect.
 
 `start` is `submit`. Task commands verify the bound implementer and the command identity. Task addition is allowed only when the contract permits it. Reviewers produce findings and never edit the ledger. Run cannot mark a Context successful or discharge its approval.
 
@@ -562,7 +578,7 @@ Unknown model work is never repeated just because the tasks are still open; `con
 
 A durable binding identifies the physical workspace, permitted scope, baseline and role policy. A grant authorizes compatible use now. Questions, approvals and paused work keep their binding, not an idle grant, so an owner can answer a parked child in the same workspace.
 
-Supervised bindings are admitted too, through a Workspace `bind` operation at Context start. A supervised binding waits while it overlaps another active supervised binding in the same workspace, from the same run or another, and the Run shows the blocker; a full-scope binding overlaps every other. Workspace never adopts another supervised operation's changes into a candidate. A Context binds once, at start, and holds its binding until it is terminal, even while halted. Because no Context waits for a binding while holding one, binding waits cannot form a cycle. Cancelling a halted Context releases its binding and leaves its files in place. Interactive conversations hold no binding (§6.2).
+Supervised bindings are admitted too, through a Workspace `bind` operation at Context start. A supervised binding waits while it overlaps another active supervised binding in the same workspace, from the same run or another, and the Run shows the blocker; a full-scope binding overlaps every other, and a read-only binding overlaps every writer, because its evidence and stable reads cover the whole tree; read-only bindings may share a workspace with each other. Workspace never adopts another supervised operation's changes into a candidate. A Context binds once, at start, and holds its binding until it is terminal, even while halted. Because no Context waits for a binding while holding one, binding waits cannot form a cycle. Cancelling a halted Context releases its binding and leaves its files in place. Interactive conversations hold no binding (§6.2).
 
 Placement resolves canonical physical identity, path casing, symlinks, scope and backend feasibility. Lane names are not lock keys. Restricted supervised grants prohibit direct Git mutation and use Workspace contribution operations. Backend-native restrictions enforce scoped writes, and placement preflight uses the same launch policy as dispatch (§8). Example: a backend whose allow-list adds to its cwd needs a scratch cwd; it cannot promise subtree confinement while rooted above the subtree. Unsupported placement is refused before any turn, with the isolated or full-workspace alternative named.
 
@@ -602,7 +618,7 @@ Fairness follows existing queue order. No lease can expire and release an uncert
 
 Workspace evidence owns baselines, candidate identity, reviewed inputs, review sessions and acceptance comparison. Context contributes contract, output and governing-document identity. Neither hashes the other's records. Evidence identifies scope **content**, not a diff against the current HEAD, so an owner's commit in the session worktree does not change a child's candidate. The baseline is kept for presenting diffs. Dirty session work is preserved: the binding records authorized pre-existing changes and excludes unrelated dirty paths from a scoped contribution. Session acceptance leaves edits in place and never commits them. Isolated lanes start from a clean committed base, and a dependent lane cannot inherit uncommitted session code.
 
-`capture(binding)` returns an opaque candidate receipt. `beginReview(candidate)` opens a stable review session covering the scripts and seats. The reviewed scope includes the inputs a judgment relies on, not only writable paths. When a reviewer may read anything and no narrower input contract is justified, the review covers the whole workspace. The first script or seat capacity and the review barrier are acquired together. Seats use a subset of the session's scope and never compete with their own barrier. When no review operation is active and the rest wait on capacity or input, the barrier is released; reacquiring compares the candidate. Approval always releases it. Remediation and advisory writing begin only after it closes.
+`capture(binding)` returns an opaque candidate receipt. `beginReview(candidate)` opens a stable review session covering the scripts and seats. The reviewed scope includes the inputs a judgment relies on, not only writable paths. When a reviewer may read anything and no narrower input contract is justified, the review covers the whole workspace. A Context with an owned scope compares evidence over its owned paths: whole-tree evidence would let concurrent reviewed writers retire each other's candidates. Edits outside the owned scope during its review are therefore not detected; the covering Context's whole-tree checks on the assembled tree are the backstop. The first script or seat capacity and the review barrier are acquired together. Seats use a subset of the session's scope and never compete with their own barrier. When no review operation is active and the rest wait on capacity or input, the barrier is released; reacquiring compares the candidate. Approval always releases it. Remediation and advisory writing begin only after it closes.
 
 Final acceptance reacquires a grant and compares exact evidence. A relevant change returns `candidate_changed`; unrelated changes outside an honest scope do not. External editors and shell Git are outside grants. Final checks detect persistent changes but cannot prove that nothing changed and was restored during a review.
 
@@ -667,12 +683,12 @@ These are focused modules sharing Run's host, not services with their own queues
 
 ### 7.4 Integration checks
 
-The definition compiler classifies each selected command for each context:
+Every registered validation command checks the whole tree. The definition compiler classifies each selected command for each context:
 
-- **Context-scoped**: runs in that context's certification.
-- **Integration**: a whole-tree command for a context whose workspace has other writers, so it cannot certify one writer while siblings leave the shared tree incomplete.
+- **Context-scoped**: no other writer in the same workspace can run alongside the context; the command runs in its certification.
+- **Integration**: another writer can run alongside it (neither depends on the other), so the command cannot certify one writer while siblings leave the shared tree incomplete. The context defers it, and its briefing and its reviewers say so.
 
-Every integration command must be covered by either the lane's publication check set (isolated lanes) or a declared after-all Context in the same workspace that depends on every writer deferring the command and selects it. Otherwise launch is refused with a located error that names both options. A standalone `cctl agent` has no sibling writers and runs whole-tree checks directly.
+Every integration command must be covered by either the lane's publication check set (isolated lanes) or a later Context in the same workspace that depends on the deferring context and selects the command. That Context's own check is judged the same way, so a coverage chain ends at a check no writer can run alongside, after every writer of the chain. Otherwise launch is refused with a located error that names both options. A standalone `cctl agent` has no sibling writers and runs whole-tree checks directly.
 
 There is no "integration debt" state. Coverage becomes an ordinary dependency or a lane-seal condition. Run cannot succeed before the covering Context succeeds or the lane publishes, and no Git publication is invented for session work.
 
@@ -716,13 +732,15 @@ Only Run records run boundaries. Context, Conversation requests and Workspace re
 
 Each entry is keyed `(runId, source occurrence)` and freezes its evidence snapshot, as the workflow result ledger does today. Projection is idempotent, so a missed projection is repaired by the next reconcile without a second occurrence. The subscription system reads the ledger as a source. Launch installs a persistent owner follow with wake, so child completion wakes an eligible interactive owner without an explicit wait. A synchronous observation and the later delivery refer to the same boundary ID, and acknowledging either marks the boundary delivered, so the owner is not woken again for an occurrence it already handled. CC does not promise exactly-once model attention after an interrupted owner turn; the boundary ID makes a duplicate presentation recognizable without rerunning the child. Late cost receipts update accounting without waking anyone.
 
+Until cutover preparation, boundaries reach the owner as queued conversation messages, which wake an idle owner; the inbox has no delivery mode that wakes yet. The move into the inbox, with that wake mode and one migration replacing the retired workflow source kind, is part of cutover preparation (Alex, 2026-10-04).
+
 Correspondence is not a run boundary. A peer message to a seat, or to completed or halted work, is a Conversation fact; Conversation records a passive subscription fact for the recipient's owner through the existing producer operation (§4.8).
 
 Owners answer, relay, amend, resume, cancel or launch follow-up siblings. They cannot approve human-only work. Summaries link questions and approvals; they are not shadow stores.
 
 ### 7.8 Pause, stop and progress
 
-Pause closes the Run permit, which closes every Context permit under it. Admitted effects drain. Stop also requests cancellation and stays `stopping` until each executor confirms settlement. Preserved results, salvageable isolated branches and blockers remain visible. A child halt is reported at once while independent work continues. The Run is `halted` when repair is required and independent progress is exhausted. A stopped child is never treated as a successful or skipped contribution. Run-level halts clear through the operation that fixes their cause: an amendment for a route or loop halt, an explicit new attempt for a blocked or stale publication, and a disposition for an uncertain one. Restart follows §3.4.
+Pause closes the Run permit, which closes every Context permit under it. Admitted effects drain. Stop also requests cancellation and stays `stopping` until each executor confirms settlement. Preserved results, salvageable isolated branches and blockers remain visible. A child halt is reported at once while independent work continues. The Run is `halted` when repair is required and independent progress is exhausted. A stopped child is never treated as a successful or skipped contribution. A Run whose own reconcile fails records a fault as a control fact: its permit closes, nothing new starts, progress needs the owner, the boundary projects from the fact, and resume clears it. Run-level halts clear through the operation that fixes their cause: an amendment for a route or loop halt, an explicit new attempt for a blocked or stale publication, and a disposition for an uncertain one. Restart follows §3.4.
 
 ## 8. Backend adapters
 
@@ -907,7 +925,7 @@ These are future implementation scenarios. None has run.
 
 | Scenario | Observable result |
 |---|---|
-| Same task through `agent` and a one-context workflow | Same resolved contract, Conversation path, questions, certification and result; no graph for standalone |
+| Same task through `agent` and a one-context workflow | Same resolved contract, Conversation path, questions, certification and result; the standalone caller authors no topology (internally a one-entry definition) |
 | Provider throws after partial output, queued and interactive | Durable partial output and exactly one failed outcome and notice after reload; correct message dispositions |
 | Cancel during preparation; old callback after replacement | No dispatch after cancel; the old completion cannot change the successor, and its cost still records |
 | Permit closes while a work order waits for capacity | `not_admitted`; no allowance charge; the item stays queued; resume admits it under a new generation |
@@ -975,6 +993,9 @@ These are future implementation scenarios. None has run.
    | **C. Wait for active reviews only** | Cooperative, except an interactive turn waits while a review session runs in its worktree. A prompt can wait behind a whole-tree check; this repository's full test suite takes 12–25 minutes. | No repeated certification from edits made during reviews. Edits during a child's work or approval waits behave as in A. |
 
    A keeps the owner responsive at the price of occasional repeated reviews, which the owner can avoid by using owned scopes or isolated placement for work it will keep editing around. The choice is recorded in the notepad's Workflow section.
+
+2. **Live input stays** (Alex, 2026-10-04). Messages sent during a running turn are delivered into it where the backend supports that, through the input contributions of §4.4, on the core as well.
+3. **Reviewer seats are not write-confined** (Alex, 2026-10-04). Reviewers are told not to edit; acceptance evidence retires a candidate whose reviewed scope changed.
 
 No other material product decision is open. UI owner creation and named lanes remain the design defaults. Wire names, file splits and configuration transforms come from these contracts during implementation. Backend restriction feasibility and Smart Merge receipt facts remain implementation proof obligations.
 

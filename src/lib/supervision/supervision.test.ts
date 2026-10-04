@@ -12,7 +12,11 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { createProductionConversationHold } from "@/lib/conversation-core/production-holds";
-import type { RunSupervision } from "./supervision";
+import type { Supervision } from "./supervision";
+import {
+  compileWorkflow,
+  workflowLaunchRequestSchema,
+} from "@/lib/runs/workflow-definition";
 import {
   agentStartRequest,
   checkpointPayload,
@@ -25,7 +29,7 @@ let fixture: PersistenceFixture;
 let h: ReturnType<typeof createSupervisionHarness>;
 
 async function launch(
-  s: RunSupervision,
+  s: Supervision,
   runId: string,
   turnsSettle = true,
 ): Promise<void> {
@@ -37,7 +41,9 @@ async function launch(
     projectPath: "/repo",
     sessionName: "session",
     owner: { conversationId: "owner-1", sessionName: "session" },
-    invocations: [{ key: "agent", request: agentStartRequest(runId) }],
+    contexts: [
+      { key: "agent", dependsOn: [], request: agentStartRequest(runId) },
+    ],
   });
   await quiesce(s, turnsSettle);
 }
@@ -155,6 +161,67 @@ describe("run supervision", () => {
       after.contexts.observe("run-1.agent")?.record.progress,
     ).toMatchObject({ kind: "halted", halt: "interrupted" });
     expect(h.notified.map((b) => b.kind)).toContain("restored_paused");
+  });
+});
+
+describe("workflow runs on the supervision graph", () => {
+  it("runs disjoint writers at the same time and their shared whole-tree check once, for the context that covers it", async () => {
+    // Each writer's turn waits until both writers are working: the test fails
+    // if one binding waited for the other.
+    const working = new Set<string>();
+    let bothWorking: () => void = () => {};
+    const together = new Promise<void>((resolve) => {
+      bothWorking = resolve;
+    });
+    h.script = async (input) => {
+      const writer = ["# Build the API", "# Build the UI"].find((title) =>
+        input.request.message.startsWith(title),
+      );
+      if (writer !== undefined) {
+        working.add(writer);
+        if (working.size === 2) bothWorking();
+        await Promise.race([
+          together,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("writers did not overlap")), 2000),
+          ),
+        ]);
+      }
+      return done("Done.");
+    };
+    const s = h.compose();
+    const seat = {
+      backend: "claude" as const,
+      modelSelection: { modelId: "sonnet", parameters: {} },
+    };
+    const request = workflowLaunchRequestSchema.parse({
+      title: "Two writers and an integration",
+      contexts: [
+        { key: "api", title: "Build the API", brief: "API", scope: { mode: "owned", paths: ["src/api"] }, checks: ["typecheck"] },
+        { key: "ui", title: "Build the UI", brief: "UI", scope: { mode: "owned", paths: ["src/ui"] }, checks: ["typecheck"] },
+        { key: "integrate", title: "Check the journey", brief: "Check", dependsOn: ["api", "ui"], scope: { mode: "readOnly" }, checks: ["typecheck"] },
+      ],
+    });
+    const launch = compileWorkflow({
+      runId: "run-w",
+      cause: "launch-run-w",
+      projectPath: "/repo",
+      session: { sessionName: "session", worktreePath: "/repo/.worktrees/session" },
+      owner: { conversationId: "owner-1", sessionName: "session" },
+      request,
+      seats: {
+        api: { implementer: seat, reviewers: [] },
+        ui: { implementer: seat, reviewers: [] },
+        integrate: { implementer: seat, reviewers: [] },
+      },
+    });
+
+    await s.runs.launch(launch);
+    await quiesce(s);
+
+    expect(working.size).toBe(2);
+    expect(s.runs.observe("run-w")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(h.checksRun).toEqual([{ bindingId: "run-w.integrate", command: "typecheck" }]);
   });
 });
 

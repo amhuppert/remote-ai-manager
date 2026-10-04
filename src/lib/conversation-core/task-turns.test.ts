@@ -36,7 +36,6 @@ function callResult(result: Partial<AgentCallResult>): AgentCallResult {
 
 function harness(
   answer: () => AgentCallResult,
-  queueReviewRequired = false,
   debugMode: DebugModeState | null = null,
   turnEnrollment: typeof enrollment = enrollment,
 ) {
@@ -47,7 +46,7 @@ function harness(
   const backendRef: AgentSessionRef | null = { backend: "claude", ref: "sdk-1" };
   const records: Pick<ConversationRecordPort, "read" | "beginTurn" | "settleTurn" | "admitProfile"> = {
     async read() {
-      return { agentBackend: "claude", backendRef, promptCount: 3, transcriptPath: null, queueReviewRequired, debugMode };
+      return { agentBackend: "claude", backendRef, promptCount: 3, transcriptPath: null, debugMode };
     },
     async beginTurn(_identity, source) {
       events.push(`begin:${source}`);
@@ -144,7 +143,7 @@ describe("task turns on an interactive conversation", () => {
       ccSessionScope: { project: "repo", session: "session", conversationId: "conv-1" },
     });
 
-    const project = harness(() => callResult({ outcome: { kind: "completed", text: "done" } }), false, null, projectEnrollment);
+    const project = harness(() => callResult({ outcome: { kind: "completed", text: "done" } }), null, projectEnrollment);
     const { result } = await project.run(governed);
     expect(result).toMatchObject({ status: "succeeded" });
     expect(project.calls[0]?.deps.taskExecution).toMatchObject({
@@ -184,38 +183,19 @@ describe("task turns on an interactive conversation", () => {
     expect(h.entries.filter((entry) => entry.role === "assistant")).toEqual([]);
   });
 
-  it("refuses a task while a queued delivery awaits the person's review, without touching the conversation", async () => {
-    const h = harness(() => callResult({}), true);
-    const { outcome } = await h.run(task());
+  it("tells the task's caller it failed when the conversation record could not be settled after it ran", async () => {
+    const h = harness(() => callResult({ outcome: { kind: "completed", text: "feat: add notices" } }));
+    h.deps.records.settleTurn = async () => {
+      throw new Error("database is locked");
+    };
+    const { result, outcome } = await h.run(task());
 
+    expect(result).toMatchObject({ status: "failed" });
     expect(outcome).toMatchObject({
-      kind: "not_started",
-      reason: "configuration",
-      message: "Review queued deliveries before sending another prompt.",
+      kind: "settlement_failed",
+      code: "persistence",
+      message: "The conversation record could not be settled: database is locked",
     });
-    expect(h.calls).toEqual([]);
-    expect(h.events).toEqual([]);
-  });
-
-  it("refuses a task while the conversation is in debug mode, which takes only the person's debug turns", async () => {
-    const h = harness(() => callResult({}), false, {
-      active: true,
-      recording: true,
-      logFilePath: "/w/.cc/debug/conv-1.ndjson",
-      enteredAt: "2026-10-03T09:00:00.000Z",
-      hypotheses: [],
-      reproductionSteps: [],
-      fixSummary: null,
-      verificationSteps: [],
-      instructionsDelivered: true,
-      phase: "awaiting_reproduction",
-      lastTurnFailed: false,
-      debugSessionId: "dbg-1",
-    });
-    const { outcome } = await h.run(task());
-    expect(outcome).toMatchObject({ kind: "not_started", reason: "configuration", message: "Exit debug mode first" });
-    expect(h.calls).toEqual([]);
-    expect(h.events).toEqual([]);
   });
 
   it("refuses a task the backend cannot run without touching the conversation", async () => {

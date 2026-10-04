@@ -1,9 +1,6 @@
 import type { ControlPermits } from "@/lib/control/permits";
-import type { ContextHost } from "@/lib/execution-context/host";
-import {
-  contextStartRequestSchema,
-  type ContextStartRequest,
-} from "@/lib/execution-context/schemas";
+import type { ContextHost, ContextSummary } from "@/lib/execution-context/host";
+import { contextStartRequestSchema } from "@/lib/execution-context/schemas";
 import { runControllerId } from "@/lib/execution-context/host";
 import type { ContextProgress } from "@/lib/execution-context/schemas";
 import type { IntentLedger } from "@/lib/intents/ledger";
@@ -11,9 +8,11 @@ import type { OwnerRef } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { RunsRepo } from "@/lib/state-store/runs-repo";
+import { decideNext, deriveRunProgress, type ObservedContexts } from "./schedule";
 import type {
   RunBoundary,
   RunBoundaryKind,
+  RunDefinitionContext,
   RunDisposition,
   RunFacts,
   RunInvocation,
@@ -29,8 +28,11 @@ export interface RunLaunchInput {
   projectPath: string;
   sessionName: string;
   owner: { conversationId: string; sessionName: string | null };
-  /** One frozen start request per invocation, keyed by its authored position. */
-  invocations: Array<{ key: string; request: ContextStartRequest }>;
+  /**
+   * Every context the run may start, each with its frozen start request; a
+   * context starts once every context it depends on has succeeded.
+   */
+  contexts: RunDefinitionContext[];
 }
 
 export interface RunHostDeps {
@@ -38,7 +40,8 @@ export interface RunHostDeps {
   runs: RunsRepo;
   intents: IntentLedger;
   permits: ControlPermits;
-  contexts: ContextHost;
+  /** The Run reads its Contexts through their summaries, never their records. */
+  contexts: Pick<ContextHost, "submit" | "outcome" | "describe" | "resume" | "cancel" | "decide">;
   touchContext(contextId: string): void;
   /** Queues an owner-facing boundary into the owner conversation, waking it when idle. */
   notifyOwner(input: { run: RunRecord; boundary: RunBoundary }): Promise<void>;
@@ -98,14 +101,14 @@ function isTerminal(progress: ContextProgress | null): boolean {
 function contextBoundary(
   run: RunRecord,
   invocation: RunInvocation,
-  progress: ContextProgress,
-  occurrence: string,
+  context: ContextSummary,
 ): Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt"> | null {
+  const { progress, occurrence } = context;
   const base = {
     runId: run.runId,
     occurrence: `${invocation.contextId}:${occurrence}`,
   };
-  const title = invocation.request.contract.title;
+  const title = context.title;
   if (
     progress.kind === "waiting" &&
     progress.obligation.kind === "await_answer"
@@ -143,56 +146,11 @@ function contextBoundary(
         contextId: invocation.contextId,
         halt: progress.halt,
         occurrence,
+        dispositions: context.dispositions,
       },
     };
   }
   return null;
-}
-
-/** Run progress from control and the observed invocations. Pure. */
-export function deriveRunProgress(
-  facts: RunFacts,
-  views: ReadonlyArray<{ key: string; progress: ContextProgress | null }>,
-): RunProgress {
-  const allTerminal = views.every((v) => isTerminal(v.progress));
-  if (facts.control.cancelled)
-    return allTerminal ? { kind: "cancelled" } : { kind: "stopping" };
-  // Success outranks pause: work that drained during a pause and finished the run is done.
-  if (
-    views.length > 0 &&
-    views.every((v) => v.progress?.kind === "succeeded")
-  ) {
-    return { kind: "succeeded" };
-  }
-  if (facts.control.paused) {
-    const draining = views.some(
-      (v) => v.progress?.kind === "paused" && v.progress.draining,
-    );
-    return { kind: "paused", draining };
-  }
-  const reasons = views.flatMap((v) => {
-    const progress = v.progress;
-    if (progress === null) return [];
-    if (progress.kind === "halted")
-      return [`${v.key}: halted (${progress.halt})`];
-    if (
-      progress.kind === "waiting" &&
-      progress.obligation.kind === "await_answer"
-    ) {
-      return [`${v.key}: question`];
-    }
-    if (
-      progress.kind === "waiting" &&
-      progress.obligation.kind === "await_approval"
-    ) {
-      return [`${v.key}: approval`];
-    }
-    return [];
-  });
-  const independentWork = views.some((v) => v.progress?.kind === "running");
-  if (reasons.length > 0 && !independentWork)
-    return { kind: "needs_owner", reasons };
-  return { kind: "running" };
 }
 
 export function createRunHost(deps: RunHostDeps): RunHost {
@@ -203,24 +161,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
   }
 
   function observeInvocations(facts: RunFacts) {
-    return facts.invocations.map((invocation) => {
-      const observed = deps.contexts.observe(invocation.contextId);
-      return {
-        invocation,
-        key: invocation.key,
-        contextId: invocation.contextId,
-        progress: observed?.record.progress ?? null,
-        occurrence: observed?.record.progressOccurrence ?? null,
-        output:
-          observed?.record.progress.kind === "succeeded"
-            ? observed.record.facts.candidates.items.find(
-                (c) =>
-                  observed.record.progress.kind === "succeeded" &&
-                  c.id === observed.record.progress.candidateId,
-              )?.output
-            : undefined,
-      };
-    });
+    return facts.invocations.map((invocation) => ({
+      invocation,
+      key: invocation.key,
+      context: deps.contexts.describe(invocation.contextId),
+    }));
   }
 
   function recordBoundary(
@@ -239,20 +184,77 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     });
   }
 
+  function observedOf(
+    views: ReturnType<typeof observeInvocations>,
+  ): ObservedContexts {
+    return new Map(
+      views.map((v) => [
+        v.key,
+        {
+          progress: v.context?.progress ?? null,
+          output: v.context?.accepted?.output,
+          active: v.context?.active ?? false,
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Starts every context the scheduler finds eligible, recording its start
+   * intent with the inputs bound now. Joins the caller's transaction.
+   */
+  function startEligible(record: RunRecord, facts: RunFacts): RunFacts {
+    const starts = decideNext(facts, observedOf(observeInvocations(facts)));
+    if (starts.length === 0) return facts;
+    const permit = deps.permits.current(runControllerId(record.runId));
+    const byKey = new Map(facts.definition.contexts.map((c) => [c.key, c]));
+    const started: RunInvocation[] = starts.map((start) => {
+      const defined = byKey.get(start.key);
+      if (defined === undefined)
+        throw new Error(`Run ${record.runId} has no context ${start.key}`);
+      const request = {
+        ...defined.request,
+        contract: { ...defined.request.contract, inputs: start.inputs },
+      };
+      const invocation: RunInvocation = {
+        key: start.key,
+        pass: 0,
+        contextId: request.contextId,
+        startCause: `${record.runId}:start:${start.key}:0`,
+        request,
+      };
+      deps.intents.record({
+        requester: owner(record.runId),
+        executor: "context",
+        cause: invocation.startCause,
+        permit,
+        request,
+        recordedAt: deps.now(),
+      });
+      return invocation;
+    });
+    return { ...facts, invocations: [...facts.invocations, ...started] };
+  }
+
   /** Projects and persists in the caller's transaction. */
   function project(record: RunRecord, facts: RunFacts): RunRecord {
     const views = observeInvocations(facts);
     for (const view of views) {
-      if (view.progress === null || view.occurrence === null) continue;
-      const boundary = contextBoundary(
-        record,
-        view.invocation,
-        view.progress,
-        view.occurrence,
-      );
+      if (view.context === null) continue;
+      const boundary = contextBoundary(record, view.invocation, view.context);
       if (boundary !== null) recordBoundary(record, boundary);
     }
-    const progress = deriveRunProgress(facts, views);
+    const fault = facts.control.fault;
+    if (fault !== null) {
+      recordBoundary(record, {
+        occurrence: `run:fault:${fault.at}`,
+        kind: "halted",
+        summary: `${facts.title}: the run could not be reconciled: ${fault.detail}. Resume it to retry.`,
+        detail: { error: fault.detail },
+      });
+    }
+    const observed = observedOf(views);
+    const progress = deriveRunProgress(facts, observed);
     if (progress.kind === "succeeded") {
       recordBoundary(record, {
         occurrence: "run:succeeded",
@@ -260,7 +262,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         summary: `${facts.title}: finished.`,
         detail: {
           outputs: Object.fromEntries(
-            views.map((v) => [v.key, v.output ?? null]),
+            facts.definition.contexts.map((c) => [
+              c.key,
+              observed.get(c.key)?.output ?? null,
+            ]),
           ),
         },
       });
@@ -274,19 +279,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       });
     }
     const updatedAt = deps.now();
-    const invocations = views.map((v) => ({
-      key: v.key,
-      contextId: v.contextId,
-      progress: v.progress,
-      occurrence: v.occurrence,
-    }));
     const revision = deps.runs.update(record.runId, record.revision, {
       facts,
       progress,
-      invocations,
       updatedAt,
     });
-    return { ...record, facts, progress, invocations, revision, updatedAt };
+    return { ...record, facts, progress, revision, updatedAt };
   }
 
   const notifying = new Map<string, Promise<void>>();
@@ -330,8 +328,9 @@ export function createRunHost(deps: RunHostDeps): RunHost {
 
   async function submitAdmissible(runId: string): Promise<void> {
     const permit = deps.permits.current(runControllerId(runId));
-    if (!deps.permits.admits(permit)) return;
     for (const intent of deps.intents.pending(owner(runId))) {
+      // Rechecked per start: a pause or cancel between two submissions stops the rest.
+      if (!deps.permits.admits(permit)) return;
       await deps.contexts.submit({ ...intent, permit });
       deps.touchContext(
         contextStartRequestSchema.parse(intent.request).contextId,
@@ -379,19 +378,13 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           parent: null,
           now,
         });
-        const invocations: RunInvocation[] = input.invocations.map((inv) => ({
-          key: inv.key,
-          pass: 0,
-          contextId: inv.request.contextId,
-          startCause: `${input.runId}:start:${inv.key}:0`,
-          request: inv.request,
-        }));
         const facts: RunFacts = {
           runId: input.runId,
           kind: input.kind,
           title: input.title,
-          invocations,
-          control: { paused: false, cancelled: false },
+          definition: { revision: 1, contexts: input.contexts },
+          invocations: [],
+          control: { paused: false, cancelled: false, fault: null },
         };
         const created: RunRecord = {
           runId: input.runId,
@@ -403,28 +396,13 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           facts,
           revision: 1,
           progress: { kind: "running" },
-          invocations: invocations.map((i) => ({
-            key: i.key,
-            contextId: i.contextId,
-            progress: null,
-            occurrence: null,
-          })),
           createdAt: now,
           updatedAt: now,
         };
         deps.runs.insertIfAbsent(created);
-        const permit = deps.permits.current(runControllerId(input.runId));
-        for (const invocation of invocations) {
-          deps.intents.record({
-            requester: owner(input.runId),
-            executor: "context",
-            cause: invocation.startCause,
-            permit,
-            request: invocation.request,
-            recordedAt: now,
-          });
-        }
-        return created;
+        // The first contexts start with the launch itself, so a run is never
+        // persisted without the work its definition can begin.
+        return project(created, startEligible(created, facts));
       });
       await host.reconcile(record.runId);
       return requireRecord(record.runId);
@@ -437,26 +415,38 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           const state = deps.contexts.outcome(intent.cause);
           if (state.kind === "settled") deps.intents.close(intent.id);
         }
-        project(record, record.facts);
+        project(record, startEligible(record, record.facts));
       });
       await submitAdmissible(runId);
       await notifyPending(runId);
     },
 
     recordReconcileFailure(runId, error) {
-      deps.log.error("runs.reconcile_failed", {
-        runId,
-        error: getErrorMessage(error),
-      });
+      const detail = getErrorMessage(error);
+      deps.log.error("runs.reconcile_failed", { runId, error: detail });
+      // A fault the owner clears: nothing new is admitted until they resume. Recorded
+      // without reading the Contexts, since reading one may be what failed.
       deps.transaction(() => {
         const record = requireRecord(runId);
+        if (record.facts.control.fault !== null) return;
+        deps.permits.close(runControllerId(runId), deps.now());
+        const facts: RunFacts = {
+          ...record.facts,
+          control: { ...record.facts.control, fault: { detail, at: deps.now() } },
+        };
+        const progress: RunProgress = facts.control.cancelled
+          ? record.progress
+          : { kind: "needs_owner", reasons: [`run: ${detail}`] };
+        const updatedAt = deps.now();
+        deps.runs.update(runId, record.revision, { facts, progress, updatedAt });
         recordBoundary(record, {
-          occurrence: `run:reconcile_failed:${record.revision}`,
+          occurrence: `run:fault:${facts.control.fault?.at ?? updatedAt}`,
           kind: "halted",
-          summary: `${record.facts.title}: the run could not be reconciled: ${getErrorMessage(error)}. Resume it to retry.`,
-          detail: { error: getErrorMessage(error) },
+          summary: `${facts.title}: the run could not be reconciled: ${detail}. Resume it to retry.`,
+          detail: { error: detail },
         });
       });
+      void notifyPending(runId);
     },
 
     observe(runId) {
@@ -491,12 +481,14 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             `Context ${foreign.contextId} does not belong to run ${runId}`,
           );
         }
+        // Resume clears a fault too: the owner asked the run to try again.
         const resumed = updateControl(
           runId,
           expectedRevision,
-          { paused: false },
+          { paused: false, fault: null },
           () => {
-            if (current.facts.control.paused)
+            const { paused, fault } = current.facts.control;
+            if (paused || fault !== null)
               deps.permits.reopen(runControllerId(runId), deps.now());
           },
         );
@@ -504,15 +496,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           const disposition = dispositions.find(
             (d) => d.contextId === invocation.contextId,
           );
-          const observed = deps.contexts.observe(invocation.contextId);
-          if (observed === null) continue;
-          if (
-            disposition !== undefined ||
-            observed.record.facts.control.paused
-          ) {
+          const context = deps.contexts.describe(invocation.contextId);
+          if (context === null) continue;
+          if (disposition !== undefined || context.paused) {
             deps.contexts.resume(
               invocation.contextId,
-              observed.record.revision,
+              context.revision,
               disposition === undefined
                 ? undefined
                 : {
@@ -534,15 +523,20 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         runId,
         expectedRevision,
         { cancelled: true },
-        () => deps.permits.revoke(runControllerId(runId), deps.now()),
+        () => {
+          deps.permits.revoke(runControllerId(runId), deps.now());
+          // A start recorded but never submitted (a crash in between) will not
+          // run: the revoked permit refuses it, so its intent closes with the run.
+          for (const intent of deps.intents.pending(owner(runId))) {
+            if (deps.contexts.outcome(intent.cause).kind === "unknown")
+              deps.intents.close(intent.id);
+          }
+        },
       );
       for (const invocation of record.facts.invocations) {
-        const observed = deps.contexts.observe(invocation.contextId);
-        if (observed === null || isTerminal(observed.record.progress)) continue;
-        await deps.contexts.cancel(
-          invocation.contextId,
-          observed.record.revision,
-        );
+        const context = deps.contexts.describe(invocation.contextId);
+        if (context === null || isTerminal(context.progress)) continue;
+        await deps.contexts.cancel(invocation.contextId, context.revision);
       }
       await host.reconcile(runId);
     },

@@ -19,7 +19,6 @@ const runRow = z.object({
   facts_json: z.string(),
   revision: z.number().int(),
   progress_json: z.string(),
-  invocations_json: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -35,7 +34,7 @@ const boundaryRow = z.object({
 });
 
 const RUN = `run_id, project_path, session_name, owner_conversation_id, owner_session_name, launch_cause,
-  facts_json, revision, progress_json, invocations_json, created_at, updated_at`;
+  facts_json, revision, progress_json, created_at, updated_at`;
 const BOUNDARY = `seq, run_id, occurrence, kind, summary, detail_json, recorded_at, notified_at`;
 
 function runFromRow(raw: unknown): RunRecord {
@@ -50,7 +49,6 @@ function runFromRow(raw: unknown): RunRecord {
     facts: JSON.parse(r.facts_json),
     revision: r.revision,
     progress: JSON.parse(r.progress_json),
-    invocations: JSON.parse(r.invocations_json),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   });
@@ -87,7 +85,7 @@ export interface RunsRepo {
   update(
     runId: string,
     expectedRevision: number,
-    change: Pick<RunRecord, "facts" | "progress" | "invocations" | "updatedAt">,
+    change: Pick<RunRecord, "facts" | "progress" | "updatedAt">,
   ): number;
   recordBoundary(boundary: Omit<RunBoundary, "seq" | "notifiedAt">): void;
   boundaries(runId: string, afterSeq?: number): RunBoundary[];
@@ -101,7 +99,7 @@ export interface RunsRepo {
 export function createRunsRepo(db: Db): RunsRepo {
   const st = {
     insert: db.prepare(
-      `INSERT OR IGNORE INTO runs (${RUN}) VALUES (@runId, @projectPath, @sessionName, @ownerConversationId, @ownerSessionName, @launchCause, @factsJson, @revision, @progressJson, @invocationsJson, @createdAt, @updatedAt)`,
+      `INSERT OR IGNORE INTO runs (${RUN}) VALUES (@runId, @projectPath, @sessionName, @ownerConversationId, @ownerSessionName, @launchCause, @factsJson, @revision, @progressJson, @createdAt, @updatedAt)`,
     ),
     get: db.prepare(`SELECT ${RUN} FROM runs WHERE run_id = ?`),
     byCause: db.prepare(`SELECT ${RUN} FROM runs WHERE launch_cause = ?`),
@@ -112,7 +110,7 @@ export function createRunsRepo(db: Db): RunsRepo {
       `SELECT ${RUN} FROM runs WHERE project_path = ? AND owner_conversation_id = ? ORDER BY created_at DESC, rowid DESC`,
     ),
     update: db.prepare(
-      `UPDATE runs SET facts_json = @factsJson, revision = revision + 1, progress_json = @progressJson, invocations_json = @invocationsJson, updated_at = @updatedAt WHERE run_id = @runId AND revision = @expectedRevision`,
+      `UPDATE runs SET facts_json = @factsJson, revision = revision + 1, progress_json = @progressJson, updated_at = @updatedAt WHERE run_id = @runId AND revision = @expectedRevision`,
     ),
     recordBoundary: db.prepare(
       `INSERT OR IGNORE INTO run_boundaries (run_id, occurrence, kind, summary, detail_json, recorded_at) VALUES (@runId, @occurrence, @kind, @summary, @detailJson, @recordedAt)`,
@@ -146,7 +144,6 @@ export function createRunsRepo(db: Db): RunsRepo {
         factsJson: JSON.stringify(p.facts),
         revision: p.revision,
         progressJson: JSON.stringify(p.progress),
-        invocationsJson: JSON.stringify(p.invocations),
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
       });
@@ -171,7 +168,6 @@ export function createRunsRepo(db: Db): RunsRepo {
         expectedRevision,
         factsJson: JSON.stringify(change.facts),
         progressJson: JSON.stringify(change.progress),
-        invocationsJson: JSON.stringify(change.invocations),
         updatedAt: change.updatedAt,
       });
       if (result.changes !== 1)

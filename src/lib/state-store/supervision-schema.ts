@@ -160,7 +160,6 @@ export const SUPERVISION_SCHEMA_DDL = `
     facts_json TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK (revision >= 1),
     progress_json TEXT NOT NULL,
-    invocations_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );

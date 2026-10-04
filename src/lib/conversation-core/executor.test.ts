@@ -201,11 +201,12 @@ function workIntent(overrides: Partial<SeatTurnRequest> = {}): PendingIntent {
       projectPath: "/repo",
       sessionName: "session",
       worktreePath: worktree,
-      access: "write",
-      scope: { mode: "full" },
+      grant: { kind: "full_write" },
+      writes: { mode: "all" },
     },
     seat: {
       contextId: "ctx-1",
+      conversationId: null,
       assignmentId: "implementer",
       role: "implementer",
       assignment: {
@@ -634,6 +635,83 @@ describe("conversation core for seats", () => {
       expect(lease.signal.aborted).toBe(true);
       lease.release();
       await retired;
+    });
+
+    it("answers admission alike for every entry: a running turn holds messages, commands and claims, and a task waits its turn", async () => {
+      enroll();
+      let finish: (result: CoreTurnResult) => void = () => {};
+      nextUserResult = () => new Promise((resolve) => (finish = resolve));
+      const core = newCore({ holds: { refusal: async () => null } });
+      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Working", inputOrigin: "user" });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      for (const turn of ["message", "command", "claim"] as const) {
+        expect(await core.admission("conv-u", turn)).toMatchObject({ code: "busy" });
+      }
+      expect(await core.admission("conv-u", "task")).toBeNull();
+
+      finish(ok("Done."));
+      await sent.settled;
+      await core.conversationIdle("conv-u");
+      expect(await core.admission("conv-u", "command")).toBeNull();
+    });
+
+    it("checks a direct message's holds again when its turn comes after another admitted alongside it", async () => {
+      enroll();
+      let finish: (result: CoreTurnResult) => void = () => {};
+      nextUserResult = () => new Promise((resolve) => (finish = resolve));
+      let held: { code: "queue_review"; message: string } | null = null;
+      const reads: Array<(value: null) => void> = [];
+      const core = newCore({
+        holds: {
+          refusal: (_conversationId, turn, options) =>
+            options?.betweenTurns === true
+              ? Promise.resolve(turn === "message" ? held : null)
+              : new Promise((resolve) => reads.push(resolve)),
+        },
+      });
+      // A queued delivery and a direct message are admitted together, before either is in the mailbox.
+      const delivery = core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Queued",
+        inputOrigin: "user",
+        queuedDelivery: { messageIds: ["q-9"], deliveryAttemptId: "att-9" },
+      });
+      const direct = core.sendUserMessage({ conversationId: "conv-u", text: "Direct", inputOrigin: "user" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      for (const release of reads) release(null);
+      const [queued, typed] = await Promise.all([delivery, direct]);
+      if (queued.kind !== "accepted" || typed.kind !== "accepted") throw new Error("not admitted");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The delivery left something to review while the direct message waited.
+      held = { code: "queue_review", message: "Review queued deliveries before sending another prompt." };
+      finish(ok("Done."));
+      expect(await typed.settled).toMatchObject({
+        status: "failed",
+        failure: "Review queued deliveries before sending another prompt.",
+      });
+      expect(userCalls.map((call) => call.text)).toEqual(["Queued"]);
+      // The person's words go back to them for review rather than being dropped.
+      expect(withdrawn).toEqual(["conv-u:Direct"]);
+    });
+
+    it("passes a durable hold's own code through to every entry", async () => {
+      enroll();
+      const core = newCore({
+        holds: {
+          async refusal(_conversationId, turn) {
+            return turn === "message" ? null : { code: "debug_mode", message: "Exit debug mode first" };
+          },
+        },
+      });
+      expect(await core.admission("conv-u", "command")).toEqual({ code: "debug_mode", message: "Exit debug mode first" });
+      expect(await core.runTask({ conversationId: "conv-u", turn: commitTask() })).toMatchObject({
+        kind: "not_started",
+        message: "Exit debug mode first",
+      });
+      expect(await core.admission("conv-u", "message")).toBeNull();
     });
 
     it("refuses new work while another owner durably holds the conversation, and admits it once released", async () => {

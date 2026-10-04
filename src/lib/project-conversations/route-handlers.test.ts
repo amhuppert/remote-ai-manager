@@ -760,8 +760,7 @@ describe("a project conversation the shared core runs", () => {
                 sent.push(message);
                 return admission;
               },
-              isBusy: () => false,
-              holdRefusal: async () => null,
+              admission: async () => null,
               async adoptBackend() {},
               clearPendingPromptText: async () => true,
               dispatchCommand: async () => {

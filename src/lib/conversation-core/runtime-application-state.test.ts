@@ -20,7 +20,13 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createAffectedConversationLister } from "@/lib/agent-capabilities/default-deps";
 import { collectRuntimeTargets } from "@/lib/mcp/runtime-targets";
-import { coreRuntimeIndex, createRuntimeApplicationState, withCoreRuntimes } from "./runtime-application-state";
+import {
+  coreRuntimeIndex,
+  createRuntimeApplicationState,
+  withCoreRuntimes,
+  type ComposedTooling,
+  type SeededRuntime,
+} from "./runtime-application-state";
 import { createRuntimeHost } from "./runtime-host";
 
 const PROJECT = "/repo";
@@ -90,13 +96,19 @@ async function harness(row: ConversationStateOverrides = {}) {
     if (row === null) throw new Error("conversation vanished");
     return row;
   };
-  return { state, published, reload };
+  /** A runtime created with no save landing while it was created. */
+  const seed = async (
+    target: typeof conversation,
+    composed: ComposedTooling,
+    runtime: SeededRuntime,
+  ): Promise<void> => (await state.beginSeed(target)).commit(composed, runtime);
+  return { state, published, reload, seed };
 }
 
 describe("core runtime application state", () => {
   it("records a runtime's MCP config and capabilities as applied once the backend accepts input under them", async () => {
     const h = await harness();
-    await h.state.seed(
+    await h.seed(
       conversation,
       { overrides: { portableMcp: H1, capabilities: cascade("claude", reviewOff) }, capabilityState: desiredState("claude-skills", reviewOff) },
       acceptsOnInput,
@@ -135,7 +147,7 @@ describe("core runtime application state", () => {
         lastApplyDisposition: "no_active_runtime",
       },
     });
-    await h.state.seed(conversation, { overrides: { portableMcp: H2 } }, acceptsOnInput);
+    await h.seed(conversation, { overrides: { portableMcp: H2 } }, acceptsOnInput);
     await h.state.recordAccepted(conversation, { type: "input_accepted", mcpConfigHash: computeEffectiveConfigHash(H2) });
 
     expect((await h.reload()).mcpRuntime).toEqual({
@@ -152,7 +164,7 @@ describe("core runtime application state", () => {
         lastApplyDisposition: "no_active_runtime",
       },
     });
-    await h.state.seed(conversation, { overrides: { portableMcp: H3 } }, acceptsOnInput);
+    await h.seed(conversation, { overrides: { portableMcp: H3 } }, acceptsOnInput);
     expect((await h.reload()).mcpRuntime?.pendingConfigHash).toBe(computeEffectiveConfigHash(H3));
 
     await h.state.recordAccepted(conversation, { type: "input_accepted", mcpConfigHash: computeEffectiveConfigHash(H3) });
@@ -164,7 +176,7 @@ describe("core runtime application state", () => {
 
   it("keeps a change saved after the runtime was created pending past that runtime's receipt", async () => {
     const h = await harness();
-    await h.state.seed(conversation, { overrides: { portableMcp: H1 } }, acceptsOnInput);
+    await h.seed(conversation, { overrides: { portableMcp: H1 } }, acceptsOnInput);
     const saved = await createMcpRuntimeApplyService({
       applicationState: createMcpRuntimeApplicationStore(fixture.deps),
       getRuntime: () => undefined,
@@ -181,9 +193,46 @@ describe("core runtime application state", () => {
     });
   });
 
+  it("keeps an MCP change saved while the runtime was being created pending past that runtime's receipt", async () => {
+    const h = await harness();
+    const seeding = await h.state.beginSeed(conversation);
+    const saved = await createMcpRuntimeApplyService({
+      applicationState: createMcpRuntimeApplicationStore(fixture.deps),
+      getRuntime: () => undefined,
+      resolvePortableForConversation: async () => ({ portable: H2 }),
+    }).applyAfterOverrideChange({ ...conversation, backend: "claude", changedServerKeys: ["x"] });
+    await seeding.commit({ overrides: { portableMcp: H1 } }, acceptsOnInput);
+
+    await h.state.recordAccepted(conversation, { type: "input_accepted", mcpConfigHash: computeEffectiveConfigHash(H1) });
+
+    expect((await h.reload()).mcpRuntime).toEqual({
+      lastAppliedConfigHash: computeEffectiveConfigHash(H1),
+      pendingConfigHash: saved.effectiveConfigHash,
+      pendingServerKeys: ["x"],
+      lastApplyDisposition: "no_active_runtime",
+    });
+  });
+
+  it("keeps a capability change saved while the runtime was being created pending", async () => {
+    const h = await harness();
+    const reviewOn = [{ itemId: "review", enabled: true }];
+    const seeding = await h.state.beginSeed(conversation);
+    await fixture.deps.mutateConversation(PROJECT, SESSION, "conv-1", "test.save_capabilities", (row) => {
+      row.agentCapabilitiesRuntime = desiredState("claude-skills", reviewOn);
+    });
+    await seeding.commit(
+      { overrides: { portableMcp: H1, capabilities: cascade("claude", reviewOff) }, capabilityState: desiredState("claude-skills", reviewOff) },
+      acceptsOnInput,
+    );
+
+    expect((await h.reload()).agentCapabilitiesRuntime?.cascades["claude-skills"]?.pendingHash).toBe(
+      computeCascadeRuntimeHash({ cascadeKind: "claude-skills", rows: reviewOn }),
+    );
+  });
+
   it("persists an MCP configuration failure the backend reports on acceptance", async () => {
     const h = await harness();
-    await h.state.seed(conversation, { overrides: { portableMcp: H2 } }, acceptsOnInput);
+    await h.seed(conversation, { overrides: { portableMcp: H2 } }, acceptsOnInput);
     await h.state.recordAccepted(conversation, {
       type: "input_accepted",
       mcpConfigHash: computeEffectiveConfigHash(H1),
@@ -201,7 +250,7 @@ describe("core runtime application state", () => {
   it("marks a selection fixed at creation that differs from the desired one as applying in a new conversation", async () => {
     const h = await harness({ agentBackend: "cursor" });
     const reviewOn = [{ itemId: "review", enabled: true }];
-    await h.state.seed(
+    await h.seed(
       conversation,
       { overrides: { portableMcp: H1, capabilities: cascade("cursor", reviewOff) }, capabilityState: desiredState("cursor-skills", reviewOff) },
       { ...acceptsOnInput, capabilitiesAtCreation: cascade("cursor", reviewOn) },
@@ -221,7 +270,7 @@ describe("core runtime application state", () => {
 
   it("reconciles at creation a runtime that applies its configuration when it is created", async () => {
     const h = await harness();
-    await h.state.seed(
+    await h.seed(
       conversation,
       { overrides: { portableMcp: H1 }, capabilityState: desiredState("claude-skills", reviewOff) },
       { capabilitiesAtCreation: cascade("claude", reviewOff) },
@@ -237,7 +286,7 @@ describe("core runtime application state", () => {
 
   it("tells clients the conversation's MCP and capability state changed when a receipt is recorded", async () => {
     const h = await harness();
-    await h.state.seed(
+    await h.seed(
       conversation,
       { overrides: { portableMcp: H1, capabilities: cascade("claude", reviewOff) }, capabilityState: desiredState("claude-skills", reviewOff) },
       acceptsOnInput,
@@ -300,7 +349,7 @@ describe("core runtime index", () => {
       factory: () => factory,
       instructions: async () => ({ sessionInstructions: [], alignmentVersion: null }),
       tooling: async () => ({ overrides: { portableMcp: H1 } }),
-      seed: async () => {},
+      beginSeed: async () => ({ commit: async () => {} }),
       callbacks: () => ({}),
       index: coreRuntimeIndex,
       log: createCapturingLogger(),

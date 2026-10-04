@@ -10,22 +10,19 @@ import {
   conversationTargetStoreSessionName,
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
-import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { Logger } from "@/lib/logging";
 import type { RunPromptRequest } from "@/lib/prompt/schemas";
 import { ProjectCollaborationUnsupportedError } from "@/lib/project-conversations/collaboration-refusal";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { ConversationCore, HoldRefusal, HoldTurn, UserMessageAdmission } from "./executor";
-import { QUEUE_REVIEW_REQUIRED_MESSAGE, type ConversationIdentity } from "./conversation-record";
+import type { AdmissionRefusal, ConversationCore, HoldTurn } from "./executor";
+import type { ConversationIdentity } from "./conversation-record";
 
 export interface CoreConversationPromptDeps {
   sendUserMessage: ConversationCore["sendUserMessage"];
-  /** The conversation runs or has a turn waiting to start. */
-  isBusy: ConversationCore["isBusy"];
-  /** The core's durable holds (a collaboration's claim, checkpoint maintenance); null when work may start. */
-  holdRefusal(conversationId: string, turn: HoldTurn): Promise<HoldRefusal | null>;
+  /** The core's admission, the same rules every entry uses; null when work may start. */
+  admission: ConversationCore["admission"];
   /** A conversation that has not run takes the backend its first input chose. */
   adoptBackend(identity: ConversationIdentity, backend: AgentBackendId): Promise<void>;
   clearPendingPromptText(
@@ -61,7 +58,7 @@ export interface CoreConversationPrompts {
 
 /** `/collab` is a claim: held as a command would be, and a fresh conversation adopts its chosen backend. */
 export async function admitCoreCollaboration(
-  deps: Pick<CoreConversationPromptDeps, "isBusy" | "holdRefusal" | "adoptBackend">,
+  deps: Pick<CoreConversationPromptDeps, "admission" | "adoptBackend">,
   input: CoreConversationPrompt,
 ): Promise<Response | null> {
   const { projectPath, target, conversation, body } = input;
@@ -105,53 +102,33 @@ function collaborationRefusal(target: ConversationTarget): Response {
   );
 }
 
-function refusal(admission: Extract<UserMessageAdmission, { kind: "refused" }>): Response {
-  const { status, code } =
-    admission.code === "busy"
-      ? { status: 409, code: "CONVERSATION_BUSY" }
-      : admission.code === "owned"
-        ? { status: 409, code: "CONVERSATION_OWNED" }
-        : admission.code === "stopping"
-          ? { status: 503, code: "SERVER_STOPPING" }
-          : { status: 409, code: "CONVERSATION_NOT_ENROLLED" };
+const REFUSAL_RESPONSES: Record<AdmissionRefusal["code"], { status: number; code: string }> = {
+  busy: { status: 409, code: "CONVERSATION_BUSY" },
+  owned: { status: 409, code: "CONVERSATION_OWNED" },
+  queue_review: { status: 409, code: "QUEUE_REVIEW_REQUIRED" },
+  debug_mode: { status: 409, code: "DEBUG_MODE_ACTIVE" },
+  stopping: { status: 503, code: "SERVER_STOPPING" },
+  not_enrolled: { status: 409, code: "CONVERSATION_NOT_ENROLLED" },
+};
+
+/** One response per admission refusal, whichever entry was refused. */
+function refusal(admission: AdmissionRefusal): Response {
+  const { status, code } = REFUSAL_RESPONSES[admission.code];
   return NextResponse.json({ error: admission.message, code } satisfies ApiError, { status });
 }
 
 /**
  * Why a conversation command (or `/collab`, a claim) cannot start now, or
  * null. A command runs through the command service rather than the core's
- * mailbox, so it is held here where the core would hold its work: by the row,
- * by a running turn, and by the core's durable holds.
+ * mailbox, so the route asks the core's admission before dispatching it.
  */
 export async function admitCoreConversationCommand(
-  deps: Pick<CoreConversationPromptDeps, "isBusy" | "holdRefusal">,
+  deps: Pick<CoreConversationPromptDeps, "admission">,
   conversation: ConversationState,
-  turn: Extract<HoldTurn, "task" | "claim">,
+  turn: Extract<HoldTurn, "command" | "claim">,
 ): Promise<Response | null> {
-  const local = commandHold(deps, conversation);
-  if (local !== null) return local;
-  const held = await deps.holdRefusal(conversation.id, turn);
-  if (held === null) return null;
-  return NextResponse.json(
-    { error: held.message, code: held.code === "owned" ? "CONVERSATION_OWNED" : "CONVERSATION_BUSY" } satisfies ApiError,
-    { status: 409 },
-  );
-}
-
-function commandHold(deps: Pick<CoreConversationPromptDeps, "isBusy">, conversation: ConversationState): Response | null {
-  const refuse = (error: string, code: string) =>
-    NextResponse.json({ error, code } satisfies ApiError, { status: 409 });
-  if (conversation.pendingQueue.some(queuedMessageBlocksOrdinaryAdmission)) {
-    return refuse(QUEUE_REVIEW_REQUIRED_MESSAGE, "QUEUE_REVIEW_REQUIRED");
-  }
-  if (conversation.debugMode?.active === true) return refuse("Exit debug mode first", "DEBUG_MODE_ACTIVE");
-  if (conversation.owner !== null) {
-    return refuse(`Conversation is held by a running collaboration (workflow "${conversation.owner.workflowId}")`, "CONVERSATION_OWNED");
-  }
-  if (deps.isBusy(conversation.id)) {
-    return refuse("Conversation is busy — a turn is already running", "CONVERSATION_BUSY");
-  }
-  return null;
+  const refused = await deps.admission(conversation.id, turn);
+  return refused === null ? null : refusal(refused);
 }
 
 /** The prompt request's own event stream: what the client reads while the turn runs. */
@@ -251,7 +228,7 @@ export async function promptCoreConversation(
   const command = parseConversationCommand(text);
   if (command !== null) {
     const refused =
-      (await deps.commandRefusal(text, backend)) ?? (await admitCoreConversationCommand(deps, conversation, "task"));
+      (await deps.commandRefusal(text, backend)) ?? (await admitCoreConversationCommand(deps, conversation, "command"));
     if (refused !== null) return refused;
     // The command service reads the backend from the row: a first input's choice is taken first.
     if (backend !== conversation.agentBackend) {
@@ -261,15 +238,6 @@ export async function promptCoreConversation(
       );
     }
     return runCommand(deps, input, command, text, clearDraft);
-  }
-
-  // Early answer, before the draft is cleared; the turn re-checks the fresh row.
-  if (conversation.pendingQueue.some(queuedMessageBlocksOrdinaryAdmission)) {
-    deps.log.warn("conversation_core.prompt_held_for_queue_review", { conversationId: conversation.id });
-    return NextResponse.json(
-      { error: QUEUE_REVIEW_REQUIRED_MESSAGE, code: "QUEUE_REVIEW_REQUIRED" } satisfies ApiError,
-      { status: 409 },
-    );
   }
 
   const events = eventStream();

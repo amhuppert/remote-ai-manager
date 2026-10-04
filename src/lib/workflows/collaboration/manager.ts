@@ -130,7 +130,7 @@ import {
   describeResumeRefusal,
   type ResumeRefusal,
 } from "./resume-eligibility";
-import { drainCoreConversation, holdCoreConversationWhileIdle } from "@/lib/runs/handles";
+import { drainCoreConversation, holdCoreConversationWhileIdle } from "@/lib/supervision/handles";
 import {
   reclaimConversationOwnership,
   releaseConversationOwnership,

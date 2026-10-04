@@ -4,7 +4,12 @@ import type { OwnerRef, PendingIntent } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { WorkspaceRepo } from "@/lib/state-store/workspace-repo";
-import type { Grant, GrantRequest, WorkspaceAdmission } from "./admission";
+import {
+  bindingScopesOverlap,
+  type Grant,
+  type GrantRequest,
+  type WorkspaceAdmission,
+} from "./admission";
 import type { WorkspaceEvidence } from "./evidence";
 import {
   workspaceOperationSchema,
@@ -53,19 +58,6 @@ export interface WorkspaceExecutor extends Executor {
   drain(): Promise<void>;
 }
 
-function scopesOverlap(a: WorkspaceScope, b: WorkspaceScope): boolean {
-  if (a.mode === "readOnly" || b.mode === "readOnly") return false;
-  if (a.mode === "full" || b.mode === "full") return true;
-  return a.paths.some((left) =>
-    b.paths.some(
-      (right) =>
-        left === right ||
-        left.startsWith(`${right}/`) ||
-        right.startsWith(`${left}/`),
-    ),
-  );
-}
-
 function scopePaths(scope: WorkspaceScope): string[] | undefined {
   return scope.mode === "owned" ? scope.paths : undefined;
 }
@@ -95,31 +87,40 @@ export function createWorkspaceExecutor(
     return binding;
   }
 
-  async function withGrant<T>(
-    request: GrantRequest,
-    work: () => Promise<T>,
-  ): Promise<T> {
-    const grant: Grant = await deps.admission.acquire(request);
-    try {
-      return await work();
-    } finally {
-      deps.admission.release(grant);
-    }
-  }
-
   function bindAdmissible(
     operation: Extract<WorkspaceOperation, { kind: "bind" }>,
   ): boolean {
-    const others = deps.repo
-      .listBindings(operation.binding.worktreePath, "bound")
+    const worktree = operation.binding.worktreePath;
+    // A bind in progress is still recording its baseline but already holds its
+    // place, so a second overlapping bind cannot slip in before it is recorded.
+    const binding = deps.repo
+      .listBindings(worktree, "waiting")
+      .filter((b) => runningBindings.has(b.bindingId));
+    const others = [...deps.repo.listBindings(worktree, "bound"), ...binding]
       .filter((b) => b.bindingId !== operation.bindingId);
     return !others.some((other) =>
-      scopesOverlap(other.request.scope, operation.binding.scope),
+      bindingScopesOverlap(other.request.scope, operation.binding.scope),
     );
   }
 
-  async function perform(
+  /** The grant an operation needs while it runs; a bind needs none. */
+  function grantFor(
     record: WorkspaceOperationRecord,
+    operation: WorkspaceOperation,
+  ): GrantRequest | null {
+    if (operation.kind === "bind") return null;
+    const binding = bindingOf(operation.bindingId).request;
+    // Checks read the whole tree, so they exclude every supervised writer.
+    const paths = operation.kind === "check" ? undefined : scopePaths(binding.scope);
+    return {
+      worktree: binding.worktreePath,
+      kind: "stable_read",
+      ...(paths !== undefined ? { paths } : {}),
+      holder: record.cause,
+    };
+  }
+
+  async function perform(
     operation: WorkspaceOperation,
     signal: AbortSignal,
   ): Promise<unknown> {
@@ -138,117 +139,125 @@ export function createWorkspaceExecutor(
       return { kind: "bound" };
     }
     const binding = bindingOf(operation.bindingId).request;
-    const stableRead: GrantRequest = {
-      worktree: binding.worktreePath,
-      kind: "stable_read",
-      ...(scopePaths(binding.scope) !== undefined
-        ? { paths: scopePaths(binding.scope) }
-        : {}),
-      holder: record.cause,
-    };
+    const capture = () =>
+      deps.evidence.capture(binding.worktreePath, binding.scope);
     switch (operation.kind) {
       case "freeze":
-        return withGrant(stableRead, async () => ({
-          kind: "frozen",
-          evidence: await deps.evidence.capture(
-            binding.worktreePath,
-            binding.scope,
-          ),
-        }));
+        return { kind: "frozen", evidence: await capture() };
       case "verify":
-        return withGrant(stableRead, async () => {
-          const current = await deps.evidence.capture(
-            binding.worktreePath,
-            binding.scope,
-          );
-          return {
-            kind: "verified",
-            changed: !deps.evidence.sameContent(current, operation.evidence),
-          };
-        });
-      case "accept":
+        return {
+          kind: "verified",
+          changed: !deps.evidence.sameContent(await capture(), operation.evidence),
+        };
+      case "accept": {
         // Session placement accepts in place: the receipt names the exact content.
-        return withGrant(stableRead, async () => {
-          const current = await deps.evidence.capture(
-            binding.worktreePath,
-            binding.scope,
-          );
-          return deps.evidence.sameContent(current, operation.evidence)
-            ? { kind: "accepted", receipt: `snapshot:${current}` }
-            : { kind: "candidate_changed" };
+        const current = await capture();
+        return deps.evidence.sameContent(current, operation.evidence)
+          ? { kind: "accepted", receipt: `snapshot:${current}` }
+          : { kind: "candidate_changed" };
+      }
+      case "check": {
+        const before = await capture();
+        const result = await deps.runCheck({
+          binding,
+          bindingId: operation.bindingId,
+          command: operation.command,
+          signal,
         });
-      case "check":
-        // Checks read the whole tree, so they exclude every supervised writer.
-        return withGrant({ ...stableRead, paths: undefined }, async () => {
-          const before = await deps.evidence.capture(
-            binding.worktreePath,
-            binding.scope,
-          );
-          const result = await deps.runCheck({
-            binding,
-            bindingId: operation.bindingId,
-            command: operation.command,
-            signal,
-          });
-          const after = await deps.evidence.capture(
-            binding.worktreePath,
-            binding.scope,
-          );
-          const wrote = deps.evidence.sameContent(before, after)
-            ? []
-            : await deps.evidence.changedPaths(
-                binding.worktreePath,
-                binding.scope,
-                before,
-                after,
-              );
-          return {
-            kind: "checked",
-            status: result.status,
-            ...(result.detail !== undefined ? { detail: result.detail } : {}),
-            wroteReviewedScope: wrote,
-          };
-        });
+        const after = await capture();
+        const wrote = deps.evidence.sameContent(before, after)
+          ? []
+          : await deps.evidence.changedPaths(
+              binding.worktreePath,
+              binding.scope,
+              before,
+              after,
+            );
+        return {
+          kind: "checked",
+          status: result.status,
+          ...(result.detail !== undefined ? { detail: result.detail } : {}),
+          wroteReviewedScope: wrote,
+        };
+      }
     }
   }
 
-  async function execute(
-    record: WorkspaceOperationRecord,
-    operation: WorkspaceOperation,
-  ): Promise<void> {
-    const controller = new AbortController();
-    controllers.set(record.cause, controller);
-    try {
-      const outcome = await perform(record, operation, controller.signal);
-      settle(record, outcome);
-    } catch (error) {
-      deps.log.error("workspace.operation_failed", {
-        cause: record.cause,
-        kind: operation.kind,
-        error: getErrorMessage(error),
-      });
-      settle(record, { kind: "refused", detail: getErrorMessage(error) });
-    } finally {
-      controllers.delete(record.cause);
-      runningBindings.delete(record.bindingId);
-    }
-  }
-
-  /** Admits one queued operation if its permit, binding and scope allow it now. */
-  function tryStart(record: WorkspaceOperationRecord): boolean {
-    if (runningBindings.has(record.bindingId)) return false;
-    const operation = workspaceOperationSchema.parse(record.request);
-    if (operation.kind === "bind" && !bindAdmissible(operation)) return false;
-    const admitted = deps.transaction(() => {
-      // Admission and its permit check happen together, at the moment of admission.
-      if (!deps.permits.admits(record.permit)) return false;
+  /**
+   * Admits the operation: under its permit as stored now (a resubmission
+   * refreshes it), and only while it is still queued. Returns false, leaving
+   * it queued, when the permit no longer admits it.
+   */
+  function admit(record: WorkspaceOperationRecord): boolean {
+    return deps.transaction(() => {
+      const current = deps.repo.getOperation(record.cause);
+      if (current?.state !== "queued" || !deps.permits.admits(current.permit))
+        return false;
       deps.repo.updateOperation(record.cause, {
         state: "running",
         updatedAt: deps.now(),
       });
       return true;
     });
-    if (!admitted) return false;
+  }
+
+  /**
+   * Waits for the operation's grant, then admits it: an operation is admitted
+   * only once it holds what it runs under, so a pause or cancel that lands
+   * during the wait leaves it queued and unrun. Admitted work drains.
+   */
+  async function execute(
+    record: WorkspaceOperationRecord,
+    operation: WorkspaceOperation,
+  ): Promise<void> {
+    const controller = new AbortController();
+    controllers.set(record.cause, controller);
+    let grant: Grant | null = null;
+    try {
+      let request: GrantRequest | null;
+      try {
+        request = grantFor(record, operation);
+      } catch (error) {
+        // Nothing it could run under: refused once, rather than failing again on every drain.
+        deps.log.error("workspace.operation_failed", {
+          cause: record.cause,
+          kind: operation.kind,
+          error: getErrorMessage(error),
+        });
+        settle(record, { kind: "refused", detail: getErrorMessage(error) });
+        return;
+      }
+      if (request !== null) {
+        try {
+          grant = await deps.admission.acquire(request, controller.signal);
+        } catch {
+          return;
+        }
+      }
+      if (!admit(record)) return;
+      try {
+        settle(record, await perform(operation, controller.signal));
+      } catch (error) {
+        deps.log.error("workspace.operation_failed", {
+          cause: record.cause,
+          kind: operation.kind,
+          error: getErrorMessage(error),
+        });
+        settle(record, { kind: "refused", detail: getErrorMessage(error) });
+      }
+    } finally {
+      if (grant !== null) deps.admission.release(grant);
+      controllers.delete(record.cause);
+      runningBindings.delete(record.bindingId);
+    }
+  }
+
+  /** Starts one queued operation whose permit, binding and scope allow it now. */
+  function tryStart(record: WorkspaceOperationRecord): boolean {
+    if (runningBindings.has(record.bindingId)) return false;
+    if (!deps.permits.admits(record.permit)) return false;
+    const operation = workspaceOperationSchema.parse(record.request);
+    if (operation.kind === "bind" && !bindAdmissible(operation)) return false;
     runningBindings.add(record.bindingId);
     const run = execute(record, operation).finally(() => inFlight.delete(run));
     inFlight.add(run);
@@ -312,10 +321,14 @@ export function createWorkspaceExecutor(
       }
     },
     withdraw(cause) {
-      deps.transaction(() => {
+      const withdrawn = deps.transaction(() => {
         const record = deps.repo.getOperation(cause);
-        if (record?.state === "queued") deps.repo.deleteOperation(cause);
+        if (record?.state !== "queued") return false;
+        deps.repo.deleteOperation(cause);
+        return true;
       });
+      // One still waiting for its grant stops waiting.
+      if (withdrawn) controllers.get(cause)?.abort();
     },
     interrupt(cause) {
       controllers.get(cause)?.abort();

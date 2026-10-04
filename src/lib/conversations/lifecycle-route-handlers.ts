@@ -85,7 +85,7 @@ import {
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
-import { enrollInCore } from "@/lib/runs/handles";
+import { enrollInCore } from "@/lib/supervision/handles";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   classifyRoutePrincipal,

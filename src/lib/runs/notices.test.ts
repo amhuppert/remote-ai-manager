@@ -25,6 +25,7 @@ describe("run boundary notices", () => {
         contextId: "run-1.agent",
         halt: "turn_failed",
         occurrence: "occ-7",
+        dispositions: ["continue", "replace_seat", "confirm_effect"],
       }),
     );
     expect(notice).toContain("continue, replace_seat, confirm_effect");

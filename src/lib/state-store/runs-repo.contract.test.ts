@@ -29,6 +29,8 @@ const contract = contextContractSchema.parse({
     { id: "reviewer-a", authority: "blocking", focus: "Correctness", ...seat },
   ],
   checks: ["typecheck"],
+  deferredChecks: ["test"],
+  inputs: [{ key: "api", title: "Build the API", output: { endpoint: "/v1/x" } }],
   humanApproval: true,
   ownerQuestions: true,
   documents: [
@@ -40,6 +42,30 @@ const contract = contextContractSchema.parse({
     },
   ],
 });
+
+function request(contextId: string) {
+  return {
+    contextId,
+    runId: "run-1",
+    ownerConversationId: "owner-1",
+    workspace: {
+      kind: "session" as const,
+      projectPath: "/repo",
+      sessionName: "session",
+      worktreePath: "/repo/.worktrees/session",
+      scope: { mode: "owned" as const, paths: ["src/api"] },
+    },
+    contract,
+    policy: {
+      unfinishedTaskRetries: 2,
+      validationRetries: 3,
+      captureRepairLimit: 1,
+      instabilityLimit: 3,
+      adviceCorrectionLimit: 1,
+      invocationTimeoutMs: 600000,
+    },
+  };
+}
 
 describe("runs repository", () => {
   it("round-trips a run with its invocations, control and observed progress", async () => {
@@ -61,53 +87,37 @@ describe("runs repository", () => {
           runId: "run-1",
           kind: "workflow" as const,
           title: "Fix the notice",
+          definition: {
+            revision: 2,
+            contexts: [
+              { key: "plan", dependsOn: [], request: request("run-1.plan") },
+              {
+                key: "implement",
+                dependsOn: ["plan"],
+                request: request("run-1.implement.1"),
+              },
+            ],
+          },
           invocations: [
             {
               key: "implement",
               pass: 1,
               contextId: "run-1.implement.1",
               startCause: "run-1:start:implement:1",
-              request: {
-                contextId: "run-1.implement.1",
-                runId: "run-1",
-                ownerConversationId: "owner-1",
-                workspace: {
-                  kind: "session" as const,
-                  projectPath: "/repo",
-                  sessionName: "session",
-                  worktreePath: "/repo/.worktrees/session",
-                  scope: { mode: "owned" as const, paths: ["src/api"] },
-                },
-                contract,
-                policy: {
-                  unfinishedTaskRetries: 2,
-                  validationRetries: 3,
-                  captureRepairLimit: 1,
-                  instabilityLimit: 3,
-                  adviceCorrectionLimit: 1,
-                  invocationTimeoutMs: 600000,
-                },
-              },
+              request: request("run-1.implement.1"),
             },
           ],
-          control: { paused: true, cancelled: true },
+          control: {
+            paused: true,
+            cancelled: true,
+            fault: { detail: "The definition could not be read", at: "2026-10-03T10:04:00.000Z" },
+          },
         },
         revision: 4,
         progress: {
           kind: "needs_owner" as const,
           reasons: ["implement: question"],
         },
-        invocations: [
-          {
-            key: "implement",
-            contextId: "run-1.implement.1",
-            progress: {
-              kind: "waiting" as const,
-              obligation: { kind: "await_answer" as const, questionId: "q-1" },
-            },
-            occurrence: "run-1.implement.1:progress:3",
-          },
-        ],
         createdAt: "2026-10-03T10:00:00.000Z",
         updatedAt: "2026-10-03T10:05:00.000Z",
       }),

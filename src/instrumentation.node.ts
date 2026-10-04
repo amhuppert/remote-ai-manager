@@ -79,7 +79,7 @@ export interface StartupDeps {
    * Run paused, and reconciles owners with open intents. Optional so a test
    * that is not about Runs need not supply it.
    */
-  bootRunSupervision?(): Promise<{
+  bootSupervision?(): Promise<{
     restoredRuns: number;
     reconciledOwners: number;
   }>;
@@ -162,9 +162,9 @@ const defaultStartupDeps: StartupDeps = {
       repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
       now: () => new Date().toISOString(),
     }),
-  bootRunSupervision: async () => {
-    const { bootRunSupervision } = await import("./lib/runs/production");
-    return bootRunSupervision();
+  bootSupervision: async () => {
+    const { bootSupervision } = await import("./lib/supervision/production");
+    return bootSupervision();
   },
   recoverInterruptedSubscriptionDeliveries: async () => {
     const { recoverInterruptedSubscriptionDeliveries } =
@@ -189,8 +189,8 @@ const defaultStartupDeps: StartupDeps = {
         await import("./lib/subscriptions/active-wait-production");
       await stopActiveSubscriptionWakes();
       try {
-        const { shutdownRunSupervision } = await import("./lib/runs/production");
-        await shutdownRunSupervision();
+        const { shutdownSupervision } = await import("./lib/supervision/production");
+        await shutdownSupervision();
       } catch (error) {
         logger.error("shutdown.run_supervision_failed", { error: getErrorMessage(error) });
       }
@@ -403,7 +403,7 @@ export function createStartupRegistrar(
     // Runs restore after seat conversations rehydrate: a restored Run is paused,
     // so nothing it owns starts until someone resumes it.
     try {
-      const booted = await deps.bootRunSupervision?.();
+      const booted = await deps.bootSupervision?.();
       if (booted !== undefined && booted.restoredRuns > 0) {
         logger.info("startup.runs_restored_paused", { ...booted });
       }

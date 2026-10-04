@@ -165,7 +165,7 @@ describe("createStartupRegistrar", () => {
       startActiveSubscriptionWakes: async () => {
         calls.push("subscription-wakes");
       },
-      bootRunSupervision: async () => {
+      bootSupervision: async () => {
         calls.push("runs");
         return { restoredRuns: 0, reconciledOwners: 0 };
       },

@@ -23,6 +23,17 @@ export const runLaunchSpec = {
   flags: {},
   payload: { maxBytes: bytes(262_144), validatePath: "run launch-check" },
 } as const;
+export const runWorkflowSpec = {
+  path: "run workflow",
+  summary: "Launch a supervised workflow of several contexts in this session",
+  description:
+    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. Contexts that could run at the same time need disjoint owned write scopes, a read-only context cannot run beside any writer, and a whole-tree check of a context other writers run alongside needs a later context that depends on it and selects the same check. You own the run: its questions, halts and result arrive as run-boundary messages.",
+  requires: "cc",
+  effects: "write",
+  args: [],
+  flags: {},
+  payload: { maxBytes: bytes(1_048_576), validatePath: "run workflow-check" },
+} as const;
 export const runShowSpec = {
   path: "run show",
   summary: "Read a run's progress, contexts and boundaries",
@@ -181,6 +192,15 @@ export const runLaunchCommand = ccCommands.defineCommand(runLaunchSpec, {
   ],
   handler: async () => ({ default: (await handlers()).launchHandler }),
 });
+export const runWorkflowCommand = ccCommands.defineCommand(runWorkflowSpec, {
+  examples: [
+    {
+      file: ".cc/temp/workflow.json",
+      why: "Launch contexts that build on each other's results",
+    },
+  ],
+  handler: async () => ({ default: (await handlers()).workflowHandler }),
+});
 export const runShowCommand = ccCommands.defineCommand(runShowSpec, {
   examples: [{ why: "Read a run you launched", args: { "run-id": "run-1" } }],
   handler: async () => ({ default: (await handlers()).showHandler }),
@@ -248,6 +268,7 @@ export const contextTaskAddCommand = ccCommands.defineCommand(
 
 export const runCommands = [
   runLaunchCommand,
+  runWorkflowCommand,
   runShowCommand,
   runAnswerCommand,
   runPauseCommand,

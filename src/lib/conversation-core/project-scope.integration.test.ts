@@ -27,7 +27,6 @@ const records: ConversationRecordPort = {
       backendRef: null,
       promptCount: 0,
       transcriptPath: null,
-      queueReviewRequired: false,
       debugMode: null,
     };
   },
@@ -69,7 +68,7 @@ async function runProjectMessage() {
     factory: () => factory,
     instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
-    seed: async () => {},
+    beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),
     index: { register: () => {}, unregister: () => {} },
     log,

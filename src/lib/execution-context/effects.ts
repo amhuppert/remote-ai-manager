@@ -28,45 +28,23 @@ import {
 } from "./certification";
 import { nextProgress } from "./progress";
 import {
+  seatRefSchema,
+  type SeatAssignment,
+  type SeatRef,
+} from "@/lib/conversation-core/schemas";
+import { turnWorkspaceAccess } from "@/lib/workspace/admission";
+import {
+  turnWorkspaceSchema,
   workspaceBindingRequestSchema,
-  workspaceScopeSchema,
+  type TurnWorkspace,
 } from "@/lib/workspace/schemas";
 import {
   allowanceKindSchema,
-  seatAssignmentSchema,
   type AllowanceKind,
   type ContextFacts,
-  type SeatAssignment,
 } from "./schemas";
 
-/** The seat a conversation effect targets; the executor spawns it on first use. */
-export const seatRefSchema = z
-  .object({
-    contextId: z.string().min(1),
-    assignmentId: z.string().min(1),
-    role: z.enum(["implementer", "reviewer"]),
-    assignment: seatAssignmentSchema,
-    conversationId: z.string().min(1).nullable(),
-    replacement: z.number().int().min(0),
-    /** Whether the seat may ask its owner a question; the contract decides. */
-    canAsk: z.boolean(),
-  })
-  .strict();
-export type SeatRef = z.infer<typeof seatRefSchema>;
-
 const outputSchemaSchema = z.record(z.string(), z.unknown());
-
-/** The workspace access a seat turn needs; Conversation acquires it at admission. */
-export const seatAccessSchema = z
-  .object({
-    projectPath: z.string().min(1),
-    sessionName: z.string().min(1),
-    worktreePath: z.string().min(1),
-    access: z.enum(["write", "stable_read", "observe"]),
-    scope: workspaceScopeSchema,
-  })
-  .strict();
-export type SeatAccess = z.infer<typeof seatAccessSchema>;
 
 const adviceItemSchema = z
   .object({
@@ -83,7 +61,7 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("work"),
-      workspace: seatAccessSchema,
+      workspace: turnWorkspaceSchema,
       reason: z.enum([
         "initial",
         "retry",
@@ -104,7 +82,7 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("capture_output"),
-      workspace: seatAccessSchema,
+      workspace: turnWorkspaceSchema,
       seat: seatRefSchema,
       message: z.string().min(1),
       outputSchema: outputSchemaSchema,
@@ -114,7 +92,7 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("review"),
-      workspace: seatAccessSchema,
+      workspace: turnWorkspaceSchema,
       seat: seatRefSchema,
       roundId: z.string().min(1),
       message: z.string().min(1),
@@ -126,7 +104,7 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("advise"),
-      workspace: seatAccessSchema,
+      workspace: turnWorkspaceSchema,
       seat: seatRefSchema,
       roundId: z.string().min(1),
       message: z.string().min(1),
@@ -209,22 +187,13 @@ export function waitsOnPerson(request: ContextEffectRequest): boolean {
 
 const IMPLEMENTER = "implementer";
 
-function seatAccess(
+/** What a seat's turn may do in the Context's workspace, as Workspace rules it. */
+function seatWorkspace(
   facts: ContextFacts,
-  access: SeatAccess["access"],
-): SeatAccess {
-  const binding = facts.binding.request;
-  const effective =
-    access === "write" && binding.scope.mode === "readOnly"
-      ? "observe"
-      : access;
-  return {
-    projectPath: binding.projectPath,
-    sessionName: binding.sessionName,
-    worktreePath: binding.worktreePath,
-    access: effective,
-    scope: binding.scope,
-  };
+  need: "write" | "stable_read" | "observe",
+  role: SeatRef["role"],
+): TurnWorkspace {
+  return turnWorkspaceAccess({ binding: facts.binding.request, need, role });
 }
 
 /** Numbers a new effect so its cause is never reused, even after a withdrawal. */
@@ -246,11 +215,19 @@ function seatRef(
   role: SeatRef["role"],
   assignment: SeatAssignment,
 ): SeatRef {
+  // The ref names the seat alone; a reviewer's authority stays in the contract.
+  const { id, profile, focus, backend, modelSelection } = assignment;
   return {
     contextId,
     assignmentId,
     role,
-    assignment,
+    assignment: {
+      id,
+      profile,
+      ...(focus !== undefined ? { focus } : {}),
+      backend,
+      modelSelection,
+    },
     conversationId: facts.seats.conversations[assignmentId] ?? null,
     replacement: facts.seats.replacements[assignmentId] ?? 0,
     canAsk: facts.contract.current.ownerQuestions,
@@ -325,7 +302,7 @@ export function planEffects(input: { facts: ContextFacts }): {
             cause,
             request: {
               kind: "capture_output",
-              workspace: seatAccess(facts, "observe"),
+              workspace: seatWorkspace(facts, "observe", "implementer"),
               seat: implementerSeat(facts, contextId),
               message: composeCapture(),
               outputSchema,
@@ -387,7 +364,7 @@ export function planEffects(input: { facts: ContextFacts }): {
           cause: nextCause("review"),
           request: {
             kind: "review",
-            workspace: seatAccess(facts, "stable_read"),
+            workspace: seatWorkspace(facts, "stable_read", "reviewer"),
             seat: seatRef(
               facts,
               contextId,
@@ -430,7 +407,7 @@ export function planEffects(input: { facts: ContextFacts }): {
             cause,
             request: {
               kind: "advise",
-              workspace: seatAccess(facts, "write"),
+              workspace: seatWorkspace(facts, "write", "implementer"),
               seat: implementerSeat(facts, contextId),
               roundId,
               message: composeAdvice(advice.items),
@@ -535,7 +512,7 @@ function planWork(
           cause,
           request: {
             kind: "work",
-            workspace: seatAccess(facts, "write"),
+            workspace: seatWorkspace(facts, "write", "implementer"),
             reason,
             seat: implementerSeat(facts, contextId),
             message,
@@ -603,7 +580,7 @@ function planWork(
         cause,
         request: {
           kind: "work",
-          workspace: seatAccess(facts, "write"),
+          workspace: seatWorkspace(facts, "write", "implementer"),
           reason,
           seat: implementerSeat(facts, contextId),
           message,
@@ -638,7 +615,7 @@ function planReviewContinuation(
         cause: `${contextId}:review:${round.id}:${assignmentId}:${questionId}`,
         request: {
           kind: "review",
-          workspace: seatAccess(facts, "stable_read"),
+          workspace: seatWorkspace(facts, "stable_read", "reviewer"),
           seat: seatRef(facts, contextId, assignmentId, "reviewer", assignment),
           roundId: round.id,
           message,

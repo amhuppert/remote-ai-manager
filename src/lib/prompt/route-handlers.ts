@@ -75,7 +75,7 @@ import {
   type CoreConversationPromptDeps,
   type CoreConversationPrompts,
 } from "@/lib/conversation-core/prompt-route";
-import { adoptCoreConversationBackend, coreOwnsConversation } from "@/lib/runs/handles";
+import { adoptCoreConversationBackend, coreOwnsConversation } from "@/lib/supervision/handles";
 
 const logger = createLogger("prompt");
 
@@ -183,13 +183,12 @@ export function productionCoreConversationPrompts(
 async function productionPromptDeps(
   log: Pick<Logger, "info" | "warn">,
 ): Promise<CoreConversationPromptDeps> {
-  const { getRunSupervision } = await import("@/lib/runs/production");
-  const supervision = getRunSupervision();
+  const { getSupervision } = await import("@/lib/supervision/production");
+  const supervision = getSupervision();
   return {
     sendUserMessage: (message) => supervision.core.sendUserMessage(message),
-    isBusy: (conversationId) => supervision.core.isBusy(conversationId),
-    holdRefusal: (conversationId, turn) =>
-      supervision.holdRefusal(conversationId, turn),
+    admission: (conversationId, turn) =>
+      supervision.core.admission(conversationId, turn),
     adoptBackend: adoptCoreConversationBackend,
     clearPendingPromptText: defaultClearConversationPendingPromptTextIfMatches,
     dispatchCommand: dispatchConversationCommand,

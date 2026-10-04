@@ -12,9 +12,9 @@ import { deriveTaskRunPermissions } from "@/lib/workflows/conversation/task-run-
 import { toPromptActorResult, type TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
 import type { executeAgentCall as ExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import { QUEUE_REVIEW_REQUIRED_MESSAGE, type ConversationRecordPort } from "./conversation-record";
+import type { ConversationRecordPort } from "./conversation-record";
 import type { TaskTurn, TaskTurnPort } from "./executor";
-import { failedTurn, runRecordedTurn, turnResultOf, withCollection } from "./recorded-turn";
+import { failedTurn, recordedOutcome, recordedResult, runRecordedTurn, turnResultOf } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
 
 export interface TaskTurnDeps {
@@ -57,19 +57,6 @@ export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
         const message = `Conversation ${conversationId} no longer exists`;
         return { result: failedTurn(message), outcome: { kind: "not_started", reason: "configuration", message } };
       }
-      // The actor made such a task wait until debug mode ended, with no bound; the core refuses it at once.
-      if (row.debugMode?.active === true) {
-        deps.log.warn("conversation_core.task_refused_in_debug_mode", { conversationId });
-        const message = "Exit debug mode first";
-        return { result: failedTurn(message), outcome: { kind: "not_started", reason: "configuration", message } };
-      }
-      if (row.queueReviewRequired) {
-        deps.log.warn("conversation_core.task_held_for_queue_review", { conversationId });
-        return {
-          result: failedTurn(QUEUE_REVIEW_REQUIRED_MESSAGE),
-          outcome: { kind: "not_started", reason: "configuration", message: QUEUE_REVIEW_REQUIRED_MESSAGE },
-        };
-      }
       const backend = request.backend ?? row.agentBackend;
       try {
         await deps.admit({ backend, turn: request });
@@ -82,7 +69,7 @@ export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
       const target = targetFromStoreSessionName(projectName, enrollment.sessionName, conversationId);
       const broadcast = { projectName, storeSessionName: enrollment.sessionName };
 
-      const { outcome, uncollected } = await runRecordedTurn(deps, identity, "workflow", async () => {
+      const recorded = await runRecordedTurn(deps, identity, "workflow", async () => {
         // Locked once any turn runs under it, as the conversation actor's admission locks it.
         await deps.records.admitProfile(identity);
         const settings = await deps.resolveSettings({
@@ -151,7 +138,10 @@ export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
         };
         return stopped;
       });
-      return { result: withCollection(turnResultOf(outcome, request.outputFormat, null), uncollected), outcome };
+      return {
+        result: recordedResult(turnResultOf(recorded.outcome, request.outputFormat, null), recorded),
+        outcome: recordedOutcome(recorded),
+      };
     },
   };
 }

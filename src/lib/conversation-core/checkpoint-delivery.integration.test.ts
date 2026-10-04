@@ -19,7 +19,7 @@ import {
 } from "@/lib/conversation-checkpoints/repo";
 import type { CheckpointPhase, CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
-import { checkpointPayload } from "@/lib/runs/testing/supervision-fixture";
+import { checkpointPayload } from "@/lib/supervision/testing/supervision-fixture";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
@@ -101,7 +101,6 @@ function rowRecords(): ConversationRecordPort {
             backendRef: row.backendRef,
             promptCount: row.promptCount,
             transcriptPath: row.transcriptPath,
-            queueReviewRequired: false,
             debugMode: null,
           };
     },
@@ -159,7 +158,7 @@ function harness(options: { repo?: ConversationCheckpointsRepo } = {}) {
     factory: () => factory,
     instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
-    seed: async () => {},
+    beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),
     index: { register: () => {}, unregister: () => {} },
     log,

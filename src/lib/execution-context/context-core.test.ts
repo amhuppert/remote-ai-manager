@@ -200,7 +200,7 @@ describe("execution context acceptance chain", () => {
 
     const [work] = h.step();
     expect(work?.request).toMatchObject({
-      workspace: { access: "write", worktreePath: binding.worktreePath },
+      workspace: { grant: { kind: "full_write" }, worktreePath: binding.worktreePath },
     });
     h.task({ kind: "complete", taskId: "t1" });
     h.settle("work", workReport());
@@ -208,7 +208,7 @@ describe("execution context acceptance chain", () => {
     h.settle("freeze", frozen("ev-1"));
     expect(h.step()[0]?.request).toMatchObject({
       kind: "review",
-      workspace: { access: "stable_read" },
+      workspace: { grant: { kind: "stable_read" } },
     });
   });
 

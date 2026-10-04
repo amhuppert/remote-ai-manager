@@ -45,6 +45,41 @@ function documentsBlock(facts: ContextFacts): string | null {
     .join("\n");
 }
 
+/** Earlier accepted results this work builds on, each exactly as accepted. */
+function inputsSection(facts: ContextFacts): string | null {
+  const inputs = facts.contract.current.inputs;
+  if (inputs.length === 0) return null;
+  return section(
+    "Results this work builds on",
+    [
+      "Earlier work was accepted with these results; its changes are already in your workspace.",
+      ...inputs.map(
+        (input) =>
+          `### ${input.title} (${input.key})\n\n\`\`\`json\n${JSON.stringify(input.output, null, 2)}\n\`\`\``,
+      ),
+    ].join("\n\n"),
+  );
+}
+
+/**
+ * What a reviewer needs to judge this work alone when other work shares its
+ * workspace: the paths it may change, and the whole-tree checks that run later
+ * on the assembled tree rather than on this work.
+ */
+function sharedWorkspaceSection(facts: ContextFacts): string | null {
+  const scope = facts.binding.request.scope;
+  const deferred = facts.contract.current.deferredChecks;
+  const lines = [
+    scope.mode === "owned"
+      ? `This work may change only ${scope.paths.map((p) => `\`${p}\``).join(", ")}. Other changes in your working directory belong to work running alongside it; judge only this work's changes.`
+      : null,
+    deferred.length > 0
+      ? `${deferred.map((c) => `\`${c}\``).join(", ")} ${deferred.length === 1 ? "is" : "are"} not run for this work: whole-workspace checks run later on the assembled tree. Do not fail this work for what they would report outside its changes.`
+      : null,
+  ].filter((line): line is string => line !== null);
+  return lines.length === 0 ? null : section("Shared workspace", lines.join("\n"));
+}
+
 function tasksBlock(facts: ContextFacts, onlyOpen: boolean): string {
   const tasks = facts.ledger.tasks.filter(
     (t) => !onlyOpen || t.status === "open",
@@ -76,6 +111,9 @@ function workingRules(facts: ContextFacts): string {
     contract.outputSchema !== null
       ? "When the work is complete you will be asked for a structured result; keep it in mind as you work."
       : null,
+    contract.deferredChecks.length > 0
+      ? `${contract.deferredChecks.map((c) => `\`${c}\``).join(", ")} check the whole workspace, which other work changes alongside yours, so they run later on the assembled tree instead of on your work.`
+      : null,
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
@@ -87,6 +125,7 @@ export function composeInitialWork(facts: ContextFacts): string {
   return [
     `# ${contract.title}`,
     contract.brief,
+    inputsSection(facts),
     section("Tasks", tasksBlock(facts, false)),
     section("Acceptance criteria", criteriaBlock(facts)),
     documents !== null ? section("Documents", documents) : null,
@@ -185,6 +224,8 @@ export function composeReview(
       ? section("Your focus", input.seat.focus)
       : null,
     section("What was asked", facts.contract.current.brief),
+    inputsSection(facts),
+    sharedWorkspaceSection(facts),
     section("Acceptance criteria", criteriaBlock(facts)),
     section(
       "Result to review",

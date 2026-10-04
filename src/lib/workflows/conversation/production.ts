@@ -37,7 +37,7 @@ import {
   runCoreTask,
   retireCoreConversation,
   stopCoreConversation,
-} from "@/lib/runs/handles";
+} from "@/lib/supervision/handles";
 const logger = createLogger("conversation-actor");
 
 type ProductionActorDependencies = Omit<

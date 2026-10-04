@@ -5,6 +5,12 @@
  * writes inside their scope. In-process: one server owns every worktree.
  */
 
+import type {
+  TurnWorkspace,
+  WorkspaceBindingRequest,
+  WorkspaceScope,
+} from "./schemas";
+
 export type GrantKind =
   | "observe"
   | "interactive_write"
@@ -31,14 +37,67 @@ function scopesOverlap(
   b: string[] | undefined,
 ): boolean {
   if (a === undefined || b === undefined) return true;
-  return a.some((left) =>
-    b.some(
-      (right) =>
-        left === right ||
-        left.startsWith(`${right}/`) ||
-        right.startsWith(`${left}/`),
-    ),
+  // Folded: a case-insensitive disk gives two spellings the same files.
+  const fold = (paths: string[]) => paths.map((p) => p.toLowerCase());
+  const right = fold(b);
+  return fold(a).some((l) =>
+    right.some((r) => l === r || l.startsWith(`${r}/`) || r.startsWith(`${l}/`)),
   );
+}
+
+/**
+ * Whether two supervised bindings on one worktree overlap (design §6.1). A
+ * read-only binding's evidence and stable reads cover the whole tree, so it
+ * overlaps every writer and only other readers may share the worktree with
+ * it; a full-scope binding overlaps every other; owned scopes overlap when a
+ * path of one contains a path of the other.
+ */
+export function bindingScopesOverlap(
+  a: WorkspaceScope,
+  b: WorkspaceScope,
+): boolean {
+  if (a.mode === "readOnly" && b.mode === "readOnly") return false;
+  if (a.mode === "readOnly" || b.mode === "readOnly") return true;
+  if (a.mode === "full" || b.mode === "full") return true;
+  return scopesOverlap(a.paths, b.paths);
+}
+
+/**
+ * One supervised turn's workspace access, the only place a binding's scope,
+ * the seat's role and what the turn needs become a grant and write limits.
+ * A writing turn holds a write grant over its scope; a review holds a
+ * whole-tree stable read; a turn that only observes holds none. An
+ * implementer keeps its scope's write limits on every turn, so its runtime is
+ * never reconfigured between turns; reviewers are not confined, by decision.
+ */
+export function turnWorkspaceAccess(input: {
+  binding: WorkspaceBindingRequest;
+  need: "write" | "stable_read" | "observe";
+  role: "implementer" | "reviewer";
+}): TurnWorkspace {
+  const { binding, need, role } = input;
+  const { scope } = binding;
+  const grant: TurnWorkspace["grant"] =
+    need === "stable_read"
+      ? { kind: "stable_read" }
+      : need === "observe" || scope.mode === "readOnly"
+        ? null
+        : scope.mode === "owned"
+          ? { kind: "scoped_write", paths: scope.paths }
+          : { kind: "full_write" };
+  const writes: TurnWorkspace["writes"] =
+    role === "reviewer" || scope.mode === "full"
+      ? { mode: "all" }
+      : scope.mode === "owned"
+        ? { mode: "paths", paths: scope.paths }
+        : { mode: "none" };
+  return {
+    projectPath: binding.projectPath,
+    sessionName: binding.sessionName,
+    worktreePath: binding.worktreePath,
+    grant,
+    writes,
+  };
 }
 
 const SUPERVISED_WRITES: ReadonlySet<GrantKind> = new Set([

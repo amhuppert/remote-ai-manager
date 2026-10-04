@@ -58,9 +58,13 @@ function harness() {
     async tooling() {
       return { overrides: { portableMcp: { servers: [] } }, capabilityState: { cascades: {} } };
     },
-    async seed(hosted, composed, runtime) {
-      if (seedFailure !== null) throw seedFailure;
-      seeds.push({ conversationId: hosted.target.conversationId, composed, runtime });
+    async beginSeed(hosted) {
+      return {
+        async commit(composed, runtime) {
+          if (seedFailure !== null) throw seedFailure;
+          seeds.push({ conversationId: hosted.target.conversationId, composed, runtime });
+        },
+      };
     },
     callbacks: () => ({}),
     index: {

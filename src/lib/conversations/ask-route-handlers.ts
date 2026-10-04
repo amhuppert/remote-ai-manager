@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { getRunSupervision } from "@/lib/runs/production";
+import { getSupervision } from "@/lib/supervision/production";
 import { NextResponse } from "next/server";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
@@ -504,8 +504,8 @@ const defaultHandlers = createAskQuestionHandlers({
   registerConversationQuestion,
   resolveLaneAskPermission: userInputGateService.resolveLaneAskPermission,
   seatAsk: {
-    seatFor: (conversationId) => getRunSupervision().seatFor(conversationId),
-    open: (input) => getRunSupervision().requests.open(input),
+    seatFor: (conversationId) => getSupervision().seatFor(conversationId),
+    open: (input) => getSupervision().requests.open(input),
   },
   generateQuestionBatchId: () => `q_${randomUUID()}`,
   log,

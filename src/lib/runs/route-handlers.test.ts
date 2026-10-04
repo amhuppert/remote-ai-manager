@@ -6,20 +6,21 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createRunRouteHandlers, type RunRouteDeps } from "./route-handlers";
 import { runViewSchema } from "./schemas";
-import type { RunSupervision } from "./supervision";
+import type { Supervision } from "@/lib/supervision/supervision";
 import {
   agentStartRequest,
   createSupervisionHarness,
   done,
   quiesce,
-} from "./testing/supervision-fixture";
+} from "@/lib/supervision/testing/supervision-fixture";
 
 let fixture: PersistenceFixture;
 let h: ReturnType<typeof createSupervisionHarness>;
-let supervision: RunSupervision;
+let supervision: Supervision;
 let sessionConversations: string[];
 let routes: ReturnType<typeof createRunRouteHandlers>;
 let tokenValid: boolean;
+let seatResolutions: number;
 
 function identity(conversationId: string): Record<string, string> {
   return {
@@ -72,6 +73,7 @@ beforeEach(() => {
   supervision = h.compose();
   sessionConversations = ["owner-1", "other-1"];
   tokenValid = true;
+  seatResolutions = 0;
   let sequence = 0;
   const deps: RunRouteDeps = {
     auth: {
@@ -108,10 +110,14 @@ beforeEach(() => {
     },
     supervision: () => supervision,
     async resolveSeats({ request: launchRequest }) {
-      const seat = {
-        backend: "claude" as const,
-        modelSelection: { modelId: "sonnet", parameters: {} },
-      };
+      seatResolutions += 1;
+      if (launchRequest.backend === "cursor") {
+        return { ok: false, status: 400, error: "Cursor is not available here", code: "backend_unavailable" };
+      }
+      const seat =
+        launchRequest.backend === "codex"
+          ? { backend: "codex" as const, modelSelection: { modelId: "gpt-5.4", parameters: {} } }
+          : { backend: "claude" as const, modelSelection: { modelId: "sonnet", parameters: {} } };
       return {
         ok: true,
         seats: {
@@ -309,6 +315,208 @@ describe("run routes", () => {
     );
   });
 
+  it("launches a workflow whose dependent context starts from its dependency's accepted result", async () => {
+    const response = await routes.launchWorkflow(
+      request(
+        {
+          title: "API then docs",
+          contexts: [
+            { key: "api", brief: "Build the API", scope: { mode: "owned", paths: ["src/api"] } },
+            { key: "docs", brief: "Document the API", dependsOn: ["api"] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(response.status).toBe(202);
+    expect(await json(response)).toMatchObject({
+      runId: "run-1",
+      contextIds: ["run-1.api", "run-1.docs"],
+    });
+    await quiesce(supervision);
+
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(runViewSchema.safeParse(view).success).toBe(true);
+    expect(view).toMatchObject({
+      kind: "workflow",
+      title: "API then docs",
+      progress: { kind: "succeeded" },
+      contexts: [
+        { key: "api", dependsOn: [], output: { summary: "Done." } },
+        { key: "docs", dependsOn: ["api"], output: { summary: "Done." } },
+      ],
+    });
+    expect(
+      supervision.contexts.observe("run-1.docs")?.record.facts.contract.current.inputs,
+    ).toEqual([{ key: "api", title: "Build the API", output: { summary: "Done." } }]);
+  });
+
+  it("freezes each context's own resolved seat, and names the context whose seat cannot be resolved", async () => {
+    h.script = () => new Promise(() => {});
+    const launched = await routes.launchWorkflow(
+      request(
+        {
+          title: "Mixed backends",
+          contexts: [
+            { key: "api", brief: "Build the API", backend: "codex", scope: { mode: "owned", paths: ["src/api"] } },
+            { key: "ui", brief: "Build the UI", scope: { mode: "owned", paths: ["src/ui"] } },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(launched.status).toBe(202);
+    const definition = supervision.runs.observe("run-1")?.record.facts.definition.contexts;
+    expect(definition?.map((c) => [c.key, c.request.contract.implementer.backend])).toEqual([
+      ["api", "codex"],
+      ["ui", "claude"],
+    ]);
+
+    const refused = await routes.launchWorkflow(
+      request(
+        {
+          title: "Unavailable backend",
+          contexts: [
+            { key: "api", brief: "Build the API" },
+            { key: "docs", brief: "Document it", backend: "cursor", dependsOn: ["api"] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(refused.status).toBe(400);
+    expect(await json(refused)).toMatchObject({
+      code: "backend_unavailable",
+      context: "docs",
+      error: expect.stringContaining('"docs"'),
+    });
+  });
+
+  it("refuses an invalid topology before resolving any seat", async () => {
+    const response = await routes.launchWorkflow(
+      request(
+        {
+          title: "Cycle with an unavailable seat",
+          contexts: [
+            { key: "a", brief: "A", backend: "cursor", dependsOn: ["b"], scope: { mode: "readOnly" } },
+            { key: "b", brief: "B", dependsOn: ["a"], scope: { mode: "readOnly" } },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toMatchObject({ issues: [{ path: "contexts.1.dependsOn" }] });
+    expect(seatResolutions).toBe(0);
+  });
+
+  it("refuses a workflow launch from a supervised seat", async () => {
+    await launch();
+    const response = await routes.launchWorkflow(
+      request({ title: "Nested", contexts: [{ key: "a", brief: "Nested work" }] }, identity("conv-1")),
+      params(),
+    );
+    expect(response.status).toBe(403);
+    expect(await json(response)).toMatchObject({ code: "seat_cannot_launch" });
+  });
+
+  it("reports only the dependencies a waiting context still waits on", async () => {
+    h.script = async (input) =>
+      input.request.message.startsWith("# Slow") ? new Promise(() => {}) : done("Done.");
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Fan in",
+          contexts: [
+            { key: "api", title: "API", brief: "Build the API", scope: { mode: "owned", paths: ["src/api"] } },
+            { key: "slow", title: "Slow", brief: "Take a while", scope: { mode: "owned", paths: ["src/slow"] } },
+            { key: "docs", brief: "Document both", dependsOn: ["api", "slow"] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision, false);
+
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(view.contexts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "api", progress: expect.objectContaining({ kind: "succeeded" }) }),
+        expect.objectContaining({ key: "docs", started: false, waitingOn: ["slow"] }),
+      ]),
+    );
+  });
+
+  it("shows contexts that have not started yet with what they wait on", async () => {
+    h.script = () => new Promise(() => {});
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "API then docs",
+          contexts: [
+            { key: "api", brief: "Build the API" },
+            { key: "docs", brief: "Document the API", dependsOn: ["api"] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision, false);
+
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(runViewSchema.safeParse(view).success).toBe(true);
+    expect(view.contexts).toEqual([
+      expect.objectContaining({ key: "api", contextId: "run-1.api", started: true }),
+      expect.objectContaining({
+        key: "docs",
+        contextId: "run-1.docs",
+        started: false,
+        progress: null,
+        dependsOn: ["api"],
+        waitingOn: ["api"],
+      }),
+    ]);
+  });
+
+  it("refuses an invalid workflow definition with every located problem, launching nothing", async () => {
+    const response = await routes.launchWorkflow(
+      request(
+        {
+          title: "Overlap",
+          contexts: [
+            { key: "a", brief: "A" },
+            { key: "b", brief: "B", dependsOn: ["ghost"] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toMatchObject({
+      issues: [{ path: "contexts.1.dependsOn.0" }],
+    });
+    expect(supervision.runs.observe("run-1")).toBeNull();
+
+    const seat = await routes.launchWorkflow(
+      request({ title: "Nested", contexts: [{ key: "a", brief: "A", humanApproval: true }] }, identity("owner-1")),
+      params(),
+    );
+    expect(await json(seat)).toMatchObject({ code: "human_approval_unavailable" });
+  });
+
   it("refuses human approval at agent launch until a person can decide it", async () => {
     const response = await routes.launch(
       request({ brief: "x", humanApproval: true }, identity("owner-1")),
@@ -329,9 +537,10 @@ describe("run routes", () => {
       projectPath: "/repo",
       sessionName: "session",
       owner: { conversationId: "owner-1", sessionName: "session" },
-      invocations: [
+      contexts: [
         {
           key: "agent",
+          dependsOn: [],
           request: agentStartRequest("run-9", { humanApproval: true }),
         },
       ],

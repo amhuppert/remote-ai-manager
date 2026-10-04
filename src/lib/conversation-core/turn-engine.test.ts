@@ -38,7 +38,7 @@ function engineWith(
     factory: () => factory,
     instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
     tooling: async () => tooling,
-    seed: async () => {},
+    beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),
     index: { register: () => {}, unregister: () => {} },
     log: silent,

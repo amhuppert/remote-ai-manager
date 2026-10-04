@@ -376,6 +376,137 @@ describe("execution context host", () => {
     expect(released).toEqual(["ctx-1"]);
   });
 
+  it("describes a context by its state rather than its records: activity, halt dispositions and the accepted result", async () => {
+    const host = newHost();
+    const work = await startContext(host);
+    expect(host.describe("ctx-1")).toMatchObject({ active: false, accepted: null, title: "Fix the notice" });
+
+    conversation.admit(work.cause);
+    expect(host.describe("ctx-1")).toMatchObject({ active: true, progress: { kind: "running" } });
+
+    conversation.settle(work.cause, workReport({ status: "failed", failure: "provider error" }));
+    await host.reconcile("ctx-1");
+    const halted = host.describe("ctx-1");
+    expect(halted).toMatchObject({ active: false, progress: { kind: "halted", halt: "turn_failed" } });
+    expect(halted?.dispositions).toContain("continue");
+    expect(halted?.tasks).toEqual([{ id: "t1", title: "Fix it", status: "open" }]);
+
+    host.resume("ctx-1", halted?.revision ?? 0, { occurrence: halted?.occurrence ?? "", disposition: { kind: "continue" } });
+    await host.reconcile("ctx-1");
+    const retry = conversation.submitted().find((i) => i.cause !== work.cause);
+    if (retry === undefined) throw new Error("no continued work");
+    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    conversation.settle(retry.cause, workReport({ finalText: "Fixed." }));
+    await host.reconcile("ctx-1");
+    for (const kind of ["freeze", "accept"]) {
+      const op = workspace.submitted().find((i) => (i.request as { kind: string }).kind === kind);
+      if (op === undefined) throw new Error(`no ${kind}`);
+      workspace.settle(op.cause, kind === "freeze" ? { kind: "frozen", evidence: "git:a:a" } : { kind: "accepted", receipt: "snapshot:git:a:a" });
+      await host.reconcile("ctx-1");
+    }
+    expect(host.describe("ctx-1")).toMatchObject({
+      progress: { kind: "succeeded" },
+      accepted: { output: { summary: "Fixed." } },
+      dispositions: [],
+      lastSummary: "Fixed.",
+    });
+  });
+
+  it("does not count a question waiting on its owner as admitted activity", async () => {
+    const host = newHost();
+    const work = await startContext(host);
+    conversation.settle(work.cause, workReport({ openQuestionId: "q-1" }));
+    await host.reconcile("ctx-1");
+    const answer = requests.submitted()[0];
+    if (answer === undefined) throw new Error("no answer request");
+    expect(requests.admit(answer.cause)).toBe(true);
+
+    expect(host.describe("ctx-1")).toMatchObject({
+      progress: { kind: "waiting", obligation: { kind: "await_answer" } },
+      active: false,
+    });
+  });
+
+  it("tells its Run whenever it consumes an outcome, even one that leaves its progress as it was", async () => {
+    const host = newHost();
+    const reviewed = contextContractSchema.parse({
+      ...contract,
+      reviewers: [
+        { id: "reviewer-a", authority: "blocking", ...seat },
+        { id: "reviewer-b", authority: "blocking", ...seat },
+      ],
+    });
+    const request = startIntent.request as Record<string, unknown>;
+    await host.submit({ ...startIntent, request: { ...request, contract: reviewed } });
+    await host.reconcile("ctx-1");
+    const [bind] = workspace.submitted();
+    if (bind === undefined) throw new Error("no bind");
+    workspace.settle(bind.cause, { kind: "bound" });
+    await host.reconcile("ctx-1");
+    const [work] = conversation.submitted();
+    if (work === undefined) throw new Error("no work order");
+    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    conversation.settle(work.cause, workReport());
+    await host.reconcile("ctx-1");
+    const freeze = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "freeze");
+    if (freeze === undefined) throw new Error("no freeze");
+    workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:a:a" });
+    await host.reconcile("ctx-1");
+    const reviewA = conversation.submitted().find(
+      (i) => (i.request as { kind: string; seat?: { assignmentId: string } }).seat?.assignmentId === "reviewer-a",
+    );
+    if (reviewA === undefined) throw new Error("no review by reviewer-a");
+    const occurrence = host.describe("ctx-1")?.occurrence;
+
+    touchedRuns.length = 0;
+    conversation.settle(reviewA.cause, workReport({ structuredOutput: { verdict: "pass", findings: [], advisories: [] } }));
+    await host.reconcile("ctx-1");
+
+    expect(host.describe("ctx-1")?.occurrence).toBe(occurrence);
+    expect(touchedRuns).toEqual(["run-1"]);
+  });
+
+  it("asks a reviewer seat for its review once the candidate is frozen", async () => {
+    const host = newHost();
+    const reviewed = contextContractSchema.parse({
+      ...contract,
+      reviewers: [{ id: "reviewer-a", authority: "blocking", ...seat }],
+    });
+    const request = startIntent.request as Record<string, unknown>;
+    await host.submit({ ...startIntent, request: { ...request, contract: reviewed } });
+    await host.reconcile("ctx-1");
+    const [bind] = workspace.submitted();
+    if (bind === undefined) throw new Error("no bind");
+    workspace.settle(bind.cause, { kind: "bound" });
+    await host.reconcile("ctx-1");
+    const [work] = conversation.submitted();
+    if (work === undefined) throw new Error("no work order");
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
+    conversation.settle(work.cause, workReport());
+    await host.reconcile("ctx-1");
+    const freeze = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "freeze");
+    if (freeze === undefined) throw new Error("no freeze");
+    workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:a:a" });
+    await host.reconcile("ctx-1");
+
+    expect(host.observe("ctx-1")?.record.progress).toMatchObject({
+      kind: "running",
+      obligation: { kind: "certify" },
+    });
+    const review = conversation
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "review");
+    expect(review?.request).toMatchObject({
+      seat: { assignmentId: "reviewer-a", role: "reviewer" },
+    });
+  });
+
   it("requires a disposition naming the current occurrence to resume a halted context", async () => {
     const host = newHost();
     const work = await startContext(host);

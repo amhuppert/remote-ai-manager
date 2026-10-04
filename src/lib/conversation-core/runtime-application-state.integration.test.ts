@@ -49,7 +49,6 @@ const records: ConversationRecordPort = {
       backendRef: null,
       promptCount: 0,
       transcriptPath: null,
-      queueReviewRequired: false,
       debugMode: null,
     };
   },
@@ -111,7 +110,7 @@ async function compose() {
         },
       ]),
     }),
-    seed: applicationState.seed,
+    beginSeed: applicationState.beginSeed,
     callbacks: () => ({}),
     index: { register: () => {}, unregister: () => {} },
     log,
@@ -160,11 +159,12 @@ async function runSeatTurn(): Promise<unknown> {
         projectPath: PROJECT,
         sessionName: SESSION,
         worktreePath: WORKTREE,
-        access: "write",
-        scope: { mode: "full" },
+        grant: { kind: "full_write" },
+        writes: { mode: "all" },
       },
       seat: {
         contextId: "ctx-1",
+        conversationId: null,
         assignmentId: "implementer",
         role: "implementer",
         assignment: {

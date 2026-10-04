@@ -4,13 +4,40 @@ import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
 import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import { ownerRefSchema } from "@/lib/intents/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
-import { workspaceScopeSchema } from "@/lib/workspace/schemas";
+import { turnWorkspaceSchema } from "@/lib/workspace/schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import {
   documentFeedbackPayloadSchema,
   notepadFeedbackPayloadSchema,
 } from "@/lib/conversations/message-content-schemas";
 import { queuedDeliveryMetadataSchema } from "@/lib/workflows/conversation/turn-spec";
+
+/** Who works a seat: its profile, focus, backend and model. One shape for contracts and turn requests. */
+export const seatAssignmentSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    profile: agentProfileRefSchema,
+    focus: z.string().trim().min(1).optional(),
+    backend: agentBackendSchema,
+    modelSelection: backendModelSelectionSchema,
+  })
+  .strict();
+export type SeatAssignment = z.infer<typeof seatAssignmentSchema>;
+
+/** The seat a turn is for: its Context, assignment and incarnation; the executor spawns its conversation on first use. */
+export const seatRefSchema = z
+  .object({
+    contextId: z.string().min(1),
+    assignmentId: z.string().min(1),
+    role: z.enum(["implementer", "reviewer"]),
+    assignment: seatAssignmentSchema,
+    conversationId: z.string().min(1).nullable(),
+    replacement: z.number().int().min(0),
+    /** Whether the seat may ask its owner a question. */
+    canAsk: z.boolean(),
+  })
+  .strict();
+export type SeatRef = z.infer<typeof seatRefSchema>;
 
 /**
  * A turn a supervisor asks a seat conversation to take. Requesters may carry
@@ -19,33 +46,8 @@ import { queuedDeliveryMetadataSchema } from "@/lib/workflows/conversation/turn-
 export const seatTurnRequestSchema = z
   .object({
     kind: z.enum(["work", "capture_output", "review", "advise"]),
-    workspace: z
-      .object({
-        projectPath: z.string().min(1),
-        sessionName: z.string().min(1),
-        worktreePath: z.string().min(1),
-        access: z.enum(["write", "stable_read", "observe"]),
-        scope: workspaceScopeSchema,
-      })
-      .passthrough(),
-    seat: z
-      .object({
-        contextId: z.string().min(1),
-        assignmentId: z.string().min(1),
-        role: z.enum(["implementer", "reviewer"]),
-        assignment: z
-          .object({
-            id: z.string().min(1),
-            profile: agentProfileRefSchema,
-            focus: z.string().optional(),
-            backend: agentBackendSchema,
-            modelSelection: backendModelSelectionSchema,
-          })
-          .passthrough(),
-        replacement: z.number().int().min(0),
-        canAsk: z.boolean(),
-      })
-      .passthrough(),
+    workspace: turnWorkspaceSchema,
+    seat: seatRefSchema,
     message: z.string().min(1),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
     timeoutMs: z.number().int().min(0).nullable(),

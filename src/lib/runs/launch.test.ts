@@ -42,8 +42,8 @@ describe("agent launch resolver", () => {
       title: "Fix the duplicate completion notice.",
       owner: { conversationId: "owner-1", sessionName: "session" },
     });
-    expect(launch.invocations).toHaveLength(1);
-    const request = launch.invocations[0]?.request;
+    expect(launch.contexts).toHaveLength(1);
+    const request = launch.contexts[0]?.request;
     expect(request?.workspace).toEqual({
       kind: "session",
       projectPath: "/repo",
@@ -88,7 +88,7 @@ describe("agent launch resolver", () => {
       },
       [gpt],
     );
-    const request = launch.invocations[0]?.request;
+    const request = launch.contexts[0]?.request;
 
     expect(launch.title).toBe("Endpoint");
     expect(request?.contract.tasks).toEqual([

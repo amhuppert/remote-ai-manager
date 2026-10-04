@@ -25,8 +25,8 @@ import {
   type ContextStartRequest,
 } from "@/lib/execution-context/schemas";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import type { RunBoundary } from "../schemas";
-import { composeRunSupervision, type RunSupervision } from "../supervision";
+import type { RunBoundary } from "@/lib/runs/schemas";
+import { composeSupervision, type Supervision } from "../supervision";
 
 const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
@@ -70,7 +70,7 @@ export const done = (finalText: string): CoreTurnResult => ({
 
 export type TurnScript = (
   input: Parameters<SeatTurnPort["run"]>[0],
-  supervision: RunSupervision,
+  supervision: Supervision,
 ) => Promise<CoreTurnResult>;
 
 export function agentStartRequest(
@@ -133,6 +133,8 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     /** An enrolled conversation's turn, after its text is recorded. */
     userTurn: (async () => done("Hello.")) as (input: Parameters<UserTurnPort["run"]>[0]) => Promise<CoreTurnResult>,
     conversations: 0,
+    /** Every acceptance check run, in order, with the binding it ran for. */
+    checksRun: [] as Array<{ bindingId: string; command: string }>,
     /** Checkpoints of enrolled conversations: the real repository over the fixture, the rest faked. */
     checkpoint: {
       /** The archive every enrolled conversation reads. */
@@ -151,9 +153,9 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
       confirmed: [] as string[],
       repo: createConversationCheckpointsRepo(fixture.db, createWriteQueue(), fixture.store.checkpointContinuation),
     },
-    compose(): RunSupervision {
-      let self: RunSupervision | null = null;
-      const supervision = composeRunSupervision({
+    compose(): Supervision {
+      let self: Supervision | null = null;
+      const supervision = composeSupervision({
         db: fixture.db,
         seatTurns: {
           async run(input) {
@@ -274,7 +276,13 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           sameContent: (a, b) => a === b,
           changedPaths: async () => [],
         },
-        runCheck: async () => ({ status: "passed" }),
+        async runCheck(input) {
+          harness.checksRun.push({
+            bindingId: input.bindingId,
+            command: input.command,
+          });
+          return { status: "passed" };
+        },
         async notifyOwner({ boundary }) {
           harness.notified.push(boundary);
         },
@@ -290,7 +298,7 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
 
 /** Lets every reconcile, turn and workspace operation run; `turnsSettle: false` skips waiting on turns. */
 export async function quiesce(
-  s: RunSupervision,
+  s: Supervision,
   turnsSettle = true,
 ): Promise<void> {
   for (let i = 0; i < 30; i += 1) {

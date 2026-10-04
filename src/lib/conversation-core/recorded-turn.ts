@@ -26,6 +26,8 @@ export interface RecordedTurn {
   outcome: TurnExecutionOutcome;
   /** Why the runtime could not be closed, when it could not: its processes may still act. */
   uncollected: string | null;
+  /** Why the conversation row could not be settled, when it could not. */
+  unsettled: string | null;
   /** The debug workflow's reading of the turn, once settled; null outside debug mode or when the row could not settle. */
   debug: DebugFinalization | null;
 }
@@ -49,6 +51,7 @@ export async function runRecordedTurn(
     message: "The turn did not run",
   };
   let uncollected: string | null = null;
+  let unsettled: string | null = null;
   let debug: DebugFinalization | null = null;
   try {
     outcome = await run();
@@ -65,16 +68,50 @@ export async function runRecordedTurn(
       (settled) => {
         debug = settled.debug;
       },
-      (error: unknown) =>
-        deps.log.error("conversation_core.row_settle_failed", { conversationId, error: getErrorMessage(error) }),
+      (error: unknown) => {
+        unsettled = getErrorMessage(error);
+        deps.log.error("conversation_core.row_settle_failed", { conversationId, error: unsettled });
+      },
     );
   }
-  return { outcome, uncollected, debug };
+  return { outcome, uncollected, unsettled, debug };
 }
 
-/** A turn whose runtime could not be closed says so, so its holder keeps what it holds. */
-export function withCollection(result: CoreTurnResult, uncollected: string | null): CoreTurnResult {
-  return uncollected === null ? result : { ...result, runtimeUncollected: uncollected };
+/**
+ * The turn's outcome as its caller should read it: a turn whose conversation
+ * row could not be settled failed in persistence, keeping what it produced.
+ */
+export function recordedOutcome(recorded: Pick<RecordedTurn, "outcome" | "unsettled">): TurnExecutionOutcome {
+  const { outcome, unsettled } = recorded;
+  if (unsettled === null) return outcome;
+  const result =
+    outcome.kind === "call_result" || outcome.kind === "settlement_failed" ? outcome.result : null;
+  return {
+    kind: "settlement_failed",
+    code: "persistence",
+    message: `The conversation record could not be settled: ${unsettled}`,
+    result,
+  };
+}
+
+/**
+ * The turn's result as its recorder settles it: a turn whose conversation row
+ * could not be settled failed, whatever it produced, and a runtime that could
+ * not be closed is reported so its holder keeps what it holds.
+ */
+export function recordedResult(
+  result: CoreTurnResult,
+  recorded: Pick<RecordedTurn, "uncollected" | "unsettled">,
+): CoreTurnResult {
+  const settled =
+    recorded.unsettled === null
+      ? result
+      : {
+          ...result,
+          ...failedTurn(`The conversation record could not be settled: ${recorded.unsettled}`),
+          finalText: result.finalText,
+        };
+  return recorded.uncollected === null ? settled : { ...settled, runtimeUncollected: recorded.uncollected };
 }
 
 export const failedTurn = (failure: string): CoreTurnResult => ({

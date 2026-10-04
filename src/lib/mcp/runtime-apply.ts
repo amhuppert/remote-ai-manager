@@ -530,9 +530,20 @@ export async function seedMcpRuntimeState(
   identity: McpRuntimeIdentity,
   portableMcp: PortableMcpConfig,
   delivery: ConversationBackendRuntime["mcpConfigDelivery"],
+  /**
+   * The pending hash read before the runtime's configuration was composed.
+   * A different one now is a save that landed during creation: newer than
+   * what the runtime was created with, so it stays pending.
+   */
+  composedOver?: { pendingConfigHash: string | undefined },
 ): Promise<void> {
   const hash = computeEffectiveConfigHash(portableMcp);
   await applicationState.update(identity, "prompt.seedMcpRuntime", (state) => {
+    if (
+      composedOver !== undefined &&
+      state?.pendingConfigHash !== composedOver.pendingConfigHash
+    )
+      return state ?? {};
     if (delivery === "input-accepted")
       return {
         ...state,

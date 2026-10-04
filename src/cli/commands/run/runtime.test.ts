@@ -16,6 +16,9 @@ const view = {
     {
       key: "agent",
       contextId: "run-1.agent",
+      dependsOn: [],
+      waitingOn: [],
+      started: true,
       progress: {
         kind: "halted",
         halt: "turn_failed",
@@ -85,6 +88,125 @@ describe("run commands", () => {
       payload: { data: { runId: "run-1" } },
     });
     expect(output.hint).toContain("cctl run show -- run-1");
+  });
+
+  it("launches a workflow definition to the workflow endpoint", async () => {
+    const definition = {
+      title: "API then docs",
+      contexts: [
+        { key: "api", brief: "Build the API" },
+        { key: "docs", brief: "Document it", dependsOn: ["api"] },
+      ],
+    };
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      files: { "/workflow.json": JSON.stringify(definition) },
+      respond: () =>
+        jsonReply(
+          {
+            runId: "run-1",
+            contextIds: ["run-1.api", "run-1.docs"],
+            progress: { kind: "running" },
+          },
+          202,
+        ),
+    });
+    const result = await fixture.run(["run", "workflow", "--file", "/workflow.json"]);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const request = fixture.requests[0];
+    expect(request?.url).toBe(
+      "http://cc.test/api/projects/project-one/sessions/session-one/runs/workflow",
+    );
+    expect(bodyOf(request?.init ?? {})).toEqual(definition);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      effect: "applied",
+      payload: { data: { runId: "run-1" } },
+    });
+  });
+
+  it("checks a workflow's topology locally, refusing a cycle at its location without sending anything", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      files: {
+        "/workflow.json": JSON.stringify({
+          title: "Cycle",
+          contexts: [
+            { key: "a", brief: "A", dependsOn: ["b"], scope: { mode: "readOnly" } },
+            { key: "b", brief: "B", dependsOn: ["a"], scope: { mode: "readOnly" } },
+          ],
+        }),
+      },
+      respond: () => jsonReply({}),
+    });
+    const result = await fixture.run(["run", "workflow-check", "--file", "/workflow.json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("Dependency cycle: a → b → a");
+    expect(fixture.requests).toEqual([]);
+  });
+
+  it("shows a context that has not started with what it waits on", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () =>
+        jsonReply({
+          ...view,
+          kind: "workflow",
+          contexts: [
+            ...view.contexts,
+            {
+              key: "docs",
+              contextId: "run-1.docs",
+              dependsOn: ["agent", "schema"],
+              waitingOn: ["agent"],
+              started: false,
+              progress: null,
+              occurrence: null,
+              tasks: [],
+              seats: {},
+              openQuestions: [],
+              lastSummary: null,
+              output: null,
+            },
+          ],
+        }),
+    });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("- docs [run-1.docs]: not started, waits on agent");
+  });
+
+  it("names the run's own state, not finished dependencies, for a context that will not start yet", async () => {
+    const docs = {
+      key: "docs",
+      contextId: "run-1.docs",
+      dependsOn: ["agent"],
+      waitingOn: [],
+      started: false,
+      progress: null,
+      occurrence: null,
+      tasks: [],
+      seats: {},
+      openQuestions: [],
+      lastSummary: null,
+      output: null,
+    };
+    for (const started of [false, true]) {
+      for (const [progress, expected] of [
+        [{ kind: "paused", draining: false }, "not started (run paused)"],
+        [{ kind: "cancelled" }, "not started (run cancelled)"],
+      ] as const) {
+        // started: a start the run recorded that no context took up before the pause or cancel.
+        const fixture = createCcRuntimeFixture({
+          env: identityEnv,
+          respond: () => jsonReply({ ...view, kind: "workflow", progress, contexts: [{ ...docs, started }] }),
+        });
+        const result = await fixture.run(["run", "show", "run-1"], "text");
+        expect(result.stdout).toContain(`- docs [run-1.docs]: ${expected}`);
+      }
+    }
   });
 
   it("refuses an unknown launch option before sending anything", async () => {

@@ -42,6 +42,8 @@ describe("execution contexts repository", () => {
         },
       ],
       checks: ["typecheck"],
+      deferredChecks: ["test"],
+      inputs: [{ key: "api", title: "Build the API", output: { endpoint: "/v1/x" } }],
       humanApproval: true,
       ownerQuestions: true,
       documents: [

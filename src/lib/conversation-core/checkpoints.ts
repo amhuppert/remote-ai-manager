@@ -935,8 +935,9 @@ export function createCoreCheckpoints(deps: CoreCheckpointDeps): CoreCheckpoints
       remember(conversationId, activePhase(active));
       if (active === null) return null;
       if (active.phase === "ready") {
-        // Only the person's next message delivers it; a task or a collaboration's claim would run without it.
-        return turn === "message"
+        // Only the next ordinary turn (a message, or a delivery from the queue) delivers it; a task,
+        // a command or a collaboration's claim would run without it.
+        return turn === "message" || turn === "delivery"
           ? null
           : { code: "busy", message: "A ready checkpoint is delivered by the next ordinary conversation turn" };
       }

@@ -12,6 +12,7 @@ import {
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
 import { ProjectCollaborationUnsupportedError } from "@/lib/project-conversations/collaboration-refusal";
+import { conversationHoldRefusal } from "./conversation-record";
 import { admitCoreCollaboration, promptCoreConversation, type CoreConversationPromptDeps } from "./prompt-route";
 import type { SeatTurnReport } from "./schemas";
 
@@ -51,11 +52,13 @@ function harness(answer: (sent: Sent) => UserMessageAdmission) {
   let busy = false;
   let durableHold: { code: "busy" | "owned"; message: string } | null = null;
   const holdsAsked: string[] = [];
+  let current = makeConversationState({ agentBackend: "claude" });
   const deps: CoreConversationPromptDeps = {
-    isBusy: () => busy,
-    async holdRefusal(_conversationId, turn) {
+    // The core's admission over the conversation under test: its running turn, its row, its other holds.
+    async admission(_conversationId, turn) {
       holdsAsked.push(turn);
-      return durableHold;
+      if (busy && turn !== "task") return { code: "busy", message: "Conversation is busy — a turn is already running" };
+      return conversationHoldRefusal(current, turn) ?? durableHold;
     },
     async adoptBackend(_identity, backend) {
       adopted.push(backend);
@@ -81,13 +84,15 @@ function harness(answer: (sent: Sent) => UserMessageAdmission) {
     body: unknown,
     conversation = makeConversationState({ agentBackend: "claude" }),
     target: ConversationTarget = sessionTarget,
-  ) =>
-    promptCoreConversation(deps, {
+  ) => {
+    current = conversation;
+    return promptCoreConversation(deps, {
       projectPath: "/repo",
       target,
       conversation,
       body: runPromptRequestSchema.parse(body),
     });
+  };
   return {
     deps,
     prompt,
@@ -175,33 +180,17 @@ describe("prompting a conversation the core runs", () => {
     expect(h.cleared).toEqual([]);
   });
 
-  it("holds new input while a queued delivery awaits review, but not for a subscription wake", async () => {
-    const h = harness(() => ({ kind: "accepted", cause: "c", settled: Promise.resolve(report()) }));
-    const queued = (kind: "user" | "subscription_update") => ({
-      id: "q-1",
-      content: [{ type: "text" as const, text: "Earlier" }],
-      status: "uncertain" as const,
-      enqueuedAt: "2026-10-03T10:00:00.000Z",
-      updatedAt: "2026-10-03T10:00:00.000Z",
-      deliveryStartedAt: "2026-10-03T10:00:01.000Z",
-      deliveredAt: null,
-      cancelledAt: null,
-      failedAt: null,
-      deliveryAttemptId: "att-1",
-      attemptCount: 1,
-      error: null,
-      ...(kind === "subscription_update" ? { metadata: { kind, batchId: "b-1" } } : {}),
-    });
-
-    const held = await h.prompt({ prompt: "Hello" }, makeConversationState({ pendingQueue: [queued("user")] }));
-    expect(held.status).toBe(409);
-    expect(await held.json()).toMatchObject({ code: "QUEUE_REVIEW_REQUIRED" });
-    expect(h.sent).toEqual([]);
-    expect(h.cleared).toEqual([]);
-
-    const wake = await h.prompt({ prompt: "Hello" }, makeConversationState({ pendingQueue: [queued("subscription_update")] }));
-    expect(wake.status).toBe(200);
-    expect(h.sent).toHaveLength(1);
+  it("answers each admission refusal with its own code, before clearing the draft", async () => {
+    for (const [code, expected] of [
+      ["queue_review", "QUEUE_REVIEW_REQUIRED"],
+      ["debug_mode", "DEBUG_MODE_ACTIVE"],
+      ["stopping", "SERVER_STOPPING"],
+    ] as const) {
+      const h = harness(() => ({ kind: "refused", code, message: "Held" }));
+      const response = await h.prompt({ prompt: "Hello" });
+      expect(await response.json()).toMatchObject({ code: expected, error: "Held" });
+      expect(h.cleared).toEqual([]);
+    }
   });
 
   it("refuses a seat conversation, which takes work only from its run", async () => {
@@ -352,13 +341,13 @@ describe("prompting a conversation the core runs", () => {
       expect(h.commands).toEqual([]);
     });
 
-    it("is held by a durable hold the core keeps, as a task would be", async () => {
+    it("is held by a durable hold the core keeps", async () => {
       const h = harness(() => ({ kind: "accepted", cause: "c", settled: new Promise(() => {}) }));
       h.setDurableHold({ code: "busy", message: "Conversation checkpoint maintenance is in progress" });
       const response = await h.prompt({ prompt: "/rebase" });
       expect(response.status).toBe(409);
       expect(await response.json()).toMatchObject({ code: "CONVERSATION_BUSY", error: "Conversation checkpoint maintenance is in progress" });
-      expect(h.holdsAsked).toEqual(["task"]);
+      expect(h.holdsAsked).toEqual(["command"]);
       expect(h.commands).toEqual([]);
     });
 

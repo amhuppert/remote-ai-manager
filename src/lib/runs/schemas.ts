@@ -18,26 +18,49 @@ export const runInvocationSchema = z
   .strict();
 export type RunInvocation = z.infer<typeof runInvocationSchema>;
 
+/** One context the run's definition may start, frozen at launch. */
+export const runDefinitionContextSchema = z
+  .object({
+    key: z.string().min(1),
+    /** Keys whose accepted results this context needs before it starts. */
+    dependsOn: z.array(z.string().min(1)),
+    /** The resolved request; its inputs are bound from the dependencies at start. */
+    request: contextStartRequestSchema,
+  })
+  .strict();
+export type RunDefinitionContext = z.infer<typeof runDefinitionContextSchema>;
+
 export const runFactsSchema = z
   .object({
     runId: z.string().min(1),
     kind: z.enum(["agent", "workflow"]),
     title: z.string().min(1),
+    definition: z
+      .object({
+        revision: z.number().int().min(1),
+        contexts: z.array(runDefinitionContextSchema).min(1),
+      })
+      .strict(),
+    /** The contexts started so far, in start order. */
     invocations: z.array(runInvocationSchema),
-    control: z.object({ paused: z.boolean(), cancelled: z.boolean() }).strict(),
+    control: z
+      .object({
+        paused: z.boolean(),
+        cancelled: z.boolean(),
+        /**
+         * The Run itself could not be reconciled: its permit stays closed and
+         * nothing new starts until the owner resumes it.
+         */
+        fault: z
+          .object({ detail: z.string().min(1), at: z.string().min(1) })
+          .strict()
+          .nullable()
+          .default(null),
+      })
+      .strict(),
   })
   .strict();
 export type RunFacts = z.infer<typeof runFactsSchema>;
-
-/** One invocation as the Run last observed it. */
-export const invocationViewSchema = z
-  .object({
-    key: z.string(),
-    contextId: z.string(),
-    progress: contextProgressSchema.nullable(),
-    occurrence: z.string().nullable(),
-  })
-  .strict();
 
 export const runProgressSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("running") }).strict(),
@@ -64,7 +87,6 @@ export const runRecordSchema = z
     facts: runFactsSchema,
     revision: z.number().int().min(1),
     progress: runProgressSchema,
-    invocations: z.array(invocationViewSchema),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
@@ -143,6 +165,12 @@ export const runViewSchema = z
         .object({
           key: z.string(),
           contextId: z.string(),
+          /** Keys whose accepted results this context needs before it starts. */
+          dependsOn: z.array(z.string()),
+          /** Dependencies that have not succeeded yet. */
+          waitingOn: z.array(z.string()),
+          /** False until every dependency succeeded and the run started it. */
+          started: z.boolean(),
           progress: contextProgressSchema.nullable(),
           /** Names the halt a disposition must clear; changes whenever progress does. */
           occurrence: z.string().nullable(),

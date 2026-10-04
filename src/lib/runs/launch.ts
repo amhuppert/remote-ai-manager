@@ -9,7 +9,9 @@ import {
   DEFAULT_CONTEXT_POLICY,
   contextContractSchema,
   reviewerAuthoritySchema,
+  type ContextStartRequest,
 } from "@/lib/execution-context/schemas";
+import type { WorkspaceScope } from "@/lib/workspace/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import type { RunLaunchInput } from "./host";
@@ -75,26 +77,40 @@ function titleOf(request: AgentLaunchRequest): string {
   return firstLine.length <= 120 ? firstLine : `${firstLine.slice(0, 117)}...`;
 }
 
-/** Freezes a standalone agent launch into one session-placed Context. Pure. */
-export function resolveAgentLaunch(input: {
-  request: AgentLaunchRequest;
+/** Where a run's contexts work and who owns them, resolved by the caller. */
+export interface LaunchPlacement {
   runId: string;
   cause: string;
   projectPath: string;
   session: { sessionName: string; worktreePath: string };
   owner: { conversationId: string; sessionName: string | null };
+}
+
+/**
+ * Freezes one context's launch fields into its start request. Pure. Agent and
+ * workflow launches both resolve through here, so the same fields give the
+ * same contract whichever way the context is launched.
+ */
+export function resolveContextStart(input: {
+  request: AgentLaunchRequest;
+  key: string;
+  placement: LaunchPlacement;
+  scope: WorkspaceScope;
   seats: { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
-}): RunLaunchInput {
-  const { request, seats } = input;
+  /** The selected checks this context leaves to later work on the assembled tree. */
+  deferredChecks?: ReadonlySet<string>;
+}): ContextStartRequest {
+  const { request, seats, placement } = input;
   const reviewerRequests = request.reviewers ?? [];
   if (reviewerRequests.length !== seats.reviewers.length) {
     throw new Error(
       `Resolved ${seats.reviewers.length} reviewer seats for ${reviewerRequests.length} requested reviewers`,
     );
   }
-  const title = titleOf(request);
+  const deferred = input.deferredChecks ?? new Set<string>();
+  const selected = request.checks ?? [];
   const contract = contextContractSchema.parse({
-    title,
+    title: titleOf(request),
     brief: request.brief,
     tasks: (request.tasks ?? []).map((task, index) => ({
       id: `t${index + 1}`,
@@ -117,39 +133,58 @@ export function resolveAgentLaunch(input: {
       profile: reviewer.profile ?? GENERAL_REVIEWER,
       ...seats.reviewers[index],
     })),
-    checks: request.checks ?? [],
+    checks: selected.filter((command) => !deferred.has(command)),
+    deferredChecks: selected.filter((command) => deferred.has(command)),
+    inputs: [],
     humanApproval: request.humanApproval ?? false,
     ownerQuestions: request.ownerQuestions ?? true,
     documents: [],
   });
   return {
+    contextId: `${placement.runId}.${input.key}`,
+    runId: placement.runId,
+    ownerConversationId: placement.owner.conversationId,
+    workspace: {
+      kind: "session",
+      projectPath: placement.projectPath,
+      sessionName: placement.session.sessionName,
+      worktreePath: placement.session.worktreePath,
+      scope: input.scope,
+    },
+    contract,
+    policy: {
+      ...DEFAULT_CONTEXT_POLICY,
+      invocationTimeoutMs: request.timeoutMs ?? null,
+    },
+  };
+}
+
+/** Freezes a standalone agent launch into one session-placed Context. Pure. */
+export function resolveAgentLaunch(
+  input: LaunchPlacement & {
+    request: AgentLaunchRequest;
+    seats: { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
+  },
+): RunLaunchInput {
+  return {
     runId: input.runId,
     cause: input.cause,
     kind: "agent",
-    title,
+    title: titleOf(input.request),
     projectPath: input.projectPath,
     sessionName: input.session.sessionName,
     owner: input.owner,
-    invocations: [
+    contexts: [
       {
         key: "agent",
-        request: {
-          contextId: `${input.runId}.agent`,
-          runId: input.runId,
-          ownerConversationId: input.owner.conversationId,
-          workspace: {
-            kind: "session",
-            projectPath: input.projectPath,
-            sessionName: input.session.sessionName,
-            worktreePath: input.session.worktreePath,
-            scope: { mode: "full" },
-          },
-          contract,
-          policy: {
-            ...DEFAULT_CONTEXT_POLICY,
-            invocationTimeoutMs: request.timeoutMs ?? null,
-          },
-        },
+        dependsOn: [],
+        request: resolveContextStart({
+          request: input.request,
+          key: "agent",
+          placement: input,
+          scope: { mode: "full" },
+          seats: input.seats,
+        }),
       },
     ],
   };

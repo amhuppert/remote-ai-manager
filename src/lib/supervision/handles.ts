@@ -14,9 +14,9 @@ import { storeSessionNameFromScopeRef, type ConversationScopeRef } from "@/lib/c
 import { getGlobalValue } from "@/lib/shared/global-singleton";
 import { createConversationCoreRepo, type ConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { getStateDb } from "@/lib/state-store/store";
-import type { RunSupervision } from "./supervision";
+import type { Supervision } from "./supervision";
 
-export const RUN_SUPERVISION_KEY = "__cc_run_supervision";
+export const SUPERVISION_KEY = "__cc_run_supervision";
 export const CORE_TURN_RUNTIME_KEY = "__cc_core_turn_runtime";
 
 /**
@@ -24,8 +24,8 @@ export const CORE_TURN_RUNTIME_KEY = "__cc_core_turn_runtime";
  * has created them. Read without composing anything, so callers outside the
  * supervision graph (the conversation actor's manager) carry no import of it.
  */
-export function composedRunSupervision(): RunSupervision | undefined {
-  return getGlobalValue<RunSupervision>(RUN_SUPERVISION_KEY);
+export function composedSupervision(): Supervision | undefined {
+  return getGlobalValue<Supervision>(SUPERVISION_KEY);
 }
 
 export function loadedCoreTurnRuntime(): Promise<CoreTurnRuntime> | undefined {
@@ -34,17 +34,17 @@ export function loadedCoreTurnRuntime(): Promise<CoreTurnRuntime> | undefined {
 
 /** Stops a core conversation's turn; `settled` once that turn has ended. Queued notices still run. */
 export function stopCoreConversation(conversationId: string): { requested: boolean; settled: Promise<void> } {
-  return composedRunSupervision()?.core.stopConversation(conversationId) ?? { requested: false, settled: Promise.resolve() };
+  return composedSupervision()?.core.stopConversation(conversationId) ?? { requested: false, settled: Promise.resolve() };
 }
 
 /** The checkpoint owner of core conversations, once run supervision is composed. */
 export function coreCheckpoints(): CoreCheckpoints | undefined {
-  return composedRunSupervision()?.checkpoints;
+  return composedSupervision()?.checkpoints;
 }
 
 /** The core takes the conversation's next queued message, if it is idle and has one. */
 export async function drainCoreConversation(conversationId: string): Promise<void> {
-  await composedRunSupervision()?.drainConversationQueue(conversationId);
+  await composedSupervision()?.drainConversationQueue(conversationId);
 }
 
 /** A question a core conversation's agent asks, or its clearing, recorded on the conversation row. */
@@ -68,7 +68,7 @@ export async function holdCoreConversationWhileIdle<T>(
   holder: HoldHolder,
   work: () => Promise<T>,
 ): Promise<{ kind: "ran"; value: T } | { kind: "busy"; reason: string } | { kind: "not_core" }> {
-  const supervision = composedRunSupervision();
+  const supervision = composedSupervision();
   if (supervision === undefined || !coreOwnsConversation(conversationId)) return { kind: "not_core" };
   const held = await supervision.core.whileIdle(conversationId, work, holder, { holds: "claim" });
   return held.kind === "busy"
@@ -81,7 +81,7 @@ export async function coreDebugCommand(
   identity: { projectPath: string; sessionName: string; conversationId: string },
   command: DebugCommand,
 ): Promise<CoreDebugCommandOutcome> {
-  const supervision = composedRunSupervision();
+  const supervision = composedSupervision();
   if (supervision === undefined) {
     return { kind: "refused", code: "not_found", message: "Run supervision is not running" };
   }
@@ -94,7 +94,7 @@ export async function runCoreTask(input: {
   turn: TaskTurn;
   signal?: AbortSignal;
 }): Promise<TurnExecutionOutcome> {
-  const supervision = composedRunSupervision();
+  const supervision = composedSupervision();
   if (supervision === undefined) {
     return { kind: "not_started", reason: "configuration", message: "Run supervision is not running" };
   }
@@ -103,7 +103,7 @@ export async function runCoreTask(input: {
 
 /** A core conversation is going away: nothing more runs in it, and its runtime is closed. */
 export async function retireCoreConversation(conversationId: string): Promise<void> {
-  await composedRunSupervision()?.core.retireConversation(conversationId);
+  await composedSupervision()?.core.retireConversation(conversationId);
   const runtime = loadedCoreTurnRuntime();
   if (runtime !== undefined) await (await runtime).host.release(conversationId);
 }

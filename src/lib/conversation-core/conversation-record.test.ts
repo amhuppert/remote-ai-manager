@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { debugModeStateSchema } from "@/lib/debug-log/schemas";
 import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
 import type { DebugModePhase, DebugModeState } from "@/lib/debug-log/schemas";
@@ -371,40 +372,55 @@ describe("conversation record", () => {
     });
   });
 
-  it("holds the conversation's turns while a collaboration owns it, and a claim while its row forbids one", () => {
-    const owned = { owner: { kind: "collaboration" as const, workflowId: "wf-1", attemptEpoch: 1 }, debugMode: null, pendingQueue: [] };
-    expect(conversationHoldRefusal({ owner: null, debugMode: null, pendingQueue: [] }, "message")).toBeNull();
-    expect(conversationHoldRefusal(owned, "task")).toEqual({
-      code: "owned",
-      message: "A collaboration holds this conversation; send your message once it ends, or stop it",
+  describe("admission rules on the conversation row", () => {
+    const uncertain = {
+      id: "q-1",
+      content: [{ type: "text" as const, text: "Earlier" }],
+      status: "uncertain" as const,
+      enqueuedAt: "t",
+      updatedAt: "t",
+      deliveryStartedAt: "t",
+      deliveredAt: null,
+      cancelledAt: null,
+      failedAt: null,
+      deliveryAttemptId: "att-1",
+      attemptCount: 1,
+      error: null,
+      metadata: null,
+    };
+    const free = { owner: null, debugMode: null, pendingQueue: [] };
+    const owned = { ...free, owner: { kind: "collaboration" as const, workflowId: "wf-1", attemptEpoch: 1 } };
+    const reviewing = { ...free, pendingQueue: [uncertain] };
+    const debugging = {
+      ...free,
+      debugMode: debugModeStateSchema.parse({ active: true, recording: true, logFilePath: "/tmp/debug.log", enteredAt: "t" }),
+    };
+    const kinds = ["message", "delivery", "task", "command", "claim"] as const;
+    const codes = (state: Parameters<typeof conversationHoldRefusal>[0]) =>
+      kinds.map((kind) => conversationHoldRefusal(state, kind)?.code ?? null);
+
+    it("admits every kind of work on a free conversation", () => {
+      expect(codes(free)).toEqual([null, null, null, null, null]);
     });
-    // A collaboration's own reclaim answers to its own fence.
-    expect(conversationHoldRefusal(owned, "claim")).toBeNull();
-    expect(
-      conversationHoldRefusal(
-        {
-          owner: null,
-          debugMode: null,
-          pendingQueue: [
-            {
-              id: "q-1",
-              content: [{ type: "text", text: "Earlier" }],
-              status: "uncertain",
-              enqueuedAt: "t",
-              updatedAt: "t",
-              deliveryStartedAt: "t",
-              deliveredAt: null,
-              cancelledAt: null,
-              failedAt: null,
-              deliveryAttemptId: "att-1",
-              attemptCount: 1,
-              error: null,
-              metadata: null,
-            },
-          ],
-        },
-        "claim",
-      ),
-    ).toMatchObject({ code: "busy", message: "Review queued deliveries before sending another prompt." });
+
+    it("holds every turn while a collaboration owns the conversation, but not the collaboration's own claim", () => {
+      expect(codes(owned)).toEqual(["owned", "owned", "owned", "owned", null]);
+      expect(conversationHoldRefusal(owned, "task")?.message).toBe(
+        'A collaboration (workflow "wf-1") holds this conversation; send your message once it ends, or stop it',
+      );
+    });
+
+    it("holds everything but the queue's own deliveries while queued deliveries await review", () => {
+      expect(codes(reviewing)).toEqual(["queue_review", null, "queue_review", "queue_review", "queue_review"]);
+      expect(conversationHoldRefusal(reviewing, "command")?.message).toBe(
+        "Review queued deliveries before sending another prompt.",
+      );
+    });
+
+    it("lets a person keep talking in debug mode, and holds tasks, commands and claims until it ends", () => {
+      // The queue decides itself which deliveries debug mode holds.
+      expect(codes(debugging)).toEqual([null, null, "debug_mode", "debug_mode", "debug_mode"]);
+      expect(conversationHoldRefusal(debugging, "task")?.message).toBe("Exit debug mode first");
+    });
   });
 });

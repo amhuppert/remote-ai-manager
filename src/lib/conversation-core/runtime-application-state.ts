@@ -3,9 +3,10 @@ import type { ConversationBackendEvent, ConversationBackendRuntime } from "@/lib
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
 import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
-import type {
-  AgentCapabilitiesUpdatedEvent,
-  AgentCapabilityRuntimeApplicationState,
+import {
+  agentCapabilityCascadeKindSchema,
+  type AgentCapabilitiesUpdatedEvent,
+  type AgentCapabilityRuntimeApplicationState,
 } from "@/lib/agent-capabilities/schemas";
 import { conversationTargetStoreSessionName, type ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { Logger } from "@/lib/logging";
@@ -30,13 +31,24 @@ interface ApplicationTarget {
   target: ConversationTarget;
 }
 
+export type SeededRuntime = Pick<
+  ConversationBackendRuntime,
+  "mcpConfigDelivery" | "capabilityConfigDelivery" | "capabilitiesAtCreation"
+>;
+
+/** A runtime's configuration baseline, opened before its configuration is composed. */
+export interface RuntimeSeeding {
+  /**
+   * The runtime was created from `composed`: persist the baseline its delivery
+   * is compared against. A change saved since the seeding began is newer than
+   * `composed`, so it stays pending rather than being replaced.
+   */
+  commit(composed: ComposedTooling, runtime: SeededRuntime): Promise<void>;
+}
+
 export interface RuntimeApplicationState {
-  /** A runtime was created from `composed`: persist the baseline its delivery is compared against. */
-  seed(
-    conversation: ApplicationTarget,
-    composed: ComposedTooling,
-    runtime: Pick<ConversationBackendRuntime, "mcpConfigDelivery" | "capabilityConfigDelivery" | "capabilitiesAtCreation">,
-  ): Promise<void>;
+  /** Reads the application state a runtime about to be composed is created over. */
+  beginSeed(conversation: ApplicationTarget): Promise<RuntimeSeeding>;
   /** The backend accepted input under the configuration this event names. */
   recordAccepted(
     conversation: ApplicationTarget,
@@ -79,23 +91,39 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
   }
 
   return {
-    async seed(conversation, composed, runtime) {
+    async beginSeed(conversation) {
       const identity = { projectPath: conversation.projectPath, target: conversation.target };
-      const { portableMcp } = composed.overrides;
-      if (portableMcp !== undefined) await seedMcpRuntimeState(mcp, identity, portableMcp, runtime.mcpConfigDelivery);
-      const { capabilityState } = composed;
-      if (capabilityState !== undefined) {
-        const baseline = reconcileDeliveredCapabilityState(
-          capabilityState,
-          runtime.capabilityConfigDelivery === "input-accepted" ? undefined : runtime.capabilitiesAtCreation,
-        );
-        await updateCapabilities(conversation, "conversation_core.seedCapabilityRuntime", () => baseline);
-      }
-      deps.log.info("conversation_core.runtime_application_seeded", {
-        conversationId: conversation.target.conversationId,
-        mcpSeeded: portableMcp !== undefined,
-        seededCascadeKinds: Object.keys(capabilityState?.cascades ?? {}),
-      });
+      const row = await deps.conversations.getConversation(
+        conversation.projectPath,
+        conversationTargetStoreSessionName(conversation.target),
+        conversation.target.conversationId,
+      );
+      const before = {
+        pendingConfigHash: row?.mcpRuntime?.pendingConfigHash,
+        capabilities: row?.agentCapabilitiesRuntime,
+      };
+      return {
+        async commit(composed, runtime) {
+          const { portableMcp } = composed.overrides;
+          if (portableMcp !== undefined)
+            await seedMcpRuntimeState(mcp, identity, portableMcp, runtime.mcpConfigDelivery, before);
+          const { capabilityState } = composed;
+          if (capabilityState !== undefined) {
+            const baseline = reconcileDeliveredCapabilityState(
+              capabilityState,
+              runtime.capabilityConfigDelivery === "input-accepted" ? undefined : runtime.capabilitiesAtCreation,
+            );
+            await updateCapabilities(conversation, "conversation_core.seedCapabilityRuntime", (current) =>
+              keepNewerSaves(baseline, current, before.capabilities),
+            );
+          }
+          deps.log.info("conversation_core.runtime_application_seeded", {
+            conversationId: conversation.target.conversationId,
+            mcpSeeded: portableMcp !== undefined,
+            seededCascadeKinds: Object.keys(capabilityState?.cascades ?? {}),
+          });
+        },
+      };
     },
 
     async recordAccepted(conversation, event) {
@@ -116,6 +144,26 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
       }
     },
   };
+}
+
+/**
+ * The seeded capability baseline, except a cascade whose pending change moved
+ * since the seeding began: that save is newer than the runtime's configuration
+ * and stays pending, with what the runtime applied at creation recorded.
+ */
+function keepNewerSaves(
+  baseline: AgentCapabilityRuntimeApplicationState,
+  current: AgentCapabilityRuntimeApplicationState | undefined,
+  before: AgentCapabilityRuntimeApplicationState | undefined,
+): AgentCapabilityRuntimeApplicationState {
+  const cascades = { ...baseline.cascades };
+  for (const kind of agentCapabilityCascadeKindSchema.options) {
+    const now = current?.cascades[kind];
+    if (now === undefined || now.pendingHash === before?.cascades[kind]?.pendingHash) continue;
+    const appliedHash = baseline.cascades[kind]?.appliedHash;
+    cascades[kind] = { ...now, ...(appliedHash !== undefined ? { appliedHash } : {}) };
+  }
+  return { cascades };
 }
 
 /** What a status reader learns of a runtime: whether it lives and for which backend, never a handle to act on. */

@@ -10,7 +10,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
-import { createWorkspaceAdmission } from "./admission";
+import { createWorkspaceAdmission, type WorkspaceAdmission } from "./admission";
 import type { WorkspaceEvidence } from "./evidence";
 import {
   createWorkspaceExecutor,
@@ -42,9 +42,14 @@ let changed: string[];
 let checkResult: CheckRunResult;
 let checkWrites: string | null;
 let checkHangs: boolean;
+/** When set, every capture waits for it: a bind still recording its baseline. */
+let captureGate: Promise<void> | null;
+let captures: number;
 
 const evidence: WorkspaceEvidence = {
   async capture() {
+    captures += 1;
+    if (captureGate !== null) await captureGate;
     return content;
   },
   sameContent: (a, b) => a === b,
@@ -53,12 +58,14 @@ const evidence: WorkspaceEvidence = {
   },
 };
 
-function newExecutor(): WorkspaceExecutor {
+function newExecutor(
+  admission: WorkspaceAdmission = createWorkspaceAdmission(),
+): WorkspaceExecutor {
   return createWorkspaceExecutor({
     transaction: (fn) => fixture.db.transaction(fn)(),
     repo: createWorkspaceRepo(fixture.db),
     permits,
-    admission: createWorkspaceAdmission(),
+    admission,
     evidence,
     async runCheck({ signal }) {
       if (checkHangs) {
@@ -104,6 +111,8 @@ beforeEach(() => {
   checkResult = { status: "passed" };
   checkWrites = null;
   checkHangs = false;
+  captureGate = null;
+  captures = 0;
 });
 afterEach(async () => {
   // Let a release's deferred drain finish before the database closes.
@@ -151,6 +160,37 @@ describe("workspace executor", () => {
     expect(touched).toEqual(
       expect.arrayContaining([{ kind: "context", id: "ctx-b" }]),
     );
+  });
+
+  it("keeps an overlapping binding waiting while another bind is still recording its baseline", async () => {
+    let open: () => void = () => {};
+    captureGate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const executor = newExecutor();
+    const first = intent("ctx-a", {
+      kind: "bind",
+      bindingId: "ctx-a",
+      binding: binding({ mode: "full" }),
+    });
+    await executor.submit(first);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(executor.outcome(first.cause)).toEqual({ kind: "running" });
+
+    const second = intent("ctx-b", {
+      kind: "bind",
+      bindingId: "ctx-b",
+      binding: binding({ mode: "owned", paths: ["src/ui"] }),
+    });
+    await executor.submit(second);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(executor.outcome(second.cause)).toEqual({ kind: "queued" });
+
+    open();
+    captureGate = null;
+    await executor.drain();
+    expect(executor.outcome(first.cause)).toEqual({ kind: "settled", outcome: { kind: "bound" } });
+    expect(executor.outcome(second.cause)).toEqual({ kind: "queued" });
   });
 
   it("starts a waiting binding only after the release's enclosing transaction commits", async () => {
@@ -363,6 +403,55 @@ describe("workspace executor", () => {
     await executor.submit({ ...freeze, permit });
     await executor.drain();
     expect(executor.outcome(freeze.cause)).toMatchObject({ kind: "settled" });
+  });
+
+  it("leaves an operation unadmitted when its permit closes while it waits for a grant, and runs it after resubmission", async () => {
+    const admission = createWorkspaceAdmission();
+    const executor = newExecutor(admission);
+    await run(executor, intent("ctx-a", { kind: "bind", bindingId: "ctx-a", binding: binding({ mode: "full" }) }));
+    const blocker = admission.tryAcquire({ worktree, kind: "git", holder: "merge" });
+    if (blocker === null) throw new Error("no blocker");
+    const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ctx-a" });
+    await executor.submit(freeze);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(executor.outcome(freeze.cause)).toEqual({ kind: "queued" });
+
+    permits.close("context:ctx-a", now);
+    const capturedBefore = captures;
+    admission.release(blocker);
+    await executor.drain();
+    expect(executor.outcome(freeze.cause)).toEqual({ kind: "queued" });
+    expect(captures).toBe(capturedBefore);
+
+    const permit = permits.reopen("context:ctx-a", now);
+    await executor.submit({ ...freeze, permit });
+    await executor.drain();
+    expect(executor.outcome(freeze.cause)).toMatchObject({ kind: "settled", outcome: { kind: "frozen" } });
+  });
+
+  it("withdraws an operation still waiting for its grant without running it", async () => {
+    const admission = createWorkspaceAdmission();
+    const executor = newExecutor(admission);
+    await run(executor, intent("ctx-a", { kind: "bind", bindingId: "ctx-a", binding: binding({ mode: "full" }) }));
+    const blocker = admission.tryAcquire({ worktree, kind: "git", holder: "merge" });
+    if (blocker === null) throw new Error("no blocker");
+    const check = intent("ctx-a", { kind: "check", bindingId: "ctx-a", command: "test", evidence: content });
+    await executor.submit(check);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await executor.withdraw(check.cause);
+    const capturedBefore = captures;
+    admission.release(blocker);
+    await executor.drain();
+    expect(executor.outcome(check.cause)).toEqual({ kind: "unknown" });
+    expect(captures).toBe(capturedBefore);
+    expect(admission.held()).toEqual([]);
+  });
+
+  it("refuses an operation on a binding it does not know, instead of failing on every drain", async () => {
+    const executor = newExecutor();
+    const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ghost" });
+    expect(await run(executor, freeze)).toMatchObject({ kind: "refused", detail: "Unknown workspace binding ghost" });
   });
 
   it("returns queued work to the queue after a restart and runs it again", async () => {

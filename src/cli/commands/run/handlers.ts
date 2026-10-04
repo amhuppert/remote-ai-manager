@@ -18,6 +18,10 @@ import {
   type AgentLaunchRequest,
 } from "@/lib/runs/launch";
 import {
+  workflowLaunchRequestSchema,
+  type WorkflowLaunchRequest,
+} from "@/lib/runs/workflow-definition";
+import {
   runControlResponseSchema,
   runLaunchedResponseSchema,
   runViewSchema,
@@ -54,6 +58,7 @@ import {
   type runPauseSpec,
   type runResumeSpec,
   type runShowSpec,
+  type runWorkflowSpec,
 } from "./definitions";
 
 type Input<S extends CommandSpec> = HandlerInput<
@@ -81,6 +86,15 @@ type Launch = MutationHandler<
   typeof ccErrors.definitions,
   typeof ccGlobalFlags,
   AgentLaunchRequest
+>;
+
+type LaunchWorkflow = MutationHandler<
+  typeof runWorkflowSpec,
+  CcApplication,
+  { context: SessionContext },
+  typeof ccErrors.definitions,
+  typeof ccGlobalFlags,
+  WorkflowLaunchRequest
 >;
 
 const okSchema = z.object({ ok: z.literal(true) }).passthrough();
@@ -122,6 +136,9 @@ interface RunViewData {
   contexts: Array<{
     key: string;
     contextId: string;
+    dependsOn: string[];
+    waitingOn: string[];
+    started: boolean;
     progress: string | null;
     halt: string | null;
     occurrence: string | null;
@@ -159,6 +176,9 @@ function toViewData(view: RunView): RunViewData {
     contexts: view.contexts.map((context) => ({
       key: context.key,
       contextId: context.contextId,
+      dependsOn: context.dependsOn,
+      waitingOn: context.waitingOn,
+      started: context.started,
       progress: context.progress?.kind ?? null,
       halt:
         context.progress?.kind === "halted"
@@ -179,6 +199,23 @@ function toViewData(view: RunView): RunViewData {
   };
 }
 
+/**
+ * Why a context has no progress yet: the run's own state first, then what it
+ * waits on. A recorded start no context took up yet reads as starting.
+ */
+function notStartedState(
+  runProgress: string,
+  context: { started: boolean; waitingOn: readonly string[] },
+): string {
+  if (runProgress === "cancelled" || runProgress === "stopping")
+    return "not started (run cancelled)";
+  if (runProgress === "paused") return "not started (run paused)";
+  if (context.started) return "starting";
+  if (context.waitingOn.length > 0)
+    return `not started, waits on ${context.waitingOn.join(", ")}`;
+  return "starting";
+}
+
 function viewText(view: JsonData<RunViewData>): string {
   const lines = [
     `Run ${view.runId} (${view.kind}): ${view.title} — ${view.progress}`,
@@ -189,9 +226,9 @@ function viewText(view: JsonData<RunViewData>): string {
       context.halt !== null
         ? ` (${context.halt}; occurrence ${context.occurrence ?? "?"})`
         : "";
-    lines.push(
-      `- ${context.key} [${context.contextId}]: ${context.progress ?? "not started"}${halt}`,
-    );
+    const state =
+      context.progress ?? notStartedState(view.progress, context);
+    lines.push(`- ${context.key} [${context.contextId}]: ${state}${halt}`);
     for (const task of context.tasks)
       lines.push(`  task ${task.id} ${task.status}: ${task.title}`);
     for (const question of context.openQuestions) {
@@ -213,55 +250,88 @@ function viewText(view: JsonData<RunViewData>): string {
   return quoteLiteralText(`${lines.join("\n")}\n`);
 }
 
+/** Posts a launch payload to `suffix` and turns the receipt into the CLI result. */
+async function postLaunch(input: {
+  app: CcApplication;
+  context: SessionContext;
+  suffix: string;
+  payload: unknown;
+}) {
+  const { app, context } = input;
+  const target = recoveryFacts([sessionReference(context.session)]);
+  const response = await cliRequest(app.host, {
+    ...context,
+    method: "POST",
+    path: `${sessionPath(context)}/runs${input.suffix}`,
+    body: input.payload,
+    principalIdentity: resolveCcPrincipal(app),
+  });
+  if (response.kind !== "ok") return ccWriteFailure(response, target);
+  const parsed = runLaunchedResponseSchema.safeParse(response.body);
+  if (!parsed.success) {
+    return {
+      effect: "unknown" as const,
+      recovery: target,
+      result: invalid("The run endpoint did not return a launch receipt."),
+    };
+  }
+  return {
+    effect: "applied" as const,
+    recovery: recoveryFacts([{ kind: "run", id: parsed.data.runId }]),
+    result: {
+      ok: true as const,
+      data: parsed.data,
+      hint: showHint(app, parsed.data.runId),
+    },
+  };
+}
+
+const launchedText = (data: JsonData<RunLaunchedResponse>) =>
+  quoteLiteralText(
+    `Run ${data.runId} launched (${data.progress.kind}). Its questions, halts and result arrive as run-boundary messages.\n`,
+  );
+
+async function prepareSession({ app }: { app: CcApplication }) {
+  const context = await resolveCcSession(app);
+  return context.ok
+    ? ({ ok: true, value: { context: context.value } } as const)
+    : context;
+}
+
 const launchImplementation: Launch = {
   decode: agentLaunchRequestSchema,
-  async prepare({ app }) {
-    const context = await resolveCcSession(app);
-    return context.ok
-      ? { ok: true, value: { context: context.value } }
-      : context;
-  },
+  prepare: prepareSession,
   commit: writeRunner<
     Parameters<Launch["commit"]>[0],
     RunLaunchedResponse,
     CcErrorCode
   >({
-    async run({ app, payload, prepared }) {
-      const { context } = prepared.value;
-      const target = recoveryFacts([sessionReference(context.session)]);
-      const response = await cliRequest(app.host, {
-        ...context,
-        method: "POST",
-        path: `${sessionPath(context)}/runs`,
-        body: payload,
-        principalIdentity: resolveCcPrincipal(app),
-      });
-      if (response.kind !== "ok") return ccWriteFailure(response, target);
-      const parsed = runLaunchedResponseSchema.safeParse(response.body);
-      if (!parsed.success) {
-        return {
-          effect: "unknown",
-          recovery: target,
-          result: invalid("The run endpoint did not return a launch receipt."),
-        };
-      }
-      return {
-        effect: "applied",
-        recovery: recoveryFacts([{ kind: "run", id: parsed.data.runId }]),
-        result: {
-          ok: true,
-          data: parsed.data,
-          hint: showHint(app, parsed.data.runId),
-        },
-      };
-    },
-    text: (data) =>
-      quoteLiteralText(
-        `Run ${data.runId} launched (${data.progress.kind}). Its questions, halts and result arrive as run-boundary messages.\n`,
-      ),
+    run: ({ app, payload, prepared }) =>
+      postLaunch({ app, context: prepared.value.context, suffix: "", payload }),
+    text: launchedText,
   }),
 };
 export const launchHandler = mutation(launchImplementation);
+
+const workflowImplementation: LaunchWorkflow = {
+  decode: workflowLaunchRequestSchema,
+  prepare: prepareSession,
+  commit: writeRunner<
+    Parameters<LaunchWorkflow["commit"]>[0],
+    RunLaunchedResponse,
+    CcErrorCode
+  >({
+    run: ({ app, payload, prepared }) =>
+      postLaunch({
+        app,
+        context: prepared.value.context,
+        suffix: "/workflow",
+        payload,
+      }),
+    text: launchedText,
+  }),
+};
+export const workflowHandler = mutation(workflowImplementation);
 
 export const showHandler: Read<typeof runShowSpec> = {
   run: runner<Input<typeof runShowSpec>, RunViewData, CcErrorCode>({

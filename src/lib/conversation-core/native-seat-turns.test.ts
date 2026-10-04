@@ -28,11 +28,12 @@ function request(overrides: Partial<SeatTurnRequest> = {}): SeatTurnRequest {
       projectPath: "/repo",
       sessionName: "session",
       worktreePath: "/repo/.worktrees/session",
-      access: "write",
-      scope: { mode: "full" },
+      grant: { kind: "full_write" },
+      writes: { mode: "all" },
     },
     seat: {
       contextId: "ctx-1",
+      conversationId: null,
       assignmentId: "implementer",
       role: "implementer",
       assignment: {
@@ -53,7 +54,7 @@ function request(overrides: Partial<SeatTurnRequest> = {}): SeatTurnRequest {
 const reviewRequest = (): SeatTurnRequest =>
   request({
     kind: "review",
-    workspace: { ...request().workspace, access: "stable_read" },
+    workspace: { ...request().workspace, grant: { kind: "stable_read" } },
     seat: { ...request().seat, assignmentId: "reviewer-a", role: "reviewer", canAsk: false },
     outputSchema: { type: "object" },
     message: "Review the candidate",
@@ -68,10 +69,11 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
   const turns: TurnRequest[] = [];
   const events: string[] = [];
   const released: string[] = [];
+  const envelopes: Array<{ contextId: string; ownedPaths: readonly string[]; payloadLocation: string | undefined }> = [];
   let backendRef: { backend: "claude"; ref: string } | null = { backend: "claude", ref: "sdk-1" };
   const records: ConversationRecordPort = {
     async read() {
-      return { agentBackend: "claude", backendRef, promptCount: 1, transcriptPath: null, queueReviewRequired: false, debugMode: null };
+      return { agentBackend: "claude", backendRef, promptCount: 1, transcriptPath: null, debugMode: null };
     },
     async beginTurn(identity, source) {
       events.push(`begin:${identity.conversationId}:${source}`);
@@ -112,20 +114,27 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
       },
     },
     getProjectDisplayName: () => "repo",
-    composeWriteEnvelope: (input): ImplementerLaneWriteEnvelope => ({
-      policy: { mode: "allowlist", allowWrite: [`${input.worktreePath}/src/api`], denyWrite: [] },
+    composeWriteEnvelope: (input): ImplementerLaneWriteEnvelope => {
+      envelopes.push({ contextId: input.contextId, ownedPaths: input.ownedPaths, payloadLocation: input.payloadLocation });
+      return {
+      policy: {
+        mode: "allowlist",
+        allowWrite: ["/scratch/ctx-1", ...input.ownedPaths.map((p) => `${input.worktreePath}/${p}`)],
+        denyWrite: [],
+      },
       worktreeRoot: input.worktreePath,
       contextScratchDir: "/scratch/ctx-1",
       contextTmpDir: "/tmp/ctx-1",
       payloadDir: "/scratch/ctx-1/payload",
       ownedPrefixes: input.ownedPaths,
-    }),
+      };
+    },
     fsWriteRestriction: () => "enforced",
     log: createCapturingLogger(),
   };
   const run = (req: SeatTurnRequest, signal = new AbortController().signal) =>
     createNativeSeatTurns(deps).run({ conversationId: "conv-1", binding, request: req, attemptId: "attempt-1", signal });
-  return { deps, run, turns, events, released };
+  return { deps, run, turns, events, released, envelopes };
 }
 
 describe("native seat turns", () => {
@@ -183,6 +192,17 @@ describe("native seat turns", () => {
       "continuity:conv-1:sdk-early",
       "settle:conv-1:true:workflow",
     ]);
+  });
+
+  it("fails a turn whose conversation row could not be settled, instead of reporting it succeeded", async () => {
+    const h = harness(async () => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } })));
+    h.deps.records.settleTurn = async () => {
+      throw new Error("database is locked");
+    };
+    const result = await h.run(request());
+
+    expect(result.status).toBe("failed");
+    expect(result.failure).toMatch(/conversation record could not be settled: database is locked/);
   });
 
   it("settles the conversation row even when the turn itself throws", async () => {
@@ -300,12 +320,18 @@ describe("native seat turns", () => {
   });
 
   it("confines an owned write scope with its write envelope, and refuses one the backend cannot limit", async () => {
-    const owned = request({ workspace: { ...request().workspace, scope: { mode: "owned", paths: ["src/api"] } } });
+    const owned = request({
+      workspace: {
+        ...request().workspace,
+        grant: { kind: "scoped_write", paths: ["src/api"] },
+        writes: { mode: "paths", paths: ["src/api"] },
+      },
+    });
     const h = harness(async () => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } })));
     await h.run(owned);
     expect(h.turns[0]?.requirements.fsWritePolicy).toEqual({
       mode: "allowlist",
-      allowWrite: ["/repo/.worktrees/session/src/api"],
+      allowWrite: ["/scratch/ctx-1", "/repo/.worktrees/session/src/api"],
       denyWrite: [],
     });
     expect(h.turns[0]?.promptText).toContain("Writable repository paths");
@@ -323,5 +349,49 @@ describe("native seat turns", () => {
     expect(result.failure).toContain("cannot limit");
     expect(refused.turns).toEqual([]);
     expect(refused.events).toEqual([]);
+  });
+
+  it("runs a read-only context's implementer under a write envelope that admits no repository path", async () => {
+    const readOnly = request({ workspace: { ...request().workspace, grant: null, writes: { mode: "none" } } });
+    const h = harness(async () => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } })));
+    await h.run(readOnly);
+
+    expect(h.envelopes).toEqual([expect.objectContaining({ ownedPaths: [], payloadLocation: "scratch" })]);
+    expect(h.turns[0]?.requirements.fsWritePolicy).toEqual({
+      mode: "allowlist",
+      allowWrite: ["/scratch/ctx-1"],
+      denyWrite: [],
+    });
+    expect(h.turns[0]?.writeCapability).toBe("read_only");
+  });
+
+  it("gives each context's implementer its own payload directory, so concurrent seats never share payload files", async () => {
+    const owned = (contextId: string) =>
+      request({
+        workspace: { ...request().workspace, grant: { kind: "scoped_write", paths: ["src/api"] }, writes: { mode: "paths", paths: ["src/api"] } },
+        seat: { ...request().seat, contextId },
+      });
+    const h = harness(async () => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } })));
+    await h.run(owned("run-1.api"));
+    await h.run(owned("run-1.ui"));
+
+    const [api, ui] = h.envelopes.map((e) => e.contextId);
+    expect(api).toBeDefined();
+    expect(api).not.toBe(ui);
+  });
+
+  it("keeps an owned implementer confined on its capture turn too", async () => {
+    const capture = request({
+      kind: "capture_output",
+      workspace: { ...request().workspace, grant: null, writes: { mode: "paths", paths: ["src/api"] } },
+    });
+    const h = harness(async () => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } })));
+    await h.run(capture);
+
+    expect(h.turns[0]?.requirements.fsWritePolicy).toEqual({
+      mode: "allowlist",
+      allowWrite: ["/scratch/ctx-1", "/repo/.worktrees/session/src/api"],
+      denyWrite: [],
+    });
   });
 });

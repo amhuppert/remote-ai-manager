@@ -58,7 +58,7 @@ export async function resolveSessionConversationId(
   sessionName: string,
 ): Promise<string> {
   const { getSessionConversations } = await import("@/lib/state-store");
-  const { coreRunsSeat } = await import("@/lib/runs/handles");
+  const { coreRunsSeat } = await import("@/lib/supervision/handles");
   const conversations = await getSessionConversations(projectPath, sessionName);
   // A run's seat takes work only from its run; any other conversation, on either engine, takes task turns.
   const id = pickSessionConversation(conversations, coreRunsSeat);

@@ -327,8 +327,6 @@ export interface ConversationRecordPort {
     backendRef: AgentSessionRef | null;
     promptCount: number;
     transcriptPath: string | null;
-    /** An ordinary queued delivery awaits the person's review: new direct input waits. */
-    queueReviewRequired: boolean;
     debugMode: ConversationRow["debugMode"];
   } | null>;
   /** The core took up the conversation's next turn: running from now, though it may still wait for capacity. */
@@ -359,25 +357,34 @@ export interface ConversationRecordPort {
   settleTurn(identity: ConversationIdentity, settlement: TurnSettlement, source: TurnSource): Promise<TurnSettled>;
 }
 
+/** Why the conversation row holds work back. */
+export type RowHoldCode = "owned" | "queue_review" | "debug_mode";
+
 /**
- * Pure: what the conversation row itself holds. A collaboration's claim (its
- * durable owner) holds every turn the core would start, messages, tasks and
- * queued batches alike, until it hands the conversation back; its own reclaim
- * answers to its own fence. A new claim waits for what holds new input: a
- * queued delivery awaiting review, or a debug session.
+ * The admission rules the conversation row decides, the same for every entry
+ * (a person's message, a queued delivery, a workflow's task, a conversation
+ * command, a claim): a collaboration owns every turn but its own claim;
+ * queued deliveries awaiting review hold everything but the queue's own
+ * deliveries; debug mode lets the person keep talking and holds tasks,
+ * commands and claims until it ends. The queue decides itself which of its
+ * deliveries review and debug mode hold.
  */
 export function conversationHoldRefusal(
   row: Pick<ConversationState, "owner" | "debugMode" | "pendingQueue">,
-  turn: "message" | "task" | "claim",
-): { code: "busy" | "owned"; message: string } | null {
-  if (turn !== "claim") {
-    return row.owner === null
-      ? null
-      : { code: "owned", message: "A collaboration holds this conversation; send your message once it ends, or stop it" };
+  turn: "message" | "delivery" | "task" | "command" | "claim",
+): { code: RowHoldCode; message: string } | null {
+  if (row.owner !== null && turn !== "claim") {
+    return {
+      code: "owned",
+      message: `A collaboration (workflow "${row.owner.workflowId}") holds this conversation; send your message once it ends, or stop it`,
+    };
   }
+  if (turn === "delivery") return null;
   if (row.pendingQueue.some(queuedMessageBlocksOrdinaryAdmission)) {
-    return { code: "busy", message: QUEUE_REVIEW_REQUIRED_MESSAGE };
+    return { code: "queue_review", message: QUEUE_REVIEW_REQUIRED_MESSAGE };
   }
-  if (row.debugMode?.active === true) return { code: "busy", message: "Exit debug mode first" };
+  if (row.debugMode?.active === true && turn !== "message") {
+    return { code: "debug_mode", message: "Exit debug mode first" };
+  }
   return null;
 }

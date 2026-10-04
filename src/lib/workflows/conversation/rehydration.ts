@@ -408,7 +408,7 @@ export async function loadRehydrationInfrastructure(): Promise<
   const { getConversationCheckpointsRepo } =
     await import("@/lib/conversation-checkpoints/service-factory");
   const { hydrateCheckpointAuthority } = await import("./checkpoint-restart");
-  const { coreOwnsConversation } = await import("@/lib/runs/handles");
+  const { coreOwnsConversation } = await import("@/lib/supervision/handles");
   return {
     isCoreOwnedConversation: coreOwnsConversation,
     mutateConversation: stateMod.mutateConversation,

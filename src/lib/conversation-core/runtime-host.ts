@@ -54,7 +54,7 @@ export interface RuntimeHostDeps {
   ): Promise<{ sessionInstructions: string[]; alignmentVersion: number | null }>;
   tooling(conversation: HostedConversation): Promise<ComposedTooling>;
   /** Every runtime created is seeded before it is handed out; a failure fails the creation. */
-  seed: RuntimeApplicationState["seed"];
+  beginSeed: RuntimeApplicationState["beginSeed"];
   callbacks(
     conversation: HostedConversation,
   ): Pick<ConversationBackendCreateInput, "onCostSettled" | "onBackgroundActivity" | "onBackgroundTasksLost">;
@@ -125,6 +125,8 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
   async function create(entry: Hosted): Promise<ConversationBackendRuntime> {
     const { conversation, requirements, managed } = entry;
     const { desired, sessionInstructions } = await desiredFor(conversation, requirements);
+    // Opened before composing, so a save landing during creation stays pending.
+    const seeding = await deps.beginSeed(conversation);
     const composed = await deps.tooling(conversation);
     if (managed.backend !== undefined) {
       try {
@@ -163,7 +165,7 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       resumed: conversation.persistedRef !== null,
     });
     // Installed first, so a failed seed leaves the runtime for the turn's release to close.
-    await deps.seed(conversation, composed, runtime);
+    await seeding.commit(composed, runtime);
     return runtime;
   }
 

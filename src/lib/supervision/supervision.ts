@@ -51,7 +51,7 @@ import {
   type WorkspaceExecutor,
   type WorkspaceExecutorDeps,
 } from "@/lib/workspace/executor";
-import { createRunHost, type RunHost, type RunHostDeps } from "./host";
+import { createRunHost, type RunHost, type RunHostDeps } from "@/lib/runs/host";
 
 type Db = InstanceType<typeof Database>;
 
@@ -71,7 +71,7 @@ function firstHold(sources: readonly HoldSource[]): HoldSource {
 }
 
 /** The edges of the supervision graph that reach outside CC's own state. */
-export interface RunSupervisionPorts {
+export interface SupervisionPorts {
   db: Db;
   seatTurns: SeatTurnPort;
   userTurns: UserTurnPort;
@@ -100,7 +100,7 @@ export interface RunSupervisionPorts {
 }
 
 /** One supervision graph: Run over Context over Conversation, Requests and Workspace. */
-export interface RunSupervision {
+export interface Supervision {
   runs: RunHost;
   contexts: ContextHost;
   core: ConversationCore;
@@ -119,17 +119,15 @@ export interface RunSupervision {
   drainConversationQueue(conversationId: string): Promise<void>;
   /** Debug mode on enrolled interactive conversations. */
   debug: CoreDebugMode;
-  /** The durable holds on a conversation (a collaboration's claim, checkpoint maintenance); null when work may start. */
-  holdRefusal: HoldSource["refusal"];
   /** Checkpoints of enrolled interactive conversations. */
   checkpoints: CoreCheckpoints;
   /** Boot: settle what the last process left running, restore runs paused, reconcile. */
   boot(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
 }
 
-export function composeRunSupervision(
-  ports: RunSupervisionPorts,
-): RunSupervision {
+export function composeSupervision(
+  ports: SupervisionPorts,
+): Supervision {
   const { db } = ports;
   const transaction = <T>(fn: () => T): T => db.transaction(fn)();
   const permits = createControlPermits(createControlPermitsRepo(db));
@@ -182,7 +180,7 @@ export function composeRunSupervision(
   // A held conversation's batch stays in its queue rather than being claimed only to be refused.
   const drainQueue = async (conversationId: string): Promise<void> => {
     try {
-      if ((await holds.refusal(conversationId, "message")) !== null) return;
+      if ((await holds.refusal(conversationId, "delivery")) !== null) return;
       await queueBridge.drain(conversationId);
     } catch (error) {
       queueLog.error("conversation_core.queue_drain_failed", { conversationId, error: getErrorMessage(error) });
@@ -259,9 +257,9 @@ export function composeRunSupervision(
       const binding = core.seatBinding(conversationId);
       if (binding === null) return null;
       const attemptId = core.runningAttempt(conversationId);
-      const context = contexts.observe(binding.contextId);
+      const context = contexts.describe(binding.contextId);
       return {
-        canAsk: context?.record.facts.contract.current.ownerQuestions ?? false,
+        canAsk: context?.ownerQuestions ?? false,
         attemptId,
         openQuestionId:
           attemptId === null
@@ -271,7 +269,6 @@ export function composeRunSupervision(
     },
     drainConversationQueue: drainQueue,
     debug,
-    holdRefusal: (conversationId, turn, options) => holds.refusal(conversationId, turn, options),
     checkpoints,
     async boot() {
       await core.recover();

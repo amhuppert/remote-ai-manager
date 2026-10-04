@@ -13,8 +13,8 @@ import { EMPTY_CHECKPOINT_USAGE, type CheckpointScopeKey } from "@/lib/conversat
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { makeConversationState, type ConversationStateOverrides } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
-import { checkpointPayloadFor, createSupervisionHarness, done, quiesce } from "@/lib/runs/testing/supervision-fixture";
-import type { RunSupervision } from "@/lib/runs/supervision";
+import { checkpointPayloadFor, createSupervisionHarness, done, quiesce } from "@/lib/supervision/testing/supervision-fixture";
+import type { Supervision } from "@/lib/supervision/supervision";
 import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
@@ -34,11 +34,11 @@ function entry(seq: number, role: "user" | "assistant", text: string): Transcrip
 
 let fixture: PersistenceFixture;
 let h: ReturnType<typeof createSupervisionHarness>;
-let s: RunSupervision;
+let s: Supervision;
 /** Every graph a test composed, each settled before the database closes. */
-let composed: RunSupervision[];
+let composed: Supervision[];
 
-function compose(): RunSupervision {
+function compose(): Supervision {
   const supervision = h.compose();
   composed.push(supervision);
   return supervision;

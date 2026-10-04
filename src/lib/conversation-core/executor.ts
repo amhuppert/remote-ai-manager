@@ -64,9 +64,15 @@ export interface UserTurnPort {
   }): Promise<CoreTurnResult>;
 }
 
+/** Why work cannot start on a conversation now. */
+export interface AdmissionRefusal {
+  code: "not_enrolled" | "stopping" | HoldRefusal["code"];
+  message: string;
+}
+
 export type UserMessageAdmission =
   | { kind: "accepted"; cause: string; settled: Promise<SeatTurnReport> }
-  | { kind: "refused"; code: "not_enrolled" | "busy" | "owned" | "stopping"; message: string };
+  | ({ kind: "refused" } & AdmissionRefusal);
 
 /** Who holds a conversation's slot for exclusive maintenance (design §4.9). */
 export type HoldHolder = { kind: "checkpoint"; requestId: string } | { kind: "debug_command" } | { kind: "collaboration_claim" };
@@ -77,10 +83,11 @@ export type HoldAcquisition =
   | { kind: "busy"; reason: string };
 
 /**
- * What is asking past the durable holds: a person's message, a workflow's
- * task, or a claim on the conversation (a collaboration taking it over).
+ * What asks to start on a conversation: a person's message, a delivery from
+ * its message queue, a workflow's task, a conversation command, or a claim (a
+ * collaboration taking it over).
  */
-export type HoldTurn = "message" | "task" | "claim";
+export type HoldTurn = "message" | "delivery" | "task" | "command" | "claim";
 
 /** An owner's durable holds on conversations, read before work starts. */
 export interface HoldSource {
@@ -94,8 +101,12 @@ export interface HoldSource {
 
 /** A durable hold another owner keeps (a checkpoint in progress, a collaboration's claim). */
 export interface HoldRefusal {
-  /** `owned`: a collaboration owns the conversation's turns; `busy`: maintenance is in progress. */
-  code: "busy" | "owned";
+  /**
+   * `owned`: a collaboration owns the conversation's turns; `busy`: a turn or
+   * maintenance is in progress; `queue_review`: queued deliveries await the
+   * person's review; `debug_mode`: debug mode holds everything but messages.
+   */
+  code: "busy" | "owned" | "queue_review" | "debug_mode";
   message: string;
 }
 
@@ -202,6 +213,12 @@ export interface ConversationCore extends Executor {
   /** The conversation runs a turn or has one waiting to start. */
   isBusy(conversationId: string): boolean;
   /**
+   * Whether work of this kind may start now, by the same rules every entry
+   * uses: the server, enrollment, maintenance, a running turn (which holds
+   * everything but a task, which waits its turn) and the durable holds.
+   */
+  admission(conversationId: string, turn: HoldTurn): Promise<AdmissionRefusal | null>;
+  /**
    * A workflow's task turn on an enrolled conversation, run in the
    * conversation's own turn order (after a turn already running). Resolves with
    * its outcome; the caller's cancellation withdraws or stops it.
@@ -242,29 +259,19 @@ type Acquired =
   /** The workspace is held for processes that could not be confirmed stopped; waiting would never end. */
   | { kind: "blocked"; reason: string };
 
+/** The grant the request names, held by this turn while it runs. */
 function grantFor(
   request: SeatTurnRequest,
   holder: string,
 ): GrantRequest | null {
-  const { worktreePath, access, scope } = request.workspace;
-  switch (access) {
-    case "observe":
-      return null;
-    case "stable_read":
-      return { worktree: worktreePath, kind: "stable_read", holder };
-    case "write":
-      if (scope.mode === "owned") {
-        return {
-          worktree: worktreePath,
-          kind: "scoped_write",
-          paths: scope.paths,
-          holder,
-        };
-      }
-      return scope.mode === "full"
-        ? { worktree: worktreePath, kind: "full_write", holder }
-        : null;
-  }
+  const { worktreePath, grant } = request.workspace;
+  if (grant === null) return null;
+  return {
+    worktree: worktreePath,
+    kind: grant.kind,
+    ...(grant.paths !== undefined ? { paths: grant.paths } : {}),
+    holder,
+  };
 }
 
 export function createConversationCore(
@@ -488,6 +495,40 @@ export function createConversationCore(
         return "not_admitted";
       }
       // Its caller, a retirement or a stop may have withdrawn it during the read (answering it already).
+      if (deps.repo.getMailbox(item.cause)?.state !== "queued" || retired.has(item.conversationId) || stopping) {
+        return "not_admitted";
+      }
+    }
+    if (turn.kind === "user" && turn.request.queuedDelivery === undefined && deps.holds !== undefined) {
+      // A direct message admitted alongside another turn waited behind it, which may have left
+      // something for the person to review first; the queue decides for its own deliveries.
+      const held = await deps.holds.refusal(item.conversationId, "message", { betweenTurns: true });
+      if (held !== null) {
+        deps.transaction(() => deps.repo.deleteMailbox(item.cause));
+        streams.delete(item.cause);
+        // The person's words go back to them for review, as a restart hands back what never started.
+        await deps.records
+          .recordWithdrawn(
+            { projectPath: turn.enrollment.projectPath, storeSessionName: turn.enrollment.sessionName, conversationId: item.conversationId },
+            { cause: item.cause, request: turn.request },
+          )
+          .catch((error: unknown) =>
+            deps.log.error("conversation_core.withdrawn_message_lost", {
+              conversationId: item.conversationId,
+              error: getErrorMessage(error),
+            }),
+          );
+        resolveWaiters(item.cause, {
+          status: "failed",
+          conversationId: item.conversationId,
+          finalText: null,
+          structuredOutput: null,
+          outputIssue: null,
+          openQuestionId: null,
+          failure: held.message,
+        });
+        return "not_admitted";
+      }
       if (deps.repo.getMailbox(item.cause)?.state !== "queued" || retired.has(item.conversationId) || stopping) {
         return "not_admitted";
       }
@@ -848,18 +889,32 @@ export function createConversationCore(
     return { kind: "refused", code: "busy", message: "The conversation is being taken over; try again" };
   }
 
-  /** Why a person's message cannot be taken now, or null. */
-  function messageRefusal(conversationId: string): Extract<UserMessageAdmission, { kind: "refused" }> | null {
-    if (stopping) {
-      return { kind: "refused", code: "stopping", message: "The server is stopping; send the message again once it is back" };
-    }
+  /**
+   * The in-process reasons work of this kind cannot start now, apart from
+   * the durable holds. A running turn holds everything back but a task, which
+   * waits its turn; maintenance (a lease) holds everything.
+   */
+  function localRefusal(conversationId: string, turn: HoldTurn): AdmissionRefusal | null {
+    if (stopping) return { code: "stopping", message: "The server is stopping; try again once it is back" };
     if (deps.repo.getInteractive(conversationId) === null || retired.has(conversationId)) {
-      return { kind: "refused", code: "not_enrolled", message: `Conversation ${conversationId} is not run by the core` };
+      return { code: "not_enrolled", message: `Conversation ${conversationId} is not run by the core` };
     }
-    if (runners.has(conversationId) || deps.repo.nextQueued(conversationId) !== null) {
-      return { kind: "refused", code: "busy", message: "Conversation is busy — a turn is already running" };
+    if (leases.has(conversationId)) return { code: "busy", message: "The conversation is held for maintenance" };
+    if (turn !== "task" && (runners.has(conversationId) || deps.repo.nextQueued(conversationId) !== null)) {
+      return { code: "busy", message: "Conversation is busy — a turn is already running" };
     }
     return null;
+  }
+
+  async function admission(conversationId: string, turn: HoldTurn): Promise<AdmissionRefusal | null> {
+    const local = localRefusal(conversationId, turn);
+    if (local !== null) return local;
+    if (deps.holds === undefined) return null;
+    const held = await readHolds(conversationId, turn, () => {
+      const since = localRefusal(conversationId, turn);
+      return since === null ? null : { kind: "refused", ...since };
+    });
+    return held === null ? null : { code: held.code, message: held.message };
   }
 
   function wake(conversationId: string): void {
@@ -1052,13 +1107,10 @@ export function createConversationCore(
     async idle() {
       while (runners.size > 0) await Promise.all([...runners.values()]);
     },
+    admission,
     async sendUserMessage(input) {
-      const refused = messageRefusal(input.conversationId);
-      if (refused !== null) return refused;
-      if (deps.holds !== undefined) {
-        const holdRefused = await readHolds(input.conversationId, "message", () => messageRefusal(input.conversationId));
-        if (holdRefused !== null) return holdRefused;
-      }
+      const refused = await admission(input.conversationId, input.queuedDelivery === undefined ? "message" : "delivery");
+      if (refused !== null) return { kind: "refused", ...refused };
       const { conversationId: _conversationId, stream: _stream, ...message } = input;
       const request: UserTurnRequest = userTurnRequestSchema.parse({ kind: "user_message", ...message });
       // A queued delivery's cause names its claim, correlating the turn with the queue rows it delivers.
@@ -1086,34 +1138,14 @@ export function createConversationCore(
       return { kind: "accepted", cause, settled };
     },
     async runTask({ conversationId, turn, signal }) {
-      if (stopping) {
-        return {
-          kind: "not_started",
-          reason: "cancelled",
-          message: "The server is stopping",
-          interruption: { reason: "shutdown" },
-        };
-      }
-      if (deps.repo.getInteractive(conversationId) === null || retired.has(conversationId)) {
-        return {
-          kind: "not_started",
-          reason: "configuration",
-          message: `Conversation ${conversationId} is not run by the core`,
-        };
-      }
       if (signal?.aborted === true) {
         return { kind: "not_started", reason: "cancelled", message: "The task was cancelled before it started" };
       }
-      if (leases.has(conversationId)) {
-        return { kind: "not_started", reason: "configuration", message: "The conversation is held for maintenance" };
-      }
-      if (deps.holds !== undefined) {
-        const held = await readHolds(conversationId, "task", () =>
-          leases.has(conversationId) || retired.has(conversationId) || stopping
-            ? { kind: "refused", code: "busy", message: "The conversation is held for maintenance" }
-            : null,
-        );
-        if (held !== null) return { kind: "not_started", reason: "configuration", message: held.message };
+      const refused = await admission(conversationId, "task");
+      if (refused !== null) {
+        return refused.code === "stopping"
+          ? { kind: "not_started", reason: "cancelled", message: refused.message, interruption: { reason: "shutdown" } }
+          : { kind: "not_started", reason: "configuration", message: refused.message };
       }
       // A cancellation during the read fired before any listener could hear it.
       if (wasAborted(signal)) {

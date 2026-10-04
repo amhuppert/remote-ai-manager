@@ -116,7 +116,7 @@ export async function createProductionTurnRuntime(options: {
         ...(seed?.runtimeState !== undefined ? { capabilityState: seed.runtimeState } : {}),
       };
     },
-    seed: applicationState.seed,
+    beginSeed: applicationState.beginSeed,
     callbacks(conversation) {
       const storeSessionName = conversationTargetStoreSessionName(conversation.target);
       const identity = {

@@ -13,6 +13,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { ExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import {
   ContextInputRefusedError,
+  DISPOSITIONS_BY_HALT,
   advanceContext,
   currentHalt,
   type ContextInput,
@@ -92,6 +93,16 @@ function isTerminal(progress: ContextProgress): boolean {
   return progress.kind === "succeeded" || progress.kind === "cancelled";
 }
 
+/** The accepted candidate's output, once the Context succeeded. */
+function acceptedOf(record: ContextRecord): { output: unknown } | null {
+  const progress = record.progress;
+  if (progress.kind !== "succeeded") return null;
+  const accepted = record.facts.candidates.items.find(
+    (candidate) => candidate.id === progress.candidateId,
+  );
+  return accepted === undefined ? null : { output: accepted.output };
+}
+
 /** The controller binding a seat conversation records when it is spawned. */
 export interface SeatBinding {
   contextId: string;
@@ -106,10 +117,41 @@ export interface ContextObservation {
   stalled: string[];
 }
 
+/**
+ * A Context as its owner reads it: what it needs next, what runs now and what
+ * it produced, without the records behind them.
+ */
+export interface ContextSummary {
+  contextId: string;
+  revision: number;
+  title: string;
+  progress: ContextProgress;
+  /** Changes whenever progress does; a halt disposition must name it. */
+  occurrence: string;
+  /** The accepted result, once the Context succeeded. */
+  accepted: { output: unknown } | null;
+  /** An effect is admitted and running: it drains through a pause. */
+  active: boolean;
+  /** The Context's own pause, apart from its Run's. */
+  paused: boolean;
+  /** What clears the current halt; empty unless halted. */
+  dispositions: readonly string[];
+  ownerQuestions: boolean;
+  tasks: Array<{ id: string; title: string; status: "open" | "done" }>;
+  /** assignment id → seat conversation id */
+  seats: Record<string, string>;
+  openQuestions: Array<{ questionId: string; seat: string }>;
+  lastSummary: string | null;
+  /** Open intents whose executor already settled: a stalled host, cleared by reconcile. */
+  stalled: string[];
+}
+
 export interface ContextHost extends Executor<ContextProgressReport> {
   reconcile(contextId: string): Promise<void>;
   recordReconcileFailure(contextId: string, error: unknown): void;
+  /** The stored record, for diagnostics and tests; consumers read `describe`. */
   observe(contextId: string): ContextObservation | null;
+  describe(contextId: string): ContextSummary | null;
   /** `caller` is the calling conversation's controller binding, resolved from its record. */
   applyTaskCommand(
     contextId: string,
@@ -248,8 +290,13 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
     }
   }
 
-  function afterCommit(before: ContextRecord, after: ContextRecord): void {
-    if (after.progressOccurrence !== before.progressOccurrence) {
+  /**
+   * Tells the Run when what it reads may have changed: a new progress
+   * occurrence, or a consumed outcome, which can end the Context's admitted
+   * activity (a paused Run's drain) while its progress stays as it was.
+   */
+  function afterCommit(before: ContextRecord, after: ContextRecord, consumedOutcome = false): void {
+    if (consumedOutcome || after.progressOccurrence !== before.progressOccurrence) {
       deps.touchRun(after.runId);
     }
   }
@@ -321,19 +368,12 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       };
       if (!isTerminal(record.progress))
         return { kind: "running", progress: report };
-      const accepted =
-        record.progress.kind === "succeeded"
-          ? record.facts.candidates.items.find(
-              (c) =>
-                record.progress.kind === "succeeded" &&
-                c.id === record.progress.candidateId,
-            )
-          : undefined;
+      const accepted = acceptedOf(record);
       return {
         kind: "settled",
         outcome: {
           ...report,
-          ...(accepted !== undefined ? { output: accepted.output } : {}),
+          ...(accepted !== null ? { output: accepted.output } : {}),
         },
       };
     },
@@ -346,6 +386,7 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
 
     async reconcile(contextId) {
       let before: ContextRecord | null = null;
+      let consumed = false;
       const after = deps.transaction(() => {
         const record = requireRecord(contextId);
         before = record;
@@ -364,6 +405,7 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
                 : { kind: "uncertain", evidence: state.evidence },
           });
           deps.intents.close(intent.id);
+          consumed = true;
         }
         const permit = permitOf(contextId);
         const stillPending = deps.intents.pending(owner(contextId));
@@ -383,7 +425,7 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         }
         return persist(record, facts, deps.intents.pending(owner(contextId)));
       });
-      if (before !== null) afterCommit(before, after);
+      if (before !== null) afterCommit(before, after, consumed);
       await submitAdmissible(contextId);
     },
 
@@ -409,6 +451,32 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         })
         .map((intent) => intent.cause);
       return { record, stalled };
+    },
+
+    describe(contextId) {
+      const observed = host.observe(contextId);
+      if (observed === null) return null;
+      const { record, stalled } = observed;
+      const { facts, progress } = record;
+      const pending = deps.intents.pending(owner(contextId));
+      return {
+        contextId,
+        revision: record.revision,
+        title: facts.contract.current.title,
+        progress,
+        occurrence: record.progressOccurrence,
+        accepted: acceptedOf(record),
+        // A question waiting on its owner is not work that drains.
+        active: effectViews(pending).some((effect) => effect.admitted && !effect.waitsOnPerson),
+        paused: facts.control.paused,
+        dispositions: progress.kind === "halted" ? DISPOSITIONS_BY_HALT[progress.halt] : [],
+        ownerQuestions: facts.contract.current.ownerQuestions,
+        tasks: facts.ledger.tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
+        seats: facts.seats.conversations,
+        openQuestions: facts.requests.open.map((open) => ({ questionId: open.questionId, seat: open.seat })),
+        lastSummary: facts.ledger.lastSummary,
+        stalled,
+      };
     },
 
     applyTaskCommand(contextId, caller, command) {

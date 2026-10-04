@@ -36,11 +36,11 @@ import { getValidationService } from "@/lib/validation/singleton";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkspaceEvidence } from "@/lib/workspace/evidence";
 import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
-import { composedRunSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, RUN_SUPERVISION_KEY } from "./handles";
+import { composedSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, SUPERVISION_KEY } from "./handles";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
-import { composeBoundaryNotice } from "./notices";
-import { boundaryDetail } from "./schemas";
-import { composeRunSupervision, type RunSupervision } from "./supervision";
+import { composeBoundaryNotice } from "@/lib/runs/notices";
+import { boundaryDetail } from "@/lib/runs/schemas";
+import { composeSupervision, type Supervision } from "./supervision";
 
 const logger = createLogger("runs");
 
@@ -49,8 +49,8 @@ const logger = createLogger("runs");
  * boot (instrumentation) and route bundles share one scheduler, one workspace
  * admission and one set of running turns.
  */
-export function getRunSupervision(): RunSupervision {
-  return getGlobalSingleton(RUN_SUPERVISION_KEY, composeProductionSupervision);
+export function getSupervision(): Supervision {
+  return getGlobalSingleton(SUPERVISION_KEY, composeProductionSupervision);
 }
 
 
@@ -60,7 +60,7 @@ function coreTurnRuntime(): Promise<CoreTurnRuntime> {
   if (cached !== undefined) return cached;
   const created = createProductionTurnRuntime({
     // Resolved when a cleanup turn ends: by then the supervision that owns debug mode is composed.
-    startDebugVerification: (input) => composedRunSupervision()?.debug.startVerification(input),
+    startDebugVerification: (input) => composedSupervision()?.debug.startVerification(input),
   }).catch((error: unknown) => {
     deleteGlobalValue(CORE_TURN_RUNTIME_KEY);
     throw error;
@@ -173,9 +173,9 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
   };
 }
 
-function composeProductionSupervision(): RunSupervision {
-  let self: RunSupervision | null = null;
-  const composed = composeRunSupervision({
+function composeProductionSupervision(): Supervision {
+  let self: Supervision | null = null;
+  const composed = composeSupervision({
     db: getStateDb(),
     seatTurns: {
       async run(input) {
@@ -274,11 +274,11 @@ function composeProductionSupervision(): RunSupervision {
 }
 
 /** Boot: called once after conversation actors rehydrate. */
-export async function bootRunSupervision(): Promise<{
+export async function bootSupervision(): Promise<{
   restoredRuns: number;
   reconciledOwners: number;
 }> {
-  return getRunSupervision().boot();
+  return getSupervision().boot();
 }
 
 /**
@@ -286,8 +286,8 @@ export async function bootRunSupervision(): Promise<{
  * settled that way rather than cancelled by a user), then every runtime the
  * core hosts closes. Composes nothing that was never used.
  */
-export async function shutdownRunSupervision(): Promise<void> {
-  const supervision = getGlobalValue<RunSupervision>(RUN_SUPERVISION_KEY);
+export async function shutdownSupervision(): Promise<void> {
+  const supervision = getGlobalValue<Supervision>(SUPERVISION_KEY);
   if (supervision !== undefined) await supervision.core.shutdown();
   const runtime = getGlobalValue<Promise<CoreTurnRuntime>>(CORE_TURN_RUNTIME_KEY);
   if (runtime !== undefined) await (await runtime).host.releaseAll();

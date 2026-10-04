@@ -1,42 +1,43 @@
 import type { RunView } from "./schemas";
-import type { RunSupervision } from "./supervision";
+import type { Supervision } from "@/lib/supervision/supervision";
 
 export function describeRun(
-  supervision: RunSupervision,
+  supervision: Supervision,
   runId: string,
 ): RunView | null {
   const observed = supervision.runs.observe(runId);
   if (observed === null) return null;
   const { record } = observed;
-  const contexts = record.facts.invocations.map((invocation) => {
-    const context = supervision.contexts.observe(invocation.contextId);
-    const facts = context?.record.facts;
-    const progress = context?.record.progress ?? null;
-    const accepted =
-      progress?.kind === "succeeded"
-        ? facts?.candidates.items.find(
-            (candidate) => candidate.id === progress.candidateId,
-          )
-        : undefined;
+  const started = new Set(record.facts.invocations.map((i) => i.key));
+  const summaries = new Map(
+    record.facts.definition.contexts.map((defined) => [
+      defined.key,
+      started.has(defined.key)
+        ? supervision.contexts.describe(defined.request.contextId)
+        : null,
+    ]),
+  );
+  const contexts = record.facts.definition.contexts.map((defined) => {
+    const context = summaries.get(defined.key) ?? null;
     return {
-      key: invocation.key,
-      contextId: invocation.contextId,
-      progress,
-      occurrence: context?.record.progressOccurrence ?? null,
-      tasks: (facts?.ledger.tasks ?? []).map((task) => ({
-        id: task.id,
-        title: task.title,
-        status: task.status,
-      })),
-      seats: facts?.seats.conversations ?? {},
-      openQuestions: (facts?.requests.open ?? []).map((open) => ({
-        questionId: open.questionId,
-        seat: open.seat,
+      key: defined.key,
+      contextId: defined.request.contextId,
+      dependsOn: defined.dependsOn,
+      waitingOn: defined.dependsOn.filter(
+        (key) => summaries.get(key)?.progress.kind !== "succeeded",
+      ),
+      started: started.has(defined.key),
+      progress: context?.progress ?? null,
+      occurrence: context?.occurrence ?? null,
+      tasks: context?.tasks ?? [],
+      seats: context?.seats ?? {},
+      openQuestions: (context?.openQuestions ?? []).map((open) => ({
+        ...open,
         text:
           supervision.requests.question(open.questionId)?.questionText ?? null,
       })),
-      lastSummary: facts?.ledger.lastSummary ?? null,
-      output: accepted?.output ?? null,
+      lastSummary: context?.lastSummary ?? null,
+      output: context?.accepted?.output ?? null,
     };
   });
   return {
@@ -58,9 +59,7 @@ export function describeRun(
     })),
     stalled: [
       ...observed.stalled,
-      ...contexts.flatMap(
-        (c) => supervision.contexts.observe(c.contextId)?.stalled ?? [],
-      ),
+      ...[...summaries.values()].flatMap((context) => context?.stalled ?? []),
     ],
   };
 }

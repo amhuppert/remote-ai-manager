@@ -42,7 +42,6 @@ const completed = (text = "Hi") => outcomeOf(settledConversationTurn({ outcome: 
 interface Row {
   backendRef: AgentSessionRef | null;
   promptCount: number;
-  queueReviewRequired?: boolean;
   debugMode?: DebugModeState | null;
 }
 
@@ -84,7 +83,7 @@ function harness(
     async read() {
       return row === null
         ? null
-        : { agentBackend: "claude", transcriptPath: "/t/conv-1.jsonl", queueReviewRequired: false, debugMode: null, ...row };
+        : { agentBackend: "claude", transcriptPath: "/t/conv-1.jsonl", debugMode: null, ...row };
     },
     async beginTurn(_identity, source) {
       events.push(`begin:${source}`);
@@ -561,23 +560,6 @@ describe("interactive turns", () => {
     const h = harness(async () => completed(), { backendRef: null, promptCount: 3 });
     await h.run(message());
     expect(h.contexts[0]?.runtimeCreatedWithoutResume).toBe(true);
-  });
-
-  it("holds a person's direct message while a queued delivery awaits review, without touching the conversation", async () => {
-    const h = harness(async () => completed(), { backendRef: null, promptCount: 2, queueReviewRequired: true });
-    expect(await h.run(message())).toMatchObject({
-      status: "failed",
-      failure: "Review queued deliveries before sending another prompt.",
-    });
-    expect(h.turns).toEqual([]);
-    expect(h.events).toEqual([]);
-    expect(h.streamed).toEqual([
-      ["error", { message: "Review queued deliveries before sending another prompt.", code: "QUEUE_REVIEW_REQUIRED" }],
-    ]);
-
-    // The queue decides for what it delivers itself.
-    await h.run(message({ queuedDelivery: { messageIds: ["q-2"], deliveryAttemptId: "att-2" } }));
-    expect(h.turns).toHaveLength(1);
   });
 
   describe("in debug mode", () => {

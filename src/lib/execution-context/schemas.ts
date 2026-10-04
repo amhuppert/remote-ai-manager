@@ -1,7 +1,5 @@
 import { z } from "zod";
-import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
-import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
-import { agentBackendSchema } from "@/lib/shared/schemas";
+import { seatAssignmentSchema } from "@/lib/conversation-core/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { workspaceBindingRequestSchema } from "@/lib/workspace/schemas";
 
@@ -11,17 +9,6 @@ import { workspaceBindingRequestSchema } from "@/lib/workspace/schemas";
 
 export const reviewerAuthoritySchema = z.enum(["blocking", "advisory"]);
 export type ReviewerAuthority = z.infer<typeof reviewerAuthoritySchema>;
-
-export const seatAssignmentSchema = z
-  .object({
-    id: z.string().trim().min(1),
-    profile: agentProfileRefSchema,
-    focus: z.string().trim().min(1).optional(),
-    backend: agentBackendSchema,
-    modelSelection: backendModelSelectionSchema,
-  })
-  .strict();
-export type SeatAssignment = z.infer<typeof seatAssignmentSchema>;
 
 export const reviewerAssignmentSchema = seatAssignmentSchema
   .extend({ authority: reviewerAuthoritySchema })
@@ -53,6 +40,18 @@ export const contractDocumentSchema = z
   .strict();
 export type ContractDocument = z.infer<typeof contractDocumentSchema>;
 
+/** The accepted result of earlier work this Context builds on, bound when it starts. */
+export const contractInputSchema = z
+  .object({
+    /** The earlier work's key in its run, telling apart works with one title. */
+    key: z.string().min(1),
+    /** The earlier work's title, as its owner named it. */
+    title: z.string().min(1),
+    output: z.unknown(),
+  })
+  .strict();
+export type ContractInput = z.infer<typeof contractInputSchema>;
+
 export const contextContractSchema = z
   .object({
     title: z.string().trim().min(1),
@@ -65,6 +64,12 @@ export const contextContractSchema = z
     reviewers: z.array(reviewerAssignmentSchema),
     /** Context-scoped acceptance checks; they run as readers before seats. */
     checks: z.array(validationCommandNameSchema),
+    /**
+     * Whole-tree checks this Context does not run because other work writes the
+     * same workspace alongside it; later work runs them on the assembled tree.
+     */
+    deferredChecks: z.array(validationCommandNameSchema).default([]),
+    inputs: z.array(contractInputSchema).default([]),
     humanApproval: z.boolean(),
     /** Whether seats may ask their owner questions. */
     ownerQuestions: z.boolean(),

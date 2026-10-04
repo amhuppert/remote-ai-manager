@@ -2,6 +2,7 @@
  * Agent-facing Run endpoints for the shared supervision path.
  *
  * - POST /api/projects/[name]/sessions/[session]/runs                → launch an agent run
+ * - POST /api/projects/[name]/sessions/[session]/runs/workflow       → launch a workflow run
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]        → the run view
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/answer → answer a seat's question
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel
@@ -35,10 +36,14 @@ import {
   type AgentLaunchRequest,
   type ResolvedSeat,
 } from "./launch";
-import { RunControlRefusedError } from "./host";
+import { RunControlRefusedError, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import type { RunRecord } from "./schemas";
-import type { RunSupervision } from "./supervision";
+import type { Supervision } from "@/lib/supervision/supervision";
+import {
+  compileWorkflow,
+  workflowLaunchRequestSchema,
+} from "./workflow-definition";
 
 type RouteContext = { params: Promise<Record<string, string>> };
 type Handler = (request: Request, context: RouteContext) => Promise<Response>;
@@ -54,7 +59,7 @@ export interface RunRouteDeps {
     worktreePath: string;
     conversations: Array<{ id: string }>;
   } | null>;
-  supervision(): RunSupervision;
+  supervision(): Supervision;
   /** Backend, model selection and admission for every seat the launch names. */
   resolveSeats(input: {
     projectPath: string;
@@ -160,7 +165,13 @@ async function readBody<T>(
 export function createRunRouteHandlers(
   deps: RunRouteDeps,
 ): Record<
-  "launch" | "show" | "answer" | "control" | "decide" | "tasks",
+  | "launch"
+  | "launchWorkflow"
+  | "show"
+  | "answer"
+  | "control"
+  | "decide"
+  | "tasks",
   Handler
 > {
   /** Token, session and a verified calling conversation of that session. */
@@ -243,6 +254,88 @@ export function createRunRouteHandlers(
     return { ok: true, caller: resolved.caller, run };
   }
 
+  /** Refusals that apply to every launch, whatever it starts. */
+  function refuseLaunch(
+    caller: Caller,
+    humanApproval: boolean,
+  ): Response | null {
+    if (humanApproval) {
+      return jsonError(
+        "Human approval is not available for agent runs yet: no Command Center surface lets Alex make the decision",
+        400,
+        "human_approval_unavailable",
+        undefined,
+        "Launch without humanApproval and review the result yourself, or ask Alex.",
+      );
+    }
+    // A seat's child would bind the workspace the seat's own context holds and
+    // wait for it, while the seat waits for the child.
+    if (deps.supervision().core.seatBinding(caller.conversationId) !== null) {
+      return jsonError(
+        "A supervised seat cannot launch runs",
+        403,
+        "seat_cannot_launch",
+        undefined,
+        "Finish your assigned work, or ask your owner with cctl ask.",
+      );
+    }
+    return null;
+  }
+
+  /** A seat resolution refusal; a workflow's names the context it belongs to. */
+  function seatFailure(
+    failure: { status: number; error: string; code?: string },
+    contextKey?: string,
+  ): Response {
+    return NextResponse.json(
+      {
+        error:
+          contextKey === undefined
+            ? failure.error
+            : `Context "${contextKey}": ${failure.error}`,
+        ...(failure.code !== undefined ? { code: failure.code } : {}),
+        ...(contextKey !== undefined ? { context: contextKey } : {}),
+      },
+      { status: failure.status },
+    );
+  }
+
+  async function startLaunch(
+    caller: Caller,
+    launch: RunLaunchInput,
+  ): Promise<Response> {
+    const record = await deps.supervision().runs.launch(launch);
+    deps.log.info("runs.launched", {
+      runId: launch.runId,
+      kind: launch.kind,
+      contexts: launch.contexts.length,
+      sessionName: caller.sessionName,
+      conversationId: caller.conversationId,
+    });
+    return NextResponse.json(
+      {
+        runId: launch.runId,
+        contextIds: launch.contexts.map((context) => context.request.contextId),
+        progress: record.progress,
+      },
+      { status: 202 },
+    );
+  }
+
+  const placementOf = (caller: Caller, runId: string) => ({
+    runId,
+    cause: `launch:${runId}`,
+    projectPath: caller.projectPath,
+    session: {
+      sessionName: caller.sessionName,
+      worktreePath: caller.worktreePath,
+    },
+    owner: {
+      conversationId: caller.conversationId,
+      sessionName: caller.sessionName,
+    },
+  });
+
   return {
     async launch(request, context) {
       const resolved = await resolveCaller(request, context);
@@ -253,72 +346,61 @@ export function createRunRouteHandlers(
         "agent run launch",
       );
       if (!body.ok) return body.response;
-      if (body.value.humanApproval === true) {
-        return jsonError(
-          "Human approval is not available for agent runs yet: no Command Center surface lets Alex make the decision",
-          400,
-          "human_approval_unavailable",
-          undefined,
-          "Launch without humanApproval and review the result yourself, or ask Alex.",
-        );
-      }
       const { caller } = resolved;
-      // A seat's child would bind the workspace the seat's own context holds and
-      // wait for it, while the seat waits for the child.
-      if (deps.supervision().core.seatBinding(caller.conversationId) !== null) {
-        return jsonError(
-          "A supervised seat cannot launch runs",
-          403,
-          "seat_cannot_launch",
-          undefined,
-          "Finish your assigned work, or ask your owner with cctl ask.",
-        );
-      }
+      const refused = refuseLaunch(caller, body.value.humanApproval === true);
+      if (refused !== null) return refused;
       const seats = await deps.resolveSeats({
         projectPath: caller.projectPath,
         request: body.value,
       });
-      if (!seats.ok) {
-        return NextResponse.json(
-          {
-            error: seats.error,
-            ...(seats.code !== undefined ? { code: seats.code } : {}),
-          },
-          { status: seats.status },
-        );
+      if (!seats.ok) return seatFailure(seats);
+      const runId = deps.newRunId();
+      return startLaunch(
+        caller,
+        resolveAgentLaunch({
+          ...placementOf(caller, runId),
+          request: body.value,
+          seats: seats.seats,
+        }),
+      );
+    },
+
+    async launchWorkflow(request, context) {
+      const resolved = await resolveCaller(request, context);
+      if (!resolved.ok) return resolved.response;
+      const body = await readBody(
+        request,
+        workflowLaunchRequestSchema,
+        "workflow run launch",
+      );
+      if (!body.ok) return body.response;
+      const { caller } = resolved;
+      const refused = refuseLaunch(
+        caller,
+        body.value.contexts.some((c) => c.humanApproval === true),
+      );
+      if (refused !== null) return refused;
+      const seats: Record<
+        string,
+        { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }
+      > = {};
+      for (const contextRequest of body.value.contexts) {
+        const resolvedSeats = await deps.resolveSeats({
+          projectPath: caller.projectPath,
+          request: contextRequest,
+        });
+        if (!resolvedSeats.ok)
+          return seatFailure(resolvedSeats, contextRequest.key);
+        seats[contextRequest.key] = resolvedSeats.seats;
       }
       const runId = deps.newRunId();
-      const launch = resolveAgentLaunch({
-        request: body.value,
-        runId,
-        cause: `launch:${runId}`,
-        projectPath: caller.projectPath,
-        session: {
-          sessionName: caller.sessionName,
-          worktreePath: caller.worktreePath,
-        },
-        owner: {
-          conversationId: caller.conversationId,
-          sessionName: caller.sessionName,
-        },
-        seats: seats.seats,
-      });
-      const record = await deps.supervision().runs.launch(launch);
-      deps.log.info("runs.launched", {
-        runId,
-        sessionName: caller.sessionName,
-        conversationId: caller.conversationId,
-        backend: seats.seats.implementer.backend,
-      });
-      return NextResponse.json(
-        {
-          runId,
-          contextIds: launch.invocations.map(
-            (invocation) => invocation.request.contextId,
-          ),
-          progress: record.progress,
-        },
-        { status: 202 },
+      return startLaunch(
+        caller,
+        compileWorkflow({
+          ...placementOf(caller, runId),
+          request: body.value,
+          seats,
+        }),
       );
     },
 

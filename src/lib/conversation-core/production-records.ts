@@ -1,6 +1,5 @@
 import { dispatchPushForConversationStatus } from "@/lib/push-notification/dispatcher";
 import { projectConversationTarget, targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import { messageQueueService, type MessageQueueService } from "@/lib/conversations/message-queue-service";
 import { queueContentOfTurnInput } from "@/lib/prompt/queue";
 import { conversationEventScopeFields, isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
@@ -180,7 +179,6 @@ export function createProductionConversationRecords(
             backendRef: row.backendRef,
             promptCount: row.promptCount,
             transcriptPath: row.transcriptPath,
-            queueReviewRequired: row.pendingQueue.some(queuedMessageBlocksOrdinaryAdmission),
             debugMode: row.debugMode,
           };
     },

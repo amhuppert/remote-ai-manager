@@ -1,7 +1,10 @@
+import type { WorkspaceBindingRequest } from "./schemas";
 import { describe, expect, it } from "vitest";
 import {
+  bindingScopesOverlap,
   createWorkspaceAdmission,
   grantsConflict,
+  turnWorkspaceAccess,
   type GrantRequest,
 } from "./admission";
 
@@ -75,6 +78,67 @@ describe("workspace conflict relation", () => {
         grant("full_write", undefined, "/repo/.worktrees/other"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("supervised binding overlap", () => {
+  const full = { mode: "full" } as const;
+  const readOnly = { mode: "readOnly" } as const;
+  const owned = (...paths: string[]) => ({ mode: "owned", paths }) as const;
+
+  it("keeps a read-only binding apart from every writer, whose changes would enter its whole-tree evidence", () => {
+    expect(bindingScopesOverlap(readOnly, full)).toBe(true);
+    expect(bindingScopesOverlap(owned("src/api"), readOnly)).toBe(true);
+    expect(bindingScopesOverlap(readOnly, readOnly)).toBe(false);
+  });
+
+  it("separates writers by scope: full overlaps everything, owned scopes only when one contains the other", () => {
+    expect(bindingScopesOverlap(full, owned("docs"))).toBe(true);
+    expect(bindingScopesOverlap(owned("src/lib"), owned("src/lib/runs"))).toBe(true);
+    expect(bindingScopesOverlap(owned("src/api"), owned("src/ui"))).toBe(false);
+    expect(bindingScopesOverlap(owned("src/api"), owned("src/apiary"))).toBe(false);
+    // A case-insensitive disk would give both spellings the same files.
+    expect(bindingScopesOverlap(owned("src/API"), owned("src/api/routes"))).toBe(true);
+  });
+});
+
+describe("a supervised turn's workspace access", () => {
+  const placement = (scope: WorkspaceBindingRequest["scope"]): WorkspaceBindingRequest => ({
+    kind: "session",
+    projectPath: "/repo",
+    sessionName: "session",
+    worktreePath: wt,
+    scope,
+  });
+  const access = (scope: WorkspaceBindingRequest["scope"], need: "write" | "stable_read" | "observe", role: "implementer" | "reviewer") => {
+    const { grant, writes } = turnWorkspaceAccess({ binding: placement(scope), need, role });
+    return { grant, writes };
+  };
+
+  it("lets an implementer's writing turn hold a write grant over its scope and write only there", () => {
+    expect(access({ mode: "owned", paths: ["src/api"] }, "write", "implementer")).toEqual({
+      grant: { kind: "scoped_write", paths: ["src/api"] },
+      writes: { mode: "paths", paths: ["src/api"] },
+    });
+    expect(access({ mode: "full" }, "write", "implementer")).toEqual({
+      grant: { kind: "full_write" },
+      writes: { mode: "all" },
+    });
+  });
+
+  it("keeps an owned or read-only implementer's limits on turns that take no grant", () => {
+    expect(access({ mode: "owned", paths: ["src/api"] }, "observe", "implementer")).toEqual({
+      grant: null,
+      writes: { mode: "paths", paths: ["src/api"] },
+    });
+    expect(access({ mode: "readOnly" }, "write", "implementer")).toEqual({ grant: null, writes: { mode: "none" } });
+  });
+
+  it("gives a review a whole-tree stable read, with reviewers unconfined by decision", () => {
+    expect(access({ mode: "owned", paths: ["src/api"] }, "stable_read", "reviewer")).toEqual({
+      grant: { kind: "stable_read" },
+      writes: { mode: "all" },
+    });
   });
 });
 

@@ -10,7 +10,7 @@ import {
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import type { ConversationRecordPort } from "./conversation-record";
 import type { SeatTurnPort } from "./executor";
-import { failedTurn as failed, runRecordedTurn, turnResultOf, withCollection } from "./recorded-turn";
+import { failedTurn as failed, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
 import type { SeatTurnRequest } from "./schemas";
 import type { TurnEngine } from "./turn-engine";
@@ -27,7 +27,13 @@ export interface NativeSeatTurnDeps {
 
 type Confinement =
   | { kind: "none" }
-  | { kind: "envelope"; envelope: ImplementerLaneWriteEnvelope; restriction: FsWriteRestrictionSupport }
+  | {
+      kind: "envelope";
+      envelope: ImplementerLaneWriteEnvelope;
+      restriction: FsWriteRestrictionSupport;
+      /** No repository path is writable: a read-only context's implementer. */
+      readOnly: boolean;
+    }
   | { kind: "refused"; reason: string };
 
 /**
@@ -36,26 +42,29 @@ type Confinement =
  * row records each turn the way every other client reads it.
  */
 export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
+  /** The write envelope that enforces what the request says the turn may write. */
   function confinementFor(request: SeatTurnRequest): Confinement {
-    const { access, scope, worktreePath } = request.workspace;
-    if (access !== "write" || scope.mode !== "owned") return { kind: "none" };
+    const { writes, worktreePath } = request.workspace;
+    if (writes.mode === "all") return { kind: "none" };
+    const readOnly = writes.mode === "none";
     const backend = request.seat.assignment.backend;
     const restriction = deps.fsWriteRestriction(backend);
     if (restriction === "unsupported") {
       return {
         kind: "refused",
-        reason: `Backend "${backend}" cannot limit conversation writes, so it cannot run under an owned write scope`,
+        reason: `Backend "${backend}" cannot limit conversation writes, so it cannot run under a ${readOnly ? "read-only" : "owned write"} scope`,
       };
     }
     try {
       const envelope = deps.composeWriteEnvelope({
         executionId: request.seat.contextId,
-        contextId: request.seat.assignmentId,
+        // Names the payload directory in the shared worktree: one per context's seat.
+        contextId: `${request.seat.contextId}.${request.seat.assignmentId}`,
         worktreePath,
-        ownedPaths: scope.paths,
-        payloadLocation: "worktree",
+        ownedPaths: writes.mode === "paths" ? writes.paths : [],
+        payloadLocation: readOnly ? "scratch" : "worktree",
       });
-      return { kind: "envelope", envelope, restriction };
+      return { kind: "envelope", envelope, restriction, readOnly };
     } catch (error) {
       return { kind: "refused", reason: `Cannot establish the write envelope: ${getErrorMessage(error)}` };
     }
@@ -92,7 +101,7 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
       const timeout = timeoutMs === null ? null : AbortSignal.timeout(timeoutMs);
       const turnSignal = timeout === null ? signal : AbortSignal.any([signal, timeout]);
 
-      const { outcome, uncollected } = await runRecordedTurn(deps, identity, "workflow", async () => {
+      const recorded = await runRecordedTurn(deps, identity, "workflow", async () => {
         const profile = await deps.records.admitProfile(identity);
         return deps.engine.runTurn({
           conversation: {
@@ -122,7 +131,10 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
             content: [{ type: "text", text: promptText }],
           },
           onBackendInit: (ref) => deps.records.recordContinuity(identity, ref),
-          writeCapability: request.seat.role === "reviewer" ? "read_only" : "write_capable",
+          writeCapability:
+            request.seat.role === "reviewer" || (confinement.kind === "envelope" && confinement.readOnly)
+              ? "read_only"
+              : "write_capable",
           autonomous: true,
           waitForBackgroundTasks: request.kind === "work",
           ...(outputFormat !== undefined ? { outputFormat, structuredOutputTurns: "work_then_format" as const } : {}),
@@ -130,7 +142,7 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
         });
       });
       const timedOut = timeout !== null && timeout.aborted && !signal.aborted ? timeoutMs : null;
-      return withCollection(turnResultOf(outcome, outputFormat, timedOut), uncollected);
+      return recordedResult(turnResultOf(recorded.outcome, outputFormat, timedOut), recorded);
     },
   };
 }
