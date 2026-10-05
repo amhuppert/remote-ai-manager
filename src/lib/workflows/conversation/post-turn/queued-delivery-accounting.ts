@@ -57,6 +57,12 @@ export interface QueuedDeliveryAccounting {
    */
   handleInputAccepted(): Promise<void>;
   /**
+   * As `handleInputAccepted`, for a caller that owns the release until it
+   * holds: rejects while the rows are not released, and the next call
+   * confirms them again — which releases rows held for review meanwhile.
+   */
+  releaseAccepted(): Promise<void>;
+  /**
    * Turn `finally`: retain any incomplete delivery for review. Mark failures
    * are logged; the original claim remains recoverable after restart.
    */
@@ -133,45 +139,54 @@ export function createQueuedDeliveryAccounting(
       await appendQueuedUserEntryOnce();
     },
 
-    handleInputAccepted(): Promise<void> {
-      if (acceptance) return acceptance;
-      acceptance = (async () => {
-        if (!input.queuedDelivery || deliveryRecorded) return;
-        await appendQueuedUserEntryOnce();
-        try {
-          const released = await deps.confirmQueuedDelivery({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            conversationId: input.conversationId,
-            ids: input.queuedDelivery.messageIds,
-            deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          });
-          deliveryRecorded = true;
-          logger.info("queue.accepted", {
-            ...scopeRefFromStoreSessionName(input.sessionName),
-            conversationId: input.conversationId,
-            messageIds: input.queuedDelivery.messageIds,
-            deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-            released,
-          });
-        } catch (error) {
-          settlementError = getErrorMessage(error);
-          logger.error("queue.acceptance_settlement_failed", {
-            ...scopeRefFromStoreSessionName(input.sessionName),
-            conversationId: input.conversationId,
-            messageIds: input.queuedDelivery.messageIds,
-            deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-            error: settlementError,
-          });
-          await holdForReview();
-        }
-      })();
-      void acceptance.catch(() => {
-        acceptance = undefined;
-      });
-      return acceptance;
+    async releaseAccepted(): Promise<void> {
+      await handleInputAccepted();
+      if (!input.queuedDelivery || deliveryRecorded) return;
+      acceptance = undefined;
+      throw new Error(settlementError ?? "The queued delivery is not released");
     },
+
+    handleInputAccepted,
 
     settleAfterTurn: holdForReview,
   };
+
+  function handleInputAccepted(): Promise<void> {
+    if (acceptance) return acceptance;
+    acceptance = (async () => {
+      if (!input.queuedDelivery || deliveryRecorded) return;
+      await appendQueuedUserEntryOnce();
+      try {
+        const released = await deps.confirmQueuedDelivery({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          ids: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        });
+        deliveryRecorded = true;
+        logger.info("queue.accepted", {
+          ...scopeRefFromStoreSessionName(input.sessionName),
+          conversationId: input.conversationId,
+          messageIds: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+          released,
+        });
+      } catch (error) {
+        settlementError = getErrorMessage(error);
+        logger.error("queue.acceptance_settlement_failed", {
+          ...scopeRefFromStoreSessionName(input.sessionName),
+          conversationId: input.conversationId,
+          messageIds: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+          error: settlementError,
+        });
+        await holdForReview();
+      }
+    })();
+    void acceptance.catch(() => {
+      acceptance = undefined;
+    });
+    return acceptance;
+  }
 }

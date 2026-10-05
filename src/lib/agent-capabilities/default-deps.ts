@@ -21,7 +21,6 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
-import { withCoreRuntimes } from "@/lib/conversation-core/runtime-application-state";
 import type {
   ResolvedCapabilityCascade,
   RuntimeConfigApplyResult,
@@ -585,7 +584,7 @@ const defaultListAffectedConversations = createAffectedConversationLister({
   listAllProjectConversations: () => stateManager.listAllProjectConversations(),
   // Lists conversations whose core turn is running too, so their changes stage
   // for the next turn; listing never calls the runtime.
-  getRuntime: withCoreRuntimes(getRuntime),
+  getRuntime,
   getProjectDisplayName,
 });
 

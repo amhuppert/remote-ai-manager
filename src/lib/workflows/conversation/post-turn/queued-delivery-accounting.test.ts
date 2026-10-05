@@ -182,6 +182,23 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     expect(deps.markQueuedUncertain).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a caller that owns the release retry a failed confirmation, holding the rows for review meanwhile", async () => {
+    const deps = makeDeps();
+    deps.confirmQueuedDelivery.mockRejectedValueOnce(new Error("database is locked"));
+    const accounting = createQueuedDeliveryAccounting(deps, {
+      ...identity,
+      queuedDelivery,
+      appendUserEntry: vi.fn(async () => {}),
+    });
+
+    await expect(accounting.releaseAccepted()).rejects.toThrow("database is locked");
+    expect(deps.markQueuedUncertain).toHaveBeenCalledTimes(1);
+    await expect(accounting.releaseAccepted()).resolves.toBeUndefined();
+    expect(deps.confirmQueuedDelivery).toHaveBeenCalledTimes(2);
+    await accounting.settleAfterTurn();
+    expect(deps.markQueuedUncertain).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects archival failure and retains the original claim for review", async () => {
     const deps = makeDeps();
     const accounting = createQueuedDeliveryAccounting(deps, {

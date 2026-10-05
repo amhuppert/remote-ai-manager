@@ -46,7 +46,7 @@ function harness(
   const backendRef: AgentSessionRef | null = { backend: "claude", ref: "sdk-1" };
   const records: Pick<ConversationRecordPort, "read" | "beginTurn" | "settleTurn" | "admitProfile"> = {
     async read() {
-      return { agentBackend: "claude", backendRef, promptCount: 3, transcriptPath: null, debugMode };
+      return { agentBackend: "claude", backendRef, promptCount: 3, transcriptPath: null, debugMode, pendingQuestionId: null, owner: null };
     },
     async beginTurn(_identity, source) {
       events.push(`begin:${source}`);

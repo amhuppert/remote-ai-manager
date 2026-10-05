@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { passthroughTurnInput } from "./testing/passthrough-input";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,8 @@ const records: ConversationRecordPort = {
       promptCount: 0,
       transcriptPath: null,
       debugMode: null,
+      pendingQuestionId: null,
+      owner: null,
     };
   },
   async claimTurn() {},
@@ -91,18 +94,7 @@ async function runProjectMessage() {
     },
     resolveModelSelection: async () => ({ modelId: "sonnet", parameters: { effort: "medium" } }),
     continuation: async () => ({ continuation: { kind: "ordinary" }, seed: null }),
-    async prepareContext(request) {
-      return {
-        promptText: request.promptText,
-        dispatchPromptText: request.promptText,
-        userPromptText: request.promptText,
-        markDispatched: () => {},
-        markDispatchFailure: () => {},
-        async onInputAccepted() {},
-        async onBackendInit() {},
-        async finish() {},
-      };
-    },
+    prepareInput: async (request) => passthroughTurnInput(request),
     nameConversation: () => {},
     requestUserQuestion: async () => ({ status: "answered" as const, answers: {} }),
     persistImages: async ({ promptText }) => ({ promptText, imageRefs: [] }),

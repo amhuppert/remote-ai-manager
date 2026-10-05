@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { DebugModePhase, DebugModeState } from "@/lib/debug-log/schemas";
 import type { DebugFinalization } from "@/lib/workflows/debug/finalization";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
-import type { ConversationBackendEvent } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendEvent,
+  ConversationBackendRuntime,
+  ConversationQueuedUserInput,
+} from "@/lib/agent-backends/conversation";
+import { InputDeliveryUncertainError, isPromptNotDeliveredFailure, markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
@@ -11,9 +16,9 @@ import type { ConversationRecordPort } from "./conversation-record";
 import type { UserTurnRequest } from "./schemas";
 import {
   createInteractiveTurns,
-  type InteractiveContextRequest,
   type InteractiveTurnDeps,
 } from "./interactive-turns";
+import { prepareTurnInput, type InputDelivery, type TurnInputDependencies, type TurnInputRequest } from "./turn-input";
 import type { TurnRequest } from "./turn-engine";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import { storeSessionNameFromScopeRef, type ConversationTarget } from "@/lib/conversations/conversation-target";
@@ -24,6 +29,7 @@ const enrollment = {
   sessionName: "session",
   enrolledAt: "2026-10-03T10:00:00.000Z",
 };
+const identity = { projectPath: "/repo", storeSessionName: "session", conversationId: "conv-1" };
 
 const message = (overrides: Partial<UserTurnRequest> = {}): UserTurnRequest => ({
   kind: "user_message",
@@ -43,6 +49,7 @@ interface Row {
   backendRef: AgentSessionRef | null;
   promptCount: number;
   debugMode?: DebugModeState | null;
+  pendingQuestionId?: string | null;
 }
 
 const debugSession = (phase: DebugModePhase): DebugModeState => ({
@@ -72,18 +79,27 @@ function harness(
   const worktreeTargets: ConversationTarget[] = [];
   const events: string[] = [];
   const streamed: [string, unknown][] = [];
-  const contexts: InteractiveContextRequest[] = [];
+  const contexts: TurnInputRequest[] = [];
   const selections: unknown[] = [];
   const named: string[] = [];
   const accepted: (AgentSessionRef | null)[] = [];
   const archived: TranscriptEntry[] = [];
   const verifications: unknown[] = [];
   let settledDebug: DebugFinalization | null = null;
+  /** The runtime the running turn holds, as the host would hand it out. */
+  let runtime: ConversationBackendRuntime | null = null;
   const records: ConversationRecordPort = {
     async read() {
       return row === null
         ? null
-        : { agentBackend: "claude", transcriptPath: "/t/conv-1.jsonl", debugMode: null, ...row };
+        : {
+            agentBackend: "claude",
+            transcriptPath: "/t/conv-1.jsonl",
+            debugMode: null,
+            pendingQuestionId: null,
+            owner: null,
+            ...row,
+          };
     },
     async beginTurn(_identity, source) {
       events.push(`begin:${source}`);
@@ -124,6 +140,7 @@ function harness(
         events.push(`release:${conversationId}`);
       },
       isLive: () => false,
+      runtime: () => runtime,
     },
     async worktreeOf(projectPath, target) {
       worktreeTargets.push(target);
@@ -134,23 +151,32 @@ function harness(
       return input.explicit ?? { modelId: "opus", parameters: {} };
     },
     continuation: async () => ({ continuation: { kind: "ordinary" }, seed: null }),
-    async prepareContext(request) {
+    async prepareInput(request) {
       contexts.push(request);
+      const delivery: InputDelivery = { dispatched: false, accepted: null, provenUndelivered: false };
       return {
         promptText: `<memory-index/>\n\n${request.promptText}`,
-        async onBackendInit() {},
         dispatchPromptText: `<memory-index/>\n\n${request.promptText}`,
         userPromptText: request.execution.turn.promptText,
-        markDispatched: () => events.push("dispatched"),
-        markDispatchFailure: () => {},
-        async onInputAccepted(ref) {
-          accepted.push(ref);
-          // As the real context does: archive the accepted input, then release the queue.
-          await request.archiveQueuedInput();
-          await request.onQueueAccepted();
+        delivery,
+        sending: () => {
+          delivery.dispatched = true;
+          events.push("dispatched");
         },
-        async finish() {
+        failed: (error) => {
+          delivery.provenUndelivered = isPromptNotDeliveredFailure(error);
+        },
+        async accepted(ref) {
+          accepted.push(ref);
+          delivery.accepted = { backendRef: ref };
+          // As turn input does: keep the accepted input, then release the queue.
+          await request.archive();
+          await request.release();
+        },
+        async backendInit() {},
+        async settle() {
           events.push("receipts-finished");
+          return true;
         },
       };
     },
@@ -180,6 +206,10 @@ function harness(
           await appendUserEntry();
         },
         async handleInputAccepted() {
+          released = true;
+          events.push(`release:${delivery.deliveryAttemptId}`);
+        },
+        async releaseAccepted() {
           released = true;
           events.push(`release:${delivery.deliveryAttemptId}`);
         },
@@ -233,8 +263,62 @@ function harness(
     settleWithDebug(decision: DebugFinalization) {
       settledDebug = decision;
     },
+    holdRuntime(held: ConversationBackendRuntime | null) {
+      runtime = held;
+    },
   };
 }
+
+/** A runtime that takes input into its running turn, recording what it was sent; `send` decides each delivery. */
+function liveRuntime(send: (input: ConversationQueuedUserInput) => Promise<void> = (input) => input.onAccepted?.() ?? Promise.resolve()) {
+  const sent: ConversationQueuedUserInput[] = [];
+  const runtime: ConversationBackendRuntime = {
+    backend: "codex",
+    status: "alive",
+    modelSelection: { modelId: "gpt", parameters: {} },
+    liveInput: "running_turn",
+    sendTurn: async () => {
+      throw new Error("not used");
+    },
+    async queueUserInput(input) {
+      sent.push(input);
+      await send(input);
+    },
+    close: async () => {},
+  };
+  return { runtime, sent };
+}
+
+/** Turn input as production prepares it, over inert context; records how its briefing finished. */
+function realTurnInput(finished: string[] = []): TurnInputDependencies {
+  return {
+    context: {
+      getLiveTicketBlock: async () => null,
+      getMemoryIndexBlock: async () => null,
+      readLiveReference: async () => null,
+      readNotepadForInjection: async () => null,
+    },
+    effects: { recordNotepadDeliveries: async () => {}, recordMemoryIndexDeliveries: async () => {} },
+    subscriptions: {
+      prepareBriefing: async () => ({
+        block: "<briefing/>",
+        onInputAccepted: async () => {},
+        async finish(settled) {
+          finished.push(settled?.disposition ?? "accepted");
+        },
+      }),
+    },
+    debug: { getDebugLogUrl: () => "http://debug" },
+    log: createCapturingLogger(),
+  };
+}
+
+const queued = (text: string, attempt = "att-9"): UserTurnRequest => ({
+  kind: "user_message",
+  text,
+  inputOrigin: "user",
+  queuedDelivery: { messageIds: [`q-${attempt}`], deliveryAttemptId: attempt },
+});
 
 describe("interactive turns", () => {
   it("runs a person's message as an ordinary turn of their conversation, with its context, model and continuity", async () => {
@@ -383,64 +467,202 @@ describe("interactive turns", () => {
     });
   });
 
-  it("retries a context receipt that failed once, as the receipt asks, before settling", async () => {
+  it("keeps an input whose receipts still owe after its turn, and settles it before the conversation's next turn", async () => {
     const h = harness(async () => completed());
-    const prepare = h.deps.prepareContext;
-    let finishes = 0;
-    h.deps.prepareContext = async (request) => ({
-      ...(await prepare(request)),
-      async finish() {
-        finishes += 1;
-        if (finishes === 1) throw new Error("subscription write failed");
-      },
-    });
-    expect(await h.run(message())).toMatchObject({ status: "succeeded" });
-    expect(finishes).toBe(2);
-  });
-
-  it("releases an accepted batch once its receipts settle, when a failed receipt held the release back", async () => {
-    const h = harness(async (turn) => {
-      await turn.onEvent?.({ type: "input_accepted" });
-      return completed();
-    });
-    const prepare = h.deps.prepareContext;
-    h.deps.prepareContext = async (request) => ({
-      ...(await prepare(request)),
-      async onInputAccepted() {
-        // As the real context does: archive, then a required receipt fails before the queue release.
-        await request.archiveQueuedInput();
-        throw new Error("notepad receipt failed");
-      },
-    });
-    await h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-7"], deliveryAttemptId: "att-7" } }));
-
-    // The agent has the input: a held-for-review batch would offer a retry that sends it twice.
-    expect(h.events).toEqual(expect.arrayContaining(["archive:att-7", "release:att-7", "queue-settled"]));
-    expect(h.events).not.toContain("review:att-7");
-  });
-
-  it("keeps a receipt that still fails and settles it when the conversation's next turn starts", async () => {
-    const h = harness(async () => completed());
-    const prepare = h.deps.prepareContext;
-    let firstReceiptCalls = 0;
-    let contexts = 0;
-    h.deps.prepareContext = async (request) => {
-      contexts += 1;
+    const prepare = h.deps.prepareInput;
+    let firstSettles = 0;
+    let inputs = 0;
+    h.deps.prepareInput = async (request) => {
+      inputs += 1;
       const prepared = await prepare(request);
-      if (contexts > 1) return prepared;
+      if (inputs > 1) return prepared;
       return {
         ...prepared,
-        async finish() {
-          firstReceiptCalls += 1;
-          if (firstReceiptCalls <= 2) throw new Error("subscription write failed");
+        async settle() {
+          firstSettles += 1;
+          return firstSettles > 1;
         },
       };
     };
     await h.run(message());
-    expect(firstReceiptCalls).toBe(2);
+    expect(firstSettles).toBe(1);
 
     await h.run(message({ text: "Next" }));
-    expect(firstReceiptCalls).toBe(3);
+    expect(firstSettles).toBe(2);
+  });
+
+  describe("live input", () => {
+    it("delivers a queued message into the running turn when its backend joins that turn, kept and released on acceptance", async () => {
+      const live = liveRuntime();
+      let outcome: unknown;
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        outcome = await h.port.deliverLive(identity, queued("Also this"));
+        return completed();
+      });
+      h.holdRuntime(live.runtime);
+      await h.run(message());
+
+      expect(outcome).toBe("accepted");
+      expect(h.contexts.map((context) => [context.mode, context.briefingAttemptId])).toEqual([
+        ["turn", "attempt-1"],
+        ["live", "att-9"],
+      ]);
+      expect(live.sent).toEqual([
+        expect.objectContaining({
+          content: [{ type: "text", text: "<memory-index/>\n\nAlso this" }],
+          userPromptText: "Also this",
+        }),
+      ]);
+      expect(h.events).toEqual(expect.arrayContaining(["archive:att-9", "release:att-9"]));
+      expect(h.archived.map((entry) => entry.id)).toContain("q-att-9");
+    });
+
+    it("leaves a message for the next turn when no turn runs, the runtime may answer it after the turn, or the row holds it", async () => {
+      const seen: boolean[] = [];
+      const h = harness(async (turn) => {
+        // The turn's own input comes first.
+        seen.push(await h.port.acceptsLive("conv-1"));
+        await turn.onEvent?.({ type: "input_accepted" });
+        seen.push(await h.port.acceptsLive("conv-1"));
+        return completed();
+      });
+      h.holdRuntime(liveRuntime().runtime);
+      seen.push(await h.port.acceptsLive("conv-1"));
+      expect(await h.port.deliverLive(identity, queued("Too early"))).toBe("not_sent");
+      expect(h.events).toContainEqual(expect.stringMatching(/^pending:att-9:/));
+      await h.run(message());
+      seen.push(await h.port.acceptsLive("conv-1"));
+      expect(seen).toEqual([false, false, true, false]);
+
+      const refused: boolean[] = [];
+      const sessionScoped = { ...liveRuntime().runtime, liveInput: undefined };
+      const withoutTurnScope = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        refused.push(await withoutTurnScope.port.acceptsLive("conv-1"));
+        return completed();
+      });
+      withoutTurnScope.holdRuntime(sessionScoped);
+      await withoutTurnScope.run(message());
+
+      const asking = harness(
+        async (turn) => {
+          await turn.onEvent?.({ type: "input_accepted" });
+          refused.push(await asking.port.acceptsLive("conv-1"));
+          return completed();
+        },
+        { backendRef: null, promptCount: 1, pendingQuestionId: "question-1" },
+      );
+      asking.holdRuntime(liveRuntime().runtime);
+      await asking.run(message());
+      expect(refused).toEqual([false, false]);
+    });
+
+    it("returns an unsent message to the queue and holds an uncertain one for review", async () => {
+      const outcomes: unknown[] = [];
+      const failures: Error[] = [new Error("The turn ended"), new InputDeliveryUncertainError("No acknowledgement")];
+      const live = liveRuntime(async () => {
+        throw failures.shift();
+      });
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        outcomes.push(await h.port.deliverLive(identity, queued("One", "att-1")));
+        outcomes.push(await h.port.deliverLive(identity, queued("Two", "att-2")));
+        return completed();
+      });
+      h.holdRuntime(live.runtime);
+      await h.run(message());
+
+      expect(outcomes).toEqual(["not_sent", "uncertain"]);
+      expect(h.events).toContainEqual(expect.stringMatching(/^pending:att-1:/));
+      expect(h.events).toContain("review:att-2");
+    });
+
+    it("settles the briefing a refused live delivery carried as not sent, as its message goes back to the queue", async () => {
+      const finished: string[] = [];
+      const inputDeps = realTurnInput(finished);
+      // As Cursor refuses an attachment before anything is sent.
+      const live = liveRuntime(async () => {
+        throw new Error("Cursor steering accepts text only; attachments require the next turn");
+      });
+      let outcome: unknown;
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        finished.length = 0;
+        outcome = await h.port.deliverLive(identity, queued("Look at this"));
+        return completed();
+      });
+      h.deps.prepareInput = (request) => prepareTurnInput(inputDeps, request);
+      h.holdRuntime(live.runtime);
+      await h.run(message());
+
+      expect(outcome).toBe("not_sent");
+      expect(finished).toEqual(["not_sent"]);
+    });
+
+    it("holds an accepted live delivery for review when the queue could not release it", async () => {
+      let outcome: unknown;
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        outcome = await h.port.deliverLive(identity, queued("Also this"));
+        return completed();
+      });
+      const accounting = h.deps.queuedDelivery;
+      h.deps.queuedDelivery = (input) => ({
+        ...accounting(input),
+        async releaseAccepted() {
+          throw new Error("database is locked");
+        },
+      });
+      h.holdRuntime(liveRuntime().runtime);
+      await h.run(message());
+
+      expect(outcome).toBe("accepted");
+      expect(h.events).toContain("review:att-9");
+    });
+
+    it("returns a delivery whose turn began settling while it was checked", async () => {
+      const gate = Promise.withResolvers<void>();
+      let delivery: Promise<unknown> | undefined;
+      const live = liveRuntime();
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        // Only the live check's row read waits: it is made synchronously inside the call.
+        const read = h.deps.records.read;
+        h.deps.records.read = async (identityRead) => {
+          await gate.promise;
+          return read(identityRead);
+        };
+        delivery = h.port.deliverLive(identity, queued("Late"));
+        h.deps.records.read = read;
+        return completed();
+      });
+      h.holdRuntime(live.runtime);
+      await h.run(message());
+      gate.resolve();
+
+      expect(await delivery).toBe("not_sent");
+      expect(live.sent).toEqual([]);
+    });
+
+    it("ends the turn only once a live delivery it took has settled", async () => {
+      let deliver = () => {};
+      const live = liveRuntime((input) => new Promise((resolve) => (deliver = () => resolve(input.onAccepted?.()))));
+      let delivery: Promise<unknown> | undefined;
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        delivery = h.port.deliverLive(identity, queued("Late"));
+        // The turn ends while the send is in flight.
+        while (live.sent.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+        setTimeout(() => deliver(), 10);
+        return completed();
+      });
+      h.holdRuntime(live.runtime);
+      await h.run(message());
+
+      expect(h.events).toContain("release:att-9");
+      expect(await delivery).toBe("accepted");
+    });
   });
 
   it("saves a message's images with the transcript and hands them to the agent with their numbered text", async () => {
@@ -494,6 +716,48 @@ describe("interactive turns", () => {
 
     expect(h.events).toContain("failed:att-r:Model gpt-x is not available");
     expect(h.events.some((event) => event.startsWith("review:"))).toBe(false);
+  });
+
+  it("retries a queue release it could not confirm, at the latest before the conversation's next turn", async () => {
+    let confirmFailures = 2;
+    const released: string[] = [];
+    const h = harness(async (turn) => {
+      await turn.onEvent?.({ type: "input_accepted" });
+      return completed();
+    });
+    h.deps.prepareInput = (request) => prepareTurnInput(realTurnInput(), request);
+    const accounting = h.deps.queuedDelivery;
+    h.deps.queuedDelivery = (input) => ({
+      ...accounting(input),
+      async releaseAccepted() {
+        if (confirmFailures > 0) {
+          confirmFailures -= 1;
+          throw new Error("database is locked");
+        }
+        released.push(input.delivery.deliveryAttemptId);
+      },
+    });
+    await h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-7"], deliveryAttemptId: "att-7" } }));
+    expect(released).toEqual([]);
+
+    await h.run(message({ text: "Next" }));
+    expect(released).toEqual(["att-7"]);
+  });
+
+  it("fails a queued batch whose send provably never reached the agent, rather than holding it for review", async () => {
+    const h = harness(async (turn) => {
+      turn.observe?.sending();
+      turn.observe?.failed(markPromptNotDelivered(new Error("the provider socket closed before the prompt was written")));
+      return outcomeOf(
+        settledConversationTurn({
+          outcome: { kind: "failed", error: { backend: "claude", failureKind: "backend_error", message: "socket closed" } },
+        }),
+      );
+    });
+    await h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-5"], deliveryAttemptId: "att-5" } }));
+
+    expect(h.events).toContainEqual(expect.stringMatching(/^failed:att-5:/));
+    expect(h.events).not.toContain("review:att-5");
   });
 
   it("fails a batch the person stopped before it was sent, and gives one the server stopped back to the queue", async () => {

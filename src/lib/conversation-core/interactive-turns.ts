@@ -18,7 +18,14 @@ import { fingerprintAssembledInput, fingerprintSubmittedInput } from "@/lib/conv
 import type { PreparedCheckpointSeed } from "@/lib/workflows/conversation/pre-turn/checkpoint-seed";
 import type { ContinuationSeed } from "@/lib/workflows/conversation/pre-turn/continuation-seed";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import type { PreparedConversationTurnContext, TurnContextExecution } from "@/lib/workflows/conversation/turn-context";
+import { isInputDeliveryUncertain, markPromptNotDelivered } from "@/lib/agent-backends/errors";
+import {
+  classifyDelivery,
+  type DeliveryClass,
+  type InputDelivery,
+  type PreparedTurnInput,
+  type TurnInputRequest,
+} from "./turn-input";
 import { toPromptActorResult, type TurnExecutionOutcome, type TurnInterruption } from "@/lib/workflows/conversation/turn-result";
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
@@ -29,38 +36,10 @@ import {
   type ConversationRecordPort,
 } from "./conversation-record";
 import type { TurnStream, UserTurnPort } from "./executor";
+import type { UserTurnRequest } from "./schemas";
 import { failedTurn, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
 import type { TurnEngine } from "./turn-engine";
-
-export interface InteractiveContextRequest {
-  execution: TurnContextExecution & { executionAttemptId: string };
-  /** The message as the agent reads it: feedback rendered as prose, images numbered in. */
-  promptText: string;
-  runtimeCreatedWithoutResume: boolean;
-  /** The one continuation this turn runs under; see `resolveContinuationSeed`. */
-  continuation: ContinuationSeed;
-  /** The ready checkpoint the turn delivers, exactly when `continuation` is one. */
-  checkpoint: PreparedCheckpointSeed | null;
-  /** Archives a queued delivery's input once accepted, without releasing its rows yet. */
-  archiveQueuedInput(): Promise<void>;
-  /** Archives (when not yet) and releases a queued delivery's rows; last in the acceptance order. */
-  onQueueAccepted(): Promise<void>;
-}
-
-/** The per-turn context a person's message runs with, and the receipts it owes. */
-export type InteractiveTurnContext = Pick<
-  PreparedConversationTurnContext,
-  | "promptText"
-  | "dispatchPromptText"
-  | "userPromptText"
-  | "promptContext"
-  | "markDispatched"
-  | "markDispatchFailure"
-  | "onInputAccepted"
-  | "onBackendInit"
-  | "finish"
->;
 
 /** The conversation row as an interactive turn reads it. */
 type ConversationRowRead = NonNullable<Awaited<ReturnType<ConversationRecordPort["read"]>>>;
@@ -79,7 +58,7 @@ export interface DebugVerificationStart {
 export interface InteractiveTurnDeps {
   engine: Pick<TurnEngine, "runTurn">;
   records: ConversationRecordPort;
-  host: Pick<RuntimeHost, "release" | "isLive">;
+  host: Pick<RuntimeHost, "release" | "isLive" | "runtime">;
   /** Where the conversation's agent works: its session's worktree, or the project root for a project conversation. */
   worktreeOf(projectPath: string, target: ConversationTarget): Promise<string>;
   /** Explicit, else the conversation's last used, else the backend default; admitted for the project. */
@@ -97,7 +76,8 @@ export interface InteractiveTurnDeps {
     identity: ConversationIdentity;
     row: ConversationRowRead;
   }): Promise<{ continuation: ContinuationSeed; seed: PreparedCheckpointSeed | null }>;
-  prepareContext(request: InteractiveContextRequest): Promise<InteractiveTurnContext>;
+  /** The turn's input: the message and the contributions ahead of it, with what its acceptance owes. */
+  prepareInput(request: TurnInputRequest): Promise<PreparedTurnInput>;
   nameConversation(input: {
     projectPath: string;
     projectName: string;
@@ -189,51 +169,65 @@ function reportEnding(stream: TurnStream | null, outcome: TurnExecutionOutcome, 
   if (call?.kind === "failed") error(call.error.message);
 }
 
-/**
- * The context's receipts owe their durable evidence before the turn settles. A
- * required receipt reports its first failure and retries on the next finish,
- * so a failure gets that one retry; true when everything is settled.
- */
-async function settleReceipts(
-  context: InteractiveTurnContext,
+/** The message as the transcript keeps it and the agent reads it: feedback as prose, images saved and numbered in. */
+async function renderMessage(
+  deps: Pick<InteractiveTurnDeps, "persistImages">,
   conversationId: string,
-  log: Pick<Logger, "warn" | "error">,
-): Promise<boolean> {
-  try {
-    await context.finish();
-    return true;
-  } catch (error) {
-    log.warn("conversation_core.context_receipts_retry", { conversationId, error: getErrorMessage(error) });
-  }
-  try {
-    await context.finish();
-    return true;
-  } catch (error) {
-    log.error("conversation_core.context_receipts_unsettled", { conversationId, error: getErrorMessage(error) });
-    return false;
-  }
-}
-
-/**
- * The context's receipts and a delivered checkpoint's own, settled and retried
- * as one: the delivery receipt first, as the actor's attempt orders them.
- */
-function withSeedReceipt(context: InteractiveTurnContext, seed: PreparedCheckpointSeed | null): InteractiveTurnContext {
-  if (seed === null) return context;
+  request: UserTurnRequest,
+): Promise<PreparedInput> {
+  const { effectivePromptText, isDrainedFeedbackBatch } = resolveTurnPromptText({
+    promptText: request.text,
+    documentFeedback: request.documentFeedback,
+    notepadFeedback: request.notepadFeedback,
+    isQueuedDelivery: request.queuedDelivery !== undefined,
+  });
+  const persisted = await deps.persistImages({
+    conversationId,
+    promptText: effectivePromptText,
+    images: request.images ?? [],
+  });
   return {
-    ...context,
-    async finish() {
-      const errors: unknown[] = [];
-      for (const finish of [() => seed.finish(), () => context.finish()]) {
-        await finish().catch((error: unknown) => errors.push(error));
-      }
-      if (errors.length > 0) throw new AggregateError(errors, "Turn receipts failed");
-    },
+    promptText: persisted.promptText,
+    imageRefs: persisted.imageRefs,
+    transcriptBlocks: composeUserTranscriptBlocks({
+      promptText: request.text,
+      effectivePromptText,
+      rewrittenPromptText: persisted.promptText,
+      isDrainedFeedbackBatch,
+      documentFeedback: request.documentFeedback,
+      notepadFeedback: request.notepadFeedback,
+      imageRefs: persisted.imageRefs,
+    }),
   };
 }
 
+/** A turn that is running now, as live input reaches it. */
+interface RunningTurn {
+  identity: ConversationIdentity;
+  execution: TurnInputRequest["execution"];
+  broadcast: TranscriptBroadcastMeta;
+  /** Set once the turn ended: it takes no more live input. */
+  settling: boolean;
+  deliveries: Set<Promise<DeliveryClass>>;
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(getErrorMessage(error));
+}
+
+
 /** A person's messages to an enrolled conversation, and the receipts their turns still owe. */
 export interface InteractiveTurns extends UserTurnPort {
+  /** Whether the conversation's running turn could take a queued message now. */
+  acceptsLive(conversationId: string): Promise<boolean>;
+  /**
+   * Delivers a queued message the queue claimed into the running turn (design
+   * §4.4 live input), through the same turn input and acceptance order as a
+   * turn's own. The queue's rows are settled here: `not_sent` returns them for
+   * the next turn; `uncertain`, and `accepted` input the queue could not
+   * release, hold them for review.
+   */
+  deliverLive(identity: ConversationIdentity, request: UserTurnRequest): Promise<DeliveryClass>;
   /**
    * Settles receipts the conversation's earlier turns could not, such as a
    * checkpoint delivery's acceptance; one that still fails stays retained.
@@ -251,20 +245,114 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
    * Receipts still unsettled when their turn ended keep an owner here and are
    * settled before the conversation's next turn prepares its own context.
    */
-  const unsettled = new Map<string, InteractiveTurnContext[]>();
+  const unsettled = new Map<string, PreparedTurnInput[]>();
   /** One settlement per conversation at a time: a turn waits for one a hold check started. */
   const settling = new Map<string, Promise<void>>();
+  /** Each conversation's running turn, which live input joins. */
+  const running = new Map<string, RunningTurn>();
+
+  function retain(conversationId: string, input: PreparedTurnInput): void {
+    deps.log.error("conversation_core.input_receipts_unsettled", { conversationId });
+    unsettled.set(conversationId, [...(unsettled.get(conversationId) ?? []), input]);
+  }
+
+  /** Why the running turn cannot take a queued message now; null when it can. */
+  async function liveRefusal(conversationId: string): Promise<string | null> {
+    const turn = running.get(conversationId);
+    if (turn === undefined) return "no_running_turn";
+    if (turn.settling) return "turn_settling";
+    const runtime = deps.host.runtime(conversationId);
+    // Only input that joins this turn, or is refused once it ends: the runtime closes with the turn.
+    if (runtime?.queueUserInput === undefined || runtime.liveInput !== "running_turn") return "runtime_not_turn_bound";
+    const row = await deps.records.read(turn.identity);
+    if (row === null) return "no_conversation";
+    // A question waits for its answer, debug mode takes no queued input, a collaboration holds the conversation.
+    if (row.pendingQuestionId !== null) return "question_pending";
+    if (runtimeDebugMode(row.debugMode) !== null) return "debug_mode";
+    if (row.owner !== null) return "collaboration_owner";
+    return null;
+  }
+
+  async function acceptsLive(conversationId: string): Promise<boolean> {
+    const reason = await liveRefusal(conversationId);
+    if (reason !== null) deps.log.info("conversation_core.live_input_declined", { conversationId, reason });
+    return reason === null;
+  }
+
+  async function deliverInto(turn: RunningTurn, request: UserTurnRequest, delivery: QueuedDeliveryMetadata): Promise<DeliveryClass> {
+    const { identity } = turn;
+    const conversationId = identity.conversationId;
+    const runtime = deps.host.runtime(conversationId);
+    if (runtime?.queueUserInput === undefined) {
+      await deps.returnQueued({ identity, delivery, error: "The running turn ended before it could take this message" });
+      return "not_sent";
+    }
+    const message = await renderMessage(deps, conversationId, request);
+    const messageId = delivery.messageIds[0] ?? delivery.deliveryAttemptId;
+    const entry: TranscriptEntry & { id: string } = {
+      id: messageId,
+      timestamp: new Date().toISOString(),
+      type: "user",
+      role: "user",
+      content: message.transcriptBlocks,
+    };
+    const accounting = deps.queuedDelivery({
+      identity,
+      delivery,
+      appendUserEntry: () => deps.transcript.appendTranscriptEntryOnce(conversationId, entry, turn.broadcast),
+    });
+    const prepared = await deps.prepareInput({
+      mode: "live",
+      execution: { ...turn.execution, turn: { inputOrigin: request.inputOrigin, promptText: request.text } },
+      promptText: message.promptText,
+      briefingAttemptId: delivery.deliveryAttemptId,
+      archive: () => accounting.appendAcceptedUserEntry(),
+      release: () => accounting.releaseAccepted(),
+    });
+    prepared.sending();
+    try {
+      await runtime.queueUserInput({
+        content: [
+          { type: "text", text: prepared.dispatchPromptText },
+          ...(request.images ?? []).map((image) => ({
+            type: "image" as const,
+            mediaType: image.mediaType,
+            base64Data: image.base64Data,
+          })),
+        ],
+        userPromptText: request.text,
+        ...(prepared.promptContext !== undefined ? { promptContext: prepared.promptContext } : {}),
+        // A live delivery joins a turn that already reported its continuity.
+        onAccepted: () => prepared.accepted(null),
+      });
+    } catch (error) {
+      // The port rejects ambiguous delivery as uncertain; any other rejection is a refusal before sending.
+      prepared.failed(isInputDeliveryUncertain(error) ? error : markPromptNotDelivered(asError(error)));
+      deps.log.warn("conversation_core.live_delivery_failed", {
+        conversationId,
+        deliveryAttemptId: delivery.deliveryAttemptId,
+        error: getErrorMessage(error),
+      });
+    }
+    // An adapter that resolved without reporting acceptance proves nothing either way: uncertain.
+    const outcome = classifyDelivery(prepared.delivery);
+    if (!(await prepared.settle())) retain(conversationId, prepared);
+    // Sent rows the queue has not released are held for review, as a turn's are.
+    if (outcome === "not_sent")
+      await deps.returnQueued({ identity, delivery, error: "Not sent into the running turn; it goes with the next turn" });
+    else await accounting.settleAfterTurn();
+    deps.log.info("conversation_core.live_delivery", { conversationId, deliveryAttemptId: delivery.deliveryAttemptId, outcome });
+    return outcome;
+  }
 
   async function settleRetainedNow(conversationId: string): Promise<void> {
     const retained = unsettled.get(conversationId) ?? [];
     unsettled.delete(conversationId);
-    const still: InteractiveTurnContext[] = [];
-    for (const context of retained) {
-      await context.finish().catch((error: unknown) => {
-        deps.log.error("conversation_core.context_receipts_unsettled", { conversationId, error: getErrorMessage(error) });
-        still.push(context);
-      });
+    const still: PreparedTurnInput[] = [];
+    for (const input of retained) {
+      if (!(await input.settle())) still.push(input);
     }
+    if (still.length > 0) deps.log.error("conversation_core.input_receipts_unsettled", { conversationId, count: still.length });
     if (still.length > 0) unsettled.set(conversationId, [...still, ...(unsettled.get(conversationId) ?? [])]);
   }
 
@@ -279,6 +367,24 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
 
   return {
     settleRetained,
+    acceptsLive,
+    async deliverLive(identity, request) {
+      const delivery = request.queuedDelivery;
+      if (delivery === undefined) throw new Error("Live input is a queued message the queue claimed");
+      const turn = running.get(identity.conversationId);
+      // Checked again after the row read: a turn that began settling meanwhile waits for no new delivery.
+      if (turn === undefined || !(await acceptsLive(identity.conversationId)) || turn.settling) {
+        await deps.returnQueued({ identity, delivery, error: "No running turn could take it; it goes with the next turn" });
+        return "not_sent";
+      }
+      const work = deliverInto(turn, request, delivery);
+      turn.deliveries.add(work);
+      try {
+        return await work;
+      } finally {
+        turn.deliveries.delete(work);
+      }
+    },
     async notStarted({ conversationId, enrollment, request, reason, endedBy }) {
       const delivery = request.queuedDelivery;
       const identity = { projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId };
@@ -310,7 +416,8 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
       const delivery = request.queuedDelivery;
       /** The queue's side of this turn, once the input it delivers is known. */
       let accounting: QueuedDeliveryAccounting | null = null;
-      let dispatched = false;
+      /** What the send observed of this turn's input, once it is prepared. */
+      let evidence: InputDelivery | null = null;
       const streamedErrors = new Set<string>();
       let turnWorktree: string | null = null;
       // Whatever ends the turn, from here on, the queue is told what became of its batch.
@@ -408,7 +515,7 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
         }
         // Settled once the turn is going to run: from here the profile is locked.
         const profile = await deps.records.admitProfile(identity);
-        const input = await prepareInput(conversationId);
+        const input = await renderMessage(deps, conversationId, request);
         const broadcast = { projectName, storeSessionName: enrollment.sessionName };
         const messageId =
           delivery === undefined
@@ -443,38 +550,47 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
         const target = targetFromStoreSessionName(projectName, enrollment.sessionName, conversationId);
         const worktreePath = await deps.worktreeOf(enrollment.projectPath, target);
         turnWorktree = worktreePath;
-        const prepared = await deps.prepareContext({
-          execution: {
-            projectPath: enrollment.projectPath,
-            target,
-            worktreePath,
-            role: null,
-            persistence: "durable",
-            executionAttemptId: attemptId,
-            debugMode,
-            turn: { inputOrigin: request.inputOrigin, promptText: request.text },
-          },
+        const execution: TurnInputRequest["execution"] = {
+          projectPath: enrollment.projectPath,
+          target,
+          worktreePath,
+          role: null,
+          persistence: "durable",
+          executionAttemptId: attemptId,
+          debugMode,
+          turn: { inputOrigin: request.inputOrigin, promptText: request.text },
+        };
+        const prepared = await deps.prepareInput({
+          mode: "turn",
+          execution,
           promptText: input.promptText,
+          briefingAttemptId: attemptId,
           runtimeCreatedWithoutResume: isRuntimeCreatedWithoutResume({
             willCreateRuntime: !deps.host.isLive(conversationId),
             promptCount: row.promptCount,
             hasResumeHandle: resumeRef !== null,
             pendingCheckpoint: seed !== null,
           }),
-          continuation: resumed.continuation,
           checkpoint: seed,
-          archiveQueuedInput: () => owned?.appendAcceptedUserEntry() ?? Promise.resolve(),
-          onQueueAccepted: () => owned?.handleInputAccepted() ?? Promise.resolve(),
+          archive: () => owned?.appendAcceptedUserEntry() ?? Promise.resolve(),
+          release: () => owned?.releaseAccepted() ?? Promise.resolve(),
         });
-        const context = withSeedReceipt(prepared, seed);
+        evidence = prepared.delivery;
         let currentRef: AgentSessionRef | null = resumeRef;
-        let inputAccepted = false;
+        // Live input joins this turn once the turn's own input is accepted, until it settles.
+        const turn: RunningTurn = {
+          identity,
+          execution,
+          broadcast,
+          settling: false,
+          deliveries: new Set(),
+        };
         try {
           // Durable before the provider is called: a crash from here leaves an attempt that may have
           // run, distinguishable from one that never did.
           await seed?.bind({
             attemptId,
-            inputFingerprint: fingerprintAssembledInput({ promptText: context.promptText, images: input.imageRefs }),
+            inputFingerprint: fingerprintAssembledInput({ promptText: prepared.promptText, images: input.imageRefs }),
             submittedInputFingerprint: fingerprintSubmittedInput({
               promptText: request.text,
               images: request.images ?? [],
@@ -507,20 +623,13 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
                 questionSignal,
               ),
             broadcast,
-            promptText: context.dispatchPromptText,
-            userPromptText: context.userPromptText,
-            ...(context.promptContext !== undefined ? { promptContext: context.promptContext } : {}),
+            promptText: prepared.dispatchPromptText,
+            userPromptText: prepared.userPromptText,
+            ...(prepared.promptContext !== undefined ? { promptContext: prepared.promptContext } : {}),
             ...(input.imageRefs.length > 0 ? { imageRefs: input.imageRefs } : {}),
             observe: {
-              sending: () => {
-                dispatched = true;
-                context.markDispatched();
-                seed?.markDispatched();
-              },
-              failed: (error) => {
-                context.markDispatchFailure(error);
-                seed?.markDispatchFailure(error);
-              },
+              sending: () => prepared.sending(),
+              failed: (error) => prepared.failed(error),
             },
             userEntry: owned === null ? userEntry : null,
             writeCapability: "write_capable",
@@ -530,7 +639,7 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
               currentRef = ref;
               await deps.records.recordContinuity(identity, ref);
               // A delivered seed's acceptance that cannot be recorded now is retried by its receipt.
-              await context.onBackendInit(ref).catch((error: unknown) =>
+              await prepared.backendInit(ref).catch((error: unknown) =>
                 deps.log.warn("conversation_core.input_receipts_failed", { conversationId, error: getErrorMessage(error) }),
               );
             },
@@ -544,16 +653,9 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
                   stream?.emit("error", { message: event.message });
                   break;
                 case "input_accepted":
-                  // Accepted input was certainly sent, whatever the send observer saw.
-                  dispatched = true;
-                  inputAccepted = true;
-                  // A receipt that cannot be recorded must not cost the turn the agent is already running.
-                  await context.onInputAccepted(currentRef).catch((error: unknown) =>
-                    deps.log.warn("conversation_core.input_receipts_failed", {
-                      conversationId,
-                      error: getErrorMessage(error),
-                    }),
-                  );
+                  // Never throws: a receipt that cannot be written stays owned, and the turn goes on.
+                  await prepared.accepted(currentRef);
+                  if (!turn.settling) running.set(conversationId, turn);
                   break;
                 default:
                   break;
@@ -564,15 +666,10 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           if (debugMode !== null) await recordDebugReport(turnOutcome, debugMode, broadcast);
           return turnOutcome;
         } finally {
-          if (!(await settleReceipts(context, conversationId, deps.log))) {
-            unsettled.set(conversationId, [...(unsettled.get(conversationId) ?? []), context]);
-          } else if (inputAccepted && owned !== null) {
-            // A receipt that failed at acceptance held the queue release back; the agent has the
-            // input, and a batch held for review would offer a retry that sends it twice.
-            await owned.handleInputAccepted().catch((error: unknown) =>
-              deps.log.warn("conversation_core.queue_release_failed", { conversationId, error: getErrorMessage(error) }),
-            );
-          }
+          turn.settling = true;
+          if (running.get(conversationId) === turn) running.delete(conversationId);
+          await Promise.allSettled([...turn.deliveries]);
+          if (!(await prepared.settle())) retain(conversationId, prepared);
         }
       }
 
@@ -601,39 +698,13 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           );
       }
 
-      async function prepareInput(conversationId: string): Promise<PreparedInput> {
-        const { effectivePromptText, isDrainedFeedbackBatch } = resolveTurnPromptText({
-          promptText: request.text,
-          documentFeedback: request.documentFeedback,
-          notepadFeedback: request.notepadFeedback,
-          isQueuedDelivery: delivery !== undefined,
-        });
-        const persisted = await deps.persistImages({
-          conversationId,
-          promptText: effectivePromptText,
-          images: request.images ?? [],
-        });
-        return {
-          promptText: persisted.promptText,
-          imageRefs: persisted.imageRefs,
-          transcriptBlocks: composeUserTranscriptBlocks({
-            promptText: request.text,
-            effectivePromptText,
-            rewrittenPromptText: persisted.promptText,
-            isDrainedFeedbackBatch,
-            documentFeedback: request.documentFeedback,
-            notepadFeedback: request.notepadFeedback,
-            imageRefs: persisted.imageRefs,
-          }),
-        };
-      }
-
       /** What the queue is owed for this turn's batch: released, held for review, or failed unsent. */
       async function settleQueued(outcome: TurnExecutionOutcome): Promise<void> {
         if (delivery === undefined) return;
         const owned: QueuedDeliveryAccounting | null = accounting;
         try {
-          if (dispatched && owned !== null) await owned.settleAfterTurn();
+          // Input that may have reached the agent is held for review; input proven unsent is failed with its reason.
+          if (evidence !== null && classifyDelivery(evidence) !== "not_sent" && owned !== null) await owned.settleAfterTurn();
           else await deps.failQueued({ identity, delivery, error: outcomeMessage(outcome) });
         } catch (error) {
           deps.log.error("conversation_core.queued_delivery_settle_failed", {

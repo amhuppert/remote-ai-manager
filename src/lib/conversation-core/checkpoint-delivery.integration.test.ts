@@ -27,7 +27,8 @@ import {
   createActorDependenciesFixture,
   groupActorFixtureDependencies,
 } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
-import { prepareConversationTurnContext } from "@/lib/workflows/conversation/turn-context";
+import { prepareTurnInput } from "./turn-input";
+import type { PassiveSubscriptionContextDependencies } from "@/lib/workflows/conversation/pre-turn/passive-subscription-context";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { createCheckpointContinuation } from "./checkpoints";
 import { createInteractiveTurns } from "./interactive-turns";
@@ -102,6 +103,8 @@ function rowRecords(): ConversationRecordPort {
             promptCount: row.promptCount,
             transcriptPath: row.transcriptPath,
             debugMode: null,
+            pendingQuestionId: row.pendingQuestionId,
+            owner: row.owner,
           };
     },
     async recordContinuity(_identity, ref) {
@@ -128,7 +131,7 @@ function rowRecords(): ConversationRecordPort {
   };
 }
 
-function harness(options: { repo?: ConversationCheckpointsRepo } = {}) {
+function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: PassiveSubscriptionContextDependencies } = {}) {
   const repo = options.repo ?? realRepo;
   const log = createCapturingLogger();
   const provider = createScriptedConversationBackend({ backend: "claude", responseText: JSON.stringify({ done: true }) });
@@ -171,7 +174,10 @@ function harness(options: { repo?: ConversationCheckpointsRepo } = {}) {
     timeouts: async () => ({ timeoutMs: 0, stallTimeoutMs: 0 }),
     log,
   });
-  const contextDeps = groupActorFixtureDependencies(createActorDependenciesFixture());
+  const contextDeps = {
+    ...groupActorFixtureDependencies(createActorDependenciesFixture()),
+    ...(options.subscriptions !== undefined ? { subscriptions: options.subscriptions } : {}),
+  };
   const turns = createInteractiveTurns({
     engine,
     records: rowRecords(),
@@ -189,19 +195,7 @@ function harness(options: { repo?: ConversationCheckpointsRepo } = {}) {
     }),
     worktreeOf: async () => `${PROJECT}/.worktrees/${SESSION}`,
     resolveModelSelection: async () => ({ modelId: "sonnet", parameters: { effort: "medium" } }),
-    prepareContext: (request) =>
-      prepareConversationTurnContext(contextDeps, {
-        execution: request.execution,
-        promptText: request.promptText,
-        continuation: request.continuation,
-        checkpoint: request.checkpoint,
-        workflowContext: undefined,
-        runtimeCreatedWithoutResume: request.runtimeCreatedWithoutResume,
-        resultAttemptId: request.execution.executionAttemptId,
-        ownReceipt: () => {},
-        archiveQueuedInput: request.archiveQueuedInput,
-        onQueueAccepted: request.onQueueAccepted,
-      }),
+    prepareInput: (request) => prepareTurnInput(contextDeps, request),
     nameConversation: () => {},
     requestUserQuestion: async () => ({ status: "answered" as const, answers: {} }),
     persistImages: async ({ promptText }) => ({ promptText, imageRefs: [] }),
@@ -303,5 +297,29 @@ describe("a ready checkpoint carried by a core conversation's next message", () 
 
     await h.turns.settleRetained(CHAT);
     expect(await reloaded().operation()).toMatchObject({ phase: "applied", acceptance: { attemptId: "attempt-1" } });
+  });
+
+  it("writes a receipt that failed after the checkpoint's acceptance was recorded, at the turn's settlement", async () => {
+    let failures = 1;
+    const written: string[] = [];
+    const h = harness({
+      subscriptions: {
+        prepareBriefing: async () => ({
+          block: "<briefing/>",
+          async onInputAccepted() {
+            if (failures > 0) {
+              failures -= 1;
+              throw new Error("database is locked");
+            }
+            written.push("briefing");
+          },
+          async finish() {},
+        }),
+      },
+    });
+    expect(await h.send("What next?", "attempt-1")).toMatchObject({ status: "succeeded" });
+
+    expect(await reloaded().operation()).toMatchObject({ phase: "applied" });
+    expect(written).toEqual(["briefing"]);
   });
 });

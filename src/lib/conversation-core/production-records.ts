@@ -1,7 +1,7 @@
 import { dispatchPushForConversationStatus } from "@/lib/push-notification/dispatcher";
 import { projectConversationTarget, targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { messageQueueService, type MessageQueueService } from "@/lib/conversations/message-queue-service";
-import { queueContentOfTurnInput } from "@/lib/prompt/queue";
+import { queueContentOfTurnInput } from "@/lib/conversations/queue-content";
 import { conversationEventScopeFields, isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { publishEvent } from "@/lib/events/publication";
@@ -180,6 +180,8 @@ export function createProductionConversationRecords(
             promptCount: row.promptCount,
             transcriptPath: row.transcriptPath,
             debugMode: row.debugMode,
+            pendingQuestionId: row.pendingQuestionId,
+            owner: row.owner,
           };
     },
     async claimTurn(identity) {

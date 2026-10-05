@@ -73,7 +73,7 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
   let backendRef: { backend: "claude"; ref: string } | null = { backend: "claude", ref: "sdk-1" };
   const records: ConversationRecordPort = {
     async read() {
-      return { agentBackend: "claude", backendRef, promptCount: 1, transcriptPath: null, debugMode: null };
+      return { agentBackend: "claude", backendRef, promptCount: 1, transcriptPath: null, debugMode: null, pendingQuestionId: null, owner: null };
     },
     async beginTurn(identity, source) {
       events.push(`begin:${identity.conversationId}:${source}`);

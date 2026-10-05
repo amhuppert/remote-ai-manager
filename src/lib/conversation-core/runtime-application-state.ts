@@ -1,4 +1,3 @@
-import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import type { ConversationBackendEvent, ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
@@ -16,8 +15,6 @@ import {
   seedMcpRuntimeState,
 } from "@/lib/mcp/runtime-apply";
 import type { McpConfigUpdatedEvent } from "@/lib/mcp/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { BackendRuntimeIndex } from "@/lib/workflows/conversation/core-coexistence";
 
 /** What a runtime is created with, and the capability baseline composed alongside it. */
 export interface ComposedTooling {
@@ -67,9 +64,8 @@ export interface RuntimeApplicationStateDeps {
  * agent, recorded on the conversation row through the same transitions the
  * conversation actor uses. Every core runtime is created for its turn with
  * the current configuration, so creation seeds the baseline and the
- * backend's acceptance settles it. There is no turn-start apply: the actor's
- * looks runtimes up in the shared registry, which never holds a core runtime,
- * and would record every overridden capability as rejected.
+ * backend's acceptance settles it. There is no turn-start apply: a change
+ * saved while a core turn runs applies to the runtime its next turn creates.
  */
 export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps): RuntimeApplicationState {
   const mcp = createMcpRuntimeApplicationStore(deps.conversations);
@@ -164,46 +160,4 @@ function keepNewerSaves(
     cascades[kind] = { ...now, ...(appliedHash !== undefined ? { appliedHash } : {}) };
   }
   return { cascades };
-}
-
-/** What a status reader learns of a runtime: whether it lives and for which backend, never a handle to act on. */
-export interface RuntimeStatus {
-  status: ConversationBackendRuntime["status"];
-  backend: AgentBackendId;
-}
-
-// One map per process: the build loads this module once for the instrumentation
-// layer (where core turns register their runtimes) and once for the route layer
-// (where configuration routes read them).
-const coreRuntimes = getGlobalSingleton("__cc_core_runtime_index", () => new Map<string, ConversationBackendRuntime>());
-
-/**
- * The runtimes core turns hold. Kept out of the shared runtime registry: live
- * delivery, commands and the actor's turn-start apply act on what that
- * registry returns, and none of them may act on a turn the core runs.
- */
-export const coreRuntimeIndex: BackendRuntimeIndex = {
-  register(conversationId, runtime) {
-    coreRuntimes.set(conversationId, runtime);
-  },
-  unregister(conversationId, runtime) {
-    if (coreRuntimes.get(conversationId) === runtime) coreRuntimes.delete(conversationId);
-  },
-};
-
-/**
- * A runtime lookup that also sees the runtimes core turns hold, so a
- * configuration change saved while a core turn runs reports that it applies
- * next turn. For status readers only: a core runtime is answered with its
- * status, never as a runtime to call.
- */
-export function withCoreRuntimes<R extends RuntimeStatus>(
-  registered: (conversationId: string) => R | undefined,
-): (conversationId: string) => R | RuntimeStatus | undefined {
-  return (conversationId) => {
-    const runtime = registered(conversationId);
-    if (runtime !== undefined) return runtime;
-    const core = coreRuntimes.get(conversationId);
-    return core === undefined ? undefined : { status: core.status, backend: core.backend };
-  };
 }

@@ -328,6 +328,10 @@ export interface ConversationRecordPort {
     promptCount: number;
     transcriptPath: string | null;
     debugMode: ConversationRow["debugMode"];
+    /** A question the agent asked that still waits for its answer. */
+    pendingQuestionId: string | null;
+    /** A collaboration that holds the conversation. */
+    owner: ConversationState["owner"];
   } | null>;
   /** The core took up the conversation's next turn: running from now, though it may still wait for capacity. */
   claimTurn(identity: ConversationIdentity): Promise<void>;

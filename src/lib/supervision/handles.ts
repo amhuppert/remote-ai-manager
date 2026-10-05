@@ -10,6 +10,9 @@ import {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { QuestionCommand } from "@/lib/workflows/conversation/manager";
 import type { CoreTurnRuntime } from "@/lib/conversation-core/production-engine";
+import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
+import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
+import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
 import { storeSessionNameFromScopeRef, type ConversationScopeRef } from "@/lib/conversations/conversation-target";
 import { getGlobalValue } from "@/lib/shared/global-singleton";
 import { createConversationCoreRepo, type ConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
@@ -99,6 +102,22 @@ export async function runCoreTask(input: {
     return { kind: "not_started", reason: "configuration", message: "Run supervision is not running" };
   }
   return supervision.core.runTask(input);
+}
+
+/** Whether a core conversation's running turn takes a queued message now. */
+export async function coreAcceptsLive(conversationId: string): Promise<boolean> {
+  const runtime = loadedCoreTurnRuntime();
+  return runtime !== undefined && (await runtime).interactiveTurns.acceptsLive(conversationId);
+}
+
+/** A queued message the queue claimed, delivered into a core conversation's running turn. */
+export async function deliverCoreLive(
+  identity: ConversationIdentity,
+  request: UserTurnRequest,
+): Promise<DeliveryClass> {
+  const runtime = loadedCoreTurnRuntime();
+  if (runtime === undefined) throw new Error("The conversation core is not running");
+  return (await runtime).interactiveTurns.deliverLive(identity, request);
 }
 
 /** A core conversation is going away: nothing more runs in it, and its runtime is closed. */

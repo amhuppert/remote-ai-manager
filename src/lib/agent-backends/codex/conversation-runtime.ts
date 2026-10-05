@@ -332,6 +332,8 @@ export class CodexConversationRuntime
   readonly queueUserInput?: (
     input: ConversationQueuedUserInput,
   ) => Promise<void>;
+  /** A steer names its turn: the provider refuses it once that turn has ended. */
+  readonly liveInput = "running_turn" as const;
   readonly modelSelection: BackendModelSelection;
 
   /** The write envelope this runtime's turns execute under; undefined when unrestricted. */

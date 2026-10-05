@@ -78,6 +78,8 @@ export interface RuntimeHost {
   closeFailure(conversationId: string): string | null;
   /** Whether the conversation's next turn would reuse a live runtime rather than create one. */
   isLive(conversationId: string): boolean;
+  /** The live runtime the conversation's running turn holds, or null. */
+  runtime(conversationId: string): ConversationBackendRuntime | null;
   /** Records unverified process cleanup; true the first time. Closing then fails and no new runtime starts. */
   recordCleanupFailure(conversationId: string, failure: { kind: "cleanup_unverified"; message: string }): boolean;
   releaseAll(): Promise<void>;
@@ -203,6 +205,10 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       return create(entry);
     },
 
+    runtime(conversationId) {
+      const backend = hosted.get(conversationId)?.managed.backend ?? null;
+      return backend?.status === "alive" ? backend : null;
+    },
     isLive(conversationId) {
       return hosted.get(conversationId)?.managed.backend?.status === "alive";
     },

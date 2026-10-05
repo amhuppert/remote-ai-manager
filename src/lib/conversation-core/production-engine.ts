@@ -18,7 +18,6 @@ import {
 } from "@/lib/workflows/conversation/pre-turn/resolve-model-effort";
 import { loadConversationTurnDependencies } from "@/lib/workflows/conversation/core-coexistence";
 import { prepareRuntimeInstructions } from "@/lib/workflows/conversation/runtime-instructions";
-import { prepareConversationTurnContext } from "@/lib/workflows/conversation/turn-context";
 import { createQueuedDeliveryAccounting } from "@/lib/workflows/conversation/post-turn/queued-delivery-accounting";
 import { persistTurnImages } from "@/lib/workflows/conversation/pre-turn/image-persistence";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
@@ -31,7 +30,9 @@ import { prepareTaskPrompt } from "@/lib/workflows/conversation/turn-context";
 import { readLineageCumulativeCost } from "@/lib/workflows/conversation/task-run-cost";
 import { createInteractiveTurns, type InteractiveTurnDeps, type InteractiveTurns } from "./interactive-turns";
 import { createProductionConversationRecords } from "./production-records";
-import { coreRuntimeIndex, createRuntimeApplicationState } from "./runtime-application-state";
+import { createRuntimeApplicationState } from "./runtime-application-state";
+import { prepareTurnInput } from "./turn-input";
+import { runtimeRegistryIndex } from "@/lib/agent-backends/runtime-registry";
 import { createRuntimeHost, type RuntimeHost } from "./runtime-host";
 import { createTurnEngine, type TurnEngine } from "./turn-engine";
 
@@ -191,11 +192,7 @@ export async function createProductionTurnRuntime(options: {
         },
       };
     },
-    // Core runtimes stay out of the shared runtime registry: the conversation
-    // actor's live delivery, MCP apply and commands act on what it returns, and
-    // none of them may act on a turn the core runs. Change-status readers see
-    // core runtimes through this index instead.
-    index: coreRuntimeIndex,
+    index: runtimeRegistryIndex,
     log,
   });
 
@@ -253,20 +250,7 @@ export async function createProductionTurnRuntime(options: {
         factory: deps.execution.getConversationBackendFactory(backend),
       });
     },
-    prepareContext: ({ execution, promptText, runtimeCreatedWithoutResume, continuation, checkpoint, archiveQueuedInput, onQueueAccepted }) =>
-      prepareConversationTurnContext(deps, {
-        execution,
-        promptText,
-        continuation,
-        checkpoint,
-        workflowContext: undefined,
-        runtimeCreatedWithoutResume,
-        resultAttemptId: execution.executionAttemptId,
-        // The context's own finish settles its receipts when the turn ends.
-        ownReceipt: () => {},
-        archiveQueuedInput,
-        onQueueAccepted,
-      }),
+    prepareInput: (request) => prepareTurnInput(deps, request),
     nameConversation(input) {
       void generateAndApplyConversationName({ ...input, trigger: "auto" }).catch((error: unknown) =>
         log.warn("conversation_core.naming_failed", {

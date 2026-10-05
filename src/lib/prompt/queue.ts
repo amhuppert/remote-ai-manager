@@ -18,6 +18,11 @@ import {
 } from "@/lib/agent-backends/runtime-registry";
 import { InputDeliveryUncertainError } from "@/lib/agent-backends/errors";
 import { isQueuedUserMessage } from "@/lib/conversations/queued-input-provenance";
+import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
+import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
+import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
+import { coreAcceptsLive, coreOwnsConversation, deliverCoreLive } from "@/lib/supervision/handles";
+import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
 import {
   preparePassiveSubscriptionContext,
   prepareAcceptedNotepadReferences,
@@ -66,78 +71,9 @@ import { modelSelectionKey } from "@/lib/agent-backends/model-selection";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { buildQueueContent } from "@/lib/conversations/queue-content";
 
 const logger = createLogger("message-queue");
-
-/**
- * Build the content blocks from raw `{ text, images, feedback }`. Text (when
- * non-empty) becomes a single `text` block first, then each image becomes an
- * inline base64 `image` block, then the review-feedback blocks (when present)
- * are appended. This is the format the next-turn drain coalesces, so the
- * live-delivery path keeps it consistent.
- *
- * NOTE: neither a `document_feedback` nor a `notepad_feedback` block is a valid
- * backend (SDK) content block — callers that deliver content to the backend
- * (`queueUserInput`) must omit them and carry the derived prose as a `text`
- * block instead.
- */
-export function buildQueueContent(args: {
-  text?: string;
-  images?: readonly ImagePayload[];
-  documentFeedback?: DocumentFeedbackPayload;
-  notepadFeedback?: NotepadFeedbackPayload;
-}): MessageContentBlock[] {
-  const content: MessageContentBlock[] = [];
-  if (args.text && args.text.length > 0) {
-    content.push({ type: "text", text: args.text });
-  }
-  for (const image of args.images ?? []) {
-    content.push({
-      type: "image",
-      mediaType: image.mediaType,
-      base64Data: image.base64Data,
-    });
-  }
-  if (args.documentFeedback) {
-    content.push({
-      type: "document_feedback",
-      items: args.documentFeedback.items,
-    });
-  }
-  if (args.notepadFeedback) {
-    content.push({
-      type: "notepad_feedback",
-      notepadId: args.notepadFeedback.notepadId,
-      notepadName: args.notepadFeedback.notepadName,
-      notepadRefXml: args.notepadFeedback.notepadRefXml,
-      items: args.notepadFeedback.items,
-    });
-  }
-  return content;
-}
-
-/**
- * Turn input that never ran (a message a restart withdrew before it started),
- * as the queue keeps it for review: content the next-turn drain reads back
- * into the same input. Feedback keeps its structured blocks, from which the
- * turn derives its prose again.
- */
-export function queueContentOfTurnInput(input: {
-  text: string;
-  images?: readonly ImagePayload[];
-  documentFeedback?: DocumentFeedbackPayload;
-  notepadFeedback?: readonly NotepadFeedbackPayload[];
-}): MessageContentBlock[] {
-  const feedback = input.documentFeedback !== undefined || input.notepadFeedback !== undefined;
-  return [
-    ...buildQueueContent({
-      ...(feedback ? {} : { text: input.text }),
-      ...(input.images !== undefined ? { images: input.images } : {}),
-      ...(input.documentFeedback !== undefined ? { documentFeedback: input.documentFeedback } : {}),
-    }),
-    ...(input.notepadFeedback ?? []).flatMap((notepadFeedback) => buildQueueContent({ notepadFeedback })),
-  ];
-}
 
 interface ConversationKey {
   projectPath: string;
@@ -146,6 +82,13 @@ interface ConversationKey {
 }
 
 export interface QueueMessageDeps {
+  /** The shared core, which takes live input for the conversations it runs itself. */
+  core?: {
+    owns(conversationId: string): Promise<boolean>;
+    acceptsLive(conversationId: string): Promise<boolean>;
+    /** Settles the claimed rows whatever the outcome. */
+    deliverLive(identity: ConversationIdentity, request: UserTurnRequest): Promise<DeliveryClass>;
+  };
   subscriptions?: PassiveSubscriptionContextDependencies;
   ownSubscriptionReceipt?(
     input: {
@@ -224,6 +167,11 @@ export interface QueueMessageDeps {
 }
 
 const defaultDeps: QueueMessageDeps = {
+  core: {
+    owns: async (conversationId) => coreOwnsConversation(conversationId),
+    acceptsLive: coreAcceptsLive,
+    deliverLive: deliverCoreLive,
+  },
   subscriptions: productionPassiveSubscriptionDependencies,
   ownSubscriptionReceipt: (input, finish) =>
     ownRuntimeInputReceipt(input.conversationId, input.runtime, finish),
@@ -426,6 +374,100 @@ function runtimeRunsSelection(
   );
 }
 
+/**
+ * Whether the core runs the conversation, and whether its running turn takes
+ * input now. The message is already queued, so a check that fails declines:
+ * the row waits for the next turn rather than failing the request.
+ */
+async function coreLiveInput(
+  params: QueueMessageParams,
+  deps: QueueMessageDeps,
+  core: NonNullable<QueueMessageDeps["core"]>,
+): Promise<"not_core" | "accepts" | "declined"> {
+  const { conversationId, sessionName, projectPath } = params;
+  try {
+    if (!(await core.owns(conversationId))) return "not_core";
+    return (await core.acceptsLive(conversationId)) ? "accepts" : "declined";
+  } catch (error) {
+    logger.warn("queue.core_live_check_failed", {
+      projectName: deps.getProjectDisplayName(projectPath),
+      ...scopeRefFromStoreSessionName(sessionName),
+      conversationId,
+      error: getErrorMessage(error),
+    });
+    return "declined";
+  }
+}
+
+/**
+ * A conversation the core runs takes live input through the core, with the
+ * same turn input as its turns; the queue only claims the row for it.
+ */
+async function deliverThroughCore(
+  params: QueueMessageParams,
+  deps: QueueMessageDeps,
+  core: NonNullable<QueueMessageDeps["core"]>,
+  entry: PendingQueuedMessage,
+): Promise<QueueMessageResult> {
+  const { projectPath, sessionName, conversationId } = params;
+  const claimed = await deps.claimLiveDelivery({ projectPath, sessionName, conversationId, id: entry.id });
+  // No longer pending: cancelled, or claimed by a racing drain.
+  if (claimed === null) return { entry, deliveryTiming: "in_turn" };
+  const deliveryAttemptId = claimed.deliveryAttemptId;
+  if (deliveryAttemptId == null) {
+    // As on the actor's path: abandoned-delivery recovery reclaims the row.
+    logger.error("queue.live_delivery", {
+      projectName: deps.getProjectDisplayName(projectPath),
+      ...scopeRefFromStoreSessionName(sessionName),
+      conversationId,
+      messageIds: [entry.id],
+      status: "delivering",
+      error: "claimed row missing delivery attempt id",
+    });
+    return { entry, deliveryTiming: "in_turn" };
+  }
+  const { promptText, images, documentFeedback, notepadFeedback } = queuedBatchToSubmitPrompt(claimed.content);
+  const request: UserTurnRequest = {
+    kind: "user_message",
+    text: promptText,
+    ...(images.length > 0 ? { images } : {}),
+    ...(documentFeedback !== undefined ? { documentFeedback } : {}),
+    ...(notepadFeedback !== undefined ? { notepadFeedback } : {}),
+    inputOrigin: isQueuedUserMessage(claimed) ? "user" : "generated",
+    queuedDelivery: { messageIds: [entry.id], deliveryAttemptId },
+  };
+  let outcome: DeliveryClass;
+  try {
+    outcome = await core.deliverLive({ projectPath, storeSessionName: sessionName, conversationId }, request);
+  } catch (error) {
+    logger.error("queue.core_live_delivery_failed", {
+      projectName: deps.getProjectDisplayName(projectPath),
+      ...scopeRefFromStoreSessionName(sessionName),
+      conversationId,
+      messageIds: [entry.id],
+      deliveryAttemptId,
+      error: getErrorMessage(error),
+    });
+    await deps.markPending({
+      projectPath,
+      sessionName,
+      conversationId,
+      ids: [entry.id],
+      deliveryAttemptId,
+      error: getErrorMessage(error),
+    });
+    return { entry, deliveryTiming: "next_turn" };
+  }
+  if (outcome === "not_sent") return { entry, deliveryTiming: "next_turn" };
+  if (outcome === "uncertain") {
+    return {
+      entry: { ...claimed, status: "uncertain", error: "It may have reached the agent; review it before sending again" },
+      deliveryTiming: "in_turn",
+    };
+  }
+  return { entry, deliveryTiming: "in_turn" };
+}
+
 async function queueMessageInOrder(
   params: QueueMessageParams,
   deps: QueueMessageDeps,
@@ -519,6 +561,23 @@ async function queueMessageInOrder(
 
   if (timing === "next_turn") {
     return { entry, deliveryTiming: "next_turn" };
+  }
+
+  if (deps.core !== undefined) {
+    const live = await coreLiveInput(params, deps, deps.core);
+    if (live === "accepts") return deliverThroughCore(params, deps, deps.core, entry);
+    if (live === "declined") {
+      // It waits for the next turn: the running turn's end, or the caller's drain, takes it.
+      logger.info("queue.delivery_deferred", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        messageIds: [entry.id],
+        status: "pending",
+        reason: "core_declined",
+      });
+      return { entry, deliveryTiming: "next_turn" };
+    }
   }
 
   // in_turn: attempt live delivery, confirmed by backend acceptance.

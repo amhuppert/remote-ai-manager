@@ -20,10 +20,9 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createAffectedConversationLister } from "@/lib/agent-capabilities/default-deps";
 import { collectRuntimeTargets } from "@/lib/mcp/runtime-targets";
+import { getRuntime, runtimeRegistryIndex } from "@/lib/agent-backends/runtime-registry";
 import {
-  coreRuntimeIndex,
   createRuntimeApplicationState,
-  withCoreRuntimes,
   type ComposedTooling,
   type SeededRuntime,
 } from "./runtime-application-state";
@@ -317,7 +316,7 @@ describe("core runtime application state", () => {
   });
 });
 
-describe("core runtime index", () => {
+describe("core runtimes in the shared registry", () => {
   /** A core runtime whose live MCP apply would change the config of the turn it is running. */
   function coreHost() {
     const applied: PortableMcpConfig[] = [];
@@ -351,7 +350,7 @@ describe("core runtime index", () => {
       tooling: async () => ({ overrides: { portableMcp: H1 } }),
       beginSeed: async () => ({ commit: async () => {} }),
       callbacks: () => ({}),
-      index: coreRuntimeIndex,
+      index: runtimeRegistryIndex,
       log: createCapturingLogger(),
     });
     const obtain = () =>
@@ -370,12 +369,10 @@ describe("core runtime index", () => {
     return { host, obtain, applied };
   }
 
-  const nothingRegistered = (): ConversationBackendRuntime | undefined => undefined;
-
   it("shows the change-status readers a conversation whose turn holds a core runtime, and only while it does", async () => {
     await harness();
     const core = coreHost();
-    const status = withCoreRuntimes(nothingRegistered);
+    const status = getRuntime;
     const listAffected = createAffectedConversationLister({
       listProjectPaths: async () => [PROJECT],
       getProjectSessions: async () => [
@@ -411,23 +408,5 @@ describe("core runtime index", () => {
     expect(await listAffected(capabilityChange)).toEqual([]);
     expect(runtimeTargets()).toEqual([]);
     expect((await saveMcp()).disposition).toBe("no_active_runtime");
-  });
-
-  it("never lets a turn-start apply act on the runtime a core turn is running", async () => {
-    await harness();
-    const core = coreHost();
-    await core.obtain();
-    try {
-      const result = await createMcpRuntimeApplyService({
-        applicationState: createMcpRuntimeApplicationStore(fixture.deps),
-        getRuntime: withCoreRuntimes(nothingRegistered),
-        resolvePortableForConversation: async () => ({ portable: H2 }),
-      }).applyAtTurnStart({ ...conversation, backend: "claude" });
-
-      expect(result.disposition).toBe("no_active_runtime");
-      expect(core.applied).toEqual([]);
-    } finally {
-      await core.host.release("conv-1");
-    }
   });
 });
