@@ -146,6 +146,15 @@ interface Waiter {
   reject(error: Error): void;
 }
 
+/**
+ * An interactive turn waits only for Git and publication operations that hold
+ * its worktree, never behind one still waiting: a waiting publication may be
+ * queued behind supervised work, and a person must not wait for that (§6.2,
+ * decision A). The publication waits for the interactive turns instead.
+ */
+const jumpsTheQueue = (request: GrantRequest): boolean =>
+  request.kind === "interactive_write";
+
 export function createWorkspaceAdmission(): WorkspaceAdmission {
   const granted = new Map<number, Grant>();
   const waiters: Waiter[] = [];
@@ -185,26 +194,33 @@ export function createWorkspaceAdmission(): WorkspaceAdmission {
     tryAcquire(request) {
       const blocked =
         conflictsWithHeld(request).length > 0 ||
-        waiters.some((waiter) => grantsConflict(waiter.request, request));
+        (!jumpsTheQueue(request) &&
+          waiters.some((waiter) => grantsConflict(waiter.request, request)));
       return blocked ? null : grant(request);
     },
     acquire(request, signal) {
+      if (signal?.aborted)
+        return Promise.reject(new Error("Workspace admission was cancelled"));
       const immediate = this.tryAcquire(request);
       if (immediate !== null) return Promise.resolve(immediate);
       return new Promise<Grant>((resolve, reject) => {
-        const waiter: Waiter = { request, resolve, reject };
-        waiters.push(waiter);
-        signal?.addEventListener(
-          "abort",
-          () => {
-            const index = waiters.indexOf(waiter);
-            if (index === -1) return;
-            waiters.splice(index, 1);
-            reject(new Error("Workspace admission was cancelled"));
-            admitWaiters();
+        const waiter: Waiter = {
+          request,
+          resolve(granted) {
+            signal?.removeEventListener("abort", stop);
+            resolve(granted);
           },
-          { once: true },
-        );
+          reject,
+        };
+        function stop(): void {
+          const index = waiters.indexOf(waiter);
+          if (index === -1) return;
+          waiters.splice(index, 1);
+          reject(new Error("Workspace admission was cancelled"));
+          admitWaiters();
+        }
+        waiters.push(waiter);
+        signal?.addEventListener("abort", stop, { once: true });
       });
     },
     release(released) {
@@ -225,13 +241,15 @@ export function createWorkspaceAdmission(): WorkspaceAdmission {
       });
     },
     blockers(request) {
-      const ahead = waiters
-        .filter(
-          (waiter) =>
-            waiter.request !== request &&
-            grantsConflict(waiter.request, request),
-        )
-        .map((waiter) => waiter.request);
+      const ahead = jumpsTheQueue(request)
+        ? []
+        : waiters
+            .filter(
+              (waiter) =>
+                waiter.request !== request &&
+                grantsConflict(waiter.request, request),
+            )
+            .map((waiter) => waiter.request);
       return [...conflictsWithHeld(request), ...ahead];
     },
     held() {

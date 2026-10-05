@@ -153,6 +153,7 @@ beforeEach(() => {
         await contextHost.submit(intent);
       },
     },
+    workspace,
     touchContext: (contextId) =>
       scheduler.touch({ kind: "context", id: contextId }),
     async notifyOwner({ boundary }) {
@@ -417,6 +418,167 @@ describe("routes and loops", () => {
     ]);
     await runs.reconcile("run-1");
     expect(notified).toHaveLength(3);
+  });
+});
+
+/** api works in lane "api"; integrate, in the session, needs its code. */
+async function launchLane(): Promise<void> {
+  const inLane = startRequest("run-1.api", false, "Build the API");
+  await runs.launch({
+    runId: "run-1",
+    cause: "launch-1",
+    kind: "workflow",
+    title: "Lane then integrate",
+    projectPath: "/repo",
+    sessionName: "session",
+    owner: { conversationId: "owner-1", sessionName: "session" },
+    contexts: [
+      {
+        key: "api",
+        dependsOn: [],
+        lane: "api",
+        request: {
+          ...inLane,
+          workspace: {
+            kind: "lane",
+            projectPath: "/repo",
+            sessionName: "session",
+            worktreePath: "/repo/.worktrees/session.1-api",
+            branch: "csm/session-1-api",
+            scope: { mode: "full" },
+          },
+        },
+      },
+      { key: "integrate", dependsOn: ["api"], request: startRequest("run-1.integrate", false, "Integrate") },
+    ],
+    lanes: [
+      {
+        key: "api",
+        laneId: "1-api",
+        worktreePath: "/repo/.worktrees/session.1-api",
+        branch: "csm/session-1-api",
+        target: { worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+        checks: ["typecheck"],
+      },
+    ],
+  });
+  await scheduler.idle();
+}
+
+describe("lanes", () => {
+  it("provisions the lane, lands its work there, publishes it, and only then starts work that needs its code", async () => {
+    await launchLane();
+    expect(contexts.observe("run-1.api")).toBeNull();
+    const provision = workspace.submitted().find((i) => (i.request as { kind?: string }).kind === "provision");
+    expect(provision?.request).toMatchObject({
+      kind: "provision",
+      lane: { laneId: "1-api", worktreePath: "/repo/.worktrees/session.1-api", sessionBranch: "csm/session" },
+    });
+    await settle(workspace, "provision", { kind: "provisioned", baseline: "b0" });
+    expect(contexts.observe("run-1.api")?.record.facts.binding.request).toMatchObject({ kind: "lane" });
+
+    await succeedActiveContext("API built.");
+    expect(contexts.observe("run-1.integrate")).toBeNull();
+    const publish = workspace.submitted().find((i) => (i.request as { kind?: string }).kind === "publish");
+    expect(publish?.cause).toBe("run-1:publish:api:1");
+    expect(publish?.request).toMatchObject({ checks: ["typecheck"] });
+
+    await settle(workspace, "publish", { kind: "published", commit: "p1", incorporated: "h0" });
+    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication).toEqual({
+      attempt: 1,
+      outcome: { kind: "published", commit: "p1", incorporated: "h0" },
+    });
+    expect(contexts.observe("run-1.integrate")?.record.facts.contract.current.inputs).toEqual([
+      { key: "api", title: "Build the API", output: { summary: "API built." } },
+    ]);
+    await succeedActiveContext("Integrated.");
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+  });
+
+  it("halts on a blocked publication, tells the owner how to retry, and publishes on the new attempt", async () => {
+    await launchLane();
+    await settle(workspace, "provision", { kind: "provisioned", baseline: "b0" });
+    await succeedActiveContext("API built.");
+    await settle(workspace, "publish", {
+      kind: "publish_blocked",
+      detail: "The session worktree has changes publication would overwrite or leave behind: notes.md.",
+    });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "needs_owner",
+      reasons: [expect.stringContaining("notes.md")],
+    });
+    expect(notified.map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
+      ["halted", "lane:api:publication:1", { runHalt: "lane_publication", lane: "api", otherWorkRemains: false }],
+    ]);
+
+    await runs.retryLane("run-1", "api", null);
+    await scheduler.idle();
+    expect(workspace.submitted().map((i) => i.cause)).toContain("run-1:publish:api:2");
+    await settle(workspace, "publish", { kind: "published", commit: "p2", incorporated: "h1" });
+    expect(contexts.observe("run-1.integrate")).not.toBeNull();
+    await expect(runs.retryLane("run-1", "api", null)).rejects.toThrow(/nothing to retry/);
+  });
+});
+
+describe("lanes under pause and cancel", () => {
+  async function readyToPublish(): Promise<string> {
+    await launchLane();
+    await settle(workspace, "provision", { kind: "provisioned", baseline: "b0" });
+    await succeedActiveContext("API built.");
+    await scheduler.idle();
+    return "run-1:publish:api:1";
+  }
+
+  it("withdraws a publication not yet admitted when cancelled, and is cancelled at once", async () => {
+    const cause = await readyToPublish();
+    expect(workspace.outcome(cause).kind).toBe("queued");
+    await runs.cancel("run-1", null);
+    await scheduler.idle();
+    expect(workspace.withdrawn).toContain(cause);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication?.outcome).toEqual({ kind: "cancelled" });
+  });
+
+  it("interrupts a running publication when cancelled and keeps stopping until it settles", async () => {
+    const cause = await readyToPublish();
+    workspace.admit(cause);
+    await runs.cancel("run-1", null);
+    await scheduler.idle();
+    expect(workspace.interrupted).toContain(cause);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "stopping" });
+
+    workspace.settle(cause, { kind: "publication_failed", detail: "Stopped before publishing" });
+    scheduler.touch({ kind: "run", id: "run-1" });
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+  });
+
+  it("withdraws a lane step a restart returned to the queue while the run was stopping, and finishes cancelling", async () => {
+    const cause = await readyToPublish();
+    workspace.admit(cause);
+    await runs.cancel("run-1", null);
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "stopping" });
+
+    // The restart found no publication marker, so the attempt went back to the queue.
+    workspace.requeue(cause);
+    await runs.restoreAfterRestart();
+    scheduler.touch({ kind: "run", id: "run-1" });
+    await scheduler.idle();
+    expect(workspace.withdrawn).toContain(cause);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication?.outcome).toEqual({ kind: "cancelled" });
+  });
+
+  it("reports a pause as draining while a lane's publication runs, and drained while it only waits", async () => {
+    const cause = await readyToPublish();
+    await runs.pause("run-1", null);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: false });
+    await runs.resume("run-1", null);
+    await scheduler.idle();
+    workspace.admit(cause);
+    await runs.pause("run-1", null);
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: true });
   });
 });
 

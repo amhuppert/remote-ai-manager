@@ -45,11 +45,36 @@ export const runDefinitionContextSchema = z
     /** Guards on some of those dependencies, by dependency key; the rest are always taken. */
     when: z.record(z.string(), routeGuardSchema).optional(),
     routing: z.object({ cardinality: routeCardinalitySchema }).strict().optional(),
+    /** Dependencies whose accepted output is enough: no code visibility, so no publication to wait for. */
+    outputOnly: z.array(z.string().min(1)).optional(),
+    /** The isolated lane this context works in; absent for session placement. */
+    lane: z.string().min(1).optional(),
     /** The resolved request; its inputs are bound from the dependencies at start. */
     request: contextStartRequestSchema,
   })
   .strict();
 export type RunDefinitionContext = z.infer<typeof runDefinitionContextSchema>;
+
+/**
+ * An isolated lane: its own worktree and branch, started from the session
+ * branch's committed head once every lane it needs code from has published,
+ * and published into the session branch once all its members are done.
+ */
+export const runLaneSchema = z
+  .object({
+    key: z.string().min(1),
+    laneId: z.string().min(1),
+    worktreePath: z.string().min(1),
+    branch: z.string().min(1),
+    /** Where the lane publishes: the session worktree and its branch. */
+    target: z
+      .object({ worktreePath: z.string().min(1), branch: z.string().min(1) })
+      .strict(),
+    /** Whole-tree checks run on the lane merged with the session head, before publication. */
+    checks: z.array(z.string().min(1)),
+  })
+  .strict();
+export type RunLane = z.infer<typeof runLaneSchema>;
 
 /**
  * A finite loop: its body runs again in fresh Contexts, the entry carrying the
@@ -69,6 +94,65 @@ export const runLoopSchema = z
   .strict();
 export type RunLoop = z.infer<typeof runLoopSchema>;
 
+/** Where a lane's worktree stands: provisioning requested, done from a pinned base commit, or refused. */
+export const laneProvisionOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("requested") }).strict(),
+  z.object({ kind: z.literal("provisioned"), baseline: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("failed"), detail: z.string().min(1) }).strict(),
+  /** Withdrawn by cancelling the run before Workspace admitted it. */
+  z.object({ kind: z.literal("cancelled") }).strict(),
+]);
+
+/**
+ * Where a lane's publication stands. `published` is the only outcome that
+ * makes the lane's code visible outside it; the others halt until the owner
+ * asks for a new attempt.
+ */
+export const lanePublicationOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("requested") }).strict(),
+  z
+    .object({
+      kind: z.literal("published"),
+      commit: z.string().min(1),
+      /** The session head the lane was merged with and checked against. */
+      incorporated: z.string().min(1),
+    })
+    .strict(),
+  /** The session worktree had changes publication must not overwrite or commit. */
+  z.object({ kind: z.literal("blocked"), detail: z.string().min(1) }).strict(),
+  /** The session branch moved after the lane was checked against it. */
+  z.object({ kind: z.literal("stale"), head: z.string().min(1) }).strict(),
+  /** The merge conflicted or a publication check failed. */
+  z.object({ kind: z.literal("failed"), detail: z.string().min(1) }).strict(),
+  /** Interrupted where Workspace could not establish whether it published. */
+  z.object({ kind: z.literal("uncertain"), detail: z.string().min(1) }).strict(),
+  /** Withdrawn by cancelling the run before Workspace admitted it. */
+  z.object({ kind: z.literal("cancelled") }).strict(),
+]);
+export type LanePublicationOutcome = z.infer<typeof lanePublicationOutcomeSchema>;
+
+export const runLaneStateSchema = z
+  .object({
+    provision: z
+      .object({ attempt: z.number().int().min(1), outcome: laneProvisionOutcomeSchema })
+      .strict(),
+    publication: z
+      .object({ attempt: z.number().int().min(1), outcome: lanePublicationOutcomeSchema })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+export type RunLaneState = z.infer<typeof runLaneStateSchema>;
+
+/** A lane's state by its own key; a key such as `constructor` must not read an inherited property. */
+export function laneStateOf(
+  facts: Pick<RunFacts, "lanes">,
+  key: string,
+): RunLaneState | undefined {
+  const lanes = facts.lanes;
+  return lanes !== undefined && Object.hasOwn(lanes, key) ? lanes[key] : undefined;
+}
+
 export const runFactsSchema = z
   .object({
     runId: z.string().min(1),
@@ -79,10 +163,13 @@ export const runFactsSchema = z
         revision: z.number().int().min(1),
         contexts: z.array(runDefinitionContextSchema).min(1),
         loops: z.array(runLoopSchema).optional(),
+        lanes: z.array(runLaneSchema).optional(),
       })
       .strict(),
     /** The contexts started so far, in start order. */
     invocations: z.array(runInvocationSchema),
+    /** Each lane the Run asked Workspace to provision, by lane key. */
+    lanes: z.record(z.string(), runLaneStateSchema).optional(),
     control: z
       .object({
         paused: z.boolean(),
@@ -215,6 +302,10 @@ export const runViewSchema = z
           skipped: z.boolean(),
           /** The loop this context belongs to, if any. */
           loop: z.string().nullable(),
+          /** The isolated lane it works in; null for the session worktree. */
+          lane: z.string().nullable(),
+          /** Lanes it waits for: its own to be provisioned, or others whose code it needs to publish. */
+          waitingOnLanes: z.array(z.string()),
           /** The pass this row shows, from 1; always 1 outside a loop. */
           pass: z.number().int().min(1),
           progress: contextProgressSchema.nullable(),
@@ -256,6 +347,35 @@ export const runViewSchema = z
     stalled: z.array(z.string()),
     /** Routes and loops that cannot proceed until the definition changes. */
     halts: z.array(z.string()),
+    lanes: z.array(
+      z
+        .object({
+          key: z.string(),
+          worktreePath: z.string(),
+          branch: z.string(),
+          state: z.enum([
+            "waiting",
+            "skipped",
+            "cancelled",
+            "provisioning",
+            "provision_failed",
+            "working",
+            "publishing",
+            "published",
+            "blocked",
+            "stale",
+            "failed",
+            "uncertain",
+          ]),
+          /** The current provisioning or publication attempt, from 1. */
+          attempt: z.number().int().nullable(),
+          /** Why it stopped, or where the session head moved. */
+          detail: z.string().nullable(),
+          /** The commit publication put on the session branch. */
+          commit: z.string().nullable(),
+        })
+        .strict(),
+    ),
     loops: z.array(
       z
         .object({

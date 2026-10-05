@@ -46,6 +46,8 @@ import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
 import { createWorkspaceAdmission } from "@/lib/workspace/admission";
 import type { WorkspaceEvidence } from "@/lib/workspace/evidence";
+import type { LaneGit } from "@/lib/workspace/lane-git";
+import type { LaneIntegrator } from "@/lib/workspace/lane-integrator";
 import {
   createWorkspaceExecutor,
   type WorkspaceExecutor,
@@ -93,6 +95,12 @@ export interface SupervisionPorts {
   createSeatConversation: ConversationCoreDeps["createSeatConversation"];
   slots: ConversationCoreDeps["slots"];
   evidence: WorkspaceEvidence;
+  /** The Git effects of isolated lanes. */
+  lanes: LaneGit;
+  /** Brings a lane up to date with the session head before it publishes. */
+  integrator: LaneIntegrator;
+  /** The worktree an enrolled conversation's turns write in, held for interactive writes while a turn runs. */
+  interactiveWorktree?: ConversationCoreDeps["interactiveWorktree"];
   runCheck: WorkspaceExecutorDeps["runCheck"];
   notifyOwner: RunHostDeps["notifyOwner"];
   now(): string;
@@ -129,7 +137,10 @@ export function composeSupervision(
   ports: SupervisionPorts,
 ): Supervision {
   const { db } = ports;
-  const transaction = <T>(fn: () => T): T => db.transaction(fn)();
+  // Every transaction here reads before it writes. Taking the write lock up
+  // front lets one wait out another connection's write; a deferred one fails
+  // at once when its read lock cannot be upgraded.
+  const transaction = <T>(fn: () => T): T => db.transaction(fn).immediate();
   const permits = createControlPermits(createControlPermitsRepo(db));
   const intents = createIntentLedger(createPendingIntentsRepo(db));
   const scheduler = createReconcileScheduler();
@@ -143,6 +154,8 @@ export function composeSupervision(
     permits,
     admission,
     evidence: ports.evidence,
+    lanes: ports.lanes,
+    integrator: ports.integrator,
     runCheck: ports.runCheck,
     touchRequester,
     now: ports.now,
@@ -201,6 +214,9 @@ export function composeSupervision(
     slots: ports.slots,
     questions: requests,
     touchRequester,
+    ...(ports.interactiveWorktree !== undefined
+      ? { interactiveWorktree: ports.interactiveWorktree }
+      : {}),
     now: ports.now,
     log: ports.logger("conversation-core"),
   });
@@ -229,6 +245,7 @@ export function composeSupervision(
     intents,
     permits,
     contexts,
+    workspace,
     touchContext: (contextId) =>
       scheduler.touch({ kind: "context", id: contextId }),
     notifyOwner: ports.notifyOwner,
@@ -272,6 +289,7 @@ export function composeSupervision(
     checkpoints,
     async boot() {
       await core.recover();
+      const drainable: string[] = [];
       // Rows the last process claimed go back to the queue's own rules before anything drains.
       for (const enrollment of coreRepo.listInteractive()) {
         const { conversationId } = enrollment;
@@ -286,11 +304,17 @@ export function composeSupervision(
         );
         // A checkpoint the last process left in flight is settled before the queue may drain.
         await checkpoints.recover(enrollment);
-        void drainQueue(conversationId);
+        drainable.push(conversationId);
       }
-      workspace.recover();
+      // Runs restore paused first: recovering an operation wakes its Run, which must start nothing until resumed.
       const restoredRuns = runsRepo.listActive().length;
       await runs.restoreAfterRestart();
+      try {
+        // Before any interactive turn starts, so finishing a publication never waits behind one.
+        await workspace.recover();
+      } finally {
+        for (const conversationId of drainable) void drainQueue(conversationId);
+      }
       const owners = intents.owners();
       for (const owner of owners) scheduler.touch(owner);
       void workspace.drain();

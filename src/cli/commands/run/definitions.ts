@@ -27,7 +27,7 @@ export const runWorkflowSpec = {
   path: "run workflow",
   summary: "Launch a supervised workflow of several contexts in this session",
   description:
-    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. Contexts that could run at the same time need disjoint owned write scopes, a read-only context cannot run beside any writer, and a whole-tree check of a context other writers run alongside needs a later context that depends on it, runs whenever it runs, and selects the same check. You own the run: its questions, halts and result arrive as run-boundary messages.",
+    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused, and so is a writing session context a lane could publish beside, since its uncommitted results block publication: make it depend on the lane's work, place it in a lane, or make it read-only. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. You own the run: its questions, halts and result arrive as run-boundary messages.",
   requires: "cc",
   effects: "write",
   args: [],
@@ -142,6 +142,22 @@ export const runCancelSpec = {
   args: [runId],
   flags: {},
 } as const;
+export const runRetrySpec = {
+  path: "run retry",
+  summary: "Ask for a new attempt at a lane's publication or provisioning",
+  description:
+    "After fixing what stopped a lane (changes in the session worktree, a moved session head, a conflict or a failing publication check, or a failed provisioning), ask for a new attempt. A new publication merges the current session head into the lane and checks it again.",
+  requires: "cc",
+  effects: "write",
+  args: [runId],
+  flags: {
+    lane: {
+      description: "Lane key, as run show lists it",
+      value: { kind: "string", minLength: 1 },
+      required: true,
+    },
+  },
+} as const;
 export const contextTaskCompleteSpec = {
   path: "context task complete",
   summary: "Mark one of your context's tasks done",
@@ -238,6 +254,12 @@ export const runCancelCommand = ccCommands.defineCommand(runCancelSpec, {
   examples: [{ why: "Cancel a run", args: { "run-id": "run-1" } }],
   handler: async () => ({ default: (await handlers()).cancelHandler }),
 });
+export const runRetryCommand = ccCommands.defineCommand(runRetrySpec, {
+  examples: [
+    { why: "Publish a lane again after committing session changes", args: { "run-id": "run-1" }, flags: { lane: "api" } },
+  ],
+  handler: async () => ({ default: (await handlers()).retryHandler }),
+});
 export const contextTaskCompleteCommand = ccCommands.defineCommand(
   contextTaskCompleteSpec,
   {
@@ -274,6 +296,7 @@ export const runCommands = [
   runPauseCommand,
   runResumeCommand,
   runCancelCommand,
+  runRetryCommand,
   contextTaskCompleteCommand,
   contextTaskReopenCommand,
   contextTaskAddCommand,

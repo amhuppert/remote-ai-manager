@@ -521,7 +521,7 @@ export const runValidation = createRunValidationActor(async () => {
 export const fixValidation = fromPromise<
   FixValidationOutput,
   FixValidationInput
->(async ({ input }) => {
+>(async ({ input, signal }) => {
   const { fixValidationErrors } =
     await import("@/lib/workflows/validation-fix");
   const { readRepoConfig } = await import("@/lib/projects/repo-config");
@@ -568,6 +568,8 @@ export const fixValidation = fromPromise<
     agentTurnDispatch: input.agentTurnDispatch,
     branchName: input.branchName,
     isRetry: input.isRetry,
+    // Stopping the machine's fixing state stops the fresh task writing into the worktree.
+    signal,
   });
 
   logger.info("validation_fix.result", {

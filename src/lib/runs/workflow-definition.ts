@@ -5,6 +5,7 @@ import {
   projectRouteExclusion,
 } from "@/lib/workflow-graph/route-projection";
 import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
+import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { bindingScopesOverlap } from "@/lib/workspace/admission";
 import {
   workspaceScopeSchema,
@@ -22,6 +23,7 @@ import {
   routeGuardSchema,
   runLoopSchema,
   type RouteGuard,
+  type RunLane,
   type RunLoop,
 } from "./schemas";
 
@@ -32,11 +34,40 @@ const keySchema = z
     "Use 1-48 lowercase letters, digits, - or _, starting with a letter or digit",
   );
 
-/** A dependency, always taken, or taken only when its guard matches the source's accepted output. */
+/**
+ * A lane key: also part of a branch name and a directory, so it neither ends in
+ * `-` nor grows long.
+ */
+const laneKeySchema = z
+  .string()
+  .regex(
+    /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9_])?$/,
+    "Use 1-32 lowercase letters, digits, - or _, starting with a letter or digit and not ending with -",
+  );
+
+/**
+ * A dependency, always taken, or taken only when its guard matches the
+ * source's accepted output. An output-only dependency needs the accepted
+ * output, not the source's code, so it never waits for a publication.
+ */
 const dependencySchema = z.union([
   z.string().min(1),
-  z.object({ key: z.string().min(1), when: routeGuardSchema }).strict(),
+  z
+    .object({
+      key: z.string().min(1),
+      when: routeGuardSchema.optional(),
+      outputOnly: z.literal(true).optional(),
+    })
+    .strict(),
 ]);
+
+/** A lane's publication checks, run on the lane merged with the session head before it publishes. */
+const workflowLaneRequestSchema = z
+  .object({
+    key: laneKeySchema,
+    checks: z.array(validationCommandNameSchema).optional(),
+  })
+  .strict();
 
 export const workflowContextRequestSchema = agentLaunchRequestSchema
   .extend({
@@ -47,6 +78,8 @@ export const workflowContextRequestSchema = agentLaunchRequestSchema
       .strict()
       .optional(),
     scope: workspaceScopeSchema.optional(),
+    /** Work in an isolated lane instead of the session worktree. */
+    lane: laneKeySchema.optional(),
   })
   .strict();
 export type WorkflowContextRequest = z.infer<
@@ -73,11 +106,12 @@ interface WorkflowAnalysis {
   deferred: Array<Set<string>>;
 }
 
-/** One known dependency as authored: its key, where it is written, and its guard. */
+/** One known dependency as authored: its key, where it is written, its guard, and whether it needs code. */
 interface Dependency {
   key: string;
   position: number;
   when: RouteGuard | undefined;
+  outputOnly: boolean;
 }
 
 function describeScope(scope: WorkspaceScope): string {
@@ -122,6 +156,7 @@ function readDependencies(contexts: readonly WorkflowContextRequest[]): {
     (context.dependsOn ?? []).forEach((entry, position) => {
       const key = typeof entry === "string" ? entry : entry.key;
       const when = typeof entry === "string" ? undefined : entry.when;
+      const outputOnly = typeof entry !== "string" && entry.outputOnly === true;
       const path = ["contexts", index, "dependsOn", position];
       const earlier = known.find((d) => d.key === key);
       if (key === context.key)
@@ -131,11 +166,12 @@ function readDependencies(contexts: readonly WorkflowContextRequest[]): {
           path,
           message: `"${key}" names no context in this workflow`,
         });
-      else if (earlier === undefined) known.push({ key, position, when });
-      else if (earlier.when !== undefined || when !== undefined)
+      else if (earlier === undefined)
+        known.push({ key, position, when, outputOnly });
+      else if (earlier.when !== undefined || when !== undefined || earlier.outputOnly !== outputOnly)
         issues.push({
           path,
-          message: `"${key}" is already listed; list a guarded dependency once`,
+          message: `"${key}" is already listed; list a guarded or output-only dependency once`,
         });
     });
     return known;
@@ -361,6 +397,168 @@ function checkLoops(
   return issues;
 }
 
+/** The workspace a context works in: its lane, or null for the session worktree. */
+const workspaceOf = (context: WorkflowContextRequest): string | null =>
+  context.lane ?? null;
+
+/**
+ * Lane rules. A lane starts from the session branch's committed head, so it
+ * cannot see a session context's code, which is never committed; a lane that
+ * needs code from another lane starts only once that lane has published, so
+ * lanes needing each other's code would wait forever; a loop's passes run in
+ * one workspace; a declared lane is one some context works in.
+ */
+function checkLanes(
+  request: {
+    contexts: readonly WorkflowContextRequest[];
+    loops?: readonly RunLoop[] | undefined;
+    lanes?: ReadonlyArray<{ key: string }> | undefined;
+  },
+  dependencies: readonly Dependency[][],
+): DefinitionIssue[] {
+  const { contexts } = request;
+  const issues: DefinitionIssue[] = [];
+  const indexOf = new Map(contexts.map((c, index) => [c.key, index]));
+  const workspaceOfKey = (key: string): string | null => {
+    const context = contexts[indexOf.get(key) ?? -1];
+    return context === undefined ? null : workspaceOf(context);
+  };
+  const describe = (workspace: string | null) =>
+    workspace === null ? "the session worktree" : `lane "${workspace}"`;
+
+  (request.loops ?? []).forEach((loop, l) => {
+    const home = workspaceOfKey(loop.entry);
+    loop.body.forEach((member, b) => {
+      if (!indexOf.has(member) || workspaceOfKey(member) === home) return;
+      issues.push({
+        path: ["loops", l, "body", b],
+        message: `"${member}" works in ${describe(workspaceOfKey(member))}, but loop "${loop.key}" runs in ${describe(home)}; every pass of a loop works in one workspace`,
+      });
+    });
+  });
+
+  const used = new Set(contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])));
+  const declared = new Set<string>();
+  (request.lanes ?? []).forEach((lane, index) => {
+    if (declared.has(lane.key))
+      issues.push({ path: ["lanes", index, "key"], message: `Lane "${lane.key}" is already declared` });
+    else if (!used.has(lane.key))
+      issues.push({ path: ["lanes", index, "key"], message: `No context works in lane "${lane.key}"` });
+    declared.add(lane.key);
+  });
+
+  for (const context of contexts) {
+    const lane = workspaceOf(context);
+    if (lane === null) continue;
+    for (const dependency of dependencies[contexts.indexOf(context)] ?? []) {
+      if (dependency.outputOnly || workspaceOfKey(dependency.key) !== null) continue;
+      issues.push({
+        path: ["contexts", contexts.indexOf(context), "dependsOn", dependency.position],
+        message: `"${dependency.key}" works in the session worktree, whose results are never committed, so lane "${lane}" cannot see its code. Mark the dependency outputOnly if "${context.key}" needs only its result, or place "${dependency.key}" in a lane.`,
+      });
+    }
+  }
+  issues.push(...checkWaits(contexts, dependencies));
+  return issues;
+}
+
+/** One step something waits on before it can go: a context finishing, a lane starting, a lane publishing. */
+type WaitNode = `context:${string}` | `starts:${string}` | `publishes:${string}`;
+
+/**
+ * Wait barriers: a lane's contexts start only once the lane starts, which
+ * waits for every lane whose code they need to publish; a lane publishes only
+ * once all its contexts finished; a context waits for what it depends on to
+ * finish, and for the lane of a dependency it needs code from to publish. A
+ * cycle among these never starts, so it is refused with the dependency that
+ * closes it. Separately, a session context that writes leaves results the
+ * session never commits, so any lane that publishes while they are there is
+ * blocked: such a context must wait for every lane to publish.
+ */
+function checkWaits(
+  contexts: readonly WorkflowContextRequest[],
+  dependencies: readonly Dependency[][],
+): DefinitionIssue[] {
+  const issues: DefinitionIssue[] = [];
+  const laneOfKey = new Map(contexts.map((c) => [c.key, workspaceOf(c)]));
+  const edges = new Map<WaitNode, Array<{ to: WaitNode; at?: DefinitionIssue["path"] }>>();
+  const wait = (from: WaitNode, to: WaitNode, at?: DefinitionIssue["path"]) => {
+    const list = edges.get(from) ?? [];
+    list.push(at === undefined ? { to } : { to, at });
+    edges.set(from, list);
+  };
+  contexts.forEach((context, index) => {
+    const self: WaitNode = `context:${context.key}`;
+    const lane = workspaceOf(context);
+    if (lane !== null) {
+      wait(`starts:${lane}`, self);
+      wait(self, `publishes:${lane}`);
+    }
+    for (const dependency of dependencies[index] ?? []) {
+      const at = ["contexts", index, "dependsOn", dependency.position];
+      const from = laneOfKey.get(dependency.key) ?? null;
+      wait(`context:${dependency.key}`, self, at);
+      if (dependency.outputOnly || from === lane || from === null) continue;
+      wait(`publishes:${from}`, self, at);
+      if (lane !== null) wait(`publishes:${from}`, `starts:${lane}`, at);
+    }
+  });
+
+  const describe = (node: WaitNode): string => {
+    const [kind, name] = node.split(/:(.*)/s) as [string, string];
+    return kind === "context" ? `"${name}"` : `lane "${name}" ${kind}`;
+  };
+  const state = new Map<WaitNode, "visiting" | "done">();
+  const trail: Array<{ node: WaitNode; at?: DefinitionIssue["path"] }> = [];
+  const visit = (node: WaitNode): boolean => {
+    state.set(node, "visiting");
+    for (const edge of edges.get(node) ?? []) {
+      const step = edge.at === undefined ? { node: edge.to } : { node: edge.to, at: edge.at };
+      if (state.get(edge.to) === "visiting") {
+        // The steps since the cycle's first node; the search's root is not on the trail.
+        const start = trail.findIndex((earlier) => earlier.node === edge.to);
+        const cycle = [...trail.slice(start + 1), step];
+        const located = [...cycle].reverse().find((earlier) => earlier.at !== undefined);
+        issues.push({
+          path: located?.at ?? ["contexts"],
+          message: `These wait for each other and never start: ${[edge.to, ...cycle.map((earlier) => earlier.node)].map(describe).join(" → ")}. Mark a dependency outputOnly, or move the contexts into one lane.`,
+        });
+        return true;
+      }
+      trail.push(step);
+      if (state.get(edge.to) === undefined && visit(edge.to)) return true;
+      trail.pop();
+    }
+    state.set(node, "done");
+    return false;
+  };
+  for (const context of contexts) {
+    const node: WaitNode = `context:${context.key}`;
+    if (state.get(node) === undefined && visit(node)) return issues;
+  }
+
+  const lanes = [...new Set(contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])))];
+  const after = (from: WaitNode): Set<WaitNode> => {
+    const reached = new Set<WaitNode>([from]);
+    for (const node of reached)
+      for (const edge of edges.get(node) ?? []) reached.add(edge.to);
+    return reached;
+  };
+  const afterPublication = new Map(lanes.map((lane) => [lane, after(`publishes:${lane}`)]));
+  contexts.forEach((context, index) => {
+    if (context.lane !== undefined || scopeOf(context).mode === "readOnly") return;
+    const blocked = lanes.find(
+      (lane) => !(afterPublication.get(lane)?.has(`context:${context.key}`) ?? false),
+    );
+    if (blocked === undefined) return;
+    issues.push({
+      path: ["contexts", index],
+      message: `"${context.key}" writes in the session worktree, whose results are never committed, and lane "${blocked}" could publish while they are there, which publication refuses. Make "${context.key}" depend on the work in lane "${blocked}", place it in a lane, or make it read-only.`,
+    });
+  });
+  return issues;
+}
+
 /** The definition as the route owner reads it: keys and guarded dependency edges. */
 function routeTopology(
   contexts: readonly WorkflowContextRequest[],
@@ -457,6 +655,7 @@ function ancestorsOf(
 function analyzeWorkflow(request: {
   contexts: readonly WorkflowContextRequest[];
   loops?: readonly RunLoop[] | undefined;
+  lanes?: ReadonlyArray<{ key: string; checks?: string[] | undefined }> | undefined;
 }): WorkflowAnalysis {
   const { contexts } = request;
   const read = readDependencies(contexts);
@@ -474,14 +673,26 @@ function analyzeWorkflow(request: {
   const issues: DefinitionIssue[] = [
     ...checkRoutes(contexts, read.dependencies),
     ...checkLoops(request.loops ?? [], contexts, read.dependencies),
+    ...checkLanes(request, read.dependencies),
   ];
+  const workspaceByKey = new Map(contexts.map((c) => [c.key, workspaceOf(c)]));
+  const sameWorkspace = (a: string, b: string): boolean =>
+    workspaceByKey.get(a) === workspaceByKey.get(b);
+  const laneChecks = new Map(
+    (request.lanes ?? []).map((lane) => [lane.key, lane.checks ?? []]),
+  );
   const ancestors = ancestorsOf(contexts, dependsOn);
   const runsBefore = (earlier: string, later: string): boolean =>
     ancestors.get(later)?.has(earlier) ?? false;
   const topology = routeTopology(contexts, read.dependencies);
   const exclusive = projectRouteExclusion(topology);
+  // Only work in one workspace can change files under another's feet.
   const concurrent = (a: string, b: string): boolean =>
-    a !== b && !runsBefore(a, b) && !runsBefore(b, a) && !exclusive(a, b);
+    a !== b &&
+    sameWorkspace(a, b) &&
+    !runsBefore(a, b) &&
+    !runsBefore(b, a) &&
+    !exclusive(a, b);
 
   contexts.forEach((later, laterIndex) => {
     for (const earlier of contexts.slice(0, laterIndex)) {
@@ -500,9 +711,15 @@ function analyzeWorkflow(request: {
     const leaves = new Set<string>();
     if (alongside === undefined) return leaves;
     const certain = projectMustRunContextIds(topology, { given: context.key });
+    const lane = workspaceOf(context);
     (context.checks ?? []).forEach((command, position) => {
+      if (lane !== null && (laneChecks.get(lane) ?? []).includes(command)) {
+        leaves.add(command);
+        return;
+      }
       const selecting = contexts.filter(
         (other) =>
+          sameWorkspace(context.key, other.key) &&
           runsBefore(context.key, other.key) &&
           (other.checks ?? []).includes(command),
       );
@@ -511,9 +728,13 @@ function analyzeWorkflow(request: {
         return;
       }
       const skippable = selecting[0];
+      const remedy =
+        lane === null
+          ? `Add a context that depends on "${context.key}" and selects "${command}"; it runs the check on the assembled tree.`
+          : `Add "${command}" to lane "${lane}"'s publication checks, which run on the lane merged with the session, or add a context in the lane that depends on "${context.key}" and selects it.`;
       issues.push({
         path: ["contexts", index, "checks", position],
-        message: `"${command}" checks the whole tree, but "${alongside.key}" writes in the same workspace while "${context.key}" runs, so it cannot certify "${context.key}" alone. Add a context that depends on "${context.key}" and selects "${command}"; it runs the check on the assembled tree.${skippable === undefined ? "" : ` "${skippable.key}" selects it, but a route can skip "${skippable.key}".`}`,
+        message: `"${command}" checks the whole tree, but "${alongside.key}" writes in the same workspace while "${context.key}" runs, so it cannot certify "${context.key}" alone. ${remedy}${skippable === undefined ? "" : ` "${skippable.key}" selects it, but a route can skip "${skippable.key}".`}`,
       });
     });
     return leaves;
@@ -531,6 +752,7 @@ export const workflowLaunchRequestSchema = z
     title: z.string().trim().min(1).max(120),
     contexts: z.array(workflowContextRequestSchema).min(1),
     loops: z.array(workflowLoopRequestSchema).optional(),
+    lanes: z.array(workflowLaneRequestSchema).optional(),
   })
   .strict()
   .superRefine((request, ctx) => {
@@ -557,6 +779,8 @@ export function compileWorkflow(
   const first = analysis.issues[0];
   if (first !== undefined)
     throw new Error(`Cannot compile an unchecked workflow: ${first.message}`);
+  const lanes = freezeLanes(input);
+  const laneByKey = new Map(lanes.map((lane) => [lane.key, lane]));
   return {
     runId: input.runId,
     cause: input.cause,
@@ -566,14 +790,20 @@ export function compileWorkflow(
     sessionName: input.session.sessionName,
     owner: input.owner,
     ...(input.request.loops !== undefined ? { loops: input.request.loops } : {}),
+    ...(lanes.length > 0 ? { lanes } : {}),
     contexts: contexts.map((context, index) => {
       const {
         key,
-        dependsOn: _authored,
+        dependsOn: authored,
         routing,
         scope: _scope,
+        lane: laneKey,
         ...fields
       } = context;
+      const lane = laneKey === undefined ? undefined : laneByKey.get(laneKey);
+      const outputOnly = (authored ?? []).flatMap((entry) =>
+        typeof entry !== "string" && entry.outputOnly === true ? [entry.key] : [],
+      );
       const seats = input.seats[key];
       if (seats === undefined)
         throw new Error(`No resolved seats for workflow context "${key}"`);
@@ -583,6 +813,8 @@ export function compileWorkflow(
         dependsOn: analysis.dependsOn[index] ?? [],
         ...(Object.keys(when).length > 0 ? { when } : {}),
         ...(routing !== undefined ? { routing } : {}),
+        ...(outputOnly.length > 0 ? { outputOnly } : {}),
+        ...(lane !== undefined ? { lane: lane.key } : {}),
         request: resolveContextStart({
           request: fields,
           key,
@@ -590,8 +822,40 @@ export function compileWorkflow(
           scope: scopeOf(context),
           seats,
           deferredChecks: analysis.deferred[index],
+          ...(lane !== undefined
+            ? { lane: { worktreePath: lane.worktreePath, branch: lane.branch } }
+            : {}),
         }),
       };
     }),
   };
+}
+
+/**
+ * Every lane the contexts work in, in order of first use, named for this run so
+ * two runs in one session never share a lane worktree or branch.
+ */
+function freezeLanes(
+  input: LaunchPlacement & { request: WorkflowLaunchRequest },
+): RunLane[] {
+  const runTag = input.runId.replace(/^run-/, "").slice(0, 8);
+  const keys = [
+    ...new Set(
+      input.request.contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])),
+    ),
+  ];
+  return keys.map((key) => {
+    const laneId = `${runTag}-${key}`;
+    return {
+      key,
+      laneId,
+      ...input.laneTargets(laneId),
+      target: {
+        worktreePath: input.session.worktreePath,
+        branch: input.session.branch,
+      },
+      checks:
+        input.request.lanes?.find((lane) => lane.key === key)?.checks ?? [],
+    };
+  });
 }

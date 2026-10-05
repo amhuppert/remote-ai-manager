@@ -16,8 +16,10 @@ import {
   createWorkspaceExecutor,
   type CheckRunResult,
   type WorkspaceExecutor,
+  type WorkspaceExecutorDeps,
 } from "./executor";
 import type { WorkspaceBindingRequest } from "./schemas";
+import { createFakeLaneGit } from "./testing/fake-lane-git";
 
 const now = "2026-10-03T10:00:00.000Z";
 const worktree = "/repo/.worktrees/session";
@@ -60,13 +62,16 @@ const evidence: WorkspaceEvidence = {
 
 function newExecutor(
   admission: WorkspaceAdmission = createWorkspaceAdmission(),
+  overrides: Partial<Pick<WorkspaceExecutorDeps, "repo" | "log">> = {},
 ): WorkspaceExecutor {
   return createWorkspaceExecutor({
     transaction: (fn) => fixture.db.transaction(fn)(),
-    repo: createWorkspaceRepo(fixture.db),
+    repo: overrides.repo ?? createWorkspaceRepo(fixture.db),
     permits,
     admission,
     evidence,
+    lanes: createFakeLaneGit().git,
+    integrator: { integrate: async () => ({ kind: "integrated" }) },
     async runCheck({ signal }) {
       if (checkHangs) {
         await new Promise<void>((resolve) =>
@@ -79,7 +84,7 @@ function newExecutor(
     },
     touchRequester: (owner) => touched.push(owner),
     now: () => now,
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    log: overrides.log ?? { info: () => {}, warn: () => {}, error: () => {} },
   });
 }
 
@@ -291,6 +296,35 @@ describe("workspace executor", () => {
     });
   });
 
+  it("leaves an operation running for restart recovery when its result cannot be written, never recording it as refused", async () => {
+    const repo = createWorkspaceRepo(fixture.db);
+    let failedSettles = 0;
+    const errors: string[] = [];
+    const executor = newExecutor(createWorkspaceAdmission(), {
+      repo: {
+        ...repo,
+        updateOperation(cause, change) {
+          if (change.state === "settled" && failedSettles > 0) {
+            failedSettles -= 1;
+            throw new Error("database is locked");
+          }
+          repo.updateOperation(cause, change);
+        },
+      },
+      log: { info: () => {}, warn: () => {}, error: (event) => errors.push(event) },
+    });
+    await run(
+      executor,
+      intent("ctx-a", { kind: "bind", bindingId: "ctx-a", binding: binding({ mode: "full" }) }),
+    );
+    failedSettles = 2;
+    const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ctx-a" });
+    await executor.submit(freeze);
+    await executor.drain();
+    expect(executor.outcome(freeze.cause)).toEqual({ kind: "running" });
+    expect(errors).toEqual(["workspace.settle_failed"]);
+  });
+
   it("reports the reviewed files an acceptance check wrote", async () => {
     const executor = newExecutor();
     await run(
@@ -465,14 +499,21 @@ describe("workspace executor", () => {
       }),
     );
     const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ctx-a" });
-    await executor.submit(freeze);
-    createWorkspaceRepo(fixture.db).updateOperation(freeze.cause, {
+    // The last process admitted it and stopped before it settled.
+    createWorkspaceRepo(fixture.db).insertOperationIfAbsent({
+      cause: freeze.cause,
+      bindingId: "ctx-a",
+      requester: freeze.requester,
+      request: freeze.request,
+      permit: freeze.permit,
       state: "running",
+      outcome: null,
+      createdAt: now,
       updatedAt: now,
     });
 
     const restarted = newExecutor();
-    restarted.recover();
+    await restarted.recover();
     expect(restarted.outcome(freeze.cause)).toEqual({ kind: "queued" });
     await restarted.drain();
     expect(restarted.outcome(freeze.cause)).toMatchObject({ kind: "settled" });

@@ -57,6 +57,7 @@ import {
   type runLaunchSpec,
   type runPauseSpec,
   type runResumeSpec,
+  type runRetrySpec,
   type runShowSpec,
   type runWorkflowSpec,
 } from "./definitions";
@@ -141,6 +142,8 @@ interface RunViewData {
     started: boolean;
     skipped: boolean;
     loop: string | null;
+    lane: string | null;
+    waitingOnLanes: string[];
     pass: number;
     progress: string | null;
     halt: string | null;
@@ -166,6 +169,7 @@ interface RunViewData {
   stalled: string[];
   halts: string[];
   loops: Array<{ key: string; pass: number; maxPasses: number; state: string }>;
+  lanes: RunView["lanes"];
 }
 
 function toViewData(view: RunView): RunViewData {
@@ -186,6 +190,8 @@ function toViewData(view: RunView): RunViewData {
       started: context.started,
       skipped: context.skipped,
       loop: context.loop,
+      lane: context.lane,
+      waitingOnLanes: context.waitingOnLanes,
       pass: context.pass,
       progress: context.progress?.kind ?? null,
       halt:
@@ -206,6 +212,7 @@ function toViewData(view: RunView): RunViewData {
     stalled: view.stalled,
     halts: view.halts,
     loops: view.loops,
+    lanes: view.lanes,
   };
 }
 
@@ -215,7 +222,13 @@ function toViewData(view: RunView): RunViewData {
  */
 function notStartedState(
   runProgress: string,
-  context: { started: boolean; skipped: boolean; waitingOn: readonly string[] },
+  context: {
+    started: boolean;
+    skipped: boolean;
+    lane: string | null;
+    waitingOn: readonly string[];
+    waitingOnLanes: readonly string[];
+  },
 ): string {
   if (context.skipped) return "skipped (its route was not taken)";
   if (runProgress === "cancelled" || runProgress === "stopping")
@@ -224,6 +237,10 @@ function notStartedState(
   if (context.started) return "starting";
   if (context.waitingOn.length > 0)
     return `not started, waits on ${context.waitingOn.join(", ")}`;
+  if (context.waitingOnLanes.length === 1 && context.waitingOnLanes[0] === context.lane)
+    return `not started, waits for lane ${context.lane} to be provisioned`;
+  if (context.waitingOnLanes.length > 0)
+    return `not started, waits for lane ${context.waitingOnLanes.join(", ")} to publish`;
   return "starting";
 }
 
@@ -254,6 +271,14 @@ function viewText(view: JsonData<RunViewData>): string {
     if (context.lastSummary !== null)
       lines.push(`  last summary: ${context.lastSummary}`);
     if (context.output !== null) lines.push(`  result: ${context.output}`);
+  }
+  for (const lane of view.lanes) {
+    const attempt = lane.attempt === null ? "" : ` (attempt ${lane.attempt})`;
+    const detail = lane.detail === null ? "" : `: ${lane.detail}`;
+    const commit = lane.commit === null ? "" : ` as ${lane.commit}`;
+    lines.push(
+      `lane ${lane.key} [${lane.branch} at ${lane.worktreePath}]: ${lane.state}${attempt}${commit}${detail}`,
+    );
   }
   for (const loop of view.loops)
     lines.push(
@@ -462,6 +487,23 @@ export const cancelHandler: Write<typeof runCancelSpec> = {
           schema: runControlResponseSchema,
         }),
       text: ({ runId }) => quoteLiteralText(`Run ${runId}: cancelling.\n`),
+    },
+  ),
+};
+
+export const retryHandler: Write<typeof runRetrySpec> = {
+  run: writeRunner<Input<typeof runRetrySpec>, { runId: string }, CcErrorCode>(
+    {
+      run: ({ app, ctx }) =>
+        runWrite({
+          app,
+          runId: ctx.args["run-id"],
+          suffix: "control",
+          body: { action: "retry", lane: ctx.flags.lane },
+          schema: runControlResponseSchema,
+        }),
+      text: ({ runId }) =>
+        quoteLiteralText(`Run ${runId}: the lane will try again.\n`),
     },
   ),
 };

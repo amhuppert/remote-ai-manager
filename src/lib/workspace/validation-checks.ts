@@ -88,10 +88,12 @@ export function createValidationCheckRunner(
         status: "unavailable",
         detail: `Command "${command}" was cancelled before it started`,
       };
-    const { branchName, targetBranch } = await deps.branchOf(
-      binding.projectPath,
-      binding.sessionName,
-    );
+    const session = await deps.branchOf(binding.projectPath, binding.sessionName);
+    // A lane is checked on its own branch, against the session branch it publishes into.
+    const { branchName, targetBranch } =
+      binding.kind === "lane"
+        ? { branchName: binding.branch, targetBranch: session.branchName }
+        : session;
     // The validation ledger's source and workflow stamp keep their current
     // names until the old engine's gate retires them.
     const submission = await deps.service.submitSystem({

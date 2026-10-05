@@ -24,6 +24,13 @@ function actionLine(
     case "approval":
       return `Only Alex can decide this; agents cannot approve it. Tell Alex that run ${id}, context ${String(detail.contextId)}, candidate ${String(detail.candidateId)} awaits approval.`;
     case "halted":
+      // A lane halt clears with a new attempt once its cause is fixed.
+      if (typeof detail.runHalt === "string" && typeof detail.lane === "string") {
+        const retry = `Fix what stopped it, then ask for a new attempt: cctl run retry ${id} --lane ${detail.lane}`;
+        return detail.otherWorkRemains === true
+          ? `Inspect: cctl run show ${id}. Work that does not need this lane continues. ${retry}`
+          : `Inspect: cctl run show ${id}. ${retry}`;
+      }
       // Only a definition change clears a route or loop halt, and the Run has
       // no amend operation, so stopping the run is the only remedy.
       if (typeof detail.runHalt === "string") {

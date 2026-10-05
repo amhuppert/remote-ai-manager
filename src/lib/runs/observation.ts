@@ -1,4 +1,4 @@
-import type { RunView } from "./schemas";
+import { laneStateOf, type RunLaneState, type RunView } from "./schemas";
 import { passContextId } from "./schedule";
 import type { Supervision } from "@/lib/supervision/supervision";
 
@@ -26,6 +26,10 @@ export function describeRun(
       state.kind === "started"
         ? supervision.contexts.describe(state.contextId)
         : null;
+    const waitingOnLanes =
+      state.kind !== "waiting"
+        ? []
+        : state.publications ?? (state.lane !== undefined ? [state.lane] : []);
     return {
       key: defined.key,
       contextId: passContextId(defined.request.contextId, pass),
@@ -34,6 +38,8 @@ export function describeRun(
       started: state.kind === "started",
       skipped: state.kind === "skipped",
       loop: loopOf.get(defined.key) ?? null,
+      lane: defined.lane ?? null,
+      waitingOnLanes,
       pass: pass + 1,
       progress: context?.progress ?? null,
       occurrence: context?.occurrence ?? null,
@@ -71,6 +77,16 @@ export function describeRun(
       ...contexts.flatMap((context) => context.stalled),
     ],
     halts: plan.halts.map((halt) => halt.reason),
+    lanes: (record.facts.definition.lanes ?? []).map((lane) => {
+      const members = record.facts.definition.contexts.filter((c) => c.lane === lane.key);
+      const skipped = members.every((c) => plan.keys.get(c.key)?.kind === "skipped");
+      return {
+        key: lane.key,
+        worktreePath: lane.worktreePath,
+        branch: lane.branch,
+        ...laneView(laneStateOf(record.facts, lane.key), skipped),
+      };
+    }),
     loops: loops.map((loop) => {
       const state = plan.loops.get(loop.key) ?? { kind: "unstarted" as const };
       const skipped =
@@ -84,4 +100,36 @@ export function describeRun(
       };
     }),
   };
+}
+
+/** Where a lane stands for its owner: its step, the attempt, and why it stopped. */
+function laneView(
+  state: RunLaneState | undefined,
+  skipped: boolean,
+): Pick<RunView["lanes"][number], "state" | "attempt" | "detail" | "commit"> {
+  const none = { attempt: null, detail: null, commit: null };
+  if (state === undefined) return { state: skipped ? "skipped" : "waiting", ...none };
+  const { provision, publication } = state;
+  if (provision.outcome.kind === "requested")
+    return { state: "provisioning", ...none, attempt: provision.attempt };
+  if (provision.outcome.kind === "failed")
+    return { state: "provision_failed", ...none, attempt: provision.attempt, detail: provision.outcome.detail };
+  if (provision.outcome.kind === "cancelled") return { state: "cancelled", ...none, attempt: provision.attempt };
+  if (publication === null) return { state: "working", ...none };
+  const at = { attempt: publication.attempt, detail: null, commit: null };
+  const outcome = publication.outcome;
+  switch (outcome.kind) {
+    case "requested":
+      return { state: "publishing", ...at };
+    case "published":
+      return { state: "published", ...at, commit: outcome.commit };
+    case "stale":
+      return { state: "stale", ...at, detail: `The session branch moved to ${outcome.head} after the lane was checked` };
+    case "blocked":
+    case "failed":
+    case "uncertain":
+      return { state: outcome.kind, ...at, detail: outcome.detail };
+    case "cancelled":
+      return { state: "cancelled", ...at };
+  }
 }

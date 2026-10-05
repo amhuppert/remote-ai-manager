@@ -222,6 +222,8 @@ export interface FixValidationErrorsParams {
    * prompt variant is built.
    */
   isRetry?: boolean;
+  /** Stops a fresh-run fix task when its caller is stopped. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -321,6 +323,7 @@ async function fixValidationErrorsImpl(
         worktreePath,
         prompt,
         systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
+        ...(params.signal !== undefined ? { signal: params.signal } : {}),
       });
       if (result.kind === "error") {
         logger.error("validation-fix.fresh_run_error", {

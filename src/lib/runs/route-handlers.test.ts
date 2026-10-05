@@ -90,11 +90,15 @@ beforeEach(() => {
     async resolveProjectPath(name) {
       return name === "repo" ? "/repo" : null;
     },
+    async laneTargets({ sessionWorktreePath }) {
+      return (laneId) => ({ worktreePath: `${sessionWorktreePath}.${laneId}`, branch: `csm/lane-${laneId}` });
+    },
     async getSession(_projectPath, sessionName) {
       if (sessionName === "session-2") {
         return {
           sessionName,
           worktreePath: "/repo/.worktrees/session-2",
+          branchName: "csm/session-2",
           conversations: [{ id: "s2-conv" }],
         };
       }
@@ -102,6 +106,7 @@ beforeEach(() => {
       return {
         sessionName,
         worktreePath: "/repo/.worktrees/session",
+        branchName: "csm/session",
         conversations: [
           ...sessionConversations.map((id) => ({ id })),
           ...Object.values(supervisionSeats()).map((id) => ({ id })),
@@ -621,6 +626,55 @@ describe("run routes", () => {
     );
     expect(view.progress).toEqual({ kind: "succeeded" });
     expect(view.loops).toEqual([{ key: "polish", pass: 0, maxPasses: 2, state: "skipped" }]);
+  });
+
+  it("runs a lane, retries a publication the session's changes blocked, and then runs the work that needs it", async () => {
+    const session = "/repo/.worktrees/session";
+    h.laneGit.state.heads.set("csm/session", "h0");
+    h.laneGit.state.dirt.set(session, ["notes.md"]);
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Lane then integrate",
+          contexts: [
+            { key: "api", brief: "Build the API", lane: "api" },
+            { key: "integrate", brief: "Integrate", dependsOn: ["api"] },
+          ],
+          lanes: [{ key: "api", checks: ["typecheck"] }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    const show = async () =>
+      json(await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
+    const blocked = await show();
+    expect(runViewSchema.safeParse(blocked).success).toBe(true);
+    expect(blocked.progress).toMatchObject({ kind: "needs_owner" });
+    expect(blocked.lanes).toEqual([
+      expect.objectContaining({ key: "api", state: "blocked", attempt: 1, detail: expect.stringContaining("notes.md") }),
+    ]);
+    expect(blocked.contexts).toEqual([
+      expect.objectContaining({ key: "api", lane: "api", contextId: "run-1.api" }),
+      expect.objectContaining({ key: "integrate", lane: null, started: false, waitingOnLanes: ["api"] }),
+    ]);
+    expect(h.checksRun).toEqual([
+      expect.objectContaining({ command: "typecheck", bindingId: expect.stringContaining("lane:") }),
+    ]);
+
+    h.laneGit.state.dirt.set(session, []);
+    const retried = await routes.control(
+      request({ action: "retry", lane: "api" }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(retried.status).toBe(200);
+    await quiesce(supervision);
+    const done = await show();
+    expect(done.progress).toEqual({ kind: "succeeded" });
+    expect(done.lanes).toEqual([expect.objectContaining({ key: "api", state: "published", attempt: 2 })]);
+    expect(h.laneGit.state.removed).toEqual([expect.stringContaining("session.")]);
   });
 
   it("refuses an invalid workflow definition with every located problem, launching nothing", async () => {

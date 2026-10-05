@@ -18,6 +18,7 @@ const binding = {
 function harness(
   submission: ValidationSubmission,
   result?: ValidationRunResult,
+  target: Parameters<ReturnType<typeof createValidationCheckRunner>>[0]["binding"] = binding,
 ) {
   const submitted: ValidationSystemSubmitRequest[] = [];
   const run = createValidationCheckRunner({
@@ -41,7 +42,7 @@ function harness(
   });
   return {
     run: (signal: AbortSignal = new AbortController().signal) =>
-      run({ binding, bindingId: "ctx-1", command: "typecheck", signal }),
+      run({ binding: target, bindingId: "ctx-1", command: "typecheck", signal }),
     submitted,
   };
 }
@@ -57,6 +58,24 @@ const accepted: ValidationSubmission = {
 };
 
 describe("validation check runner", () => {
+  it("checks a lane on its own branch, measured against the session branch it publishes into", async () => {
+    const lane = {
+      kind: "lane" as const,
+      projectPath: "/repo",
+      sessionName: "session",
+      worktreePath: "/repo/.worktrees/session.1-api",
+      branch: "csm/session-1-api",
+      scope: { mode: "full" as const },
+    };
+    const h = harness(accepted, { kind: "passed", runId: "vrun-1", exitCode: 0, output: "ok" }, lane);
+    await h.run();
+    expect(h.submitted[0]?.target).toMatchObject({
+      worktreePath: "/repo/.worktrees/session.1-api",
+      branchName: "csm/session-1-api",
+      targetBranch: "csm/session",
+    });
+  });
+
   it("cancels the system-owned validation run when the check is interrupted", async () => {
     let cancelled: string | null = null;
     let finish: (result: ValidationRunResult) => void = () => {};

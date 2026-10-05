@@ -35,6 +35,14 @@ import { getStateDb } from "@/lib/state-store/store";
 import { getValidationService } from "@/lib/validation/singleton";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkspaceEvidence } from "@/lib/workspace/evidence";
+import { createLaneGit } from "@/lib/workspace/lane-git";
+import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { createLaneConflictActors, createSmartMergeIntegrator } from "@/lib/workspace/smart-merge-integrator";
+import { mergeMachine } from "@/lib/workflows/merge/machine";
+import { defaultGitClient } from "@/lib/git/client";
+import { acquireSessionLock, isSessionBusy } from "@/lib/prompt/single-flight";
+import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import { composedSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, SUPERVISION_KEY } from "./handles";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
@@ -175,6 +183,14 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
 
 function composeProductionSupervision(): Supervision {
   let self: Supervision | null = null;
+  const laneGit = createLaneGit({
+    git: defaultGitClient,
+    exists: existsSync,
+    writeFile: (filePath, content) => writeFile(filePath, content, "utf-8"),
+    worktrees: createParallelWorktrees(),
+    acquireSessionLock,
+    isSessionBusy,
+  });
   const composed = composeSupervision({
     db: getStateDb(),
     seatTurns: {
@@ -224,6 +240,17 @@ function composeProductionSupervision(): Supervision {
     },
     slots: { acquire: (label, signal) => acquireQuerySlot(label, { signal }) },
     evidence: createWorkspaceEvidence(),
+    async interactiveWorktree(enrollment) {
+      const scope = scopeRefFromStoreSessionName(enrollment.sessionName);
+      if (scope.scope === "project") return enrollment.projectPath;
+      return (await getSession(enrollment.projectPath, scope.sessionName))?.worktreePath ?? null;
+    },
+    lanes: laneGit,
+    integrator: createSmartMergeIntegrator({
+      machine: mergeMachine.provide({ actors: createLaneConflictActors() }),
+      lanes: laneGit,
+      log: createLogger("workspace"),
+    }),
     runCheck: createValidationCheckRunner({
       service: getValidationService(),
       async branchOf(projectPath, sessionName) {

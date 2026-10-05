@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import type { WorkspaceBindingRequest } from "./schemas";
 import { describe, expect, it } from "vitest";
 import {
@@ -168,6 +169,27 @@ describe("workspace admission", () => {
     await publication;
     expect(granted).toBe(true);
   });
+
+  it("stops listening for its caller's stop once a waiting request is granted", async () => {
+    const admission = createWorkspaceAdmission();
+    const turn = admission.tryAcquire(grant("interactive_write"));
+    if (turn === null) throw new Error("no grant");
+    const controller = new AbortController();
+    const waiting = admission.acquire(grant("git"), controller.signal);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+    admission.release(turn);
+    await waiting;
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+
+  it("refuses a request whose caller has already stopped, instead of queueing it behind a holder", async () => {
+    const admission = createWorkspaceAdmission();
+    expect(admission.tryAcquire(grant("interactive_write"))).not.toBeNull();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(admission.acquire(grant("git"), controller.signal)).rejects.toThrow(/cancelled/);
+    expect(admission.blockers(grant("scoped_write", ["src/api"]))).toEqual([]);
+  });
 });
 
 describe("workspace admission change signal", () => {
@@ -184,5 +206,19 @@ describe("workspace admission change signal", () => {
     admission.release(held);
     await waiting;
     expect(woke).toBe(true);
+  });
+
+  it("starts an interactive turn beside a Git operation that is only waiting, so a person never waits behind supervised work", async () => {
+    const admission = createWorkspaceAdmission();
+    const worktree = "/repo/.worktrees/session";
+    const seat = admission.tryAcquire({ worktree, kind: "full_write", holder: "seat" });
+    const publication = admission.acquire({ worktree, kind: "git", holder: "publish" });
+    expect(admission.tryAcquire({ worktree, kind: "interactive_write", holder: "owner-turn" })).not.toBeNull();
+    if (seat !== null) admission.release(seat);
+    // The publication still waits for the owner's turn it now conflicts with.
+    let admitted = false;
+    void publication.then(() => (admitted = true));
+    await Promise.resolve();
+    expect(admitted).toBe(false);
   });
 });

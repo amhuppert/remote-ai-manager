@@ -9,13 +9,15 @@ import {
   type RouteProjection,
 } from "@/lib/workflow-graph/route-projection";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
-import type {
-  RouteGuard,
-  RunDefinitionContext,
-  RunFacts,
-  RunInvocation,
-  RunLoop,
-  RunProgress,
+import {
+  laneStateOf,
+  type LanePublicationOutcome,
+  type RouteGuard,
+  type RunDefinitionContext,
+  type RunFacts,
+  type RunInvocation,
+  type RunLoop,
+  type RunProgress,
 } from "./schemas";
 
 /** What the Run last observed of each started context, keyed by Context id. */
@@ -39,9 +41,23 @@ export interface ScheduledStart {
 
 /** Where one defined context stands in its current pass. */
 export type KeyState =
-  | { kind: "waiting"; pass: number; on: string[] }
+  | {
+      kind: "waiting";
+      pass: number;
+      /** Dependencies not yet decided. */
+      on: string[];
+      /** Its lane, when that lane's worktree is all it still waits for. */
+      lane?: string;
+      /** Lanes whose code it needs and that have not published yet. */
+      publications?: string[];
+    }
   | { kind: "skipped" }
   | { kind: "started"; pass: number; contextId: string };
+
+/** Workspace work on a lane that is due now. */
+export type LaneAction =
+  | { kind: "provision"; lane: string }
+  | { kind: "publish"; lane: string; attempt: number };
 
 /** `next`: the pass's exit result missed the exit condition and another pass is due. */
 export type LoopState =
@@ -57,10 +73,14 @@ export interface RunHalt {
     | "route_unevaluable"
     | "route_cardinality"
     | "loop_exhausted"
-    | "loop_unevaluable";
+    | "loop_unevaluable"
+    | "lane_provision"
+    | "lane_publication";
   /** Stable while the cause stands, so projecting it again records nothing new. */
   occurrence: string;
   reason: string;
+  /** The lane a lane halt concerns; a new attempt for it clears the halt. */
+  lane?: string;
 }
 
 /**
@@ -70,11 +90,15 @@ export interface RunHalt {
 export interface RunPlan {
   /** Starts that are due, whatever the Run's control says. */
   starts: ScheduledStart[];
+  /** Lane provisioning and first publication attempts that are due, likewise. */
+  laneActions: LaneAction[];
   keys: ReadonlyMap<string, KeyState>;
   loops: ReadonlyMap<string, LoopState>;
   halts: RunHalt[];
-  /** Every defined context succeeded or was skipped, and nothing halted. */
+  /** Every defined context succeeded or was skipped, every lane that ran published, and nothing halted. */
   complete: boolean;
+  /** A lane's provisioning or publication was requested and has not settled. */
+  laneWorkInFlight: boolean;
   /**
    * Some started context can still move without the owner, or a start is
    * due, whatever the Run's control says: a pause or fault holds this work,
@@ -260,6 +284,113 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
       });
   }
 
+  const laneState = (lane: string) => laneStateOf(facts, lane);
+  const definedLanes = facts.definition.lanes ?? [];
+  const settlementOf = (key: string) => projection.settlementByContextId.get(key);
+  const membersOf = (lane: string) => defined.filter((c) => c.lane === lane);
+  const laneSkipped = (lane: string): boolean =>
+    membersOf(lane).every((c) => settlementOf(c.key) === "skipped");
+  const published = (lane: string): boolean =>
+    laneState(lane)?.publication?.outcome.kind === "published";
+  const provisioned = (lane: string | undefined): boolean =>
+    lane === undefined ||
+    laneState(lane)?.provision.outcome.kind === "provisioned";
+  const needsCode = (c: RunDefinitionContext, source: string): boolean =>
+    !(c.outputOnly ?? []).includes(source);
+  /**
+   * Lanes whose code `c` needs through its taken routes and that have not
+   * published. A session writer waits for every lane that may still publish:
+   * publication refuses a session holding its uncommitted results, and a
+   * skipped route can drop the dependency that ordered it after a lane.
+   */
+  const awaitedPublications = (c: RunDefinitionContext): string[] => {
+    if (c.lane === undefined && c.request.workspace.scope.mode !== "readOnly")
+      return definedLanes.flatMap((lane) =>
+        published(lane.key) || laneSkipped(lane.key) ? [] : [lane.key],
+      );
+    return codeFromLanes(c);
+  };
+  const codeFromLanes = (c: RunDefinitionContext): string[] => [
+    ...new Set(
+      activeDependencySourceIds(projection, c.key).flatMap((source) => {
+        const lane = byKey.get(source)?.lane;
+        return lane !== undefined &&
+          lane !== c.lane &&
+          needsCode(c, source) &&
+          !published(lane)
+          ? [lane]
+          : [];
+      }),
+    ),
+  ];
+  /** Ready to start but for its lane's worktree. */
+  const startable = (c: RunDefinitionContext): boolean => {
+    const loop = loopOf.get(c.key);
+    if (loop !== undefined && loop.entry !== c.key) return false;
+    return (
+      status(c.key) === undefined &&
+      projection.verdictByContextId.get(c.key)?.kind === "eligible" &&
+      awaitedPublications(c).length === 0
+    );
+  };
+
+  for (const lane of definedLanes) {
+    const state = laneState(lane.key);
+    if (state?.provision.outcome.kind === "failed")
+      halts.push({
+        kind: "lane_provision",
+        lane: lane.key,
+        occurrence: `lane:${lane.key}:provision:${state.provision.attempt}`,
+        reason: `lane "${lane.key}": its worktree could not be provisioned: ${state.provision.outcome.detail}`,
+      });
+    const publication = state?.publication;
+    if (publication === undefined || publication === null) continue;
+    const reason = publicationHaltReason(lane.key, publication.outcome);
+    if (reason !== null)
+      halts.push({
+        kind: "lane_publication",
+        lane: lane.key,
+        occurrence: `lane:${lane.key}:publication:${publication.attempt}`,
+        reason,
+      });
+  }
+
+  const laneActions: LaneAction[] = [];
+  for (const lane of definedLanes) {
+    const state = laneState(lane.key);
+    const members = membersOf(lane.key);
+    if (state === undefined) {
+      if (laneSkipped(lane.key)) continue;
+      // Every lane it needs code from has published, so its base includes that code.
+      const prerequisites = new Set(
+        members.flatMap((c) =>
+          c.dependsOn.flatMap((source) => {
+            const from = byKey.get(source)?.lane;
+            return from !== undefined && from !== lane.key && needsCode(c, source)
+              ? [from]
+              : [];
+          }),
+        ),
+      );
+      const ready = [...prerequisites].every(
+        (from) => published(from) || laneSkipped(from),
+      );
+      if (ready && members.some(startable))
+        laneActions.push({ kind: "provision", lane: lane.key });
+      continue;
+    }
+    if (state.provision.outcome.kind !== "provisioned" || state.publication !== null)
+      continue;
+    // Sealed: every member is done or skipped, loops included.
+    if (
+      members.every((c) => {
+        const settled = settlementOf(c.key);
+        return settled === "completed" || settled === "skipped";
+      })
+    )
+      laneActions.push({ kind: "publish", lane: lane.key, attempt: 1 });
+  }
+
   const routeInputs = (key: string): ContractInput[] =>
     activeDependencySourceIds(projection, key).map((source) => ({
       key: source,
@@ -268,10 +399,7 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     }));
   const starts: ScheduledStart[] = [];
   for (const c of defined) {
-    const loop = loopOf.get(c.key);
-    if (loop !== undefined && loop.entry !== c.key) continue;
-    if (status(c.key) !== undefined) continue;
-    if (projection.verdictByContextId.get(c.key)?.kind !== "eligible") continue;
+    if (!startable(c) || !provisioned(c.lane)) continue;
     starts.push({
       key: c.key,
       pass: 0,
@@ -342,12 +470,28 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
                   edge.resolution.kind === "unevaluable",
               )
               .map((edge) => edge.logicalSourceId);
-      keys.set(c.key, { kind: "waiting", pass, on: [...new Set(on)] });
+      const waiting: Extract<KeyState, { kind: "waiting" }> = {
+        kind: "waiting",
+        pass,
+        on: [...new Set(on)],
+      };
+      const publications = on.length === 0 ? awaitedPublications(c) : [];
+      if (publications.length > 0) waiting.publications = publications;
+      else if (on.length === 0 && c.lane !== undefined && !provisioned(c.lane))
+        waiting.lane = c.lane;
+      keys.set(c.key, waiting);
     }
   }
 
+  const laneWorkInFlight = Object.values(facts.lanes ?? {}).some(
+    (state) =>
+      state.provision.outcome.kind === "requested" ||
+      state.publication?.outcome.kind === "requested",
+  );
   const moving =
     starts.length > 0 ||
+    laneActions.length > 0 ||
+    laneWorkInFlight ||
     facts.invocations.some((invocation) => {
       const progress = observed.get(invocation.contextId)?.progress ?? null;
       // A start its host has not created yet is still on its way.
@@ -360,8 +504,32 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     defined.every((c) => {
       const settled = projection.settlementByContextId.get(c.key);
       return settled === "completed" || settled === "skipped";
-    });
-  return { starts, keys, loops: loopStates, halts, complete, moving };
+    }) &&
+    definedLanes.every(
+      (lane) => laneState(lane.key) === undefined || published(lane.key),
+    );
+  return { starts, laneActions, keys, loops: loopStates, halts, complete, moving, laneWorkInFlight };
+}
+
+/** Why a lane's publication stops the run until the owner asks for a new attempt; null while it does not. */
+function publicationHaltReason(
+  lane: string,
+  outcome: LanePublicationOutcome,
+): string | null {
+  switch (outcome.kind) {
+    case "requested":
+    case "published":
+    case "cancelled":
+      return null;
+    case "blocked":
+      return `lane "${lane}": publication blocked: ${outcome.detail}`;
+    case "stale":
+      return `lane "${lane}": the session branch moved to ${outcome.head} after the lane was checked against it; a new attempt merges the new head and checks again`;
+    case "failed":
+      return `lane "${lane}": publication failed: ${outcome.detail}`;
+    case "uncertain":
+      return `lane "${lane}": publication may or may not have happened: ${outcome.detail}`;
+  }
 }
 
 /** A dependency's own guard; a key such as `constructor` must not read an inherited property. */
@@ -433,6 +601,8 @@ function ownerReasons(facts: RunFacts, observed: ObservedContexts): string[] {
 export function deriveRunProgress(
   facts: RunFacts,
   observed: ObservedContexts,
+  /** Workspace is running one of the Run's lane steps now; it drains through a pause. */
+  laneStepRunning = false,
 ): RunProgress {
   const plan = planRun(facts, observed);
   const started = facts.invocations.map(
@@ -443,7 +613,7 @@ export function deriveRunProgress(
   );
   // Cancellation revokes the permit, so a start no Context took up never will.
   if (facts.control.cancelled)
-    return started.every((p) => p === null || isTerminal(p))
+    return started.every((p) => p === null || isTerminal(p)) && !plan.laneWorkInFlight
       ? { kind: "cancelled" }
       : { kind: "stopping" };
   // Success outranks pause: work that drained during a pause and finished the run is done.
@@ -451,7 +621,8 @@ export function deriveRunProgress(
   if (facts.control.fault !== null)
     return { kind: "needs_owner", reasons: [`run: ${facts.control.fault.detail}`] };
   // The Run's permit stops new effects; the ones already admitted drain.
-  if (facts.control.paused) return { kind: "paused", draining: active };
+  if (facts.control.paused)
+    return { kind: "paused", draining: active || laneStepRunning };
   const reasons = [
     ...ownerReasons(facts, observed),
     ...plan.halts.map((halt) => halt.reason),

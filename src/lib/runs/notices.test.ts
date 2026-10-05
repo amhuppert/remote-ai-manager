@@ -72,4 +72,13 @@ describe("run boundary notices", () => {
     expect(stalled).not.toContain("another notice follows");
     expect(stalled).toContain("cctl run cancel run-1");
   });
+
+  it("tells the owner to retry a lane once what stopped its publication is fixed", () => {
+    const notice = composeBoundaryNotice(
+      run,
+      boundary("halted", { runHalt: "lane_publication", lane: "api", otherWorkRemains: false }),
+    );
+    expect(notice).toContain("cctl run retry run-1 --lane api");
+    expect(notice).not.toContain("cctl run resume");
+  });
 });

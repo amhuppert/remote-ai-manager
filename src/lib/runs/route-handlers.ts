@@ -5,7 +5,7 @@
  * - POST /api/projects/[name]/sessions/[session]/runs/workflow       → launch a workflow run
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]        → the run view
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/answer → answer a seat's question
- * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel
+ * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel | retry (a lane)
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/decide → human approval decision (people only)
  * - POST /api/projects/[name]/sessions/[session]/contexts/tasks      → a seat's task command
  *
@@ -34,6 +34,7 @@ import {
   agentLaunchRequestSchema,
   resolveAgentLaunch,
   type AgentLaunchRequest,
+  type LaunchPlacement,
   type ResolvedSeat,
 } from "./launch";
 import { RunControlRefusedError, type RunLaunchInput } from "./host";
@@ -57,8 +58,14 @@ export interface RunRouteDeps {
   ): Promise<{
     sessionName: string;
     worktreePath: string;
+    branchName: string;
     conversations: Array<{ id: string }>;
   } | null>;
+  /** Where this session's lanes live, by lane id, as the lane worktree naming decides. */
+  laneTargets(input: {
+    projectPath: string;
+    sessionWorktreePath: string;
+  }): Promise<LaunchPlacement["laneTargets"]>;
   supervision(): Supervision;
   /** Backend, model selection and admission for every seat the launch names. */
   resolveSeats(input: {
@@ -97,6 +104,7 @@ const controlSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("cancel") }).strict(),
+  z.object({ action: z.literal("retry"), lane: z.string().min(1) }).strict(),
 ]);
 const decideSchema = z
   .object({
@@ -131,6 +139,7 @@ interface Caller {
   projectPath: string;
   sessionName: string;
   worktreePath: string;
+  branch: string;
   conversationId: string;
 }
 
@@ -216,6 +225,7 @@ export function createRunRouteHandlers(
         projectPath,
         sessionName: sessionState.sessionName,
         worktreePath: sessionState.worktreePath,
+        branch: sessionState.branchName,
         conversationId: identity.scope.conversationId,
       },
     };
@@ -322,18 +332,26 @@ export function createRunRouteHandlers(
     );
   }
 
-  const placementOf = (caller: Caller, runId: string) => ({
+  const placementOf = async (
+    caller: Caller,
+    runId: string,
+  ): Promise<LaunchPlacement> => ({
     runId,
     cause: `launch:${runId}`,
     projectPath: caller.projectPath,
     session: {
       sessionName: caller.sessionName,
       worktreePath: caller.worktreePath,
+      branch: caller.branch,
     },
     owner: {
       conversationId: caller.conversationId,
       sessionName: caller.sessionName,
     },
+    laneTargets: await deps.laneTargets({
+      projectPath: caller.projectPath,
+      sessionWorktreePath: caller.worktreePath,
+    }),
   });
 
   return {
@@ -358,7 +376,7 @@ export function createRunRouteHandlers(
       return startLaunch(
         caller,
         resolveAgentLaunch({
-          ...placementOf(caller, runId),
+          ...(await placementOf(caller, runId)),
           request: body.value,
           seats: seats.seats,
         }),
@@ -397,7 +415,7 @@ export function createRunRouteHandlers(
       return startLaunch(
         caller,
         compileWorkflow({
-          ...placementOf(caller, runId),
+          ...(await placementOf(caller, runId)),
           request: body.value,
           seats,
         }),
@@ -466,6 +484,8 @@ export function createRunRouteHandlers(
         if (body.value.action === "resume")
           await runs.resume(runId, null, body.value.dispositions ?? []);
         if (body.value.action === "cancel") await runs.cancel(runId, null);
+        if (body.value.action === "retry")
+          await runs.retryLane(runId, body.value.lane, null);
       } catch (error) {
         if (!isRefusal(error)) throw error;
         deps.log.warn("runs.control_refused", {

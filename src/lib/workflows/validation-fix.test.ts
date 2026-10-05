@@ -334,6 +334,23 @@ describe("validation-fix (fresh-run dispatch, #78)", () => {
     expect(input.systemInstructions).toContain("fix validation errors");
   });
 
+  it("stops the fresh fix task when its caller is stopped", async () => {
+    const executeFreshTaskRun = vi.fn().mockResolvedValue(textOk("fixes applied"));
+    const { fixValidationErrors } = createValidationFixer(createTestDeps({ executeFreshTaskRun }));
+    const controller = new AbortController();
+    await fixValidationErrors({
+      worktreePath: "/worktrees/merge-target",
+      validationOutput: "error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      branchName: BRANCH_NAME,
+      agentTurnDispatch: "fresh-run",
+      signal: controller.signal,
+    });
+    const [input] = executeFreshTaskRun.mock.calls[0]!;
+    expect(input.signal).toBe(controller.signal);
+  });
+
   it("maps a fresh-run error result to a failed fix", async () => {
     const deps = createTestDeps({
       executeFreshTaskRun: vi

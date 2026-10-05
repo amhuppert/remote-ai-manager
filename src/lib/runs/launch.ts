@@ -82,8 +82,10 @@ export interface LaunchPlacement {
   runId: string;
   cause: string;
   projectPath: string;
-  session: { sessionName: string; worktreePath: string };
+  session: { sessionName: string; worktreePath: string; branch: string };
   owner: { conversationId: string; sessionName: string | null };
+  /** Where a lane of this session lives, by lane id; owned by the lane worktree naming. */
+  laneTargets(laneId: string): { worktreePath: string; branch: string };
 }
 
 /**
@@ -99,6 +101,8 @@ export function resolveContextStart(input: {
   seats: { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
   /** The selected checks this context leaves to later work on the assembled tree. */
   deferredChecks?: ReadonlySet<string>;
+  /** The lane worktree and branch, for a context placed in a lane. */
+  lane?: { worktreePath: string; branch: string };
 }): ContextStartRequest {
   const { request, seats, placement } = input;
   const reviewerRequests = request.reviewers ?? [];
@@ -144,13 +148,23 @@ export function resolveContextStart(input: {
     contextId: `${placement.runId}.${input.key}`,
     runId: placement.runId,
     ownerConversationId: placement.owner.conversationId,
-    workspace: {
-      kind: "session",
-      projectPath: placement.projectPath,
-      sessionName: placement.session.sessionName,
-      worktreePath: placement.session.worktreePath,
-      scope: input.scope,
-    },
+    workspace:
+      input.lane === undefined
+        ? {
+            kind: "session",
+            projectPath: placement.projectPath,
+            sessionName: placement.session.sessionName,
+            worktreePath: placement.session.worktreePath,
+            scope: input.scope,
+          }
+        : {
+            kind: "lane",
+            projectPath: placement.projectPath,
+            sessionName: placement.session.sessionName,
+            worktreePath: input.lane.worktreePath,
+            branch: input.lane.branch,
+            scope: input.scope,
+          },
     contract,
     policy: {
       ...DEFAULT_CONTEXT_POLICY,

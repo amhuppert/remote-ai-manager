@@ -383,6 +383,34 @@ describe("conversation core for seats", () => {
       expect(freeSlots).toBe(2);
     });
 
+    it("waits for a Git operation on its worktree, then holds the worktree for interactive writes while it runs", async () => {
+      enroll();
+      const worktree = "/repo/.worktrees/session";
+      const core = newCore({ interactiveWorktree: async () => worktree });
+      const publication = admission.tryAcquire({ worktree, kind: "git", holder: "publish" });
+      if (publication === null) throw new Error("no grant");
+      let finish: (result: CoreTurnResult) => void = () => {};
+      nextUserResult = () => new Promise((resolve) => (finish = resolve));
+
+      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(userCalls).toEqual([]);
+
+      admission.release(publication);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(userCalls).toHaveLength(1);
+      // Supervised writers still work beside it; Git operations wait for it.
+      const seat = admission.tryAcquire({ worktree, kind: "scoped_write", paths: ["src"], holder: "seat" });
+      expect(seat).not.toBeNull();
+      if (seat !== null) admission.release(seat);
+      expect(admission.tryAcquire({ worktree, kind: "git", holder: "publish-2" })).toBeNull();
+
+      finish(ok());
+      if (sent.kind === "accepted") await sent.settled;
+      await core.conversationIdle("conv-u");
+      expect(admission.tryAcquire({ worktree, kind: "git", holder: "publish-3" })).not.toBeNull();
+    });
+
     it("refuses a conversation the core does not run, and one already running a turn", async () => {
       const core = newCore();
       expect(await core.sendUserMessage({ conversationId: "conv-x", text: "Hello", inputOrigin: "user" })).toMatchObject({

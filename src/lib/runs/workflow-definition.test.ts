@@ -18,7 +18,11 @@ const placement = {
   runId: "run-1",
   cause: "launch-1",
   projectPath: "/repo",
-  session: { sessionName: "session", worktreePath: "/repo/.worktrees/session" },
+  session: { sessionName: "session", worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+  laneTargets: (laneId: string) => ({
+    worktreePath: `/repo/.worktrees/session.${laneId}`,
+    branch: `csm/session-${laneId}`,
+  }),
   owner: { conversationId: "owner-1", sessionName: "session" },
 };
 
@@ -558,5 +562,170 @@ describe("loops (W3)", () => {
     expect(
       issues({ title: "No passes", contexts, loops: [{ ...loop, maxPasses: 0 }] }).map((e) => e.path),
     ).toEqual(["loops.0.maxPasses"]);
+  });
+});
+
+describe("lanes (W4)", () => {
+  it("places contexts in lanes, freezes the lane plan, and lets writers in different workspaces overlap", () => {
+    const launch = launched({
+      title: "Two lanes and an integration",
+      contexts: [
+        { key: "api", brief: "API", lane: "api" },
+        { key: "ui", brief: "UI", lane: "ui" },
+        { key: "integrate", brief: "Integrate", dependsOn: ["api", "ui"], checks: ["typecheck"] },
+      ],
+      lanes: [{ key: "api", checks: ["lint"] }],
+    });
+    expect(launch.contexts.map((c) => [c.key, c.lane ?? null])).toEqual([
+      ["api", "api"],
+      ["ui", "ui"],
+      ["integrate", null],
+    ]);
+    const target = { worktreePath: "/repo/.worktrees/session", branch: "csm/session" };
+    expect(launch.lanes).toEqual([
+      { key: "api", laneId: "1-api", worktreePath: "/repo/.worktrees/session.1-api", branch: "csm/session-1-api", target, checks: ["lint"] },
+      { key: "ui", laneId: "1-ui", worktreePath: "/repo/.worktrees/session.1-ui", branch: "csm/session-1-ui", target, checks: [] },
+    ]);
+    expect(launch.contexts[0]?.request.workspace).toMatchObject({
+      kind: "lane",
+      worktreePath: "/repo/.worktrees/session.1-api",
+      branch: "csm/session-1-api",
+    });
+    expect(launch.contexts[2]?.request.contract.checks).toEqual(["typecheck"]);
+  });
+
+  it("refuses a lane that would need uncommitted session work, unless it needs only the output", () => {
+    const definition = (dependency: unknown) => ({
+      title: "Session then lane",
+      contexts: [
+        { key: "plan", brief: "Plan", scope: readOnly, outputSchema: { type: "object" } },
+        { key: "build", brief: "Build", lane: "build", dependsOn: [dependency] },
+      ],
+    });
+    const refused = issues(definition("plan"));
+    expect(refused.map((e) => e.path)).toEqual(["contexts.1.dependsOn.0"]);
+    expect(refused[0]?.message).toMatch(/never committed/);
+    expect(refused[0]?.message).toMatch(/outputOnly/);
+    expect(() => launched(definition({ key: "plan", outputOnly: true }))).not.toThrow();
+  });
+
+  it("refuses lanes that would each wait for the other's publication", () => {
+    const refused = issues({
+      title: "Lane cycle",
+      contexts: [
+        { key: "x1", brief: "X1", lane: "a" },
+        { key: "y", brief: "Y", lane: "b", dependsOn: ["x1"] },
+        { key: "x2", brief: "X2", lane: "a", dependsOn: ["y"] },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual(["contexts.2.dependsOn.0"]);
+    expect(refused[0]?.message).toMatch(/lane "a" publishes/);
+    expect(refused[0]?.message).toMatch(/lane "b" publishes/);
+  });
+
+  it("refuses a wait cycle an output-only dependency closes, and accepts one where no lane waits for a publication", () => {
+    const refused = issues({
+      title: "Mixed",
+      contexts: [
+        { key: "x1", brief: "X1", lane: "a", outputSchema: { type: "object" } },
+        { key: "y", brief: "Y", lane: "b", dependsOn: [{ key: "x1", outputOnly: true }] },
+        { key: "x2", brief: "X2", lane: "a", dependsOn: ["y"] },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual(["contexts.2.dependsOn.0"]);
+    expect(refused[0]?.message).toMatch(/lane "a" starts/);
+    expect(() =>
+      launched({
+        title: "Output only",
+        contexts: [
+          { key: "x1", brief: "X1", lane: "a", outputSchema: { type: "object" } },
+          { key: "y", brief: "Y", lane: "b", dependsOn: [{ key: "x1", outputOnly: true }], outputSchema: { type: "object" } },
+          { key: "x2", brief: "X2", lane: "a", dependsOn: [{ key: "y", outputOnly: true }] },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a lane that waits for a session context that waits for the lane", () => {
+    expect(
+      issues({
+        title: "Session in between",
+        contexts: [
+          { key: "m1", brief: "M1", lane: "a", scope: owned("src/a") },
+          { key: "check", brief: "Check", scope: readOnly, dependsOn: ["m1"], outputSchema: { type: "object" } },
+          { key: "m2", brief: "M2", lane: "a", scope: owned("src/b"), dependsOn: [{ key: "check", outputOnly: true }] },
+        ],
+      }).map((e) => e.path),
+    ).toEqual(["contexts.2.dependsOn.0"]);
+  });
+
+  it("refuses a session writer that a lane could publish beside, since its uncommitted results would block that publication", () => {
+    const refused = issues({
+      title: "Session writer beside a lane",
+      contexts: [
+        { key: "docs", brief: "Docs" },
+        { key: "api", brief: "API", lane: "api" },
+      ],
+    });
+    expect(refused.map((e) => e.path)).toEqual(["contexts.0"]);
+    expect(refused[0]?.message).toMatch(/never committed/);
+    expect(() =>
+      launched({
+        title: "Session writer after the lane",
+        contexts: [
+          { key: "api", brief: "API", lane: "api" },
+          { key: "docs", brief: "Docs", dependsOn: ["api"] },
+          { key: "audit", brief: "Audit", scope: readOnly, dependsOn: ["docs"] },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("covers a lane member's whole-tree check with the lane's publication checks", () => {
+    const definition = (lanes: unknown[]) => ({
+      title: "Two writers in a lane",
+      contexts: [
+        { key: "m1", brief: "M1", lane: "work", scope: owned("src/a"), checks: ["typecheck"] },
+        { key: "m2", brief: "M2", lane: "work", scope: owned("src/b") },
+        { key: "after", brief: "After", dependsOn: ["m1", "m2"], checks: ["typecheck"] },
+      ],
+      lanes,
+    });
+    expect(contract(definition([{ key: "work", checks: ["typecheck"] }]), "m1")).toMatchObject({
+      checks: [],
+      deferredChecks: ["typecheck"],
+    });
+    // A session context after the lane works in another workspace, so it does not cover the lane's check.
+    const refused = issues(definition([]));
+    expect(refused.map((e) => e.path)).toEqual(["contexts.0.checks.0"]);
+    expect(refused[0]?.message).toMatch(/publication checks/);
+  });
+
+  it("refuses a loop across workspaces and a lane entry no context uses", () => {
+    expect(
+      issues({
+        title: "Loop across a lane",
+        contexts: [
+          { key: "implement", brief: "Implement", lane: "work" },
+          {
+            key: "review",
+            brief: "Review",
+            dependsOn: ["implement"],
+            outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+          },
+        ],
+        loops: [
+          {
+            key: "polish",
+            body: ["implement", "review"],
+            entry: "implement",
+            exit: "review",
+            until: { schema: { type: "object", properties: { ok: { const: true } } } },
+            maxPasses: 2,
+          },
+        ],
+        lanes: [{ key: "spare" }],
+      }).map((e) => e.path),
+    ).toEqual(["loops.0.body.1", "lanes.0.key"]);
   });
 });

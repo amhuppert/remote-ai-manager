@@ -12,7 +12,7 @@ import {
   planRun,
   type ObservedContexts,
 } from "./schedule";
-import type { RouteGuard, RunFacts, RunLoop } from "./schemas";
+import type { RouteGuard, RunFacts, RunLaneState, RunLoop } from "./schemas";
 
 const seat = {
   profile: { tier: "builtin" as const, id: "standard-agent" },
@@ -248,6 +248,9 @@ interface Defined {
   when?: Record<string, RouteGuard>;
   routing?: { cardinality: "independent" | "atLeastOne" | "exactlyOne" };
   outputSchema?: Record<string, unknown>;
+  lane?: string;
+  outputOnly?: string[];
+  readOnly?: true;
 }
 
 /** A definition with routes or loops; `started` lists [key, pass] in start order. */
@@ -255,9 +258,15 @@ function workflow(
   defined: Defined[],
   started: Array<[string, number]>,
   loops: RunLoop[] = [],
+  lanes: Record<string, RunLaneState> = {},
 ): RunFacts {
+  const laneKeys = [...new Set(defined.flatMap((d) => (d.lane === undefined ? [] : [d.lane])))];
   const requests = new Map(
-    defined.map((d) => [d.key, request(d.key, d.outputSchema ?? null)]),
+    defined.map((d) => {
+      const made = request(d.key, d.outputSchema ?? null);
+      if (d.readOnly === true) made.workspace = { ...made.workspace, scope: { mode: "readOnly" } };
+      return [d.key, made];
+    }),
   );
   return {
     runId: "run-1",
@@ -270,10 +279,21 @@ function workflow(
         dependsOn: d.dependsOn ?? [],
         ...(d.when !== undefined ? { when: d.when } : {}),
         ...(d.routing !== undefined ? { routing: d.routing } : {}),
+        ...(d.lane !== undefined ? { lane: d.lane } : {}),
+        ...(d.outputOnly !== undefined ? { outputOnly: d.outputOnly } : {}),
         request: requests.get(d.key) ?? request(d.key),
       })),
       loops,
+      lanes: laneKeys.map((key) => ({
+        key,
+        laneId: `1-${key}`,
+        worktreePath: `/repo/.worktrees/session.1-${key}`,
+        branch: `csm/session-1-${key}`,
+        target: { worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+        checks: [],
+      })),
     },
+    lanes,
     invocations: started.map(([key, pass]) => ({
       key,
       pass,
@@ -702,6 +722,157 @@ describe("loops", () => {
     const stop = observed({ plan: { progress: succeeded("c-plan"), output: { go: false } } });
     expect(decideNext(facts, stop)).toEqual([]);
     expect(planRun(facts, stop).keys.get("review")).toEqual({ kind: "skipped" });
+    expect(deriveRunProgress(facts, stop)).toEqual({ kind: "succeeded" });
+  });
+});
+
+describe("lanes", () => {
+  const ready = { attempt: 1, outcome: { kind: "provisioned" as const, baseline: "b0" } };
+  const provisioned: RunLaneState = { provision: ready, publication: null };
+  const published = (attempt = 1): RunLaneState => ({
+    provision: ready,
+    publication: { attempt, outcome: { kind: "published", commit: "p1", incorporated: "h0" } },
+  });
+  const twoLanes: Defined[] = [
+    { key: "api", lane: "api" },
+    { key: "ui", lane: "ui" },
+    { key: "integrate", dependsOn: ["api", "ui"] },
+  ];
+  const done = (key: string, output: unknown = { summary: `${key} done` }) => ({
+    [key]: { progress: succeeded(`c-${key}`), output },
+  });
+
+  it("provisions a lane before any member starts, and starts members only in a provisioned lane", () => {
+    const launch = planRun(workflow(twoLanes, []), observed({}));
+    expect(launch.starts).toEqual([]);
+    expect(launch.laneActions).toEqual([
+      { kind: "provision", lane: "api" },
+      { kind: "provision", lane: "ui" },
+    ]);
+    expect(launch.keys.get("api")).toEqual({ kind: "waiting", pass: 0, on: [], lane: "api" });
+
+    const requested = planRun(
+      workflow(twoLanes, [], [], {
+        api: { provision: { attempt: 1, outcome: { kind: "requested" } }, publication: null },
+        ui: provisioned,
+      }),
+      observed({}),
+    );
+    expect(requested.laneActions).toEqual([]);
+    expect(requested.starts.map((start) => start.key)).toEqual(["ui"]);
+    expect(requested.moving).toBe(true);
+  });
+
+  it("publishes a lane once every member is done, and starts work outside it only after publication", () => {
+    const working = workflow(twoLanes, [["api", 0], ["ui", 0]], [], { api: provisioned, ui: provisioned });
+    const apiDone = observed({ ...done("api"), ui: { progress: running } });
+    expect(planRun(working, apiDone).laneActions).toEqual([{ kind: "publish", lane: "api", attempt: 1 }]);
+
+    const bothDone = observed({ ...done("api"), ...done("ui") });
+    const apiPublished = workflow(twoLanes, [["api", 0], ["ui", 0]], [], { api: published(), ui: provisioned });
+    const waiting = planRun(apiPublished, bothDone);
+    expect(waiting.starts).toEqual([]);
+    expect(waiting.laneActions).toEqual([{ kind: "publish", lane: "ui", attempt: 1 }]);
+    expect(waiting.keys.get("integrate")).toEqual({ kind: "waiting", pass: 0, on: [], publications: ["ui"] });
+
+    const both = workflow(twoLanes, [["api", 0], ["ui", 0]], [], { api: published(), ui: published() });
+    expect(keysOf(decideNext(both, bothDone))).toEqual(["integrate@0"]);
+    expect(deriveRunProgress(both, bothDone)).toEqual({ kind: "running" });
+    const finished = workflow(twoLanes, [["api", 0], ["ui", 0], ["integrate", 0]], [], { api: published(), ui: published() });
+    expect(deriveRunProgress(finished, observed({ ...done("api"), ...done("ui"), ...done("integrate") }))).toEqual({
+      kind: "succeeded",
+    });
+  });
+
+  it("starts a session writer only after every lane that may still publish has, even when a skipped route removed its link to one", () => {
+    const layout: Defined[] = [
+      { key: "plan", readOnly: true, outputSchema: { type: "object" } },
+      { key: "keep", lane: "a" },
+      {
+        key: "maybe",
+        lane: "a",
+        dependsOn: ["plan"],
+        outputOnly: ["plan"],
+        when: { plan: { schema: { properties: { take: { const: true } } } } },
+      },
+      { key: "docs", dependsOn: ["maybe", "plan"], outputOnly: ["plan"] },
+    ];
+    const skipped = observed({ ...done("plan", { take: false }), keep: { progress: running } });
+    const working = planRun(workflow(layout, [["plan", 0], ["keep", 0]], [], { a: provisioned }), skipped);
+    expect(working.starts).toEqual([]);
+    expect(working.keys.get("docs")).toEqual({ kind: "waiting", pass: 0, on: [], publications: ["a"] });
+
+    const afterPublication = observed({ ...done("plan", { take: false }), ...done("keep") });
+    expect(
+      planRun(workflow(layout, [["plan", 0], ["keep", 0]], [], { a: published() }), afterPublication).starts.map(
+        (start) => start.key,
+      ),
+    ).toEqual(["docs"]);
+  });
+
+  it("does not succeed while a lane's work is unpublished", () => {
+    const facts = workflow([{ key: "api", lane: "api" }], [["api", 0]], [], { api: provisioned });
+    expect(deriveRunProgress(facts, observed(done("api")))).toEqual({ kind: "running" });
+  });
+
+  it("provisions a lane that needs another lane's code only after that lane published, unless it needs only output", () => {
+    const chain = (outputOnly?: string[]): Defined[] => [
+      { key: "x", lane: "a", outputSchema: { type: "object" } },
+      { key: "y", lane: "b", dependsOn: ["x"], ...(outputOnly !== undefined ? { outputOnly } : {}) },
+    ];
+    const xDone = observed(done("x", { ready: true }));
+    const unpublished = { a: provisioned };
+    expect(planRun(workflow(chain(), [["x", 0]], [], unpublished), xDone).laneActions).toEqual([
+      { kind: "publish", lane: "a", attempt: 1 },
+    ]);
+    expect(planRun(workflow(chain(), [["x", 0]], [], { a: published() }), xDone).laneActions).toEqual([
+      { kind: "provision", lane: "b" },
+    ]);
+    expect(planRun(workflow(chain(["x"]), [["x", 0]], [], unpublished), xDone).laneActions).toEqual([
+      { kind: "publish", lane: "a", attempt: 1 },
+      { kind: "provision", lane: "b" },
+    ]);
+  });
+
+  it("halts on a blocked publication until a new attempt is requested", () => {
+    const blocked = workflow([{ key: "api", lane: "api" }], [["api", 0]], [], {
+      api: {
+        provision: ready,
+        publication: { attempt: 1, outcome: { kind: "blocked", detail: "The session has uncommitted changes" } },
+      },
+    });
+    const plan = planRun(blocked, observed(done("api")));
+    expect(plan.laneActions).toEqual([]);
+    expect(plan.halts).toEqual([
+      expect.objectContaining({ kind: "lane_publication", occurrence: "lane:api:publication:1" }),
+    ]);
+    expect(deriveRunProgress(blocked, observed(done("api")))).toEqual({
+      kind: "needs_owner",
+      reasons: [expect.stringContaining("The session has uncommitted changes")],
+    });
+
+    const retried = workflow([{ key: "api", lane: "api" }], [["api", 0]], [], {
+      api: { provision: ready, publication: { attempt: 2, outcome: { kind: "requested" } } },
+    });
+    expect(planRun(retried, observed(done("api"))).halts).toEqual([]);
+    expect(deriveRunProgress(retried, observed(done("api")))).toEqual({ kind: "running" });
+  });
+
+  it("plans a lane named like an inherited property as any other", () => {
+    const facts = workflow([{ key: "build", lane: "constructor" }], []);
+    expect(planRun(facts, observed({})).laneActions).toEqual([{ kind: "provision", lane: "constructor" }]);
+  });
+
+  it("never provisions a lane whose members a route skipped", () => {
+    const facts = workflow(
+      [
+        { key: "gate", outputSchema: { type: "object", properties: { go: { type: "boolean" } } } },
+        { key: "build", lane: "build", dependsOn: ["gate"], when: { gate: { schema: { type: "object", properties: { go: { const: true } } } } } },
+      ],
+      [["gate", 0]],
+    );
+    const stop = observed(done("gate", { go: false }));
+    expect(planRun(facts, stop).laneActions).toEqual([]);
     expect(deriveRunProgress(facts, stop)).toEqual({ kind: "succeeded" });
   });
 });

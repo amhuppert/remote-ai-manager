@@ -25,6 +25,9 @@ import {
   type ContextStartRequest,
 } from "@/lib/execution-context/schemas";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { createFakeLaneGit } from "@/lib/workspace/testing/fake-lane-git";
+import { createDirectLaneIntegrator } from "@/lib/workspace/lane-integrator";
+import type { WorkspaceExecutorDeps } from "@/lib/workspace/executor";
 import type { RunBoundary } from "@/lib/runs/schemas";
 import { composeSupervision, type Supervision } from "../supervision";
 
@@ -118,7 +121,11 @@ export function agentStartRequest(
  * checks pass, and owner notices are recorded.
  */
 export function createSupervisionHarness(fixture: PersistenceFixture) {
+  const laneGit = createFakeLaneGit();
   const harness = {
+    /** The lane Git port, in memory: set heads, dirt or conflicts to steer lane runs. */
+    lanes: laneGit.git,
+    laneGit,
     notified: [] as RunBoundary[],
     turnMessages: [] as string[],
     /** Batches waiting in enrolled conversations' message queues, claimed first in, first out. */
@@ -155,6 +162,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     },
     compose(): Supervision {
       let self: Supervision | null = null;
+      const checkRunner: WorkspaceExecutorDeps["runCheck"] = async (input) => {
+        harness.checksRun.push({ bindingId: input.bindingId, command: input.command });
+        return { status: "passed" };
+      };
       const supervision = composeSupervision({
         db: fixture.db,
         seatTurns: {
@@ -276,13 +287,9 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           sameContent: (a, b) => a === b,
           changedPaths: async () => [],
         },
-        async runCheck(input) {
-          harness.checksRun.push({
-            bindingId: input.bindingId,
-            command: input.command,
-          });
-          return { status: "passed" };
-        },
+        lanes: harness.lanes,
+        integrator: createDirectLaneIntegrator({ lanes: harness.lanes, runCheck: checkRunner }),
+        runCheck: checkRunner,
         async notifyOwner({ boundary }) {
           harness.notified.push(boundary);
         },

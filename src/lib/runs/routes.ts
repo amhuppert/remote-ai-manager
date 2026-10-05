@@ -4,7 +4,11 @@ import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-select
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 import { createAgentAuth } from "@/lib/agent-gateway/token";
+import path from "node:path";
+import { resolveBranchPrefix } from "@/lib/config/cascade";
 import { readConfig } from "@/lib/config/loader";
+import { readRepoConfig } from "@/lib/projects/repo-config";
+import { deriveLaneTargets } from "@/lib/workflow-graph/parallel-worktrees";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -93,10 +97,28 @@ const resolveSeats: RunRouteDeps["resolveSeats"] = async ({
   return { ok: true, seats: { implementer: implementer.seat, reviewers } };
 };
 
+/** Lane worktrees sit beside the session's, named as every CC lane is; the branch prefix is read once, at launch. */
+const laneTargets: RunRouteDeps["laneTargets"] = async ({
+  projectPath,
+  sessionWorktreePath,
+}) => {
+  const [config, repoConfig] = await Promise.all([
+    readConfig(),
+    readRepoConfig(projectPath),
+  ]);
+  const branchPrefix = resolveBranchPrefix(config, repoConfig);
+  const sessionDir = path.basename(sessionWorktreePath);
+  return (laneId) => {
+    const targets = deriveLaneTargets({ projectPath, sessionDir, laneId, branchPrefix });
+    return { worktreePath: targets.worktreePath, branch: targets.branchName };
+  };
+};
+
 const handlers = createRunRouteHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
+  laneTargets,
   supervision: getSupervision,
   resolveSeats,
   newRunId,

@@ -164,6 +164,51 @@ describe("run supervision", () => {
   });
 });
 
+describe("lane runs across a restart", () => {
+  it("starts nothing a recovered publication unblocks until the owner resumes the run", async () => {
+    h.laneGit.state.heads.set("csm/session", "h0");
+    // The publication of lane a never finishes integrating before the restart.
+    h.laneGit.state.mergeGate = new Promise(() => {});
+    const before = h.compose();
+    const request = workflowLaunchRequestSchema.parse({
+      title: "Lane b needs lane a",
+      contexts: [
+        { key: "x", brief: "X", lane: "a" },
+        { key: "y", brief: "Y", lane: "b", dependsOn: ["x"] },
+      ],
+    });
+    const seat = { backend: "claude" as const, modelSelection: { modelId: "sonnet", parameters: {} } };
+    await before.runs.launch(
+      compileWorkflow({
+        runId: "run-1",
+        cause: "launch-run-1",
+        projectPath: "/repo",
+        session: { sessionName: "session", worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+        owner: { conversationId: "owner-1", sessionName: "session" },
+        laneTargets: (laneId) => ({ worktreePath: `/repo/.worktrees/session.${laneId}`, branch: `csm/session-${laneId}` }),
+        request,
+        seats: { x: { implementer: seat, reviewers: [] }, y: { implementer: seat, reviewers: [] } },
+      }),
+    );
+    // Lane a provisions, x lands, and its publication starts and stays in its merge.
+    for (let tries = 0; tries < 200 && before.workspace.outcome("run-1:publish:a:1").kind !== "running"; tries++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(before.workspace.outcome("run-1:publish:a:1").kind).toBe("running");
+
+    // The last process published lane a and stopped before storing the receipt.
+    h.laneGit.state.mergeGate = null;
+    h.laneGit.state.heads.set("csm/session", "p1");
+    h.laneGit.state.messages.set("p1", "Publish lane 1-a\n\nCC-Publication: run-1:publish:a:1");
+    const after = h.compose();
+    await after.boot();
+    await quiesce(after, false);
+
+    expect(after.runs.observe("run-1")?.record.progress.kind).toBe("paused");
+    expect(after.workspace.outcome("run-1:publish:a:1")).toMatchObject({ kind: "settled", outcome: { kind: "published" } });
+    expect(after.workspace.outcome("run-1:provision:b:1").kind).toBe("unknown");
+  });
+});
+
 describe("workflow runs on the supervision graph", () => {
   it("runs disjoint writers at the same time and their shared whole-tree check once, for the context that covers it", async () => {
     // Each writer's turn waits until both writers are working: the test fails
@@ -206,8 +251,9 @@ describe("workflow runs on the supervision graph", () => {
       runId: "run-w",
       cause: "launch-run-w",
       projectPath: "/repo",
-      session: { sessionName: "session", worktreePath: "/repo/.worktrees/session" },
+      session: { sessionName: "session", worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
       owner: { conversationId: "owner-1", sessionName: "session" },
+      laneTargets: (laneId) => ({ worktreePath: `/repo/.worktrees/session.${laneId}`, branch: `csm/session-${laneId}` }),
       request,
       seats: {
         api: { implementer: seat, reviewers: [] },

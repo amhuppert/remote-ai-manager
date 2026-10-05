@@ -140,6 +140,13 @@ export interface ConversationCoreDeps {
   repo: ConversationCoreRepo;
   permits: ControlPermits;
   admission: WorkspaceAdmission;
+  /**
+   * The worktree an enrolled conversation's turns write in. An interactive
+   * turn holds it for interactive writes, which conflict only with Git and
+   * publication operations there: those wait for the turn, and the turn waits
+   * for them. Without it, interactive turns take no grant.
+   */
+  interactiveWorktree?(enrollment: InteractiveEnrollmentRecord): Promise<string | null>;
   createSeatConversation(input: {
     projectPath: string;
     sessionName: string;
@@ -461,6 +468,17 @@ export function createConversationCore(
     resolve?.(outcome);
   }
 
+  /** The interactive-write grant an enrolled conversation's turn holds on its worktree, if it has one. */
+  async function interactiveGrant(
+    enrollment: InteractiveEnrollmentRecord,
+    holder: string,
+  ): Promise<GrantRequest | null> {
+    const worktree = await deps.interactiveWorktree?.(enrollment);
+    return worktree === undefined || worktree === null
+      ? null
+      : { worktree, kind: "interactive_write", holder };
+  }
+
   /** The turn a mailbox item asks for: a seat's work order, a person's message or a workflow's task. */
   function turnOf(
     item: MailboxItemRecord,
@@ -477,7 +495,6 @@ export function createConversationCore(
       if (task?.success === true) return { kind: "task", request: task.data, enrollment };
     }
     const request = seatTurnRequestSchema.parse(item.request);
-    // Interactive writes are cooperative; only supervised seats take workspace grants.
     return { kind: "seat", request, grant: grantFor(request, item.cause) };
   }
 
@@ -566,7 +583,9 @@ export function createConversationCore(
       );
     }
     try {
-      const acquired = await acquire(item, turn.kind === "seat" ? turn.grant : null, controller.signal);
+      const grantRequest =
+        turn.kind === "seat" ? turn.grant : await interactiveGrant(turn.enrollment, item.cause);
+      const acquired = await acquire(item, grantRequest, controller.signal);
       if (acquired.kind === "blocked") {
         resolveWaiters(
           item.cause,

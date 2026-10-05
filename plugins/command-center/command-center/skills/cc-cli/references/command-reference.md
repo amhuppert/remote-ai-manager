@@ -255,6 +255,9 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl run resume` — Resume a paused or halted run
   - `cctl run resume <run-id> [options]`
   - Flags: `--context`, `--occurrence`, `--disposition`, `--allowance`, `--count`, `--reason`, `--evidence`.
+- `cctl run retry` — Ask for a new attempt at a lane's publication or provisioning
+  - `cctl run retry <run-id> --lane <string> [options]`
+  - Flags: `--lane` (required).
 - `cctl run show` — Read a run's progress, contexts and boundaries
   - `cctl run show <run-id> [options]`
 - `cctl run workflow` — Launch a supervised workflow of several contexts in this session

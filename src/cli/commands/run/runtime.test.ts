@@ -21,6 +21,8 @@ const view = {
       started: true,
       skipped: false,
       loop: null,
+      lane: null,
+      waitingOnLanes: [],
       pass: 1,
       progress: {
         kind: "halted",
@@ -49,6 +51,7 @@ const view = {
   stalled: [],
   halts: [],
   loops: [],
+  lanes: [],
 };
 
 function bodyOf(init: { body?: unknown }): unknown {
@@ -168,6 +171,8 @@ describe("run commands", () => {
               started: false,
               skipped: false,
               loop: null,
+              lane: null,
+              waitingOnLanes: [],
               pass: 1,
               progress: null,
               occurrence: null,
@@ -195,6 +200,8 @@ describe("run commands", () => {
       started: false,
       skipped: false,
       loop: null,
+      lane: null,
+      waitingOnLanes: [],
       pass: 1,
       progress: null,
       occurrence: null,
@@ -261,6 +268,8 @@ describe("run commands", () => {
       started: false,
       skipped: false,
       loop: null,
+      lane: null,
+      waitingOnLanes: [],
       pass: 1,
       progress: null,
       occurrence: null,
@@ -375,6 +384,54 @@ describe("run commands", () => {
           ],
         },
       ],
+    ]);
+  });
+
+  it("asks for a new attempt at a lane, and shows lanes and the work waiting for them", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: ({ url }) =>
+        url.endsWith("/control")
+          ? jsonReply({ ok: true, progress: { kind: "running" } })
+          : jsonReply({
+              ...view,
+              kind: "workflow",
+              progress: { kind: "needs_owner", reasons: ['lane "api": publication blocked: notes.md'] },
+              contexts: [
+                {
+                  ...view.contexts[0],
+                  key: "integrate",
+                  contextId: "run-1.integrate",
+                  started: false,
+                  progress: null,
+                  occurrence: null,
+                  waitingOnLanes: ["api"],
+                },
+              ],
+              lanes: [
+                {
+                  key: "api",
+                  worktreePath: "/repo/.worktrees/session.1-api",
+                  branch: "csm/session-1-api",
+                  state: "blocked",
+                  attempt: 1,
+                  detail: "The session worktree has changes: notes.md",
+                  commit: null,
+                },
+              ],
+            }),
+    });
+    const shown = await fixture.run(["run", "show", "run-1"], "text");
+    expect(shown.exitCode, shown.stderr).toBe(0);
+    expect(shown.stdout).toContain("- integrate [run-1.integrate]: not started, waits for lane api to publish");
+    expect(shown.stdout).toContain(
+      "lane api [csm/session-1-api at /repo/.worktrees/session.1-api]: blocked (attempt 1): The session worktree has changes: notes.md",
+    );
+
+    expect((await fixture.run(["run", "retry", "run-1", "--lane", "api"])).exitCode).toBe(0);
+    expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)]).at(-1)).toEqual([
+      "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/control",
+      { action: "retry", lane: "api" },
     ]);
   });
 

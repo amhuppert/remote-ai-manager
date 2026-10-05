@@ -98,7 +98,19 @@ describe("runs repository", () => {
                   review: { else: true as const },
                 },
                 routing: { cardinality: "exactlyOne" as const },
+                outputOnly: ["review"],
+                lane: "api",
                 request: request("run-1.implement.1"),
+              },
+            ],
+            lanes: [
+              {
+                key: "api",
+                laneId: "1-api",
+                worktreePath: "/repo/.worktrees/session.1-api",
+                branch: "csm/session-1-api",
+                target: { worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+                checks: ["typecheck"],
               },
             ],
             loops: [
@@ -121,6 +133,15 @@ describe("runs repository", () => {
               request: request("run-1.implement.1"),
             },
           ],
+          lanes: {
+            api: {
+              provision: { attempt: 2, outcome: { kind: "provisioned" as const, baseline: "b0" } },
+              publication: {
+                attempt: 3,
+                outcome: { kind: "published" as const, commit: "p3", incorporated: "h2" },
+              },
+            },
+          },
           control: {
             paused: true,
             cancelled: true,

@@ -12,12 +12,15 @@ interface Operation {
  * way real executors do, and admits an operation only when its permit admits.
  */
 export interface FakeExecutor extends Executor {
+  interrupt(cause: string): void;
   submitted(): PendingIntent[];
   operation(cause: string): Operation | undefined;
   /** Admits a queued operation; returns false when its permit refuses. */
   admit(cause: string): boolean;
   settle(cause: string, outcome: unknown): void;
   settleUncertain(cause: string, evidence: string): void;
+  /** Returns a running operation to the queue, as recovery after a restart does. */
+  requeue(cause: string): void;
   readonly withdrawn: string[];
   readonly interrupted: string[];
 }
@@ -67,6 +70,9 @@ export function createFakeExecutor(permits: ControlPermits): FakeExecutor {
     },
     settleUncertain(cause, evidence) {
       require(cause).state = { kind: "uncertain", evidence };
+    },
+    requeue(cause) {
+      require(cause).state = { kind: "queued" };
     },
   };
 }

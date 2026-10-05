@@ -176,7 +176,31 @@ export function createOwnedLandingOperations(
     const headTree = (
       await git(worktreePath, ["rev-parse", "HEAD^{tree}"])
     ).trim();
+    const candidates = await nominees(worktreePath);
+    if (candidates.length === 0) return true;
+    return withNomineesStaged(worktreePath, candidates, async (indexFile) => {
+      const tree = (await git(worktreePath, ["write-tree"], indexFile)).trim();
+      return tree === headTree;
+    });
+  }
 
+  /** The paths whose working files differ from HEAD, judged the same way. */
+  async function worktreeChangesFromHead(worktreePath: string): Promise<string[]> {
+    const candidates = await nominees(worktreePath);
+    if (candidates.length === 0) return [];
+    return withNomineesStaged(worktreePath, candidates, async (indexFile) =>
+      splitNul(
+        await git(
+          worktreePath,
+          ["diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD"],
+          indexFile,
+        ),
+      ).sort(),
+    );
+  }
+
+  /** Paths either index-reading probe names as differing from HEAD. */
+  async function nominees(worktreePath: string): Promise<string[]> {
     const [diffOut, othersOut] = await Promise.all([
       git(worktreePath, [
         "--literal-pathspecs",
@@ -193,11 +217,15 @@ export function createOwnedLandingOperations(
         "--exclude-standard",
       ]),
     ]);
-    const candidates = [
-      ...new Set([...splitNul(diffOut), ...splitNul(othersOut)]),
-    ];
-    if (candidates.length === 0) return true;
+    return [...new Set([...splitNul(diffOut), ...splitNul(othersOut)])];
+  }
 
+  /** Answers `read` from a private index seeded from HEAD with the nominees' working contents staged. */
+  async function withNomineesStaged<T>(
+    worktreePath: string,
+    candidates: readonly string[],
+    read: (indexFile: string) => Promise<T>,
+  ): Promise<T> {
     const gitDir = (
       await git(worktreePath, ["rev-parse", "--absolute-git-dir"])
     ).trim();
@@ -214,8 +242,7 @@ export function createOwnedLandingOperations(
         ["--literal-pathspecs", "add", "--all", ...scope],
         indexFile,
       );
-      const tree = (await git(worktreePath, ["write-tree"], indexFile)).trim();
-      return tree === headTree;
+      return await read(indexFile);
     } finally {
       await rm(indexFile, { force: true });
     }
@@ -348,7 +375,7 @@ export function createOwnedLandingOperations(
     }
   }
 
-  return { commitOwnedPaths, worktreeMatchesHead };
+  return { commitOwnedPaths, worktreeMatchesHead, worktreeChangesFromHead };
 }
 
 // ============================================================

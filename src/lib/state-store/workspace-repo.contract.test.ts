@@ -43,6 +43,36 @@ describe("workspace repository", () => {
     });
   });
 
+  it("round-trips a lane binding with its branch", async () => {
+    fixture = createPersistenceFixture();
+    const db = fixture.db;
+    const repo = createWorkspaceRepo(db);
+    await assertRoundTripDurability({
+      label: "workspace lane binding",
+      schema: workspaceBindingRecordSchema,
+      buildMaximalFixture: () => ({
+        bindingId: "ctx-2",
+        request: {
+          kind: "lane" as const,
+          projectPath: "/repo",
+          sessionName: "session",
+          worktreePath: "/repo/.worktrees/session.1-api",
+          branch: "csm/session-1-api",
+          scope: { mode: "owned" as const, paths: ["src/api"] },
+        },
+        state: "bound" as const,
+        baseline: "git:abc:def",
+        createdAt: "2026-10-03T10:00:00.000Z",
+        updatedAt: "2026-10-03T10:01:00.000Z",
+      }),
+      persist: (value) => {
+        repo.insertBindingIfAbsent(value);
+        return value;
+      },
+      reload: (value) => createWorkspaceRepo(db).getBinding(value.bindingId),
+    });
+  });
+
   it("round-trips an operation with its permit and outcome", async () => {
     fixture = createPersistenceFixture();
     const db = fixture.db;

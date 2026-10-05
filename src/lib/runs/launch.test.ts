@@ -23,8 +23,10 @@ function resolve(
     session: {
       sessionName: "session",
       worktreePath: "/repo/.worktrees/session",
+      branch: "csm/session",
     },
     owner: { conversationId: "owner-1", sessionName: "session" },
+    laneTargets: (laneId) => ({ worktreePath: `/repo/.worktrees/session.${laneId}`, branch: `csm/session-${laneId}` }),
     seats: { implementer: sonnet, reviewers },
   });
 }

@@ -110,23 +110,55 @@ export const turnWorkspaceSchema = z
   .strict();
 export type TurnWorkspace = z.infer<typeof turnWorkspaceSchema>;
 
-/** A placement resolved at launch; the binding itself is admitted at Context start. */
-export const workspaceBindingRequestSchema = z
-  .object({
-    kind: z.literal("session"),
-    projectPath: z.string().min(1),
-    sessionName: z.string().min(1),
-    worktreePath: z.string().min(1),
-    scope: workspaceScopeSchema,
-  })
-  .strict();
+/**
+ * A placement resolved at launch; the binding itself is admitted at Context
+ * start. Session placement works in the session worktree and accepts in place;
+ * lane placement works in the lane's worktree and lands each accepted result
+ * as a commit on the lane branch.
+ */
+export const workspaceBindingRequestSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("session"),
+      projectPath: z.string().min(1),
+      sessionName: z.string().min(1),
+      worktreePath: z.string().min(1),
+      scope: workspaceScopeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("lane"),
+      projectPath: z.string().min(1),
+      sessionName: z.string().min(1),
+      worktreePath: z.string().min(1),
+      branch: z.string().min(1),
+      scope: workspaceScopeSchema,
+    })
+    .strict(),
+]);
 export type WorkspaceBindingRequest = z.infer<
   typeof workspaceBindingRequestSchema
 >;
 
+/** An isolated lane: its worktree and branch, and the session worktree and branch it publishes into. */
+export const laneTargetSchema = z
+  .object({
+    projectPath: z.string().min(1),
+    sessionName: z.string().min(1),
+    laneId: z.string().min(1),
+    worktreePath: z.string().min(1),
+    branch: z.string().min(1),
+    sessionWorktreePath: z.string().min(1),
+    sessionBranch: z.string().min(1),
+  })
+  .strict();
+export type LaneTarget = z.infer<typeof laneTargetSchema>;
+
 /**
  * Operations Workspace executes. Requesters may carry their own labels on a
- * request; Workspace reads only these fields.
+ * request; Workspace reads only these fields. Lane operations name the lane's
+ * worktree as their binding, so a lane runs one of them at a time.
  */
 export const workspaceOperationSchema = z.discriminatedUnion("kind", [
   z
@@ -159,6 +191,22 @@ export const workspaceOperationSchema = z.discriminatedUnion("kind", [
       kind: z.literal("accept"),
       bindingId: z.string().min(1),
       evidence: z.string().min(1),
+    })
+    .passthrough(),
+  z
+    .object({
+      kind: z.literal("provision"),
+      bindingId: z.string().min(1),
+      lane: laneTargetSchema,
+    })
+    .passthrough(),
+  z
+    .object({
+      kind: z.literal("publish"),
+      bindingId: z.string().min(1),
+      lane: laneTargetSchema,
+      /** Whole-tree checks run on the lane merged with the session head. */
+      checks: z.array(z.string().min(1)),
     })
     .passthrough(),
 ]);
@@ -235,5 +283,18 @@ export const workspaceReportSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("candidate_changed") }).strict(),
   z.object({ kind: z.literal("refused"), detail: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("provisioned"), baseline: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("published"),
+      commit: z.string().min(1),
+      incorporated: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal("publish_blocked"), detail: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("publication_stale"), head: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("publication_failed"), detail: z.string().min(1) }).strict(),
+  /** Whether the session holds the publication could not be established; the owner checks. */
+  z.object({ kind: z.literal("publication_uncertain"), detail: z.string().min(1) }).strict(),
 ]);
 export type WorkspaceReport = z.infer<typeof workspaceReportSchema>;
