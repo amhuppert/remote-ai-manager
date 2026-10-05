@@ -123,6 +123,7 @@ describe("runs repository", () => {
                 maxPasses: 3,
               },
             ],
+            authored: { title: "Fix the notice", contexts: [{ key: "implement", brief: "Fix it", lane: "api" }] },
           },
           invocations: [
             {

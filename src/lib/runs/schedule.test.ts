@@ -444,7 +444,11 @@ describe("routes", () => {
       { key: "after-docs", dependsOn: ["docs"] },
     ];
     const chore = { progress: succeeded("c-t"), output: { kind: "chore" } };
-    const control = (paused: boolean, fault: RunFacts["control"]["fault"] = null) => ({ paused, cancelled: false, fault });
+    const control = (paused: boolean, fault: RunFacts["control"]["fault"] = null) => ({
+      paused,
+      cancelled: false,
+      fault,
+    });
     const remains = (started: Array<[string, number]>, seen: ObservedContexts, paused = false, fault: RunFacts["control"]["fault"] = null) => {
       const facts = { ...workflow(defined, started), control: control(paused, fault) };
       return onlyHaltsRemain(facts, seen, planRun(facts, seen));
@@ -483,8 +487,8 @@ describe("routes", () => {
     const unreadable = observed({ triage: { progress: succeeded("c-t"), output: null } });
     expect(decideNext(facts, unreadable)).toEqual([]);
     expect(planRun(facts, unreadable).halts.map((h) => [h.kind, h.occurrence])).toEqual([
-      ["route_unevaluable", "route:fix:unevaluable"],
-      ["route_unevaluable", "route:design:unevaluable"],
+      ["route_unevaluable", "route:fix:unevaluable:triage"],
+      ["route_unevaluable", "route:design:unevaluable:triage"],
     ]);
     expect(deriveRunProgress(facts, unreadable).kind).toBe("needs_owner");
   });

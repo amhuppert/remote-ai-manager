@@ -6,6 +6,7 @@ import {
   activeDependencySourceIds,
   incomingRoutes,
   projectRoutes,
+  type RouteEdgeResolution,
   type RouteProjection,
 } from "@/lib/workflow-graph/route-projection";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
@@ -99,6 +100,8 @@ export interface RunPlan {
   complete: boolean;
   /** A lane's provisioning or publication was requested and has not settled. */
   laneWorkInFlight: boolean;
+  /** Each dependency edge, keyed `source->target`, with how its route stands now. */
+  routes: ReadonlyMap<string, { source: string; target: string; resolution: RouteEdgeResolution["kind"] }>;
   /**
    * Some started context can still move without the owner, or a start is
    * due, whatever the Run's control says: a pause or fault holds this work,
@@ -264,7 +267,8 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
       .map((edge) => edge.logicalSourceId);
     halts.push({
       kind: "route_unevaluable",
-      occurrence: `route:${c.key}:unevaluable`,
+      // Named by its sources too: an amendment can clear one, and another source can halt the same context later.
+      occurrence: `route:${c.key}:unevaluable:${[...new Set(sources)].sort().join(",")}`,
       reason: `route: whether "${c.key}" runs cannot be decided, because the result of ${quoted([...new Set(sources)])} cannot be read`,
     });
   }
@@ -508,7 +512,22 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     definedLanes.every(
       (lane) => laneState(lane.key) === undefined || published(lane.key),
     );
-  return { starts, laneActions, keys, loops: loopStates, halts, complete, moving, laneWorkInFlight };
+  return {
+    starts,
+    laneActions,
+    keys,
+    loops: loopStates,
+    halts,
+    complete,
+    moving,
+    laneWorkInFlight,
+    routes: new Map(
+      projection.edges.map((edge) => [
+        edge.edgeId,
+        { source: edge.logicalSourceId, target: edge.targetContextId, resolution: edge.resolution.kind },
+      ]),
+    ),
+  };
 }
 
 /** Why a lane's publication stops the run until the owner asks for a new attempt; null while it does not. */

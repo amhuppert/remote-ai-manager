@@ -164,6 +164,8 @@ export const runFactsSchema = z
         contexts: z.array(runDefinitionContextSchema).min(1),
         loops: z.array(runLoopSchema).optional(),
         lanes: z.array(runLaneSchema).optional(),
+        /** The workflow as its owner wrote this revision, to read back, edit and amend. */
+        authored: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
     /** The contexts started so far, in start order. */
@@ -284,6 +286,8 @@ export const runViewSchema = z
     kind: z.enum(["agent", "workflow"]),
     progress: runProgressSchema,
     revision: z.number().int(),
+    /** The definition revision in force: what an amendment is based on. */
+    definitionRevision: z.number().int().min(1),
     ownerConversationId: z.string(),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -398,6 +402,27 @@ export const runViewSchema = z
   })
   .strict();
 export type RunView = z.infer<typeof runViewSchema>;
+
+export const runDefinitionResponseSchema = z
+  .object({
+    runId: z.string().min(1),
+    revision: z.number().int().min(1),
+    /** The workflow as its owner wrote the current revision; null for an agent run. */
+    definition: z.record(z.string(), z.unknown()).nullable(),
+  })
+  .strict();
+
+export const runAmendedResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    /** The definition revision the amendment made. */
+    revision: z.number().int().min(1),
+    progress: runProgressSchema.nullable(),
+    /** Routes and loops that still cannot proceed under it. */
+    halts: z.array(z.string()),
+  })
+  .strict();
+export type RunAmendedResponse = z.infer<typeof runAmendedResponseSchema>;
 
 export const runControlResponseSchema = z
   .object({ ok: z.literal(true), progress: runProgressSchema.nullable() })

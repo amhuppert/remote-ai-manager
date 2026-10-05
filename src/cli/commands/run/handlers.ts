@@ -22,7 +22,9 @@ import {
   type WorkflowLaunchRequest,
 } from "@/lib/runs/workflow-definition";
 import {
+  runAmendedResponseSchema,
   runControlResponseSchema,
+  runDefinitionResponseSchema,
   runLaunchedResponseSchema,
   runViewSchema,
   type RunLaunchedResponse,
@@ -52,7 +54,9 @@ import {
   type contextTaskAddSpec,
   type contextTaskCompleteSpec,
   type contextTaskReopenSpec,
+  type runAmendSpec,
   type runAnswerSpec,
+  type runDefinitionSpec,
   type runCancelSpec,
   type runLaunchSpec,
   type runPauseSpec,
@@ -87,6 +91,15 @@ type Launch = MutationHandler<
   typeof ccErrors.definitions,
   typeof ccGlobalFlags,
   AgentLaunchRequest
+>;
+
+type Amend = MutationHandler<
+  typeof runAmendSpec,
+  CcApplication,
+  { context: SessionContext },
+  typeof ccErrors.definitions,
+  typeof ccGlobalFlags,
+  WorkflowLaunchRequest
 >;
 
 type LaunchWorkflow = MutationHandler<
@@ -170,6 +183,7 @@ interface RunViewData {
   halts: string[];
   loops: Array<{ key: string; pass: number; maxPasses: number; state: string }>;
   lanes: RunView["lanes"];
+  definitionRevision: number;
 }
 
 function toViewData(view: RunView): RunViewData {
@@ -213,6 +227,7 @@ function toViewData(view: RunView): RunViewData {
     halts: view.halts,
     loops: view.loops,
     lanes: view.lanes,
+    definitionRevision: view.definitionRevision,
   };
 }
 
@@ -246,7 +261,7 @@ function notStartedState(
 
 function viewText(view: JsonData<RunViewData>): string {
   const lines = [
-    `Run ${view.runId} (${view.kind}): ${view.title} — ${view.progress}`,
+    `Run ${view.runId} (${view.kind}, definition revision ${view.definitionRevision}): ${view.title} — ${view.progress}`,
   ];
   for (const reason of view.needsOwner) lines.push(`needs you: ${reason}`);
   for (const context of view.contexts) {
@@ -379,6 +394,62 @@ const workflowImplementation: LaunchWorkflow = {
 };
 export const workflowHandler = mutation(workflowImplementation);
 
+interface AmendData {
+  runId: string;
+  revision: number;
+  progress: string | null;
+  halts: string[];
+}
+
+const amendImplementation: Amend = {
+  decode: workflowLaunchRequestSchema,
+  prepare: prepareSession,
+  commit: writeRunner<Parameters<Amend["commit"]>[0], AmendData, CcErrorCode>({
+    async run({ app, ctx, payload, prepared }) {
+      const runId = ctx.args["run-id"];
+      const basedOn = ctx.flags["based-on"];
+      const recovery = recoveryFacts([{ kind: "run", id: runId }]);
+      const response = await cliRequest(app.host, {
+        ...prepared.value.context,
+        method: "POST",
+        path: `${runPath(prepared.value.context, runId)}/amend`,
+        body: { definition: payload, ...(basedOn !== undefined ? { basedOn } : {}) },
+        principalIdentity: resolveCcPrincipal(app),
+      });
+      if (response.kind !== "ok") return ccWriteFailure(response, recovery);
+      const parsed = runAmendedResponseSchema.safeParse(response.body);
+      if (!parsed.success)
+        return {
+          effect: "unknown" as const,
+          recovery,
+          result: invalid("The amendment acknowledgement is invalid; read run show before retrying."),
+        };
+      return {
+        effect: "applied" as const,
+        recovery,
+        result: {
+          ok: true as const,
+          data: {
+            runId,
+            revision: parsed.data.revision,
+            progress: parsed.data.progress?.kind ?? null,
+            halts: parsed.data.halts,
+          },
+          hint: showHint(app, runId),
+        },
+      };
+    },
+    text: (data) =>
+      quoteLiteralText(
+        [
+          `Run ${data.runId}: definition revision ${data.revision} in force${data.progress === null ? "" : ` (${data.progress})`}.`,
+          ...data.halts.map((halt) => `still cannot proceed: ${halt}`),
+        ].join("\n") + "\n",
+      ),
+  }),
+};
+export const amendHandler = mutation(amendImplementation);
+
 export const showHandler: Read<typeof runShowSpec> = {
   run: runner<Input<typeof runShowSpec>, RunViewData, CcErrorCode>({
     async run({ app, ctx }) {
@@ -397,6 +468,60 @@ export const showHandler: Read<typeof runShowSpec> = {
         : invalid("The run view is invalid.");
     },
     text: viewText,
+  }),
+};
+
+/**
+ * JSON whose text survives being printed and saved: JSON leaves DEL, C1 controls
+ * and the line and paragraph separators raw inside strings, which the literal
+ * quoting would mark up and which line readers split on.
+ */
+function escapedJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(
+    /[\u007f-\u009f\u2028\u2029]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+interface DefinitionData {
+  runId: string;
+  revision: number;
+  /** The workflow as written, JSON-encoded; null for an agent run. */
+  definition: string | null;
+}
+
+export const definitionHandler: Read<typeof runDefinitionSpec> = {
+  run: runner<Input<typeof runDefinitionSpec>, DefinitionData, CcErrorCode>({
+    async run({ app, ctx }) {
+      const resolved = await resolveCcSession(app);
+      if (!resolved.ok) return resolved;
+      const response = await cliRequest(app.host, {
+        ...resolved.value,
+        method: "GET",
+        path: `${runPath(resolved.value, ctx.args["run-id"])}/definition`,
+        principalIdentity: resolveCcPrincipal(app),
+      });
+      if (response.kind !== "ok") return ccRequestFailure(response);
+      const parsed = runDefinitionResponseSchema.safeParse(response.body);
+      if (!parsed.success || parsed.data.runId !== ctx.args["run-id"])
+        return invalid("The run definition is invalid.");
+      const { definition } = parsed.data;
+      return {
+        ok: true,
+        data: {
+          runId: parsed.data.runId,
+          revision: parsed.data.revision,
+          definition: definition === null ? null : escapedJson(definition),
+        },
+      };
+    },
+    // The definition alone, so it can be saved to a file, edited and amended.
+    text: (data) =>
+      quoteLiteralText(
+        data.definition === null
+          ? `Run ${data.runId} has no workflow definition to amend: it runs one agent, or was launched before definitions were kept.\n`
+          : `${data.definition}\n`,
+      ),
   }),
 };
 

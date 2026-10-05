@@ -21,6 +21,8 @@ let sessionConversations: string[];
 let routes: ReturnType<typeof createRunRouteHandlers>;
 let tokenValid: boolean;
 let seatResolutions: number;
+/** The branch prefix lanes are named with; configuration can change while a run lives. */
+let branchPrefix: string;
 
 function identity(conversationId: string): Record<string, string> {
   return {
@@ -74,6 +76,7 @@ beforeEach(() => {
   sessionConversations = ["owner-1", "other-1"];
   tokenValid = true;
   seatResolutions = 0;
+  branchPrefix = "csm";
   let sequence = 0;
   const deps: RunRouteDeps = {
     auth: {
@@ -91,7 +94,7 @@ beforeEach(() => {
       return name === "repo" ? "/repo" : null;
     },
     async laneTargets({ sessionWorktreePath }) {
-      return (laneId) => ({ worktreePath: `${sessionWorktreePath}.${laneId}`, branch: `csm/lane-${laneId}` });
+      return (laneId) => ({ worktreePath: `${sessionWorktreePath}.${laneId}`, branch: `${branchPrefix}/lane-${laneId}` });
     },
     async getSession(_projectPath, sessionName) {
       if (sessionName === "session-2") {
@@ -290,6 +293,34 @@ describe("run routes", () => {
     expect(supervision.runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
+  });
+
+  it("finishes cancelling a run whose agent waits for its owner's answer, withdrawing the question", async () => {
+    h.script = async (input, self) => {
+      self.requests.open({
+        conversationId: input.conversationId,
+        attemptId: input.attemptId,
+        questionText: "Which file?",
+        questions: [{ question: "Which file?" }],
+      });
+      return done("Asked.");
+    };
+    await launch();
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    const questionId = (view.contexts as Array<{ openQuestions: Array<{ questionId: string }> }>)[0]
+      ?.openQuestions[0]?.questionId;
+    expect(questionId).toBeDefined();
+
+    const cancelled = await routes.control(
+      request({ action: "cancel" }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(cancelled.status).toBe(200);
+    await quiesce(supervision);
+    expect(supervision.runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(supervision.requests.question(questionId ?? "")?.state).toBe("withdrawn");
   });
 
   it("pauses, resumes and cancels a run for its owner only", async () => {
@@ -769,6 +800,124 @@ describe("run routes", () => {
     expect(supervision.runs.observe("run-9")?.record.progress).toEqual({
       kind: "succeeded",
     });
+  });
+
+  it("lets only the owner amend a workflow, running a halted loop further, and names each change started work forbids", async () => {
+    h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
+    const polish = (maxPasses: number, implementBrief = "Implement it") => ({
+      title: "Polish",
+      contexts: [
+        { key: "implement", brief: implementBrief },
+        {
+          key: "review",
+          brief: "Review it",
+          dependsOn: ["implement"],
+          outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+        },
+      ],
+      loops: [
+        {
+          key: "polish",
+          body: ["implement", "review"],
+          entry: "implement",
+          exit: "review",
+          until: { schema: { type: "object", properties: { approved: { const: true } } } },
+          maxPasses,
+        },
+      ],
+    });
+    await routes.launchWorkflow(request(polish(1), identity("owner-1")), params());
+    await quiesce(supervision);
+    const amend = (body: unknown, caller = "owner-1") =>
+      routes.amend(request(body, identity(caller)), params({ runId: "run-1" }));
+
+    const byOther = await amend({ definition: polish(2) }, "other-1");
+    expect(byOther.status).toBe(403);
+
+    const readDefinition = async () =>
+      json(await routes.definition(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
+    expect(await readDefinition()).toEqual({ runId: "run-1", revision: 1, definition: polish(1) });
+
+    const amended = await amend({ definition: polish(2), basedOn: 1 });
+    expect(amended.status).toBe(200);
+    expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
+    expect(await readDefinition()).toEqual({ runId: "run-1", revision: 2, definition: polish(2) });
+    await quiesce(supervision);
+    const view = await json(
+      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    expect(view.loops).toEqual([{ key: "polish", pass: 2, maxPasses: 2, state: "exhausted" }]);
+    expect(view.definitionRevision).toBe(2);
+
+    const refused = await amend({ definition: polish(1, "Implement it differently") });
+    expect(refused.status).toBe(409);
+    expect(await json(refused)).toMatchObject({
+      code: "amendment_refused",
+      issues: [
+        { path: "definition", message: expect.stringContaining('"implement" has started') },
+        { path: "definition", message: expect.stringContaining('loop "polish"') },
+      ],
+    });
+  });
+
+  it("reports a refusal as a conflict even when it comes from another copy of the run module, as the boot-time supervision is", async () => {
+    // A server can load the Run module once for boot and again for a route, so the refusal's class is not the route's.
+    class RunControlRefusedError extends Error {
+      override name = "RunControlRefusedError";
+    }
+    class RunAmendmentRefusedError extends Error {
+      override name = "RunAmendmentRefusedError";
+      constructor(readonly issues: string[]) {
+        super(issues.join("; "));
+      }
+    }
+    await launch();
+    const real = supervision;
+    supervision = {
+      ...real,
+      runs: {
+        ...real.runs,
+        async retryLane() {
+          throw new RunControlRefusedError('Run run-1 has no lane "nope"');
+        },
+        async amend() {
+          throw new RunAmendmentRefusedError(['"agent" has started']);
+        },
+      },
+    };
+    const retry = await routes.control(
+      request({ action: "retry", lane: "nope" }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(retry.status).toBe(409);
+    expect(await json(retry)).toMatchObject({ code: "run_control_refused" });
+    const amended = await routes.amend(
+      request({ definition: { title: "Again", contexts: [{ key: "agent", brief: "Fix it" }] } }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(amended.status).toBe(409);
+    expect(await json(amended)).toMatchObject({
+      code: "amendment_refused",
+      issues: [{ path: "definition", message: '"agent" has started' }],
+    });
+  });
+
+  it("keeps a run's lanes where they are when the branch prefix changed after launch", async () => {
+    // The lane's context starts, and its turn stays open, before the branch prefix changes.
+    h.laneGit.state.heads.set("csm/session", "h0");
+    h.script = () => new Promise(() => {});
+    const laned = { title: "Laned", contexts: [{ key: "api", brief: "Build it", lane: "api" }] };
+    await routes.launchWorkflow(request(laned, identity("owner-1")), params());
+    await quiesce(supervision, false);
+    expect(supervision.runs.observe("run-1")?.record.facts.invocations.map((i) => i.key)).toEqual(["api"]);
+    const launchedLane = supervision.runs.observe("run-1")?.record.facts.definition.lanes?.[0];
+    branchPrefix = "team";
+    const amended = await routes.amend(
+      request({ definition: { ...laned, title: "Laned again" } }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
+    expect(supervision.runs.observe("run-1")?.record.facts.definition.lanes?.[0]).toEqual(launchedLane);
   });
 
   it("records a seat's task commands only for the seat's own context", async () => {

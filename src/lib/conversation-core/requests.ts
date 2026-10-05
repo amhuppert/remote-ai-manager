@@ -31,6 +31,8 @@ export interface ConversationRequests extends Executor {
   /** Returns false when the question is unknown or no longer open. */
   answer(questionId: string, answer: string): boolean;
   withdrawQuestion(questionId: string): void;
+  /** Withdraws the question a stopped requester's wait is for. */
+  interrupt(cause: string): void;
   /** The question a conversation opened during one attempt, if any is still open. */
   openedDuring(conversationId: string, attemptId: string): string | null;
   question(questionId: string): CoreQuestionRecord | null;
@@ -129,6 +131,11 @@ export function createConversationRequests(
     },
     withdraw() {
       // A wait is a passive registration; withdrawing it changes nothing durable.
+    },
+    interrupt(cause) {
+      // A stopped asker no longer needs the answer: its question closes, which settles the wait.
+      const wait = deps.repo.getWait(cause);
+      if (wait !== null) resolve(wait.questionId, "withdrawn", null);
     },
   };
 }

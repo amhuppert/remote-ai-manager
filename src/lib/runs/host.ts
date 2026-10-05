@@ -11,6 +11,7 @@ import type { OwnerRef } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { RunsRepo } from "@/lib/state-store/runs-repo";
+import { amendDefinition, type ProposedDefinition } from "./amendment";
 import {
   deriveRunProgress,
   onlyHaltsRemain,
@@ -51,6 +52,8 @@ export interface RunLaunchInput {
   contexts: RunDefinitionContext[];
   loops?: RunLoop[];
   lanes?: RunLane[];
+  /** The workflow as its owner wrote it. */
+  authored?: Record<string, unknown>;
 }
 
 export interface RunHostDeps {
@@ -115,6 +118,16 @@ export interface RunHost {
       notes?: string;
     },
   ): void;
+  /**
+   * Replaces a workflow's definition with its next revision, unless work it
+   * already did forbids the change (design §7.6). `basedOn` names the
+   * definition revision the proposal was made from; null applies it to the
+   * definition as it is now.
+   */
+  amend(
+    runId: string,
+    input: { definition: ProposedDefinition; basedOn: number | null },
+  ): Promise<void>;
   /** Boot: every active Run restores paused, and its owner is told. */
   restoreAfterRestart(): Promise<void>;
 }
@@ -126,6 +139,37 @@ export class RunControlRefusedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "RunControlRefusedError";
+  }
+}
+
+/**
+ * Whether an error is a Run refusal. Judged by name: the supervision a route
+ * calls is created at boot, and a server can load this module once for boot
+ * and again for a route, so the refusal's class need not be the route's.
+ */
+export function isRunRefusal(error: unknown): error is Error {
+  return (
+    error instanceof Error &&
+    (error.name === "RunControlRefusedError" ||
+      error.name === "RunAmendmentRefusedError")
+  );
+}
+
+/** The changes an amendment refusal names, or null for any other error. */
+export function amendmentIssuesOf(error: unknown): string[] | null {
+  if (!(error instanceof Error) || error.name !== "RunAmendmentRefusedError")
+    return null;
+  const issues: unknown = "issues" in error ? error.issues : null;
+  return Array.isArray(issues) && issues.every((issue) => typeof issue === "string")
+    ? issues
+    : null;
+}
+
+/** An amendment that work the Run already did forbids; nothing changed. */
+export class RunAmendmentRefusedError extends RunControlRefusedError {
+  constructor(readonly issues: string[]) {
+    super(`The amendment changes work that already happened: ${issues.join("; ")}`);
+    this.name = "RunAmendmentRefusedError";
   }
 }
 
@@ -423,10 +467,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
   }
 
   /**
-   * Route and loop halts reach the owner at once. Only a definition change
-   * clears them, so a halt reported while other work remains (moving, held by
-   * a pause or fault, or waiting on the owner) promises one more notice, and
-   * the run records it once the halts are all that stands.
+   * Route and loop halts reach the owner at once. Only an amendment (or
+   * cancelling) clears them, so a halt reported while other work remains
+   * (moving, held by a pause or fault, or waiting on the owner) promises one
+   * more notice, and the run records it once the halts are all that stands.
    */
   function projectRunHalts(
     record: RunRecord,
@@ -448,7 +492,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       });
     }
     // A lane halt clears with a retry the owner can ask for at once; the
-    // follow-up is for route and loop halts, which nothing but cancelling ends.
+    // follow-up is for route and loop halts, which only an amendment or cancelling ends.
     if (otherWorkRemains || plan.halts.some((halt) => halt.lane !== undefined)) return;
     const boundaries = deps.runs.boundaries(record.runId);
     // A promise counts until a follow-up answers it.
@@ -470,7 +514,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       occurrence: `run:stalled:${[...occurrences].sort().join(",")}`,
       kind: "halted",
       summary: `${record.facts.title}: only halted routes or loops remain. ${plan.halts.map((halt) => halt.reason).join("; ")}.`,
-      detail: { runHalt: "stalled", otherWorkRemains: false },
+      detail: {
+        runHalt: "stalled",
+        otherWorkRemains: false,
+        halts: [...new Set(plan.halts.map((halt) => halt.kind))].sort(),
+      },
     });
   }
 
@@ -636,6 +684,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             contexts: input.contexts,
             ...(input.loops !== undefined ? { loops: input.loops } : {}),
             ...(input.lanes !== undefined ? { lanes: input.lanes } : {}),
+            ...(input.authored !== undefined ? { authored: input.authored } : {}),
           },
           invocations: [],
           control: { paused: false, cancelled: false, fault: null },
@@ -880,10 +929,35 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       deps.contexts.decide(contextId, input);
     },
 
+    async amend(runId, { definition: proposed, basedOn }) {
+      const revision = deps.transaction(() => {
+        const record = requireRecord(runId);
+        const { facts } = record;
+        if (facts.kind !== "workflow")
+          throw new RunControlRefusedError(
+            `Run ${runId} runs one agent; only a workflow run's definition can be amended`,
+          );
+        if (facts.control.cancelled || record.progress.kind === "succeeded")
+          throw new RunControlRefusedError(
+            `Run ${runId} already finished (${facts.control.cancelled ? "cancelled" : "succeeded"})`,
+          );
+        if (basedOn !== null && basedOn !== facts.definition.revision)
+          throw new RunControlRefusedError(
+            `Run ${runId}'s definition is at revision ${facts.definition.revision}, not ${basedOn}; read run show and amend that revision`,
+          );
+        const amended = amendDefinition(facts, observedOf(observeInvocations(facts)), proposed);
+        if (!amended.ok) throw new RunAmendmentRefusedError(amended.issues);
+        const next: RunFacts = { ...facts, title: amended.title, definition: amended.definition };
+        project(record, startEligible(record, next));
+        return amended.definition.revision;
+      });
+      deps.log.info("runs.amended", { runId, revision });
+      await host.reconcile(runId);
+    },
+
     async restoreAfterRestart() {
-      const active = deps.runs
-        .listActive()
-        .filter((run) => !run.facts.control.cancelled);
+      const listed = deps.runs.listActive();
+      const active = listed.filter((run) => !run.facts.control.cancelled);
       // Close every permit first, in one transaction, so nothing a later failure
       // skips can admit work before its owner decides to resume.
       deps.transaction(() => {
@@ -907,6 +981,17 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           });
         } catch (error) {
           deps.log.error("runs.restore_failed", {
+            runId: run.runId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+      // A cancel the last process did not finish stops its children again; each stop is idempotent.
+      for (const run of listed.filter((r) => r.facts.control.cancelled)) {
+        try {
+          await host.cancel(run.runId, null);
+        } catch (error) {
+          deps.log.error("runs.cancel_resume_failed", {
             runId: run.runId,
             error: getErrorMessage(error),
           });

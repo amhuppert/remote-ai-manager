@@ -9,6 +9,7 @@ const view = {
   kind: "agent",
   progress: { kind: "needs_owner", reasons: ["agent: halted (turn_failed)"] },
   revision: 4,
+  definitionRevision: 1,
   ownerConversationId: "owner-1",
   createdAt: "2026-10-03T10:00:00.000Z",
   updatedAt: "2026-10-03T10:05:00.000Z",
@@ -433,6 +434,97 @@ describe("run commands", () => {
       "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/control",
       { action: "retry", lane: "api" },
     ]);
+  });
+
+  it("amends a run's definition from the revision it was read at, and reports what still cannot proceed", async () => {
+    const definition = {
+      title: "API then docs",
+      contexts: [
+        { key: "api", brief: "Build the API" },
+        { key: "docs", brief: "Document it", dependsOn: ["api"] },
+      ],
+    };
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      files: { "/workflow.json": JSON.stringify(definition) },
+      respond: () =>
+        jsonReply({ ok: true, revision: 3, progress: { kind: "running" }, halts: ['route: "triage" must take exactly one'] }),
+    });
+    const result = await fixture.run(["run", "amend", "run-1", "--file", "/workflow.json", "--based-on", "2"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)])).toEqual([
+      [
+        "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/amend",
+        { definition, basedOn: 2 },
+      ],
+    ]);
+    expect(result.stdout).toContain("revision 3");
+    expect(result.stdout).toContain('still cannot proceed: route: "triage" must take exactly one');
+  });
+
+  it("prints a workflow run's definition as written, with its revision, to edit and amend", async () => {
+    const definition = { title: "API then docs", contexts: [{ key: "api", brief: "Build the API" }] };
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () => jsonReply({ runId: "run-1", revision: 2, definition }),
+    });
+    const result = await fixture.run(["run", "definition", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(fixture.requests[0]?.url).toBe(
+      "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/definition",
+    );
+    // The text is the definition alone, ready to save, edit and amend.
+    expect(JSON.parse(result.stdout)).toEqual(definition);
+  });
+
+  it("prints each change a refused amendment names", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      files: { "/workflow.json": JSON.stringify({ title: "T", contexts: [{ key: "api", brief: "B" }] }) },
+      respond: () =>
+        jsonReply(
+          {
+            error: "The amendment changes work that already happened (2 changes)",
+            code: "amendment_refused",
+            issues: [
+              { path: "definition", message: '"api" has started, so its request cannot change' },
+              { path: "definition", message: '"t" was skipped by a route that already ran, so it stays skipped' },
+            ],
+          },
+          409,
+        ),
+    });
+    const result = await fixture.run(["run", "amend", "run-1", "--file", "/workflow.json"], "text");
+
+    expect(result.exitCode).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toContain('"api" has started, so its request cannot change');
+    expect(output).toContain('"t" was skipped by a route that already ran');
+  });
+
+  it("prints a definition that stays valid JSON with line or paragraph separators in its text", async () => {
+    const definition = { title: "Odd", contexts: [{ key: "api", brief: "First\u2028second\u2029third\u0085" }] };
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () => jsonReply({ runId: "run-1", revision: 1, definition }),
+    });
+    const result = await fixture.run(["run", "definition", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(definition);
+  });
+
+  it("shows the definition revision an amendment is based on", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () => jsonReply({ ...view, kind: "workflow", definitionRevision: 2 }),
+    });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("definition revision 2");
   });
 
   it("refuses incomplete dispositions without sending them", async () => {

@@ -64,6 +64,11 @@ export class ContextInputRefusedError extends Error {
   }
 }
 
+/** Whether an error is a Context refusal, judged by name as Run refusals are (see `isRunRefusal`). */
+export function isContextRefusal(error: unknown): error is Error {
+  return error instanceof Error && error.name === "ContextInputRefusedError";
+}
+
 /**
  * Applies one input to a Context's facts. Handlers record what they observed;
  * none assigns lifecycle or invalidates downstream proof, which lapses by

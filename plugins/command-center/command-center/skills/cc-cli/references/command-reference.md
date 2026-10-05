@@ -239,11 +239,19 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--title`.
 - `cctl run` — Launch and steer supervised agent runs
   - `cctl run <command> [options]`
+- `cctl run amend` — Replace a workflow run's definition with a corrected one
+  - `cctl run amend <run-id> --file <path> [options]`
+  - Flags: `--based-on`, `--file` (required).
+- `cctl run amend-check` — Validate: Replace a workflow run's definition with a corrected one
+  - `cctl run amend-check <run-id> --file <path> [options]`
+  - Flags: `--based-on`, `--file` (required).
 - `cctl run answer` — Answer a question an agent in your run asked
   - `cctl run answer <run-id> --question <string> (--text <string> | --text-file <path>) [options]`
   - Flags: `--question` (required), `--text` / `--text-file` (required), `--text-file`.
 - `cctl run cancel` — Cancel a run you launched
   - `cctl run cancel <run-id> [options]`
+- `cctl run definition` — Read a workflow run's definition as written, to edit and amend
+  - `cctl run definition <run-id> [options]`
 - `cctl run launch` — Launch a supervised agent run in this session
   - `cctl run launch --file <path> [options]`
   - Flags: `--file` (required).

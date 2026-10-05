@@ -34,6 +34,32 @@ export const runWorkflowSpec = {
   flags: {},
   payload: { maxBytes: bytes(1_048_576), validatePath: "run workflow-check" },
 } as const;
+export const runAmendSpec = {
+  path: "run amend",
+  summary: "Replace a workflow run's definition with a corrected one",
+  description:
+    "Submit the whole definition in the run workflow shape, as it should be from now on (run definition prints the current one). Work that has not started may change, be added or be removed, as long as every route already decided stays decided. Started contexts and the body of a started loop stay exactly as they started and in the loop they started in; a route already taken or not taken stays so, and a context or lane a route skipped stays skipped (put new work in a new context or lane), so removing work can be refused when it would turn an else route the other way; a result that broke its routing's cardinality or could not be read may get new routes, which clears that halt; a started loop may only get a higher maxPasses, which runs another pass of an exhausted loop; and a lane that has been provisioned, or asked to be, keeps its contexts, checks and the lanes whose code it started from. --based-on names the definition revision you read (run show), so a definition changed since is refused. Each refused change is named.",
+  requires: "cc",
+  effects: "write",
+  args: [runId],
+  flags: {
+    "based-on": {
+      description: "Definition revision the amendment was made from, as run show reports it",
+      value: { kind: "integer", min: 1 },
+    },
+  },
+  payload: { maxBytes: bytes(1_048_576), validatePath: "run amend-check" },
+} as const;
+export const runDefinitionSpec = {
+  path: "run definition",
+  summary: "Read a workflow run's definition as written, to edit and amend",
+  description:
+    "Returns the workflow in the run workflow shape as its current revision was written, with that revision. Edit it and submit it with run amend --based-on <revision>.",
+  requires: "cc",
+  effects: "read",
+  args: [runId],
+  flags: {},
+} as const;
 export const runShowSpec = {
   path: "run show",
   summary: "Read a run's progress, contexts and boundaries",
@@ -217,6 +243,21 @@ export const runWorkflowCommand = ccCommands.defineCommand(runWorkflowSpec, {
   ],
   handler: async () => ({ default: (await handlers()).workflowHandler }),
 });
+export const runAmendCommand = ccCommands.defineCommand(runAmendSpec, {
+  examples: [
+    {
+      file: ".cc/temp/workflow.json",
+      args: { "run-id": "run-1" },
+      flags: { "based-on": 2 },
+      why: "Give a halted route's result new routes",
+    },
+  ],
+  handler: async () => ({ default: (await handlers()).amendHandler }),
+});
+export const runDefinitionCommand = ccCommands.defineCommand(runDefinitionSpec, {
+  examples: [{ why: "Read the definition to amend it", args: { "run-id": "run-1" } }],
+  handler: async () => ({ default: (await handlers()).definitionHandler }),
+});
 export const runShowCommand = ccCommands.defineCommand(runShowSpec, {
   examples: [{ why: "Read a run you launched", args: { "run-id": "run-1" } }],
   handler: async () => ({ default: (await handlers()).showHandler }),
@@ -291,6 +332,8 @@ export const contextTaskAddCommand = ccCommands.defineCommand(
 export const runCommands = [
   runLaunchCommand,
   runWorkflowCommand,
+  runAmendCommand,
+  runDefinitionCommand,
   runShowCommand,
   runAnswerCommand,
   runPauseCommand,

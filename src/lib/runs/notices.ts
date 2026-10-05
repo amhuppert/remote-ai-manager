@@ -31,10 +31,17 @@ function actionLine(
           ? `Inspect: cctl run show ${id}. Work that does not need this lane continues. ${retry}`
           : `Inspect: cctl run show ${id}. ${retry}`;
       }
-      // Only a definition change clears a route or loop halt, and the Run has
-      // no amend operation, so stopping the run is the only remedy.
+      // Only a definition change clears a route or loop halt; resuming does not.
       if (typeof detail.runHalt === "string") {
-        const remedy = `Resuming does not clear it and the definition cannot be amended, so the remedy is to cancel the run and relaunch a corrected workflow: cctl run cancel ${id}`;
+        // A started loop's exit condition cannot be amended, so an unreadable exit is cancel-only.
+        const halts = z.array(z.string()).safeParse(detail.halts);
+        const onlyUnreadableLoops =
+          detail.runHalt === "loop_unevaluable" ||
+          (halts.success && halts.data.length > 0 && halts.data.every((kind) => kind === "loop_unevaluable"));
+        const remedy =
+          onlyUnreadableLoops
+            ? `Resuming does not clear it, and a started loop's exit condition cannot be amended, so the remedy is to cancel the run and relaunch a corrected workflow: cctl run cancel ${id}`
+            : `Resuming does not clear it. Amend the definition: save it with cctl run definition ${id} > <workflow.json>, change the routes of the result that halted or raise the loop's maxPasses, then cctl run amend ${id} --file <workflow.json> --based-on <revision>. Or stop: cctl run cancel ${id}`;
         return detail.otherWorkRemains === true
           ? `Inspect: cctl run show ${id}. Other work in this run is not finished; another notice follows once only halted routes or loops remain. ${remedy}`
           : `Inspect: cctl run show ${id}. ${remedy}`;

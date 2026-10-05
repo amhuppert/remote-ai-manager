@@ -4,8 +4,10 @@
  * - POST /api/projects/[name]/sessions/[session]/runs                → launch an agent run
  * - POST /api/projects/[name]/sessions/[session]/runs/workflow       → launch a workflow run
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]        → the run view
+ * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]/definition → the workflow as written
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/answer → answer a seat's question
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel | retry (a lane)
+ * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/amend  → replace a workflow's definition (owner)
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/decide → human approval decision (people only)
  * - POST /api/projects/[name]/sessions/[session]/contexts/tasks      → a seat's task command
  *
@@ -22,7 +24,7 @@ import {
 } from "@/lib/agent-gateway/conversation-identity";
 import { LANE_IDENTITY_HEADER } from "@/lib/agent-gateway/lane-identity";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
-import { ContextInputRefusedError } from "@/lib/execution-context/advance";
+import { isContextRefusal } from "@/lib/execution-context/advance";
 import { haltDispositionSchema } from "@/lib/execution-context/schemas";
 import type { Logger } from "@/lib/logging";
 import {
@@ -37,13 +39,14 @@ import {
   type LaunchPlacement,
   type ResolvedSeat,
 } from "./launch";
-import { RunControlRefusedError, type RunLaunchInput } from "./host";
+import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import type { RunRecord } from "./schemas";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
   workflowLaunchRequestSchema,
+  type WorkflowLaunchRequest,
 } from "./workflow-definition";
 
 type RouteContext = { params: Promise<Record<string, string>> };
@@ -114,6 +117,13 @@ const decideSchema = z
     notes: z.string().min(1).optional(),
   })
   .strict();
+const amendSchema = z
+  .object({
+    definition: workflowLaunchRequestSchema,
+    /** The definition revision the proposal was made from. */
+    basedOn: z.number().int().min(1).optional(),
+  })
+  .strict();
 const taskCommandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("complete"), taskId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal("reopen"), taskId: z.string().min(1) }).strict(),
@@ -129,10 +139,7 @@ const taskCommandSchema = z.discriminatedUnion("kind", [
 
 /** Refusals the Run or a Context reports without changing anything; anything else is a fault. */
 function isRefusal(error: unknown): error is Error {
-  return (
-    error instanceof RunControlRefusedError ||
-    error instanceof ContextInputRefusedError
-  );
+  return isRunRefusal(error) || isContextRefusal(error);
 }
 
 interface Caller {
@@ -177,8 +184,10 @@ export function createRunRouteHandlers(
   | "launch"
   | "launchWorkflow"
   | "show"
+  | "definition"
   | "answer"
   | "control"
+  | "amend"
   | "decide"
   | "tasks",
   Handler
@@ -264,7 +273,68 @@ export function createRunRouteHandlers(
     return { ok: true, caller: resolved.caller, run };
   }
 
-  /** Refusals that apply to every launch, whatever it starts. */
+  /** A run of this session, for a request no agent credential may make. */
+  async function resolvePersonRun(
+    request: Request,
+    context: RouteContext,
+    refusal: string,
+    hint: string,
+  ): Promise<{ ok: true; run: RunRecord } | { ok: false; response: Response }> {
+    const transport = await deps.auth.validateOptionalToken(request);
+    if (transport.kind === "invalid")
+      return { ok: false, response: jsonError("Invalid token", 401) };
+    const presentsAgent =
+      transport.kind === "valid" ||
+      request.headers.has(CONVERSATION_IDENTITY_HEADER) ||
+      request.headers.has(LANE_IDENTITY_HEADER);
+    if (presentsAgent)
+      return {
+        ok: false,
+        response: jsonError(refusal, 403, "human_decision_required", undefined, hint),
+      };
+    const { name, session, runId } = await context.params;
+    const resolved = await resolveProjectSessionOr404(deps, name ?? "", session ?? "");
+    if (!resolved.ok) return resolved;
+    const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
+    if (
+      run === null ||
+      run.projectPath !== resolved.value.projectPath ||
+      run.sessionName !== resolved.value.session.sessionName
+    ) {
+      return { ok: false, response: notFound(`Run "${runId}" not found`) };
+    }
+    return { ok: true, run };
+  }
+
+  function refuseWorkflow(caller: Caller, definition: WorkflowLaunchRequest): Response | null {
+    return refuseLaunch(
+      caller,
+      definition.contexts.some((c) => c.humanApproval === true),
+    );
+  }
+
+  /** Each context's own seats, or the refusal naming the context whose seat cannot be resolved. */
+  async function workflowSeats(
+    caller: Caller,
+    definition: WorkflowLaunchRequest,
+  ): Promise<
+    | { ok: true; seats: Record<string, { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }> }
+    | { ok: false; response: Response }
+  > {
+    const seats: Record<string, { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }> = {};
+    for (const contextRequest of definition.contexts) {
+      const resolvedSeats = await deps.resolveSeats({
+        projectPath: caller.projectPath,
+        request: contextRequest,
+      });
+      if (!resolvedSeats.ok)
+        return { ok: false, response: seatFailure(resolvedSeats, contextRequest.key) };
+      seats[contextRequest.key] = resolvedSeats.seats;
+    }
+    return { ok: true, seats };
+  }
+
+  /** Refusals that apply to every launch or amendment, whatever it starts. */
   function refuseLaunch(
     caller: Caller,
     humanApproval: boolean,
@@ -393,33 +463,82 @@ export function createRunRouteHandlers(
       );
       if (!body.ok) return body.response;
       const { caller } = resolved;
-      const refused = refuseLaunch(
-        caller,
-        body.value.contexts.some((c) => c.humanApproval === true),
-      );
+      const refused = refuseWorkflow(caller, body.value);
       if (refused !== null) return refused;
-      const seats: Record<
-        string,
-        { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }
-      > = {};
-      for (const contextRequest of body.value.contexts) {
-        const resolvedSeats = await deps.resolveSeats({
-          projectPath: caller.projectPath,
-          request: contextRequest,
-        });
-        if (!resolvedSeats.ok)
-          return seatFailure(resolvedSeats, contextRequest.key);
-        seats[contextRequest.key] = resolvedSeats.seats;
-      }
+      const seats = await workflowSeats(caller, body.value);
+      if (!seats.ok) return seats.response;
       const runId = deps.newRunId();
       return startLaunch(
         caller,
         compileWorkflow({
           ...(await placementOf(caller, runId)),
           request: body.value,
-          seats,
+          seats: seats.seats,
         }),
       );
+    },
+
+    async amend(request, context) {
+      const owned = await resolveOwnedRun(request, context);
+      if (!owned.ok) return owned.response;
+      const body = await readBody(request, amendSchema, "workflow amendment");
+      if (!body.ok) return body.response;
+      const { caller, run } = owned;
+      const proposed = body.value.definition;
+      const refused = refuseWorkflow(caller, proposed);
+      if (refused !== null) return refused;
+      const seats = await workflowSeats(caller, proposed);
+      if (!seats.ok) return seats.response;
+      // A lane the run already named stays where it is, whatever configuration names new lanes now.
+      const placement = await placementOf(caller, run.runId);
+      const frozenLanes = run.facts.definition.lanes ?? [];
+      const compiled = compileWorkflow({
+        ...placement,
+        laneTargets: (laneId) => {
+          const frozen = frozenLanes.find((lane) => lane.laneId === laneId);
+          return frozen === undefined
+            ? placement.laneTargets(laneId)
+            : { worktreePath: frozen.worktreePath, branch: frozen.branch };
+        },
+        request: proposed,
+        seats: seats.seats,
+      });
+      const runs = deps.supervision().runs;
+      try {
+        await runs.amend(run.runId, {
+          definition: {
+            title: compiled.title,
+            contexts: compiled.contexts,
+            ...(compiled.loops !== undefined ? { loops: compiled.loops } : {}),
+            ...(compiled.lanes !== undefined ? { lanes: compiled.lanes } : {}),
+            ...(compiled.authored !== undefined ? { authored: compiled.authored } : {}),
+          },
+          basedOn: body.value.basedOn ?? null,
+        });
+      } catch (error) {
+        const issues = amendmentIssuesOf(error);
+        if (issues !== null) {
+          deps.log.warn("runs.amendment_refused", { runId: run.runId, issues: issues.length });
+          return NextResponse.json(
+            {
+              error: `The amendment changes work that already happened (${issues.length} ${issues.length === 1 ? "change" : "changes"})`,
+              code: "amendment_refused",
+              issues: issues.map((message) => ({ path: "definition", message })),
+            },
+            { status: 409 },
+          );
+        }
+        if (!isRefusal(error)) throw error;
+        deps.log.warn("runs.amendment_refused", { runId: run.runId, error: error.message });
+        return jsonError(error.message, 409, "run_control_refused");
+      }
+      const amended = runs.observe(run.runId)?.record;
+      return NextResponse.json({
+        ok: true,
+        revision: amended?.facts.definition.revision ?? 0,
+        progress: amended?.progress ?? null,
+        halts: runs.inspect(run.runId)?.plan.halts.map((halt) => halt.reason) ?? [],
+      });
     },
 
     async show(request, context) {
@@ -435,6 +554,24 @@ export function createRunRouteHandlers(
       const view = inSession ? describeRun(supervision, run.runId) : null;
       if (view === null) return notFound(`Run "${runId}" not found`);
       return NextResponse.json(view);
+    },
+
+    async definition(request, context) {
+      const resolved = await resolveCaller(request, context);
+      if (!resolved.ok) return resolved.response;
+      const { runId } = await context.params;
+      const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
+      if (
+        run === null ||
+        run.projectPath !== resolved.caller.projectPath ||
+        run.sessionName !== resolved.caller.sessionName
+      )
+        return notFound(`Run "${runId}" not found`);
+      return NextResponse.json({
+        runId: run.runId,
+        revision: run.facts.definition.revision,
+        definition: run.facts.definition.authored ?? null,
+      });
     },
 
     async answer(request, context) {
@@ -508,36 +645,14 @@ export function createRunRouteHandlers(
     // Human approval is a person's decision: no agent credential may make it,
     // including the run's owner (design §5.5, §7.7).
     async decide(request, context) {
-      const transport = await deps.auth.validateOptionalToken(request);
-      if (transport.kind === "invalid") return jsonError("Invalid token", 401);
-      const presentsAgent =
-        transport.kind === "valid" ||
-        request.headers.has(CONVERSATION_IDENTITY_HEADER) ||
-        request.headers.has(LANE_IDENTITY_HEADER);
-      if (presentsAgent) {
-        return jsonError(
-          "Only a person decides a result awaiting human approval",
-          403,
-          "human_decision_required",
-          undefined,
-          "Tell Alex the run, context and candidate awaiting the decision; agents cannot approve it.",
-        );
-      }
-      const { name, session, runId } = await context.params;
-      const resolved = await resolveProjectSessionOr404(
-        deps,
-        name ?? "",
-        session ?? "",
+      const person = await resolvePersonRun(
+        request,
+        context,
+        "Only a person decides a result awaiting human approval",
+        "Tell Alex the run, context and candidate awaiting the decision; agents cannot approve it.",
       );
-      if (!resolved.ok) return resolved.response;
-      const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-      if (
-        run === null ||
-        run.projectPath !== resolved.value.projectPath ||
-        run.sessionName !== resolved.value.session.sessionName
-      ) {
-        return notFound(`Run "${runId}" not found`);
-      }
+      if (!person.ok) return person.response;
+      const { run } = person;
       const body = await readBody(request, decideSchema, "approval decision");
       if (!body.ok) return body.response;
       const { contextId, ...decision } = body.value;

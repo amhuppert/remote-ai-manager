@@ -791,6 +791,7 @@ export function compileWorkflow(
     owner: input.owner,
     ...(input.request.loops !== undefined ? { loops: input.request.loops } : {}),
     ...(lanes.length > 0 ? { lanes } : {}),
+    authored: input.request,
     contexts: contexts.map((context, index) => {
       const {
         key,

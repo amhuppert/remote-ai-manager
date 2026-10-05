@@ -61,6 +61,7 @@ export function describeRun(
     kind: record.facts.kind,
     progress: record.progress,
     revision: record.revision,
+    definitionRevision: record.facts.definition.revision,
     ownerConversationId: record.ownerConversationId,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,

@@ -55,13 +55,13 @@ describe("run boundary notices", () => {
     expect(notice).not.toContain("cctl run decide");
   });
 
-  it("does not offer resume for a route or loop halt, and says whether another notice follows", () => {
+  it("offers an amendment, not resume, for a route or loop halt, and says whether another notice follows", () => {
     const waiting = composeBoundaryNotice(
       run,
       boundary("halted", { runHalt: "loop_exhausted", otherWorkRemains: true }),
     );
     expect(waiting).not.toContain("cctl run resume");
-    expect(waiting).toContain("cctl run cancel run-1");
+    expect(waiting).toContain("cctl run amend run-1 --file");
     expect(waiting).toContain("another notice follows once only halted routes or loops remain");
 
     const stalled = composeBoundaryNotice(
@@ -70,7 +70,24 @@ describe("run boundary notices", () => {
     );
     expect(stalled).not.toContain("cctl run resume");
     expect(stalled).not.toContain("another notice follows");
-    expect(stalled).toContain("cctl run cancel run-1");
+    expect(stalled).toContain("cctl run amend run-1 --file");
+    expect(stalled).toContain("cctl run definition run-1");
+  });
+
+  it("offers only cancelling for a loop whose exit result cannot be read, which no amendment of a started loop changes", () => {
+    const notice = composeBoundaryNotice(
+      run,
+      boundary("halted", { runHalt: "loop_unevaluable", otherWorkRemains: false }),
+    );
+    expect(notice).not.toContain("cctl run amend");
+    expect(notice).toContain("cctl run cancel run-1");
+
+    const onlyUnreadableLoops = composeBoundaryNotice(
+      run,
+      boundary("halted", { runHalt: "stalled", otherWorkRemains: false, halts: ["loop_unevaluable"] }),
+    );
+    expect(onlyUnreadableLoops).not.toContain("cctl run amend");
+    expect(onlyUnreadableLoops).toContain("cctl run cancel run-1");
   });
 
   it("tells the owner to retry a lane once what stopped its publication is fixed", () => {

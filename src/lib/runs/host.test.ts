@@ -29,8 +29,13 @@ import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo
 import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo";
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
-import { createRunHost, type RunHost } from "./host";
-import type { RunBoundary } from "./schemas";
+import {
+  createRunHost,
+  RunAmendmentRefusedError,
+  type RunHost,
+  type RunLaunchInput,
+} from "./host";
+import type { RouteGuard, RunBoundary } from "./schemas";
 
 const now = "2026-10-03T10:00:00.000Z";
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -414,17 +419,107 @@ describe("routes and loops", () => {
     expect(notified.map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
       promised,
       ["question", expect.any(String), expect.anything()],
-      ["halted", "run:stalled:route:triage:cardinality", { runHalt: "stalled", otherWorkRemains: false }],
+      [
+        "halted",
+        "run:stalled:route:triage:cardinality",
+        { runHalt: "stalled", otherWorkRemains: false, halts: ["route_cardinality"] },
+      ],
     ]);
     await runs.reconcile("run-1");
     expect(notified).toHaveLength(3);
   });
 });
 
+describe("amendments", () => {
+  const takesBoth = { schema: { type: "object", properties: { approved: { const: false } } } };
+  const routed = (shipGuard: RouteGuard) => [
+    {
+      key: "triage",
+      dependsOn: [],
+      routing: { cardinality: "exactlyOne" as const },
+      request: startRequest("run-1.triage", false, "Triage", verdictSchema),
+    },
+    { key: "fix", dependsOn: ["triage"], when: { triage: takesBoth }, request: startRequest("run-1.fix", false, "Fix") },
+    { key: "ship", dependsOn: ["triage"], when: { triage: shipGuard }, request: startRequest("run-1.ship", false, "Ship") },
+  ];
+  const launchInput = (overrides: Partial<RunLaunchInput>): RunLaunchInput => ({
+    runId: "run-1",
+    cause: "launch-1",
+    kind: "workflow",
+    title: "Amended",
+    projectPath: "/repo",
+    sessionName: "session",
+    owner: { conversationId: "owner-1", sessionName: "session" },
+    contexts: [],
+    ...overrides,
+  });
+
+  it("clears a route halt when the owner amends the routes of the result that broke them, and starts the route now taken", async () => {
+    await runs.launch(launchInput({ contexts: routed(takesBoth) }));
+    await scheduler.idle();
+    await succeedWithOutput({ approved: false });
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
+
+    await runs.amend("run-1", { definition: { title: "Routed again", contexts: routed({ else: true }) }, basedOn: 1 });
+    await scheduler.idle();
+    const record = runs.observe("run-1")?.record;
+    expect(record?.facts.definition.revision).toBe(2);
+    expect(record?.facts.title).toBe("Routed again");
+    expect(runs.inspect("run-1")?.plan.halts).toEqual([]);
+    expect(contexts.observe("run-1.fix")).not.toBeNull();
+    expect(contexts.observe("run-1.ship")).toBeNull();
+  });
+
+  it("runs another pass of an exhausted loop once its owner raises maxPasses", async () => {
+    const polish = (maxPasses: number) => ({
+      key: "polish",
+      body: ["implement", "review"],
+      entry: "implement",
+      exit: "review",
+      until: { schema: { type: "object", properties: { approved: { const: true } } } },
+      maxPasses,
+    });
+    const contextsOfLoop = [
+      { key: "implement", dependsOn: [], request: startRequest("run-1.implement", false, "Implement") },
+      { key: "review", dependsOn: ["implement"], request: startRequest("run-1.review", false, "Review", verdictSchema) },
+    ];
+    await runs.launch(launchInput({ contexts: contextsOfLoop, loops: [polish(1)] }));
+    await scheduler.idle();
+    await succeedActiveContext("First try.");
+    await succeedWithOutput({ approved: false });
+    expect(runs.inspect("run-1")?.plan.halts.map((halt) => halt.kind)).toEqual(["loop_exhausted"]);
+
+    await runs.amend("run-1", { definition: { title: "Polish", contexts: contextsOfLoop, loops: [polish(2)] }, basedOn: null });
+    await scheduler.idle();
+    expect(contexts.observe("run-1.implement.pass2")).not.toBeNull();
+  });
+
+  it("refuses an amendment that changes started work, or one based on an older revision, and leaves the run as it was", async () => {
+    await launchChain();
+    const before = runs.observe("run-1")?.record;
+    const changed = [
+      { key: "api", dependsOn: [], request: startRequest("run-1.api", false, "Build another API") },
+      { key: "docs", dependsOn: ["api"], request: startRequest("run-1.docs", false, "Document the API") },
+    ];
+    await expect(
+      runs.amend("run-1", { definition: { title: "API then docs", contexts: changed }, basedOn: null }),
+    ).rejects.toThrow(RunAmendmentRefusedError);
+    await expect(
+      runs.amend("run-1", { definition: { title: "API then docs", contexts: changed.slice(1) }, basedOn: 3 }),
+    ).rejects.toThrow(/revision 1/);
+    expect(runs.observe("run-1")?.record).toEqual(before);
+  });
+});
+
 /** api works in lane "api"; integrate, in the session, needs its code. */
 async function launchLane(): Promise<void> {
+  await runs.launch(laneLaunch());
+  await scheduler.idle();
+}
+
+function laneLaunch(): RunLaunchInput {
   const inLane = startRequest("run-1.api", false, "Build the API");
-  await runs.launch({
+  return {
     runId: "run-1",
     cause: "launch-1",
     kind: "workflow",
@@ -461,8 +556,7 @@ async function launchLane(): Promise<void> {
         checks: ["typecheck"],
       },
     ],
-  });
-  await scheduler.idle();
+  };
 }
 
 describe("lanes", () => {
@@ -779,6 +873,29 @@ describe("run host", () => {
         .submitted()
         .map((i) => (i.request as { reason?: string }).reason),
     ).toEqual(["initial", "continue"]);
+  });
+
+  it("finishes cancelling after a restart a run left stopping, stopping its children again", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(conversation, "work", report({ openQuestionId: "q-1" }));
+    await scheduler.idle();
+    const wait = requests.submitted().find((i) => (i.request as { kind?: string }).kind === "answer");
+    if (wait === undefined) throw new Error("no answer wait");
+    requests.admit(wait.cause);
+
+    // As a restart leaves it when the process stopped before the wait was withdrawn.
+    await runs.cancel("run-1", null);
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "stopping" });
+    const interruptsBefore = requests.interrupted.length;
+
+    await runs.restoreAfterRestart();
+    expect(requests.interrupted.length).toBeGreaterThan(interruptsBefore);
+    requests.settle(wait.cause, { kind: "withdrawn" });
+    scheduler.touch({ kind: "context", id: "run-1.agent" });
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
   });
 
   it("reports a paused run as draining while a child's admitted turn runs, and drained once it settles", async () => {
