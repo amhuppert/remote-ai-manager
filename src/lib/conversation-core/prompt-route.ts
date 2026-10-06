@@ -17,7 +17,7 @@ import { ProjectCollaborationUnsupportedError } from "@/lib/project-conversation
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AdmissionRefusal, ConversationCore, HoldTurn } from "./executor";
-import type { ConversationIdentity } from "./conversation-record";
+import { backendLocked, type ConversationIdentity } from "./conversation-record";
 
 export interface CoreConversationPromptDeps {
   sendUserMessage: ConversationCore["sendUserMessage"];
@@ -66,7 +66,7 @@ export async function admitCoreCollaboration(
   if (held !== null) return held;
   const backend = body.backend ?? conversation.agentBackend;
   if (backend === conversation.agentBackend) return null;
-  if (conversation.promptCount > 0 || conversation.backendRef !== null) {
+  if (backendLocked(conversation)) {
     return NextResponse.json(
       {
         error: `Backend mismatch: conversation uses "${conversation.agentBackend}" but request specified "${backend}"`,
@@ -201,7 +201,7 @@ export async function promptCoreConversation(
   // The backend is chosen with the first message and fixed from then on; the
   // turn itself adopts it, so this is only the early answer.
   const backend = body.backend ?? conversation.agentBackend;
-  if (backend !== conversation.agentBackend && (conversation.promptCount > 0 || conversation.backendRef !== null)) {
+  if (backend !== conversation.agentBackend && backendLocked(conversation)) {
     return NextResponse.json(
       {
         error: `Backend mismatch: conversation uses "${conversation.agentBackend}" but request specified "${backend}"`,

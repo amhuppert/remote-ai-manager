@@ -78,20 +78,31 @@ export async function runRecordedTurn(
 }
 
 /**
- * The turn's outcome as its caller should read it: a turn whose conversation
- * row could not be settled failed in persistence, keeping what it produced.
+ * The turn's outcome as its caller should read it, keeping what it produced:
+ * a turn whose conversation row could not be settled failed in persistence,
+ * and one whose runtime could not be closed failed to end — its processes may
+ * still act — as the core records it too.
  */
-export function recordedOutcome(recorded: Pick<RecordedTurn, "outcome" | "unsettled">): TurnExecutionOutcome {
-  const { outcome, unsettled } = recorded;
-  if (unsettled === null) return outcome;
+export function recordedOutcome(
+  recorded: Pick<RecordedTurn, "outcome" | "unsettled" | "uncollected">,
+): TurnExecutionOutcome {
+  const { outcome, unsettled, uncollected } = recorded;
+  if (unsettled === null && uncollected === null) return outcome;
   const result =
     outcome.kind === "call_result" || outcome.kind === "settlement_failed" ? outcome.result : null;
-  return {
-    kind: "settlement_failed",
-    code: "persistence",
-    message: `The conversation record could not be settled: ${unsettled}`,
-    result,
-  };
+  return unsettled !== null
+    ? {
+        kind: "settlement_failed",
+        code: "persistence",
+        message: `The conversation record could not be settled: ${unsettled}`,
+        result,
+      }
+    : {
+        kind: "settlement_failed",
+        code: "runtime_close",
+        message: `The agent runtime could not be closed: ${uncollected}`,
+        result,
+      };
 }
 
 /**

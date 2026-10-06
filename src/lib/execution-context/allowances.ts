@@ -9,6 +9,14 @@ export function remainingAllowance(
   return budget - used;
 }
 
+/** Whether the allowance can still pay for a turn: unspent, or reserved by one in flight. */
+export function allowanceAvailable(facts: ContextFacts, kind: AllowanceKind): boolean {
+  return (
+    remainingAllowance(facts, kind) > 0 ||
+    facts.allowances.charges.some((c) => c.kind === kind && c.state === "reserved")
+  );
+}
+
 /** Reserved with the work order's intent; one reservation per cause. */
 export function reserveAllowance(
   facts: ContextFacts,

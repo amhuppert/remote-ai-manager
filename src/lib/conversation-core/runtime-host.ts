@@ -189,6 +189,8 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       entry.requirements = requirements;
       hosted.set(conversation.conversationId, entry);
       const live = entry.managed.backend;
+      // Core turns release their runtime when they end, so each obtains a fresh one; reuse serves a
+      // host that keeps runtimes between turns (design amendment 13).
       if (live !== undefined && live.status === "alive") {
         const { desired } = await desiredFor(conversation, requirements);
         const changes = runtimeConfigurationChanges({ current: entry.managed.configurationSnapshot, desired });

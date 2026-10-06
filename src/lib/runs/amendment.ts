@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
-import type { SeatAssignment } from "@/lib/conversation-core/schemas";
 import { planRun, type ObservedContexts } from "./schedule";
+import { laneCodePrerequisites, laneMembers, laneSkipped, loopOf } from "./topology";
 import {
   laneStateOf,
   type RunDefinitionContext,
@@ -32,53 +32,68 @@ const same = (a: unknown, b: unknown): boolean =>
 const quoted = (keys: readonly string[]): string =>
   keys.map((key) => `"${key}"`).join(", ");
 
-/** A seat as authored: resolving it again may pick another backend or model for the same request. */
-function authoredSeat(seat: SeatAssignment): Omit<SeatAssignment, "backend" | "modelSelection"> {
-  const { backend: _backend, modelSelection: _model, ...authored } = seat;
-  return authored;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A context's entry as its owner wrote it, or null. */
+export function writtenEntry(authored: Record<string, unknown> | undefined, key: string): Record<string, unknown> | null {
+  const contexts = authored?.contexts;
+  const entry = Array.isArray(contexts) ? contexts.find((c) => isRecord(c) && c.key === key) : undefined;
+  return isRecord(entry) ? entry : null;
+}
+
+/** Its place in the graph as written: what it depends on (in any order), its routes and its lane. */
+function placeOf(entry: Record<string, unknown>): unknown {
+  const dependsOn = Array.isArray(entry.dependsOn) ? entry.dependsOn : [];
+  return {
+    dependsOn: dependsOn.map((d) => JSON.stringify(plain(d))).sort(),
+    when: entry.when ?? null,
+    lane: entry.lane ?? null,
+    routing: entry.routing ?? null,
+  };
+}
+
+/**
+ * What it was given, as written: compared as written, because resolving it
+ * again may fill in another backend or model while its owner changed nothing.
+ */
+function givenOf(entry: Record<string, unknown>): unknown {
+  const { key: _key, dependsOn: _dependsOn, when: _when, lane: _lane, routing: _routing, ...given } = entry;
+  return given;
 }
 
 /** Why a started context cannot take the proposed entry, or null when nothing it started with changes. */
 function startedChange(
   key: string,
-  was: RunDefinitionContext,
-  now: RunDefinitionContext,
+  was: { written: Record<string, unknown>; compiled: RunDefinitionContext },
+  now: { written: Record<string, unknown>; compiled: RunDefinitionContext },
 ): string | null {
-  const structure = (c: RunDefinitionContext) => ({
-    dependsOn: [...c.dependsOn].sort(),
-    when: c.when ?? null,
-    outputOnly: [...(c.outputOnly ?? [])].sort(),
-    lane: c.lane ?? null,
-    routing: c.routing ?? null,
-  });
-  if (!same(structure(was), structure(now)))
+  if (!same(placeOf(was.written), placeOf(now.written)))
     return `"${key}" has started, so its dependencies, routes or lane cannot change`;
-  // The checks it selected, wherever the compiler placed them; where it placed them comes next.
-  const request = (c: RunDefinitionContext, placed: boolean) => {
-    const { contract } = c.request;
-    return {
-      ...c.request,
-      contract: {
-        ...contract,
-        implementer: authoredSeat(contract.implementer),
-        reviewers: contract.reviewers.map((reviewer) => ({
-          ...authoredSeat(reviewer),
-          authority: reviewer.authority,
-        })),
-        checks: placed ? contract.checks : [...contract.checks, ...contract.deferredChecks].sort(),
-        deferredChecks: placed ? contract.deferredChecks : [],
-      },
-    };
-  };
-  if (!same(request(was, false), request(now, false)))
+  if (!same(givenOf(was.written), givenOf(now.written)))
     return `"${key}" has started, so its request (brief, tasks, criteria, checks, output schema, seats or policy) cannot change`;
-  if (!same(request(was, true), request(now, true)))
+  // Where the compiler placed its checks depends on the work beside it.
+  const placed = (c: RunDefinitionContext) => ({
+    checks: c.request.contract.checks,
+    deferredChecks: c.request.contract.deferredChecks,
+  });
+  if (!same(placed(was.compiled), placed(now.compiled)))
     return `"${key}" has started, and this amendment changes which of its checks it runs itself (work beside it in its worktree decides that); keep that work as it was, or order new work after it`;
   return null;
 }
 
-const loopOf = (loops: readonly RunLoop[] | undefined, key: string): string | null =>
-  (loops ?? []).find((loop) => loop.body.includes(key))?.key ?? null;
+/**
+ * The contexts an amendment keeps exactly as they started: every started one,
+ * and every member of a started loop's body, which is one unit — a member yet
+ * to run this pass is fixed too. Their resolved entries stand as frozen.
+ */
+export function frozenKeys(facts: RunFacts): Set<string> {
+  const started = new Set(facts.invocations.map((i) => i.key));
+  const startedLoops = (facts.definition.loops ?? []).filter((loop) => loop.body.some((key) => started.has(key)));
+  return new Set([...started, ...startedLoops.flatMap((loop) => loop.body)]);
+}
+
+const loopKeyOf = (loops: readonly RunLoop[] | undefined, key: string): string | null => loopOf(loops, key)?.key ?? null;
 
 const ROUTE_DECISION: Partial<Record<string, string>> = {
   active: "taken",
@@ -86,31 +101,8 @@ const ROUTE_DECISION: Partial<Record<string, string>> = {
   omitted: "dropped, its source having been skipped",
 };
 
-/** Lanes whose code a lane's contexts need: the lanes its worktree must start from. */
-function prerequisitesOf(
-  contexts: readonly RunDefinitionContext[],
-  lane: string,
-): Set<string> {
-  const laneOf = new Map(contexts.map((c) => [c.key, c.lane]));
-  return new Set(
-    contexts
-      .filter((c) => c.lane === lane)
-      .flatMap((c) =>
-        c.dependsOn.flatMap((source) => {
-          const from = laneOf.get(source);
-          return from !== undefined &&
-            from !== lane &&
-            !(c.outputOnly ?? []).includes(source)
-            ? [from]
-            : [];
-        }),
-      ),
-  );
-}
-
-const membersOf = (contexts: readonly RunDefinitionContext[], lane: string) =>
-  contexts
-    .filter((c) => c.lane === lane)
+const memberKeysOf = (contexts: readonly RunDefinitionContext[], lane: string) =>
+  laneMembers(contexts, lane)
     .map((c) => c.key)
     .sort();
 
@@ -132,24 +124,30 @@ export function amendDefinition(
   const currentByKey = new Map(current.contexts.map((c) => [c.key, c]));
   const proposedByKey = new Map(proposed.contexts.map((c) => [c.key, c]));
 
+  if (current.authored === undefined || proposed.authored === undefined)
+    return { ok: false, issues: ["the run was launched before its definition could be read back, so it cannot be amended"] };
   const started = new Set(facts.invocations.map((i) => i.key));
   const startedLoops = (current.loops ?? []).filter((loop) =>
     loop.body.some((key) => started.has(key)),
   );
-  // A started loop's body is one unit: a member yet to run this pass is fixed too.
-  const frozen = new Set([...started, ...startedLoops.flatMap((loop) => loop.body)]);
+  const frozen = frozenKeys(facts);
   for (const key of frozen) {
     const was = currentByKey.get(key);
     if (was === undefined) continue;
     const now = proposedByKey.get(key);
-    if (now === undefined) {
+    const wasWritten = writtenEntry(current.authored, key);
+    const nowWritten = writtenEntry(proposed.authored, key);
+    if (now === undefined || nowWritten === null) {
       issues.push(`"${key}" has started, so it stays in the run; cancel the run to stop it`);
       continue;
     }
-    const change = startedChange(key, was, now);
+    const change =
+      wasWritten === null
+        ? `"${key}" has started, and the run holds no written definition of it to compare with`
+        : startedChange(key, { written: wasWritten, compiled: was }, { written: nowWritten, compiled: now });
     if (change !== null) issues.push(change);
     // Joining or leaving a loop would run it again, or end it, after its result was used.
-    if (loopOf(current.loops, key) !== loopOf(proposed.loops, key))
+    if (loopKeyOf(current.loops, key) !== loopKeyOf(proposed.loops, key))
       issues.push(`"${key}" has started, so the loop it runs in cannot change`);
   }
 
@@ -171,13 +169,17 @@ export function amendDefinition(
   const proposedLanes = proposed.lanes ?? [];
   for (const lane of current.lanes ?? []) {
     if (laneStateOf(facts, lane.key) === undefined) continue;
-    if (!same(membersOf(current.contexts, lane.key), membersOf(proposed.contexts, lane.key)))
+    if (!same(memberKeysOf(current.contexts, lane.key), memberKeysOf(proposed.contexts, lane.key)))
       issues.push(`lane "${lane.key}" has been provisioned, or asked to be, so which contexts work in it cannot change`);
     const amended = proposedLanes.find((l) => l.key === lane.key);
+    const placement = (l: RunLane | undefined) =>
+      l === undefined ? null : { laneId: l.laneId, worktreePath: l.worktreePath, branch: l.branch, target: l.target };
+    if (amended !== undefined && !same(placement(lane), placement(amended)))
+      issues.push(`lane "${lane.key}" has been provisioned, or asked to be, so its worktree and branch cannot change`);
     if (!same(lane.checks, amended?.checks ?? []))
       issues.push(`lane "${lane.key}" has been provisioned, or asked to be, so its publication checks cannot change`);
-    const had = prerequisitesOf(current.contexts, lane.key);
-    const gained = [...prerequisitesOf(proposed.contexts, lane.key)].filter((from) => !had.has(from));
+    const had = laneCodePrerequisites(current.contexts, lane.key);
+    const gained = [...laneCodePrerequisites(proposed.contexts, lane.key)].filter((from) => !had.has(from));
     if (gained.length > 0)
       issues.push(
         `lane "${lane.key}" was provisioned, or asked to be, without the code of lane ${quoted(gained)}, so its contexts cannot come to need it`,
@@ -186,11 +188,8 @@ export function amendDefinition(
 
 
   if (issues.length > 0) return { ok: false, issues };
-  const lanes = proposedLanes.map((lane) =>
-    laneStateOf(facts, lane.key) === undefined
-      ? lane
-      : ((current.lanes ?? []).find((l) => l.key === lane.key) ?? lane),
-  );
+  // The compiler kept every lane the run named where it was, and a provisioned lane's checks are unchanged.
+  const lanes = proposedLanes;
   const definition: RunFacts["definition"] = {
     revision: current.revision + 1,
     contexts: proposed.contexts.map((c) =>
@@ -227,9 +226,10 @@ export function amendDefinition(
   // A skipped lane contributed no code, and lanes and the session went on without it: it stays skipped.
   for (const lane of current.lanes ?? []) {
     if (laneStateOf(facts, lane.key) !== undefined) continue;
-    const members = membersOf(current.contexts, lane.key);
-    if (members.length === 0 || !members.every((key) => plan.keys.get(key)?.kind === "skipped")) continue;
-    if (membersOf(proposed.contexts, lane.key).some((key) => next.keys.get(key)?.kind !== "skipped"))
+    const isSkipped = (key: string) => plan.keys.get(key)?.kind === "skipped";
+    if (memberKeysOf(current.contexts, lane.key).length === 0 || !laneSkipped(current.contexts, lane.key, isSkipped))
+      continue;
+    if (memberKeysOf(proposed.contexts, lane.key).some((key) => next.keys.get(key)?.kind !== "skipped"))
       issues.push(`lane "${lane.key}" was skipped, as every context in it was; put new work in a new lane`);
   }
   if (issues.length > 0) return { ok: false, issues };

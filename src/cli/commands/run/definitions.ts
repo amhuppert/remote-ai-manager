@@ -1,5 +1,29 @@
 import { bytes, defineGroup } from "cli-for-agents";
+import type { AllowanceKind, HaltDisposition } from "@/lib/execution-context/schemas";
 import { ccCommands } from "../../framework/family";
+
+/**
+ * The dispositions and allowances a Context accepts. Literal, as flag types
+ * need them; the checks below fail to compile when they and Context's schemas
+ * differ in either direction.
+ */
+const DISPOSITION_KINDS = [
+  "continue",
+  "retry",
+  "retry_capture",
+  "retry_advice",
+  "replace_seat",
+  "rereview",
+  "grant",
+  "confirm_effect",
+] as const satisfies readonly HaltDisposition["kind"][];
+const ALLOWANCE_KINDS = ["unfinishedTaskRetries", "validationRetries"] as const satisfies readonly AllowanceKind[];
+const everyDispositionListed: Exclude<HaltDisposition["kind"], (typeof DISPOSITION_KINDS)[number]> extends never
+  ? true
+  : never = true;
+const everyAllowanceListed: Exclude<AllowanceKind, (typeof ALLOWANCE_KINDS)[number]> extends never ? true : never = true;
+void everyDispositionListed;
+void everyAllowanceListed;
 
 const runId = {
   name: "run-id",
@@ -27,7 +51,7 @@ export const runWorkflowSpec = {
   path: "run workflow",
   summary: "Launch a supervised workflow of several contexts in this session",
   description:
-    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused, and so is a writing session context a lane could publish beside, since its uncommitted results block publication: make it depend on the lane's work, place it in a lane, or make it read-only. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. You own the run: its questions, halts and result arrive as run-boundary messages.",
+    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused. A publication changes the session worktree, so each session context must be ordered against each lane's publication, or placed in a lane: a read-only one depends on the lane's work or the lane's work depends on it (outputOnly), and a writing one depends on the lane's work, since its uncommitted results block publication. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. You own the run: its questions, halts and result arrive as run-boundary messages.",
   requires: "cc",
   effects: "write",
   args: [],
@@ -124,24 +148,12 @@ export const runResumeSpec = {
       description: "How to clear the halt",
       value: {
         kind: "enum",
-        values: [
-          "continue",
-          "retry",
-          "retry_capture",
-          "retry_advice",
-          "replace_seat",
-          "rereview",
-          "grant",
-          "confirm_effect",
-        ],
+        values: DISPOSITION_KINDS,
       },
     },
     allowance: {
       description: "Allowance a grant adds to",
-      value: {
-        kind: "enum",
-        values: ["unfinishedTaskRetries", "validationRetries"],
-      },
+      value: { kind: "enum", values: ALLOWANCE_KINDS },
     },
     count: {
       description: "How many more attempts a grant allows",

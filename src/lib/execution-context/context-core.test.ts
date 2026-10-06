@@ -117,7 +117,7 @@ function unboundHarness(
     },
     step(): PlannedEffect[] {
       if (pending.length > 0) return [];
-      const planned = planEffects({ facts });
+      const planned = planEffects({ facts, othersPending: false });
       facts = planned.facts;
       pending = planned.effects;
       return planned.effects;
@@ -306,6 +306,8 @@ describe("execution context acceptance chain", () => {
         count: 1,
         reason: "close to done",
       },
+      occurrence: "occ",
+      at: "t",
     });
     expect(h.step()[0]?.request).toMatchObject({
       kind: "work",
@@ -428,12 +430,45 @@ describe("execution context acceptance chain", () => {
     h.input({
       kind: "disposition",
       disposition: { kind: "rereview", reason: "contract clarified" },
+      occurrence: "occ",
+      at: "t",
     });
 
     expect(h.step()[0]?.request).toMatchObject({
       kind: "review",
       roundId: "ctx:round:2",
     });
+  });
+
+  it("gives work done after an advisory response a full review again, advisory reviewers included", () => {
+    const h = harness(
+      contract({ reviewers: [reviewer("blocker", "blocking"), reviewer("advisor", "advisory")] }),
+    );
+    workAndFreeze(h);
+    h.step();
+    h.settle("review", verdictReport("pass"));
+    h.settle("review", verdictReport("pass", { advisories: [{ title: "Rename helper", description: "Clearer" }] }));
+    h.step();
+    h.settle(
+      "advise",
+      workReport({
+        structuredOutput: { dispositions: [{ advisoryId: "ctx:round:1:advisor:1", disposition: "addressed", reason: "" }] },
+      }),
+    );
+    h.step();
+    h.settle("verify", { kind: "verified", changed: true });
+
+    // New work before the next freeze: a task reopened, then done again.
+    h.task({ kind: "reopen", taskId: "t1" });
+    expect(h.step()[0]?.request).toMatchObject({ kind: "work" });
+    h.task({ kind: "complete", taskId: "t1" });
+    h.settle("work", workReport());
+    h.step();
+    h.settle("freeze", frozen("ev-3"));
+    expect(h.step().map((e) => (e.request.kind === "review" ? e.request.seat.assignmentId : e.request.kind))).toEqual([
+      "blocker",
+      "advisor",
+    ]);
   });
 
   it("delivers fresh advice once and recertifies changed work with blocking reviewers only", () => {
@@ -620,6 +655,28 @@ describe("execution context acceptance chain", () => {
     ).toContain("notice.ts");
   });
 
+  it("lets only turns that can wait for an answer ask the owner: work and review, not capture or advice", () => {
+    const seatOf = (effect: PlannedEffect | undefined) =>
+      effect !== undefined && "seat" in effect.request ? effect.request.seat : null;
+    const capturing = harness(contract({ outputSchema: { type: "object" } }));
+    const [work] = capturing.step();
+    expect(seatOf(work)?.canAsk).toBe(true);
+    capturing.task({ kind: "complete", taskId: "t1" });
+    capturing.settle("work", workReport());
+    const [capture] = capturing.step();
+    expect(capture?.request.kind).toBe("capture_output");
+    expect(seatOf(capture)?.canAsk).toBe(false);
+
+    const advised = harness(contract({ reviewers: [reviewer("advisor", "advisory")] }));
+    workAndFreeze(advised);
+    const [review] = advised.step();
+    expect(seatOf(review)?.canAsk).toBe(true);
+    advised.settle("review", verdictReport("pass", { advisories: [{ title: "Rename helper", description: "Clearer" }] }));
+    const [advise] = advised.step();
+    expect(advise?.request.kind).toBe("advise");
+    expect(seatOf(advise)?.canAsk).toBe(false);
+  });
+
   it("drains an admitted capture during pause and plans nothing until resume", () => {
     const h = harness(contract({ outputSchema: { type: "object" } }));
     h.step();
@@ -651,6 +708,8 @@ describe("execution context acceptance chain", () => {
     h.input({
       kind: "disposition",
       disposition: { kind: "rereview", reason: "clarified" },
+      occurrence: "occ",
+      at: "t",
     });
     const before = h.facts.certification;
 
@@ -682,7 +741,7 @@ describe("execution context acceptance chain", () => {
       kind: "halted",
       halt: "candidate_unstable",
     });
-    h.input({ kind: "disposition", disposition: { kind: "continue" } });
+    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ", at: "t" });
     expect(h.step()[0]?.request.kind).toBe("freeze");
   });
 
@@ -704,13 +763,86 @@ describe("execution context acceptance chain", () => {
           count: 1,
           reason: "x",
         },
+        occurrence: "occ",
+        at: "t",
       }),
     ).toThrow(/does not clear/);
     h.input({
       kind: "disposition",
       disposition: { kind: "confirm_effect", evidence: "files inspected" },
+      occurrence: "occ",
+      at: "t",
     });
     expect(h.progress().kind).toBe("running");
+  });
+
+  it("reports the last allowed retry as running while it is in flight, and exhausted only once it settles", () => {
+    const h = harness(contract(), { ...DEFAULT_CONTEXT_POLICY, unfinishedTaskRetries: 1 });
+    h.step();
+    h.settle("work", workReport());
+    expect(h.step()[0]?.request).toMatchObject({ kind: "work", reason: "retry" });
+
+    expect(h.progress(false)).toMatchObject({ kind: "running", obligation: { kind: "work", reason: "retry" } });
+    expect(h.progress(true)).toMatchObject({ kind: "running", obligation: { kind: "work", reason: "retry" } });
+    h.settle("work", workReport());
+    expect(h.progress()).toMatchObject({ kind: "halted", halt: "retries_exhausted" });
+  });
+
+  it("reports the last allowed remediation as running while it is in flight", () => {
+    const h = harness(contract({ checks: ["test"] }), {
+      ...DEFAULT_CONTEXT_POLICY,
+      validationRetries: 1,
+    });
+    workAndFreeze(h);
+    h.step();
+    h.settle("check", { kind: "checked", status: "failed", wroteReviewedScope: [] });
+    expect(h.step()[0]?.request).toMatchObject({ kind: "work", reason: "remediate" });
+
+    expect(h.progress()).toMatchObject({ kind: "running", obligation: { kind: "work", reason: "remediate" } });
+  });
+
+  it("recovers a refused bind: the owner's continue starts a new bind operation, and the decision is kept", () => {
+    const h = unboundHarness(contract());
+    const [first] = h.step();
+    h.settle("bind", { kind: "refused", detail: "The worktree is missing" });
+    expect(h.progress()).toMatchObject({ kind: "halted", halt: "workspace_refused" });
+
+    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ-1", at: "t1" });
+    const [second] = h.step();
+    expect(second?.request.kind).toBe("bind");
+    expect(second?.cause).not.toBe(first?.cause);
+    expect(h.facts.control.dispositions).toEqual([
+      { occurrence: "occ-1", halt: "workspace_refused", disposition: { kind: "continue" }, at: "t1" },
+    ]);
+  });
+
+  it("runs a refused acceptance check again under a new operation once the owner continues", () => {
+    const h = harness(contract({ checks: ["test"] }));
+    workAndFreeze(h);
+    const [check] = h.step();
+    expect(check?.request.kind).toBe("check");
+    h.settle("check", { kind: "refused", detail: "The validation service could not start the run" });
+    expect(h.progress()).toMatchObject({ kind: "halted", halt: "workspace_refused" });
+
+    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ-3", at: "t3" });
+    const [again] = h.step();
+    expect(again?.request.kind).toBe("check");
+    expect(again?.cause).not.toBe(check?.cause);
+  });
+
+  it("recovers an uncertain acceptance under a new operation, keeping the owner's confirmation", () => {
+    const h = harness(contract());
+    workAndFreeze(h);
+    const [accept] = h.step();
+    expect(accept?.request.kind).toBe("accept");
+    h.settleUncertain("accept");
+
+    const confirmation = { kind: "confirm_effect" as const, evidence: "The lane holds the landing commit" };
+    h.input({ kind: "disposition", disposition: confirmation, occurrence: "occ-2", at: "t2" });
+    const [again] = h.step();
+    expect(again?.request.kind).toBe("accept");
+    expect(again?.cause).not.toBe(accept?.cause);
+    expect(h.facts.control.dispositions.map((d) => d.disposition)).toEqual([confirmation]);
   });
 
   it("plans nothing while a failed turn's halt stands, and works again after its disposition", () => {
@@ -723,7 +855,7 @@ describe("execution context acceptance chain", () => {
 
     expect(h.progress()).toMatchObject({ kind: "halted", halt: "turn_failed" });
     expect(h.step()).toEqual([]);
-    h.input({ kind: "disposition", disposition: { kind: "continue" } });
+    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ", at: "t" });
     expect(h.step()[0]?.request.kind).toBe("work");
   });
 

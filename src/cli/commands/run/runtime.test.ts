@@ -23,7 +23,8 @@ const view = {
       skipped: false,
       loop: null,
       lane: null,
-      waitingOnLanes: [],
+      waitingOnLaneProvision: null,
+      waitingOnPublications: [],
       pass: 1,
       progress: {
         kind: "halted",
@@ -173,7 +174,8 @@ describe("run commands", () => {
               skipped: false,
               loop: null,
               lane: null,
-              waitingOnLanes: [],
+              waitingOnLaneProvision: null,
+              waitingOnPublications: [],
               pass: 1,
               progress: null,
               occurrence: null,
@@ -202,7 +204,8 @@ describe("run commands", () => {
       skipped: false,
       loop: null,
       lane: null,
-      waitingOnLanes: [],
+      waitingOnLaneProvision: null,
+      waitingOnPublications: [],
       pass: 1,
       progress: null,
       occurrence: null,
@@ -270,7 +273,8 @@ describe("run commands", () => {
       skipped: false,
       loop: null,
       lane: null,
-      waitingOnLanes: [],
+      waitingOnLaneProvision: null,
+      waitingOnPublications: [],
       pass: 1,
       progress: null,
       occurrence: null,
@@ -294,6 +298,47 @@ describe("run commands", () => {
         expect(result.stdout).toContain(`- docs [run-1.docs]: ${expected}`);
       }
     }
+  });
+
+  it("tells a pause still draining admitted work from a settled one, and names a paused context's next step", async () => {
+    const paused = (draining: boolean) => ({
+      ...view,
+      progress: { kind: "paused", draining },
+      contexts: [
+        {
+          ...view.contexts[0],
+          progress: draining
+            ? { kind: "paused", next: null, draining: true }
+            : { kind: "paused", next: { kind: "running", obligation: { kind: "freeze" } }, draining: false },
+        },
+      ],
+    });
+    const show = async (draining: boolean) => {
+      const fixture = createCcRuntimeFixture({ env: identityEnv, respond: () => jsonReply(paused(draining)) });
+      return fixture.run(["run", "show", "run-1"], "text");
+    };
+
+    const draining = await show(true);
+    expect(draining.stdout).toContain("— paused (draining: admitted work is still finishing)");
+    expect(draining.stdout).toContain("- agent [run-1.agent]: paused (draining)");
+    const drained = await show(false);
+    expect(drained.stdout).toContain("— paused (drained)");
+    expect(drained.stdout).toContain("- agent [run-1.agent]: paused (next: freeze)");
+  });
+
+  it("shows a context the run's pause holds as held, with its next step, once admitted work has finished", async () => {
+    const underRunPause = (draining: boolean) => ({
+      ...view,
+      progress: { kind: "paused", draining },
+      contexts: [{ ...view.contexts[0], progress: { kind: "running", obligation: { kind: "freeze" } } }],
+    });
+    const show = async (draining: boolean) => {
+      const fixture = createCcRuntimeFixture({ env: identityEnv, respond: () => jsonReply(underRunPause(draining)) });
+      return fixture.run(["run", "show", "run-1"], "text");
+    };
+
+    expect((await show(true)).stdout).toContain("- agent [run-1.agent]: running (admitted work finishing under the run's pause)");
+    expect((await show(false)).stdout).toContain("- agent [run-1.agent]: held by the run's pause (next: freeze)");
   });
 
   it("refuses an unknown launch option before sending anything", async () => {
@@ -406,7 +451,8 @@ describe("run commands", () => {
                   started: false,
                   progress: null,
                   occurrence: null,
-                  waitingOnLanes: ["api"],
+                  waitingOnLaneProvision: null,
+                  waitingOnPublications: ["api"],
                 },
               ],
               lanes: [

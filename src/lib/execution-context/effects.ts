@@ -42,6 +42,7 @@ import {
   allowanceKindSchema,
   type AllowanceKind,
   type ContextFacts,
+  type Obligation,
 } from "./schemas";
 
 const outputSchemaSchema = z.record(z.string(), z.unknown());
@@ -208,12 +209,31 @@ function allocateCause(
   };
 }
 
+/**
+ * A stable cause names one operation that repeats safely (bind, a check,
+ * accept, an answer wait, a reviewer's continuation), so its executor answers
+ * a resubmission with the outcome it already has. Each owner disposition
+ * authorizes another attempt, a new operation.
+ */
+function attemptCause(facts: ContextFacts, base: string): string {
+  const attempt = facts.control.dispositions.length;
+  return attempt === 0 ? base : `${base}:attempt-${attempt}`;
+}
+
+/**
+ * Whether a turn may ask the owner: only turns whose settlement parks the
+ * question and resumes them with the answer — work and review. A capture or
+ * advice turn's result must arrive in the turn itself.
+ */
+type Questions = "may_ask" | "answers_in_turn";
+
 function seatRef(
   facts: ContextFacts,
   contextId: string,
   assignmentId: string,
   role: SeatRef["role"],
   assignment: SeatAssignment,
+  questions: Questions,
 ): SeatRef {
   // The ref names the seat alone; a reviewer's authority stays in the contract.
   const { id, profile, focus, backend, modelSelection } = assignment;
@@ -230,26 +250,38 @@ function seatRef(
     },
     conversationId: facts.seats.conversations[assignmentId] ?? null,
     replacement: facts.seats.replacements[assignmentId] ?? 0,
-    canAsk: facts.contract.current.ownerQuestions,
+    canAsk: questions === "may_ask" && facts.contract.current.ownerQuestions,
   };
 }
 
-function implementerSeat(facts: ContextFacts, contextId: string): SeatRef {
+function implementerSeat(facts: ContextFacts, contextId: string, questions: Questions): SeatRef {
   return seatRef(
     facts,
     contextId,
     IMPLEMENTER,
     "implementer",
     facts.contract.current.implementer,
+    questions,
   );
+}
+
+/** An answer wait, or a reviewer's continuation: steps that touch only the seat that asked. */
+function parksOneSeat(facts: ContextFacts, obligation: Obligation): boolean {
+  if (obligation.kind === "await_answer") return true;
+  if (obligation.kind !== "work" || obligation.reason !== "continue") return false;
+  const answered = facts.requests.answered.find((a) => !a.continued);
+  return answered !== undefined && answered.seat !== IMPLEMENTER;
 }
 
 /**
  * Plans the effects of the current obligation. Called only when the permit
- * admits and nothing is pending; records any fact the plan itself needs (a new
- * review round, a reserved allowance, the effect sequence) in the returned facts.
+ * admits; records any fact the plan itself needs (a new review round, a
+ * reserved allowance, the effect sequence) in the returned facts. While other
+ * effects are pending, only a seat's question and a reviewer's continuation
+ * are planned: they park and resume that seat alone, and their stable causes
+ * make planning them again a no-op. Everything else waits for the batch.
  */
-export function planEffects(input: { facts: ContextFacts }): {
+export function planEffects(input: { facts: ContextFacts; othersPending: boolean }): {
   facts: ContextFacts;
   effects: PlannedEffect[];
 } {
@@ -264,13 +296,14 @@ export function planEffects(input: { facts: ContextFacts }): {
   if (progress.kind !== "running" && progress.kind !== "waiting") {
     return { facts, effects: [] };
   }
+  const obligation = progress.obligation;
+  if (input.othersPending && !parksOneSeat(facts, obligation)) return { facts, effects: [] };
   const timeoutMs = facts.policy.invocationTimeoutMs;
   const nextCause = (kind: string): string => {
     const allocated = allocateCause(facts, kind);
     facts = allocated.facts;
     return allocated.cause;
   };
-  const obligation = progress.obligation;
 
   switch (obligation.kind) {
     case "bind":
@@ -279,7 +312,7 @@ export function planEffects(input: { facts: ContextFacts }): {
         effects: [
           {
             executor: "workspace",
-            cause: `${contextId}:bind`,
+            cause: attemptCause(facts, `${contextId}:bind`),
             request: {
               kind: "bind",
               bindingId: contextId,
@@ -303,7 +336,7 @@ export function planEffects(input: { facts: ContextFacts }): {
             request: {
               kind: "capture_output",
               workspace: seatWorkspace(facts, "observe", "implementer"),
-              seat: implementerSeat(facts, contextId),
+              seat: implementerSeat(facts, contextId, "answers_in_turn"),
               message: composeCapture(),
               outputSchema,
               timeoutMs,
@@ -341,7 +374,7 @@ export function planEffects(input: { facts: ContextFacts }): {
           facts,
           effects: pendingChecks.map((check) => ({
             executor: "workspace" as const,
-            cause: `${contextId}:check:${roundId}:${check.command}`,
+            cause: attemptCause(facts, `${contextId}:check:${roundId}:${check.command}`),
             request: {
               kind: "check" as const,
               bindingId: contextId,
@@ -371,6 +404,7 @@ export function planEffects(input: { facts: ContextFacts }): {
               assignment.id,
               "reviewer",
               assignment,
+              "may_ask",
             ),
             roundId: round.id,
             message: composeReview(facts, {
@@ -408,7 +442,7 @@ export function planEffects(input: { facts: ContextFacts }): {
             request: {
               kind: "advise",
               workspace: seatWorkspace(facts, "write", "implementer"),
-              seat: implementerSeat(facts, contextId),
+              seat: implementerSeat(facts, contextId, "answers_in_turn"),
               roundId,
               message: composeAdvice(advice.items),
               items: advice.items,
@@ -447,7 +481,7 @@ export function planEffects(input: { facts: ContextFacts }): {
         effects: [
           {
             executor: "requests",
-            cause: `${contextId}:answer:${obligation.questionId}`,
+            cause: attemptCause(facts, `${contextId}:answer:${obligation.questionId}`),
             request: { kind: "answer", questionId: obligation.questionId },
           },
         ],
@@ -462,7 +496,7 @@ export function planEffects(input: { facts: ContextFacts }): {
         effects: [
           {
             executor: "workspace",
-            cause: `${contextId}:accept:${candidate.id}`,
+            cause: attemptCause(facts, `${contextId}:accept:${candidate.id}`),
             request: {
               kind: "accept",
               bindingId: contextId,
@@ -514,7 +548,7 @@ function planWork(
             kind: "work",
             workspace: seatWorkspace(facts, "write", "implementer"),
             reason,
-            seat: implementerSeat(facts, contextId),
+            seat: implementerSeat(facts, contextId, "may_ask"),
             message,
             allowance: null,
             questionId: question,
@@ -582,7 +616,7 @@ function planWork(
           kind: "work",
           workspace: seatWorkspace(facts, "write", "implementer"),
           reason,
-          seat: implementerSeat(facts, contextId),
+          seat: implementerSeat(facts, contextId, "may_ask"),
           message,
           allowance,
           ...extra,
@@ -612,11 +646,11 @@ function planReviewContinuation(
     effects: [
       {
         executor: "conversation",
-        cause: `${contextId}:review:${round.id}:${assignmentId}:${questionId}`,
+        cause: attemptCause(facts, `${contextId}:review:${round.id}:${assignmentId}:${questionId}`),
         request: {
           kind: "review",
           workspace: seatWorkspace(facts, "stable_read", "reviewer"),
-          seat: seatRef(facts, contextId, assignmentId, "reviewer", assignment),
+          seat: seatRef(facts, contextId, assignmentId, "reviewer", assignment, "may_ask"),
           roundId: round.id,
           message,
           outputSchema: REVIEW_VERDICT_OUTPUT_SCHEMA,

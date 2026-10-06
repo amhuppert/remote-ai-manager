@@ -234,6 +234,11 @@ export interface ConversationCore extends Executor {
   /** The attempt a conversation is running now, for questions it asks. */
   runningAttempt(conversationId: string): string | null;
   /**
+   * Whether the conversation's running seat turn may ask its owner, as its own
+   * request says: only a turn whose settlement waits for the answer may.
+   */
+  runningSeatMayAsk(conversationId: string): boolean;
+  /**
    * Runs `work` (a debug command) only while the conversation runs and waits
    * for nothing, holding new turns off until it is done; the conversation's
    * idle hook runs afterwards.
@@ -288,6 +293,8 @@ export function createConversationCore(
   const rerun = new Set<string>();
   const controllers = new Map<string, AbortController>();
   const runningAttempts = new Map<string, string>();
+  /** Whether each running seat turn may ask its owner, from its own request. */
+  const runningSeatAsks = new Map<string, boolean>();
   /** Set at server stop: no new turn starts; queued work waits for the next boot. */
   let stopping = false;
   /** The mailbox cause each conversation is running or acquiring for now, for stop. */
@@ -671,6 +678,7 @@ export function createConversationCore(
       }
       deps.transaction(() => deps.repo.admitAttempt(attemptId));
       runningAttempts.set(item.conversationId, attemptId);
+      if (turn.kind === "seat") runningSeatAsks.set(item.conversationId, turn.request.seat.canAsk);
       let result: CoreTurnResult;
       try {
         if (turn.kind === "user") {
@@ -720,6 +728,7 @@ export function createConversationCore(
         };
       } finally {
         runningAttempts.delete(item.conversationId);
+        runningSeatAsks.delete(item.conversationId);
         acquired.releaseSlot();
       }
       if (result.runtimeUncollected !== undefined) {
@@ -1282,6 +1291,9 @@ export function createConversationCore(
     },
     runningAttempt(conversationId) {
       return runningAttempts.get(conversationId) ?? null;
+    },
+    runningSeatMayAsk(conversationId) {
+      return runningSeatAsks.get(conversationId) ?? false;
     },
   };
 }

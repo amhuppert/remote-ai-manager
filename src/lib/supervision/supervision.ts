@@ -186,8 +186,21 @@ export function composeSupervision(
     enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
     log: ports.logger("conversation-core"),
   });
+  // A runtime whose close failed may still act in the worktree: nothing new runs beside it.
+  const uncollectedRuntime: HoldSource = {
+    async refusal(conversationId) {
+      const failure = await ports.checkpoints.runtime.closeFailure(conversationId);
+      return failure === null
+        ? null
+        : {
+            code: "busy",
+            message: `The conversation's last agent runtime did not close (${failure}), so nothing more runs in it until it does; restarting the server clears it`,
+          };
+    },
+  };
   const holds = firstHold([
     ports.conversationHold,
+    uncollectedRuntime,
     checkpoints,
   ]);
   // A held conversation's batch stays in its queue rather than being claimed only to be refused.
@@ -274,9 +287,9 @@ export function composeSupervision(
       const binding = core.seatBinding(conversationId);
       if (binding === null) return null;
       const attemptId = core.runningAttempt(conversationId);
-      const context = contexts.describe(binding.contextId);
       return {
-        canAsk: context?.ownerQuestions ?? false,
+        // The running turn's own permission: a capture or advice turn answers within the turn.
+        canAsk: core.runningSeatMayAsk(conversationId),
         attemptId,
         openQuestionId:
           attemptId === null

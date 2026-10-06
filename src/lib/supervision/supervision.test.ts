@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { taskTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
 import { createConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
 import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
@@ -100,7 +101,7 @@ describe("run supervision", () => {
       kind: "succeeded",
     });
     expect(h.notified.map((b) => [b.runId, b.kind, b.detail])).toEqual([
-      ["run-1", "succeeded", { outputs: { agent: { summary: "Done." } } }],
+      ["run-1", "succeeded", { kind: "succeeded", outputs: { agent: { summary: "Done." } } }],
     ]);
 
     await launch(s, "run-2");
@@ -140,6 +141,55 @@ describe("run supervision", () => {
     expect(s.runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
+  });
+
+  it("recovers a refused bind once the owner continues: the bind runs again and the run finishes", async () => {
+    h.evidenceFailures = 1;
+    const s = h.compose();
+    await launch(s, "run-1");
+    const halted = s.contexts.describe("run-1.agent");
+    expect(halted?.progress).toMatchObject({ kind: "halted", halt: "workspace_refused" });
+
+    await s.runs.resume("run-1", [
+      { contextId: "run-1.agent", occurrence: halted?.occurrence ?? "", disposition: { kind: "continue" } },
+    ]);
+    await quiesce(s);
+    expect(s.runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+  });
+
+  it("lets a seat ask its owner only in a turn that can wait for the answer, not while it captures its output", async () => {
+    const asks: Array<[string, boolean | undefined]> = [];
+    h.script = async (input, self) => {
+      asks.push([input.request.kind, self.seatFor(input.conversationId)?.canAsk]);
+      return input.request.kind === "capture_output"
+        ? { ...done("Captured."), structuredOutput: { summary: "Done." } }
+        : done("Done.");
+    };
+    const s = h.compose();
+    await s.runs.launch({
+      runId: "run-1",
+      cause: "launch-run-1",
+      kind: "agent",
+      title: "Fix the notice",
+      projectPath: "/repo",
+      sessionName: "session",
+      owner: { conversationId: "owner-1", sessionName: "session" },
+      contexts: [
+        {
+          key: "agent",
+          dependsOn: [],
+          request: agentStartRequest("run-1", {
+            outputSchema: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] },
+          }),
+        },
+      ],
+    });
+    await quiesce(s);
+
+    expect(asks).toEqual([
+      ["work", true],
+      ["capture_output", false],
+    ]);
   });
 
   it("restores a run interrupted by a restart paused, with the interrupted turn visible as a halt", async () => {
@@ -275,6 +325,35 @@ describe("a collaboration's claim on a conversation the core runs", () => {
   beforeEach(() => {
     fixture.seedProject("/repo");
     fixture.seedSession("/repo", "session");
+  });
+
+  it("runs nothing more in a conversation whose last runtime did not close, telling a task's caller why", async () => {
+    await fixture.seedConversation("/repo", "session", makeConversationState({ id: "chat-stuck" }));
+    createConversationCoreRepo(fixture.db).enrollInteractive({
+      conversationId: "chat-stuck",
+      projectPath: "/repo",
+      sessionName: "session",
+      enrolledAt: "2026-10-03T10:00:00.000Z",
+    });
+    h.uncollected.set("chat-stuck", "the agent process did not exit");
+    const s = h.compose();
+
+    expect(await s.core.sendUserMessage({ conversationId: "chat-stuck", text: "Next", inputOrigin: "user" })).toMatchObject({
+      kind: "refused",
+      code: "busy",
+      message: expect.stringContaining("did not close"),
+    });
+    expect(
+      await s.core.runTask({
+        conversationId: "chat-stuck",
+        turn: taskTurnRequestSchema.parse({
+          kind: "task_run",
+          promptText: "Write a commit message",
+          executionClass: "nongoverned-task",
+        }),
+      }),
+    ).toMatchObject({ kind: "not_started", message: expect.stringContaining("did not close") });
+    expect(h.userMessages).toEqual([]);
   });
 
   it("holds the person's message while the row has an owner, and admits it once the conversation is handed back", async () => {

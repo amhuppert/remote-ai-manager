@@ -13,9 +13,9 @@ import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
 import { createWorkspaceAdmission, type WorkspaceAdmission } from "./admission";
 import type { WorkspaceEvidence } from "./evidence";
 import { createWorkspaceExecutor, type WorkspaceExecutor, type WorkspaceExecutorDeps } from "./executor";
-import { createDirectLaneIntegrator } from "./lane-integrator";
+import { createDirectLaneIntegrator } from "./testing/direct-lane-integrator";
 import { createFakeLaneGit } from "./testing/fake-lane-git";
-import type { LaneTarget, WorkspaceBindingRequest } from "./schemas";
+import { laneProvisionReportSchema, type LaneTarget, type WorkspaceBindingRequest } from "./schemas";
 
 const now = "2026-10-04T10:00:00.000Z";
 const session = "/repo/.worktrees/session";
@@ -42,6 +42,8 @@ let permits: ControlPermits;
 let content: string;
 let checks: Array<{ command: string; worktreePath: string }>;
 let failingCheck: string | null;
+/** Holds every lane check until released, to land a pause while one runs. */
+let checkGate: Promise<void> | null;
 let fake: ReturnType<typeof fakeGit>;
 
 const evidence: WorkspaceEvidence = {
@@ -54,9 +56,13 @@ const evidence: WorkspaceEvidence = {
   },
 };
 
-function newExecutor(admission: WorkspaceAdmission = createWorkspaceAdmission()): WorkspaceExecutor {
+function newExecutor(
+  admission: WorkspaceAdmission = createWorkspaceAdmission(),
+  touchRequester: WorkspaceExecutorDeps["touchRequester"] = () => {},
+): WorkspaceExecutor {
   const runCheck: WorkspaceExecutorDeps["runCheck"] = async ({ binding, command }) => {
     checks.push({ command, worktreePath: binding.worktreePath });
+    if (checkGate !== null) await checkGate;
     return command === failingCheck ? { status: "failed", detail: "2 type errors" } : { status: "passed" };
   };
   return createWorkspaceExecutor({
@@ -68,7 +74,7 @@ function newExecutor(admission: WorkspaceAdmission = createWorkspaceAdmission())
     lanes: fake.git,
     integrator: createDirectLaneIntegrator({ lanes: fake.git, runCheck }),
     runCheck,
-    touchRequester: () => {},
+    touchRequester,
     now: () => now,
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
@@ -121,6 +127,7 @@ beforeEach(() => {
   content = "git:t1:t1";
   checks = [];
   failingCheck = null;
+  checkGate = null;
   fake = fakeGit();
 });
 afterEach(async () => {
@@ -360,6 +367,12 @@ describe("lane publication", () => {
     });
   });
 
+  it("refuses with a reason even when the failure it met carried no message", async () => {
+    fake.state.provisionFails = "";
+    const outcome = await settled(newExecutor(), intent(run, { kind: "provision", bindingId: `lane:${laneWorktree}`, lane }));
+    expect(laneProvisionReportSchema.parse(outcome)).toEqual({ kind: "refused", detail: expect.stringMatching(/\S/) });
+  });
+
   it("refuses a lane holding changes no member landed", async () => {
     fake.state.dirt.set(laneWorktree, ["stray.txt"]);
     expect(await settled(newExecutor(), publish())).toEqual({
@@ -380,6 +393,73 @@ describe("lane publication", () => {
     expect(executor.outcome(request.cause).kind).not.toBe("settled");
     expect(fake.state.merges).toEqual([]);
     admission.release(turn);
+    await executor.drain();
+    expect(executor.outcome(request.cause)).toEqual({
+      kind: "settled",
+      outcome: { kind: "published", commit: "c2", incorporated: "h0" },
+    });
+  });
+
+  it("does not publish a lane whose run was paused while it integrated: the session stays as it was", async () => {
+    let releaseChecks = () => {};
+    checkGate = new Promise((resolve) => (releaseChecks = resolve));
+    const executor = newExecutor();
+    const request = publish(["typecheck"]);
+    await executor.submit(request);
+    const drained = executor.drain();
+    while (checks.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+
+    permits.close("run:run-1", now);
+    releaseChecks();
+    await drained;
+    expect(executor.outcome(request.cause)).toEqual({ kind: "queued" });
+    expect(fake.state.heads.get("csm/session")).toBe("h0");
+  });
+
+  it("tells its run when a pause sent it back to the queue, so a run resumed meanwhile submits it again", async () => {
+    const admission = createWorkspaceAdmission();
+    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    if (turn === null) throw new Error("no grant");
+    const request = publish();
+    // As the Run does on a touch: submit its pending step again under its current permit.
+    const executor: WorkspaceExecutor = newExecutor(admission, () => {
+      void executor.submit({ ...request, permit: permits.current("run:run-1") });
+    });
+    await executor.submit(request);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Paused and resumed while it still waits for the session; the resubmission meets it running.
+    permits.close("run:run-1", now);
+    permits.reopen("run:run-1", now);
+    await executor.submit({ ...request, permit: permits.current("run:run-1") });
+    admission.release(turn);
+    await executor.drain();
+    await executor.drain();
+
+    expect(executor.outcome(request.cause)).toEqual({
+      kind: "settled",
+      outcome: { kind: "published", commit: "c2", incorporated: "h0" },
+    });
+  });
+
+  it("does not publish through a pause it spent waiting for the session: it goes back to the queue, and runs again once resumed", async () => {
+    const admission = createWorkspaceAdmission();
+    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    if (turn === null) throw new Error("no grant");
+    const executor = newExecutor(admission);
+    const request = publish();
+    await executor.submit(request);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    permits.close("run:run-1", now);
+    admission.release(turn);
+    await executor.drain();
+    expect(executor.outcome(request.cause)).toEqual({ kind: "queued" });
+    expect(fake.state.merges).toEqual([]);
+    expect(fake.state.heads.get("csm/session")).toBe("h0");
+
+    permits.reopen("run:run-1", now);
+    await executor.submit({ ...request, permit: permits.current("run:run-1") });
     await executor.drain();
     expect(executor.outcome(request.cause)).toEqual({
       kind: "settled",

@@ -75,7 +75,6 @@ function facts(
       pass: 0,
       contextId: `run-1.${key}`,
       startCause: `run-1:start:${key}:0`,
-      request: request(key),
     })),
     control,
   };
@@ -95,21 +94,27 @@ const halted: ContextProgress = {
   detail: "The provider failed.",
 };
 
+/** A context waiting on an answer has the question open, as Context reports it. */
+function asksOwner(progress: ContextProgress | null): boolean {
+  const next = progress?.kind === "paused" ? progress.next : progress;
+  return next?.kind === "waiting" && next.obligation.kind === "await_answer";
+}
+
 /** Observations by definition key for first passes, or by Context id (`run-1.key.pass2`) for later ones. */
 function observed(
-  entries: Record<string, { progress: ContextProgress | null; output?: unknown; active?: boolean }>,
+  entries: Record<string, { progress: ContextProgress | null; output?: unknown; active?: boolean; openQuestions?: number }>,
 ): ObservedContexts {
   return new Map(
     Object.entries(entries).map(([key, entry]) => [
       key.startsWith("run-1.") ? key : `run-1.${key}`,
-      { active: false, ...entry },
+      { active: false, openQuestions: asksOwner(entry.progress) ? 1 : 0, ...entry },
     ]),
   );
 }
 
 describe("scheduler", () => {
   it("starts every context without dependencies at launch", () => {
-    expect(decideNext(facts([]), observed({})).map((s) => s.key)).toEqual(["api", "ui"]);
+    expect(decideNext(facts([]), observed({})).starts.map((s) => s.key)).toEqual(["api", "ui"]);
   });
 
   it("starts a context once all its dependencies succeeded, with their accepted outputs as inputs", () => {
@@ -117,13 +122,13 @@ describe("scheduler", () => {
       api: { progress: succeeded("c-api"), output: { endpoint: "/v1/x" } },
       ui: { progress: running },
     });
-    expect(decideNext(facts(["api", "ui"]), partly)).toEqual([]);
+    expect(decideNext(facts(["api", "ui"]), partly).starts).toEqual([]);
 
     const both = observed({
       api: { progress: succeeded("c-api"), output: { endpoint: "/v1/x" } },
       ui: { progress: succeeded("c-ui"), output: { summary: "Built the page." } },
     });
-    expect(decideNext(facts(["api", "ui"]), both)).toEqual([
+    expect(decideNext(facts(["api", "ui"]), both).starts).toEqual([
       {
         key: "integrate",
         pass: 0,
@@ -141,9 +146,9 @@ describe("scheduler", () => {
       api: { progress: succeeded("c-api"), output: null },
       ui: { progress: succeeded("c-ui"), output: null },
     });
-    expect(decideNext(facts(["api", "ui"], { paused: true, cancelled: false, fault: null }), done)).toEqual([]);
-    expect(decideNext(facts(["api", "ui"], { paused: false, cancelled: true, fault: null }), done)).toEqual([]);
-    expect(decideNext(facts(["api", "ui", "integrate"]), done)).toEqual([]);
+    expect(decideNext(facts(["api", "ui"], { paused: true, cancelled: false, fault: null }), done).starts).toEqual([]);
+    expect(decideNext(facts(["api", "ui"], { paused: false, cancelled: true, fault: null }), done).starts).toEqual([]);
+    expect(decideNext(facts(["api", "ui", "integrate"]), done).starts).toEqual([]);
   });
 });
 
@@ -202,7 +207,7 @@ describe("run progress", () => {
       api: { progress: succeeded("c-api"), output: null },
       ui: { progress: succeeded("c-ui"), output: null },
     });
-    expect(decideNext(facts(["api", "ui"], faulted), roots)).toEqual([]);
+    expect(decideNext(facts(["api", "ui"], faulted), roots).starts).toEqual([]);
     expect(deriveRunProgress(facts(["api", "ui"], faulted), roots)).toEqual({
       kind: "needs_owner",
       reasons: ["run: The definition could not be read"],
@@ -299,13 +304,12 @@ function workflow(
       pass,
       contextId: at(key, pass),
       startCause: `run-1:start:${key}:${pass}`,
-      request: requests.get(key) ?? request(key),
     })),
     control: { paused: false, cancelled: false, fault: null },
   };
 }
 
-const keysOf = (starts: ReturnType<typeof decideNext>) =>
+const keysOf = (starts: ReturnType<typeof decideNext>["starts"]) =>
   starts.map((start) => `${start.key}@${start.pass}`);
 
 /** The Context a pass of a key runs in: later passes get fresh Contexts. */
@@ -336,7 +340,7 @@ describe("routes", () => {
 
   it("starts only the branch whose guard matches the accepted output, and skips the rest", () => {
     const triaged = observed({ triage: { progress: succeeded("c-t"), output: { kind: "bug" } } });
-    expect(decideNext(workflow(routed(), [["triage", 0]]), triaged)).toEqual([
+    expect(decideNext(workflow(routed(), [["triage", 0]]), triaged).starts).toEqual([
       {
         key: "fix",
         pass: 0,
@@ -356,7 +360,7 @@ describe("routes", () => {
       design: { progress: succeeded("c-d"), output: { summary: "Designed it." } },
     });
     // report joins fix and design: the skipped fix drops out, so report builds on design alone.
-    expect(decideNext(facts, designed)).toEqual([
+    expect(decideNext(facts, designed).starts).toEqual([
       {
         key: "report",
         pass: 0,
@@ -385,7 +389,7 @@ describe("routes", () => {
     ];
     const facts = workflow(defined, [["triage", 0], ["docs", 0]]);
     const chore = { progress: succeeded("c-t"), output: { kind: "chore" } };
-    expect(decideNext(facts, observed({ triage: chore, docs: { progress: running } }))).toEqual([]);
+    expect(decideNext(facts, observed({ triage: chore, docs: { progress: running } })).starts).toEqual([]);
     const plan = planRun(facts, observed({ triage: chore, docs: { progress: running } }));
     expect(plan.halts).toEqual([
       expect.objectContaining({ kind: "route_cardinality", occurrence: "route:triage:cardinality" }),
@@ -413,7 +417,7 @@ describe("routes", () => {
     ];
     const facts = workflow(defined, [["triage", 0]]);
     const bug = observed({ triage: { progress: succeeded("c-t"), output: { kind: "bug" } } });
-    expect(decideNext(facts, bug)).toEqual([]);
+    expect(decideNext(facts, bug).starts).toEqual([]);
     expect(planRun(facts, bug).halts.map((h) => h.kind)).toEqual(["route_cardinality"]);
   });
 
@@ -426,7 +430,7 @@ describe("routes", () => {
     ];
     const facts = workflow(defined, [["triage", 0]]);
     const bug = observed({ triage: { progress: succeeded("c-t"), output: { kind: "bug" } } });
-    expect(decideNext(facts, bug)).toEqual([
+    expect(decideNext(facts, bug).starts).toEqual([
       {
         key: "join",
         pass: 0,
@@ -485,7 +489,7 @@ describe("routes", () => {
   it("halts the routes it cannot evaluate instead of reading a missing output as false", () => {
     const facts = workflow(routed(), [["triage", 0]]);
     const unreadable = observed({ triage: { progress: succeeded("c-t"), output: null } });
-    expect(decideNext(facts, unreadable)).toEqual([]);
+    expect(decideNext(facts, unreadable).starts).toEqual([]);
     expect(planRun(facts, unreadable).halts.map((h) => [h.kind, h.occurrence])).toEqual([
       ["route_unevaluable", "route:fix:unevaluable:triage"],
       ["route_unevaluable", "route:design:unevaluable:triage"],
@@ -524,7 +528,7 @@ describe("loops", () => {
       implement: { progress: succeeded("c-i1"), output: { summary: "Implemented." } },
       review: { progress: succeeded("c-r1"), output: rejected },
     });
-    expect(decideNext(firstPass, reviewed)).toEqual([
+    expect(decideNext(firstPass, reviewed).starts).toEqual([
       {
         key: "implement",
         pass: 1,
@@ -546,7 +550,7 @@ describe("loops", () => {
       ...reviewed,
       ...observed({ [at("implement", 1)]: { progress: running } }),
     ]);
-    expect(decideNext(secondPass, implementing)).toEqual([]);
+    expect(decideNext(secondPass, implementing).starts).toEqual([]);
     expect(planRun(secondPass, implementing).keys.get("review")).toEqual({
       kind: "waiting",
       pass: 1,
@@ -556,7 +560,7 @@ describe("loops", () => {
       ...reviewed,
       ...observed({ [at("implement", 1)]: { progress: succeeded("c-i2"), output: { summary: "Added tests." } } }),
     ]);
-    expect(decideNext(secondPass, implemented)).toEqual([
+    expect(decideNext(secondPass, implemented).starts).toEqual([
       {
         key: "review",
         pass: 1,
@@ -579,14 +583,14 @@ describe("loops", () => {
       [at("implement", 1)]: { progress: succeeded("c-i2"), output: { summary: "Added tests." } },
       [at("review", 1)]: { progress: running },
     });
-    expect(decideNext(facts, lastPassRunning)).toEqual([]);
+    expect(decideNext(facts, lastPassRunning).starts).toEqual([]);
 
     const approved = { approved: true, findings: "" };
     const lastPassApproved = new Map([
       ...lastPassRunning,
       ...observed({ [at("review", 1)]: { progress: succeeded("c-r2"), output: approved } }),
     ]);
-    expect(decideNext(facts, lastPassApproved)).toEqual([
+    expect(decideNext(facts, lastPassApproved).starts).toEqual([
       {
         key: "ship",
         pass: 0,
@@ -614,7 +618,7 @@ describe("loops", () => {
       implement: { progress: succeeded("c-i1"), output: { summary: "Implemented." } },
       review: { progress: succeeded("c-r1"), output: rejected },
     });
-    expect(decideNext(facts, reviewed)).toEqual([]);
+    expect(decideNext(facts, reviewed).starts).toEqual([]);
     expect(planRun(facts, reviewed).halts).toEqual([
       expect.objectContaining({ kind: "loop_exhausted", occurrence: "loop:polish:exhausted:1" }),
     ]);
@@ -631,7 +635,7 @@ describe("loops", () => {
       implement: { progress: succeeded("c-i1"), output: { summary: "Implemented." } },
       review: { progress: succeeded("c-r1"), output: null },
     });
-    expect(decideNext(facts, unreadable)).toEqual([]);
+    expect(decideNext(facts, unreadable).starts).toEqual([]);
     expect(planRun(facts, unreadable).halts.map((h) => h.occurrence)).toEqual([
       "loop:polish:unevaluable:1",
     ]);
@@ -656,7 +660,7 @@ describe("loops", () => {
       [at("implement", 1)]: { progress: succeeded("c-i2"), output: { summary: "Second." } },
       [at("review", 1)]: { progress: succeeded("c-r2"), output: { approved: true, risky: true } },
     });
-    expect(decideNext(facts, passes)).toEqual([
+    expect(decideNext(facts, passes).starts).toEqual([
       {
         key: "escalate",
         pass: 0,
@@ -683,7 +687,7 @@ describe("loops", () => {
         ]),
       ),
     });
-    expect(decideNext(facts, seen)).toEqual([
+    expect(decideNext(facts, seen).starts).toEqual([
       {
         key: "implement",
         pass: 4,
@@ -706,10 +710,10 @@ describe("loops", () => {
       review: { progress: succeeded("c-r1"), output: rejected },
     });
     const paused = { ...facts, control: { paused: true, cancelled: false, fault: null } };
-    expect(decideNext(paused, reviewed)).toEqual([]);
+    expect(decideNext(paused, reviewed).starts).toEqual([]);
     expect(deriveRunProgress(paused, reviewed)).toEqual({ kind: "paused", draining: false });
     expect(planRun(paused, reviewed).loops.get("polish")).toEqual({ kind: "next", pass: 0 });
-    expect(keysOf(decideNext(facts, reviewed))).toEqual(["implement@1"]);
+    expect(keysOf(decideNext(facts, reviewed).starts)).toEqual(["implement@1"]);
   });
 
   it("skips the whole loop when the route into its entry is not taken", () => {
@@ -724,7 +728,7 @@ describe("loops", () => {
     ];
     const facts = workflow(gated, [["plan", 0]], [polish(3)]);
     const stop = observed({ plan: { progress: succeeded("c-plan"), output: { go: false } } });
-    expect(decideNext(facts, stop)).toEqual([]);
+    expect(decideNext(facts, stop).starts).toEqual([]);
     expect(planRun(facts, stop).keys.get("review")).toEqual({ kind: "skipped" });
     expect(deriveRunProgress(facts, stop)).toEqual({ kind: "succeeded" });
   });
@@ -780,7 +784,7 @@ describe("lanes", () => {
     expect(waiting.keys.get("integrate")).toEqual({ kind: "waiting", pass: 0, on: [], publications: ["ui"] });
 
     const both = workflow(twoLanes, [["api", 0], ["ui", 0]], [], { api: published(), ui: published() });
-    expect(keysOf(decideNext(both, bothDone))).toEqual(["integrate@0"]);
+    expect(keysOf(decideNext(both, bothDone).starts)).toEqual(["integrate@0"]);
     expect(deriveRunProgress(both, bothDone)).toEqual({ kind: "running" });
     const finished = workflow(twoLanes, [["api", 0], ["ui", 0], ["integrate", 0]], [], { api: published(), ui: published() });
     expect(deriveRunProgress(finished, observed({ ...done("api"), ...done("ui"), ...done("integrate") }))).toEqual({
@@ -814,6 +818,27 @@ describe("lanes", () => {
     ).toEqual(["docs"]);
   });
 
+  it("starts a session reader a lane waits for at once, and one after the lane only once it published, even when a skipped route removed its link", () => {
+    const layout: Defined[] = [
+      { key: "plan", readOnly: true, outputSchema: { type: "object" } },
+      { key: "keep", lane: "a" },
+      {
+        key: "maybe",
+        lane: "a",
+        dependsOn: ["plan"],
+        outputOnly: ["plan"],
+        when: { plan: { schema: { properties: { take: { const: true } } } } },
+      },
+      { key: "audit", readOnly: true, dependsOn: ["maybe", "plan"], outputOnly: ["plan"] },
+    ];
+    expect(planRun(workflow(layout, []), observed({})).starts.map((start) => start.key)).toEqual(["plan"]);
+
+    const skipped = observed({ ...done("plan", { take: false }), keep: { progress: running } });
+    const working = planRun(workflow(layout, [["plan", 0], ["keep", 0]], [], { a: provisioned }), skipped);
+    expect(working.starts).toEqual([]);
+    expect(working.keys.get("audit")).toEqual({ kind: "waiting", pass: 0, on: [], publications: ["a"] });
+  });
+
   it("does not succeed while a lane's work is unpublished", () => {
     const facts = workflow([{ key: "api", lane: "api" }], [["api", 0]], [], { api: provisioned });
     expect(deriveRunProgress(facts, observed(done("api")))).toEqual({ kind: "running" });
@@ -842,7 +867,7 @@ describe("lanes", () => {
     const blocked = workflow([{ key: "api", lane: "api" }], [["api", 0]], [], {
       api: {
         provision: ready,
-        publication: { attempt: 1, outcome: { kind: "blocked", detail: "The session has uncommitted changes" } },
+        publication: { attempt: 1, outcome: { kind: "publish_blocked", detail: "The session has uncommitted changes" } },
       },
     });
     const plan = planRun(blocked, observed(done("api")));

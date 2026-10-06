@@ -3,7 +3,7 @@ import type { GitClient } from "@/lib/git/client";
 import { inspectInProgressMerge } from "@/lib/git/conflict-markers";
 import { createOwnedLandingOperations } from "@/lib/git/owned-landing";
 import { createWorktreeOperations } from "@/lib/git/worktree";
-import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import type { FrozenLaneProvisioner, ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 
 /**
  * The Git effects of isolated lanes, behind one port so the Workspace executor
@@ -47,8 +47,6 @@ export interface LaneGit {
     branch: string;
     marker: string;
   }): Promise<string | null>;
-  /** Aborts a merge in progress; does nothing otherwise. */
-  abortMerge(worktreePath: string): Promise<void>;
   /**
    * Undoes a merge in progress only while its conflicts are unresolved; a
    * resolved merge, and one whose state cannot be read, are somebody's work
@@ -139,7 +137,7 @@ export interface LaneGitDeps {
   git: GitClient;
   exists(filePath: string): boolean;
   writeFile(filePath: string, content: string): Promise<void>;
-  worktrees: Pick<ParallelWorktrees, "provisionLane" | "disposeLane">;
+  worktrees: FrozenLaneProvisioner & Pick<ParallelWorktrees, "disposeLane">;
   /** The single-flight lock CC's own commit and merge jobs take on a session. */
   acquireSessionLock(projectPath: string, sessionName: string): () => void;
   isSessionBusy(projectPath: string, sessionName: string): boolean;
@@ -216,22 +214,17 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
         throw new Error(
           `The lane worktree ${input.worktreePath} exists, but its setup never finished. Remove it and its branch (git worktree remove --force ${input.worktreePath} && git branch -D ${input.branch}), then ask for a new attempt.`,
         );
-      const targets = await deps.worktrees.provisionLane({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        sessionDir: path.basename(input.sessionWorktreePath),
-        sessionBranch: input.base,
-        laneId: input.laneId,
-      });
-      // The run froze these names at launch; a changed branch prefix would move them.
-      if (
-        path.resolve(targets.worktreePath) !== path.resolve(input.worktreePath) ||
-        targets.branchName !== input.branch
-      ) {
-        throw new Error(
-          `The lane would be created as ${targets.branchName} at ${targets.worktreePath}, not ${input.branch} at ${input.worktreePath} as launched; was the branch prefix changed?`,
-        );
-      }
+      // Where the run named it at launch, whatever names new lanes now.
+      await deps.worktrees.provisionLaneAt(
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          sessionDir: path.basename(input.sessionWorktreePath),
+          sessionBranch: input.base,
+          laneId: input.laneId,
+        },
+        { worktreePath: input.worktreePath, branchName: input.branch },
+      );
       await deps.writeFile(await readyMarker(), "ready\n");
       return { baseline: (await git(input.worktreePath, ["rev-parse", "HEAD"])).trim() };
     },
@@ -266,10 +259,6 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
         ])
       ).trim();
       return found.length > 0 ? found : null;
-    },
-
-    async abortMerge(worktreePath) {
-      if (await mergeInProgress(worktreePath)) await git(worktreePath, ["merge", "--abort"]);
     },
 
     mergeInProgress,

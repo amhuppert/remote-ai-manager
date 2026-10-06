@@ -176,6 +176,25 @@ describe("createParallelWorktrees branch prefix resolution", () => {
     ).toBe(true);
   });
 
+  it("provisions a lane at the coordinates its run froze, whatever the branch prefix configuration says now", async () => {
+    const { client, calls } = makeRecordingClient();
+    const pwt = createParallelWorktrees({
+      gitClient: client,
+      existsSync: () => false,
+      readGlobalConfig: async () => ({ branchPrefix: "team" }),
+      readRepoConfig: async () => null,
+    });
+
+    const result = await pwt.provisionLaneAt(
+      { projectPath: "/repo", sessionName: "session-1", sessionDir: "session-1", sessionBranch: "csm/session-1", laneId: "lane-a" },
+      { worktreePath: "/repo/.worktrees/session-1.lane-a", branchName: "csm/session-1-lane-a" },
+    );
+
+    expect(result).toEqual({ worktreePath: "/repo/.worktrees/session-1.lane-a", branchName: "csm/session-1-lane-a" });
+    expect(calls.some((c) => c.startsWith("worktree add -b csm/session-1-lane-a /repo/.worktrees/session-1.lane-a csm/session-1"))).toBe(true);
+    expect(calls.some((c) => c.includes("team/"))).toBe(false);
+  });
+
   it("prefers the per-repo branch prefix over the global one", async () => {
     const { client } = makeRecordingClient();
     const pwt = createParallelWorktrees({

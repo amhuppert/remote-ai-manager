@@ -471,9 +471,10 @@ type WaitNode = `context:${string}` | `starts:${string}` | `publishes:${string}`
  * once all its contexts finished; a context waits for what it depends on to
  * finish, and for the lane of a dependency it needs code from to publish. A
  * cycle among these never starts, so it is refused with the dependency that
- * closes it. Separately, a session context that writes leaves results the
- * session never commits, so any lane that publishes while they are there is
- * blocked: such a context must wait for every lane to publish.
+ * closes it. Separately, a publication changes the session worktree, so every
+ * session context is ordered against each lane's publication. A reader may come
+ * before it or after it. A writer leaves results the session never commits,
+ * which block any later publication, so it must come after every publication.
  */
 function checkWaits(
   contexts: readonly WorkflowContextRequest[],
@@ -546,14 +547,20 @@ function checkWaits(
   };
   const afterPublication = new Map(lanes.map((lane) => [lane, after(`publishes:${lane}`)]));
   contexts.forEach((context, index) => {
-    if (context.lane !== undefined || scopeOf(context).mode === "readOnly") return;
+    if (context.lane !== undefined) return;
+    const self: WaitNode = `context:${context.key}`;
+    const reader = scopeOf(context).mode === "readOnly";
+    const before = reader ? after(self) : new Set<WaitNode>();
     const blocked = lanes.find(
-      (lane) => !(afterPublication.get(lane)?.has(`context:${context.key}`) ?? false),
+      (lane) =>
+        !(afterPublication.get(lane)?.has(self) ?? false) && !before.has(`publishes:${lane}`),
     );
     if (blocked === undefined) return;
     issues.push({
       path: ["contexts", index],
-      message: `"${context.key}" writes in the session worktree, whose results are never committed, and lane "${blocked}" could publish while they are there, which publication refuses. Make "${context.key}" depend on the work in lane "${blocked}", place it in a lane, or make it read-only.`,
+      message: reader
+        ? `"${context.key}" is read-only and reads the whole session worktree, and lane "${blocked}" could publish while it runs, which changes that worktree under it. Make "${context.key}" depend on the work in lane "${blocked}", make that work depend on "${context.key}" (outputOnly), or place "${context.key}" in a lane.`
+        : `"${context.key}" writes in the session worktree, whose results are never committed, and lane "${blocked}" could publish while they are there, which publication refuses. Make "${context.key}" depend on the work in lane "${blocked}", or place it in a lane.`,
     });
   });
   return issues;
@@ -772,6 +779,8 @@ export function compileWorkflow(
   input: LaunchPlacement & {
     request: WorkflowLaunchRequest;
     seats: Record<string, Seats>;
+    /** An amended run's lanes: a lane the run already named keeps its worktree and branch. */
+    existingLanes?: readonly RunLane[];
   },
 ): RunLaunchInput {
   const contexts = input.request.contexts;
@@ -837,7 +846,7 @@ export function compileWorkflow(
  * two runs in one session never share a lane worktree or branch.
  */
 function freezeLanes(
-  input: LaunchPlacement & { request: WorkflowLaunchRequest },
+  input: LaunchPlacement & { request: WorkflowLaunchRequest; existingLanes?: readonly RunLane[] },
 ): RunLane[] {
   const runTag = input.runId.replace(/^run-/, "").slice(0, 8);
   const keys = [
@@ -846,6 +855,10 @@ function freezeLanes(
     ),
   ];
   return keys.map((key) => {
+    const checks = input.request.lanes?.find((lane) => lane.key === key)?.checks ?? [];
+    const existing = input.existingLanes?.find((lane) => lane.key === key);
+    // Named once: whatever configuration names new lanes now, this one stays where it is.
+    if (existing !== undefined) return { ...existing, checks };
     const laneId = `${runTag}-${key}`;
     return {
       key,
@@ -855,8 +868,7 @@ function freezeLanes(
         worktreePath: input.session.worktreePath,
         branch: input.session.branch,
       },
-      checks:
-        input.request.lanes?.find((lane) => lane.key === key)?.checks ?? [],
+      checks,
     };
   });
 }

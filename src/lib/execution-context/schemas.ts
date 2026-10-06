@@ -344,11 +344,62 @@ export const recordedHaltSchema = z
   .strict();
 export type RecordedHalt = z.infer<typeof recordedHaltSchema>;
 
+export const derivedHaltKindSchema = z.enum([
+  "retries_exhausted",
+  "output_invalid",
+  "candidate_unstable",
+  "plan_defect",
+  "advice_invalid",
+  "unavailable",
+]);
+export type DerivedHaltKind = z.infer<typeof derivedHaltKindSchema>;
+
+export const haltKindSchema = z.union([
+  derivedHaltKindSchema,
+  recordedHaltKindSchema,
+]);
+export type HaltKind = z.infer<typeof haltKindSchema>;
+
+/** Dispositions that clear a halt, bound to the halt's occurrence id. */
+export const haltDispositionSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("grant"),
+      allowance: allowanceKindSchema,
+      count: z.number().int().min(1),
+      reason: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal("retry_capture") }).strict(),
+  z.object({ kind: z.literal("continue") }).strict(),
+  z.object({ kind: z.literal("rereview"), reason: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("retry_advice") }).strict(),
+  z.object({ kind: z.literal("retry") }).strict(),
+  z.object({ kind: z.literal("replace_seat") }).strict(),
+  z
+    .object({ kind: z.literal("confirm_effect"), evidence: z.string().min(1) })
+    .strict(),
+]);
+export type HaltDisposition = z.infer<typeof haltDispositionSchema>;
+
+/** An owner's decision that cleared a halt, kept with what justified it. */
+export const recordedDispositionSchema = z
+  .object({
+    occurrence: z.string().min(1),
+    halt: haltKindSchema,
+    disposition: haltDispositionSchema,
+    at: z.string().min(1),
+  })
+  .strict();
+export type RecordedDisposition = z.infer<typeof recordedDispositionSchema>;
+
 export const controlFactsSchema = z
   .object({
     paused: z.boolean(),
     cancelled: z.boolean(),
     halt: recordedHaltSchema.nullable(),
+    /** Every disposition the owner applied, in order; each one authorizes a new attempt of what halted. */
+    dispositions: z.array(recordedDispositionSchema),
     steers: z.array(
       z
         .object({
@@ -431,22 +482,6 @@ export type ContextFacts = z.infer<typeof contextFactsSchema>;
 // Derived progress
 // ---------------------------------------------------------------------------
 
-export const derivedHaltKindSchema = z.enum([
-  "retries_exhausted",
-  "output_invalid",
-  "candidate_unstable",
-  "plan_defect",
-  "advice_invalid",
-  "unavailable",
-]);
-export type DerivedHaltKind = z.infer<typeof derivedHaltKindSchema>;
-
-export const haltKindSchema = z.union([
-  derivedHaltKindSchema,
-  recordedHaltKindSchema,
-]);
-export type HaltKind = z.infer<typeof haltKindSchema>;
-
 export const obligationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("bind") }).strict(),
   z
@@ -517,28 +552,6 @@ export const contextProgressSchema = z.union([
     .strict(),
 ]);
 export type ContextProgress = z.infer<typeof contextProgressSchema>;
-
-/** Dispositions that clear a halt, bound to the halt's occurrence id. */
-export const haltDispositionSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("grant"),
-      allowance: allowanceKindSchema,
-      count: z.number().int().min(1),
-      reason: z.string().min(1),
-    })
-    .strict(),
-  z.object({ kind: z.literal("retry_capture") }).strict(),
-  z.object({ kind: z.literal("continue") }).strict(),
-  z.object({ kind: z.literal("rereview"), reason: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("retry_advice") }).strict(),
-  z.object({ kind: z.literal("retry") }).strict(),
-  z.object({ kind: z.literal("replace_seat") }).strict(),
-  z
-    .object({ kind: z.literal("confirm_effect"), evidence: z.string().min(1) })
-    .strict(),
-]);
-export type HaltDisposition = z.infer<typeof haltDispositionSchema>;
 
 /** One persisted Context: its facts, its frozen placement and the progress projection. */
 export const contextRecordSchema = z

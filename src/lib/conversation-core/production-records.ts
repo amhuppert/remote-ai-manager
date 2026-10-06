@@ -27,6 +27,7 @@ import {
   applyQuestionCleared,
   applyQuestionWithdrawn,
   applyTurnBegin,
+  backendLocked,
   applyTurnClaimed,
   applyTurnInterrupted,
   applyTurnSettlement,
@@ -257,7 +258,7 @@ export function createProductionConversationRecords(
           identity.conversationId,
           "conversation-core.withdrawn.backend",
           (row) => {
-            if (row.promptCount === 0 && row.backendRef === null) row.agentBackend = chosen;
+            if (!backendLocked(row)) row.agentBackend = chosen;
           },
         );
       }
@@ -282,6 +283,8 @@ export function createProductionConversationRecords(
         "conversation-core.turn.interrupted",
         (row) => ({ status: applyTurnInterrupted(row, new Date().toISOString()), facts: factsOf(row) }),
       );
+      // Its turn settled the row first: the restart interrupted nothing the person sees.
+      if (status === null) return;
       const interruption = "The server restarted while this turn was running, so it was interrupted.";
       await appendNotice({
         conversationId: identity.conversationId,

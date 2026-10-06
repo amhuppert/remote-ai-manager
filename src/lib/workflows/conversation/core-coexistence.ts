@@ -1,17 +1,16 @@
 /**
- * What the shared conversation core reuses from the conversation actor while
- * both engines run side by side (design r2 §15): the managed runtime handle,
- * the production collaborators a turn composes, and the checkpoint lifecycle
- * (owned maintenance, the restart rules and the queued-receipt repair) that
- * the core runs for its own conversations. The actor's own modules stay
- * private; this is the one surface the core reaches. Deleted with the actor at
- * cutover, when these move to the core.
+ * Pure actor primitives the shared conversation core reuses while both
+ * engines run side by side (design r2 §15): the managed runtime handle and the
+ * checkpoint lifecycle (owned maintenance, the restart rules and the
+ * queued-receipt repair). Importing this loads none of the actor's container,
+ * which the core's composition modules take from `./core-composition`.
+ * At cutover these move to their owning domains (conversation-core, the
+ * checkpoint domain) rather than being deleted with the actor.
  */
 export {
   ManagedConversationRuntime,
   type BackendRuntimeIndex,
 } from "./runtime-binding";
-export { loadProductionActorDependencies as loadConversationTurnDependencies } from "./production";
 export {
   captureCheckpointSourceForHost,
   runCheckpointMaintenance,

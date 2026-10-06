@@ -41,10 +41,12 @@ import {
 } from "./launch";
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
-import type { RunRecord } from "./schemas";
+import { frozenKeys, writtenEntry } from "./amendment";
+import type { RunDefinitionContext, RunRecord } from "./schemas";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
+  workflowContextRequestSchema,
   workflowLaunchRequestSchema,
   type WorkflowLaunchRequest,
 } from "./workflow-definition";
@@ -240,6 +242,29 @@ export function createRunRouteHandlers(
     };
   }
 
+  function amendmentRefused(runId: string, issues: readonly string[]): Response {
+    deps.log.warn("runs.amendment_refused", { runId, issues: issues.length });
+    return NextResponse.json(
+      {
+        error: `The amendment changes work that already happened (${issues.length} ${issues.length === 1 ? "change" : "changes"})`,
+        code: "amendment_refused",
+        issues: issues.map((message) => ({ path: "definition", message })),
+      },
+      { status: 409 },
+    );
+  }
+
+  /** The run, when it belongs to this session; any other id reads as not found. */
+  function runInSession(
+    runId: string | undefined,
+    place: { projectPath: string; sessionName: string },
+  ): { ok: true; run: RunRecord } | { ok: false; response: Response } {
+    const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
+    if (run === null || run.projectPath !== place.projectPath || run.sessionName !== place.sessionName)
+      return { ok: false, response: notFound(`Run "${runId}" not found`) };
+    return { ok: true, run };
+  }
+
   /** The caller's own run in this session; anyone else gets a refusal naming the owner. */
   async function resolveOwnedRun(
     request: Request,
@@ -251,14 +276,9 @@ export function createRunRouteHandlers(
     const resolved = await resolveCaller(request, context);
     if (!resolved.ok) return resolved;
     const { runId } = await context.params;
-    const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-    if (
-      run === null ||
-      run.projectPath !== resolved.caller.projectPath ||
-      run.sessionName !== resolved.caller.sessionName
-    ) {
-      return { ok: false, response: notFound(`Run "${runId}" not found`) };
-    }
+    const found = runInSession(runId, resolved.caller);
+    if (!found.ok) return found;
+    const { run } = found;
     if (run.ownerConversationId !== resolved.caller.conversationId) {
       return {
         ok: false,
@@ -295,15 +315,10 @@ export function createRunRouteHandlers(
     const { name, session, runId } = await context.params;
     const resolved = await resolveProjectSessionOr404(deps, name ?? "", session ?? "");
     if (!resolved.ok) return resolved;
-    const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-    if (
-      run === null ||
-      run.projectPath !== resolved.value.projectPath ||
-      run.sessionName !== resolved.value.session.sessionName
-    ) {
-      return { ok: false, response: notFound(`Run "${runId}" not found`) };
-    }
-    return { ok: true, run };
+    return runInSession(runId, {
+      projectPath: resolved.value.projectPath,
+      sessionName: resolved.value.session.sessionName,
+    });
   }
 
   function refuseWorkflow(caller: Caller, definition: WorkflowLaunchRequest): Response | null {
@@ -313,16 +328,28 @@ export function createRunRouteHandlers(
     );
   }
 
-  /** Each context's own seats, or the refusal naming the context whose seat cannot be resolved. */
+  /**
+   * Each context's own seats, or the refusal naming the context whose seat
+   * cannot be resolved. A context kept as it started (`kept`) keeps the seats
+   * it was admitted with: its work happened, and is not admitted again.
+   */
   async function workflowSeats(
     caller: Caller,
     definition: WorkflowLaunchRequest,
+    kept: ReadonlyMap<string, RunDefinitionContext> = new Map(),
   ): Promise<
     | { ok: true; seats: Record<string, { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }> }
     | { ok: false; response: Response }
   > {
     const seats: Record<string, { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }> = {};
     for (const contextRequest of definition.contexts) {
+      const frozen = kept.get(contextRequest.key);
+      if (frozen !== undefined) {
+        const { implementer, reviewers } = frozen.request.contract;
+        const seatOf = ({ backend, modelSelection }: ResolvedSeat) => ({ backend, modelSelection });
+        seats[contextRequest.key] = { implementer: seatOf(implementer), reviewers: reviewers.map(seatOf) };
+        continue;
+      }
       const resolvedSeats = await deps.resolveSeats({
         projectPath: caller.projectPath,
         request: contextRequest,
@@ -487,20 +514,23 @@ export function createRunRouteHandlers(
       const proposed = body.value.definition;
       const refused = refuseWorkflow(caller, proposed);
       if (refused !== null) return refused;
-      const seats = await workflowSeats(caller, proposed);
+      // Started work is compiled as its owner first wrote it, with the seats it started with; the
+      // amendment then compares the proposal as written and names every change started work forbids.
+      const frozen = frozenKeys(run.facts);
+      const kept = new Map(run.facts.definition.contexts.filter((c) => frozen.has(c.key)).map((c) => [c.key, c]));
+      const asStarted = {
+        ...proposed,
+        contexts: proposed.contexts.map((context) => {
+          const written = kept.has(context.key) ? writtenEntry(run.facts.definition.authored, context.key) : null;
+          return written === null ? context : workflowContextRequestSchema.parse(written);
+        }),
+      };
+      const seats = await workflowSeats(caller, asStarted, kept);
       if (!seats.ok) return seats.response;
-      // A lane the run already named stays where it is, whatever configuration names new lanes now.
-      const placement = await placementOf(caller, run.runId);
-      const frozenLanes = run.facts.definition.lanes ?? [];
       const compiled = compileWorkflow({
-        ...placement,
-        laneTargets: (laneId) => {
-          const frozen = frozenLanes.find((lane) => lane.laneId === laneId);
-          return frozen === undefined
-            ? placement.laneTargets(laneId)
-            : { worktreePath: frozen.worktreePath, branch: frozen.branch };
-        },
-        request: proposed,
+        ...(await placementOf(caller, run.runId)),
+        existingLanes: run.facts.definition.lanes ?? [],
+        request: asStarted,
         seats: seats.seats,
       });
       const runs = deps.supervision().runs;
@@ -511,23 +541,13 @@ export function createRunRouteHandlers(
             contexts: compiled.contexts,
             ...(compiled.loops !== undefined ? { loops: compiled.loops } : {}),
             ...(compiled.lanes !== undefined ? { lanes: compiled.lanes } : {}),
-            ...(compiled.authored !== undefined ? { authored: compiled.authored } : {}),
+            authored: proposed,
           },
           basedOn: body.value.basedOn ?? null,
         });
       } catch (error) {
         const issues = amendmentIssuesOf(error);
-        if (issues !== null) {
-          deps.log.warn("runs.amendment_refused", { runId: run.runId, issues: issues.length });
-          return NextResponse.json(
-            {
-              error: `The amendment changes work that already happened (${issues.length} ${issues.length === 1 ? "change" : "changes"})`,
-              code: "amendment_refused",
-              issues: issues.map((message) => ({ path: "definition", message })),
-            },
-            { status: 409 },
-          );
-        }
+        if (issues !== null) return amendmentRefused(run.runId, issues);
         if (!isRefusal(error)) throw error;
         deps.log.warn("runs.amendment_refused", { runId: run.runId, error: error.message });
         return jsonError(error.message, 409, "run_control_refused");
@@ -545,13 +565,9 @@ export function createRunRouteHandlers(
       const resolved = await resolveCaller(request, context);
       if (!resolved.ok) return resolved.response;
       const { runId } = await context.params;
-      const supervision = deps.supervision();
-      const run = supervision.runs.observe(runId ?? "")?.record ?? null;
-      const inSession =
-        run !== null &&
-        run.projectPath === resolved.caller.projectPath &&
-        run.sessionName === resolved.caller.sessionName;
-      const view = inSession ? describeRun(supervision, run.runId) : null;
+      const found = runInSession(runId, resolved.caller);
+      if (!found.ok) return found.response;
+      const view = describeRun(deps.supervision(), found.run.runId);
       if (view === null) return notFound(`Run "${runId}" not found`);
       return NextResponse.json(view);
     },
@@ -560,13 +576,9 @@ export function createRunRouteHandlers(
       const resolved = await resolveCaller(request, context);
       if (!resolved.ok) return resolved.response;
       const { runId } = await context.params;
-      const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-      if (
-        run === null ||
-        run.projectPath !== resolved.caller.projectPath ||
-        run.sessionName !== resolved.caller.sessionName
-      )
-        return notFound(`Run "${runId}" not found`);
+      const found = runInSession(runId, resolved.caller);
+      if (!found.ok) return found.response;
+      const { run } = found;
       return NextResponse.json({
         runId: run.runId,
         revision: run.facts.definition.revision,
@@ -617,12 +629,12 @@ export function createRunRouteHandlers(
       const { runId } = owned.run;
       // The CLI holds no revision, so the act applies to the run as it is now.
       try {
-        if (body.value.action === "pause") await runs.pause(runId, null);
+        if (body.value.action === "pause") await runs.pause(runId);
         if (body.value.action === "resume")
-          await runs.resume(runId, null, body.value.dispositions ?? []);
-        if (body.value.action === "cancel") await runs.cancel(runId, null);
+          await runs.resume(runId, body.value.dispositions ?? []);
+        if (body.value.action === "cancel") await runs.cancel(runId);
         if (body.value.action === "retry")
-          await runs.retryLane(runId, body.value.lane, null);
+          await runs.retryLane(runId, body.value.lane);
       } catch (error) {
         if (!isRefusal(error)) throw error;
         deps.log.warn("runs.control_refused", {

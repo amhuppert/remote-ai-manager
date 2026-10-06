@@ -45,9 +45,7 @@ beforeEach(async () => {
     exists: existsSync,
     writeFile: (filePath, content) => writeFile(filePath, content, "utf-8"),
     worktrees: {
-      async provisionLane(input) {
-        const worktreePath = path.join(input.projectPath, ".worktrees", `${input.sessionDir}.${input.laneId}`);
-        const branchName = `${input.sessionDir}-${input.laneId}`;
+      async provisionLaneAt(input, { worktreePath, branchName }) {
         // Like the real provisioning: a worktree already on its branch is adopted.
         if (!existsSync(worktreePath))
           await git(input.projectPath, ["worktree", "add", "-b", branchName, worktreePath, input.sessionBranch]);
@@ -124,7 +122,6 @@ describe("lane git", () => {
       files: ["src/shared.ts"],
     });
     expect(await lanes.dirtyPaths(lane)).toEqual([]);
-    await lanes.abortMerge(lane);
 
     await write(session, "src/shared.ts", "export const shared = 'lane';\n");
     await git(session, ["commit", "-am", "agree"]);

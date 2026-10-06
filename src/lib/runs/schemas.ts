@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { laneProvisionReportSchema, lanePublicationReportSchema } from "@/lib/workspace/schemas";
 import {
   contextStartRequestSchema,
   contextProgressSchema,
@@ -12,8 +13,6 @@ export const runInvocationSchema = z
     pass: z.number().int().min(0),
     contextId: z.string().min(1),
     startCause: z.string().min(1),
-    /** The frozen request the Run recorded to start it. */
-    request: contextStartRequestSchema,
   })
   .strict();
 export type RunInvocation = z.infer<typeof runInvocationSchema>;
@@ -94,40 +93,26 @@ export const runLoopSchema = z
   .strict();
 export type RunLoop = z.infer<typeof runLoopSchema>;
 
-/** Where a lane's worktree stands: provisioning requested, done from a pinned base commit, or refused. */
+/** Requested of Workspace and not answered yet. */
+const requestedSchema = z.object({ kind: z.literal("requested") }).strict();
+/** Withdrawn by cancelling the run before Workspace admitted it. */
+const withdrawnSchema = z.object({ kind: z.literal("cancelled") }).strict();
+
+/** Where a lane's worktree stands: requested, withdrawn, or what Workspace reported. */
 export const laneProvisionOutcomeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("requested") }).strict(),
-  z.object({ kind: z.literal("provisioned"), baseline: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("failed"), detail: z.string().min(1) }).strict(),
-  /** Withdrawn by cancelling the run before Workspace admitted it. */
-  z.object({ kind: z.literal("cancelled") }).strict(),
+  requestedSchema,
+  withdrawnSchema,
+  ...laneProvisionReportSchema.options,
 ]);
 
 /**
- * Where a lane's publication stands. `published` is the only outcome that
- * makes the lane's code visible outside it; the others halt until the owner
- * asks for a new attempt.
+ * Where a lane's publication stands: requested, withdrawn, or what Workspace
+ * reported. Anything but `published` halts until the owner asks for a new attempt.
  */
 export const lanePublicationOutcomeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("requested") }).strict(),
-  z
-    .object({
-      kind: z.literal("published"),
-      commit: z.string().min(1),
-      /** The session head the lane was merged with and checked against. */
-      incorporated: z.string().min(1),
-    })
-    .strict(),
-  /** The session worktree had changes publication must not overwrite or commit. */
-  z.object({ kind: z.literal("blocked"), detail: z.string().min(1) }).strict(),
-  /** The session branch moved after the lane was checked against it. */
-  z.object({ kind: z.literal("stale"), head: z.string().min(1) }).strict(),
-  /** The merge conflicted or a publication check failed. */
-  z.object({ kind: z.literal("failed"), detail: z.string().min(1) }).strict(),
-  /** Interrupted where Workspace could not establish whether it published. */
-  z.object({ kind: z.literal("uncertain"), detail: z.string().min(1) }).strict(),
-  /** Withdrawn by cancelling the run before Workspace admitted it. */
-  z.object({ kind: z.literal("cancelled") }).strict(),
+  requestedSchema,
+  withdrawnSchema,
+  ...lanePublicationReportSchema.options,
 ]);
 export type LanePublicationOutcome = z.infer<typeof lanePublicationOutcomeSchema>;
 
@@ -232,6 +217,57 @@ export const runBoundaryKindSchema = z.enum([
 ]);
 export type RunBoundaryKind = z.infer<typeof runBoundaryKindSchema>;
 
+/** A route, loop or lane that cannot proceed on its own. */
+export const runHaltKindSchema = z.enum([
+  "route_unevaluable",
+  "route_cardinality",
+  "loop_exhausted",
+  "loop_unevaluable",
+  "lane_provision",
+  "lane_publication",
+]);
+export type RunHaltKind = z.infer<typeof runHaltKindSchema>;
+
+/**
+ * What clears a Run's own halt: a definition change, a new attempt for its
+ * lane, or nothing short of cancelling (a started loop's unreadable exit).
+ */
+export const runHaltClearedBySchema = z.enum(["amend", "retry_lane", "cancel"]);
+export type RunHaltClearedBy = z.infer<typeof runHaltClearedBySchema>;
+
+/** What a boundary concerns, frozen when it is recorded: everything its notice needs. */
+export const runBoundaryDetailSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("question"), contextId: z.string().min(1), questionId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("approval"), contextId: z.string().min(1), candidateId: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("context_halt"),
+      contextId: z.string().min(1),
+      halt: z.string().min(1),
+      occurrence: z.string().min(1),
+      /** What clears it, as the Context named them when it halted. */
+      dispositions: z.array(z.string().min(1)),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("run_halt"),
+      halt: runHaltKindSchema,
+      clearedBy: runHaltClearedBySchema,
+      lane: z.string().min(1).optional(),
+      /** Other work goes on; a follow-up comes once only halts that need an amendment or cancelling remain. */
+      otherWorkRemains: z.boolean(),
+    })
+    .strict(),
+  /** The follow-up: only halts that need an amendment or cancelling remain. */
+  z.object({ kind: z.literal("stalled"), clearedBy: z.enum(["amend", "cancel"]) }).strict(),
+  z.object({ kind: z.literal("fault"), error: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("succeeded"), outputs: z.record(z.string(), z.unknown()) }).strict(),
+  z.object({ kind: z.literal("cancelled") }).strict(),
+  z.object({ kind: z.literal("restored_paused") }).strict(),
+]);
+export type RunBoundaryDetail = z.infer<typeof runBoundaryDetailSchema>;
+
 /** One owner-facing occurrence, keyed by its source occurrence so projection is idempotent. */
 export const runBoundarySchema = z
   .object({
@@ -240,20 +276,12 @@ export const runBoundarySchema = z
     occurrence: z.string().min(1),
     kind: runBoundaryKindSchema,
     summary: z.string().min(1),
-    detail: z.unknown(),
+    detail: runBoundaryDetailSchema,
     recordedAt: z.string().min(1),
     notifiedAt: z.string().min(1).nullable(),
   })
   .strict();
 export type RunBoundary = z.infer<typeof runBoundarySchema>;
-
-/** Reads a boundary's frozen detail as a field map; any other shape reads as empty. */
-export function boundaryDetail(
-  boundary: Pick<RunBoundary, "detail">,
-): Record<string, unknown> {
-  const parsed = z.record(z.string(), z.unknown()).safeParse(boundary.detail);
-  return parsed.success ? parsed.data : {};
-}
 
 /** A disposition the owner passes to one Context's halt through the Run. */
 export const runDispositionSchema = z
@@ -308,8 +336,10 @@ export const runViewSchema = z
           loop: z.string().nullable(),
           /** The isolated lane it works in; null for the session worktree. */
           lane: z.string().nullable(),
-          /** Lanes it waits for: its own to be provisioned, or others whose code it needs to publish. */
-          waitingOnLanes: z.array(z.string()),
+          /** Its own lane, still to be provisioned before it can start. */
+          waitingOnLaneProvision: z.string().nullable(),
+          /** Lanes whose publication it waits for. */
+          waitingOnPublications: z.array(z.string()),
           /** The pass this row shows, from 1; always 1 outside a loop. */
           pass: z.number().int().min(1),
           progress: contextProgressSchema.nullable(),

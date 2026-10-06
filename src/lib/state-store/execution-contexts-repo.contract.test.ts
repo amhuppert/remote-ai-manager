@@ -201,6 +201,14 @@ describe("execution contexts repository", () => {
           detail: "provider error",
           seat: "implementer",
         },
+        dispositions: [
+          {
+            occurrence: "halted:effect_uncertain:3",
+            halt: "effect_uncertain",
+            disposition: { kind: "confirm_effect", evidence: "The lane holds the landing" },
+            at: "2026-10-05T12:00:00.000Z",
+          },
+        ],
         steers: [
           { id: "steer-1", instruction: "Use notice.ts", consumed: true },
         ],

@@ -16,7 +16,7 @@ import {
   resolveBackendTimeoutMs,
   resolveTurnModelSelection,
 } from "@/lib/workflows/conversation/pre-turn/resolve-model-effort";
-import { loadConversationTurnDependencies } from "@/lib/workflows/conversation/core-coexistence";
+import { loadConversationTurnDependencies } from "@/lib/workflows/conversation/core-composition";
 import { prepareRuntimeInstructions } from "@/lib/workflows/conversation/runtime-instructions";
 import { createQueuedDeliveryAccounting } from "@/lib/workflows/conversation/post-turn/queued-delivery-accounting";
 import { persistTurnImages } from "@/lib/workflows/conversation/pre-turn/image-persistence";
@@ -181,6 +181,8 @@ export async function createProductionTurnRuntime(options: {
           );
         },
         onBackgroundActivity(activity) {
+          // A background task's progress after the agent's own output: the turn still works.
+          engine.notifyActivity(conversation.conversationId);
           getBackgroundActivityChannel().record(
             {
               projectName: conversation.projectName,

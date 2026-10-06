@@ -21,6 +21,8 @@ let sessionConversations: string[];
 let routes: ReturnType<typeof createRunRouteHandlers>;
 let tokenValid: boolean;
 let seatResolutions: number;
+/** A backend that was configured at launch and withdrawn since. */
+let codexWithdrawn: boolean;
 /** The branch prefix lanes are named with; configuration can change while a run lives. */
 let branchPrefix: string;
 
@@ -76,6 +78,7 @@ beforeEach(() => {
   sessionConversations = ["owner-1", "other-1"];
   tokenValid = true;
   seatResolutions = 0;
+  codexWithdrawn = false;
   branchPrefix = "csm";
   let sequence = 0;
   const deps: RunRouteDeps = {
@@ -119,7 +122,7 @@ beforeEach(() => {
     supervision: () => supervision,
     async resolveSeats({ request: launchRequest }) {
       seatResolutions += 1;
-      if (launchRequest.backend === "cursor") {
+      if (launchRequest.backend === "cursor" || (launchRequest.backend === "codex" && codexWithdrawn)) {
         return { ok: false, status: 400, error: "Cursor is not available here", code: "backend_unavailable" };
       }
       const seat =
@@ -689,7 +692,7 @@ describe("run routes", () => {
     ]);
     expect(blocked.contexts).toEqual([
       expect.objectContaining({ key: "api", lane: "api", contextId: "run-1.api" }),
-      expect.objectContaining({ key: "integrate", lane: null, started: false, waitingOnLanes: ["api"] }),
+      expect.objectContaining({ key: "integrate", lane: null, started: false, waitingOnPublications: ["api"] }),
     ]);
     expect(h.checksRun).toEqual([
       expect.objectContaining({ command: "typecheck", bindingId: expect.stringContaining("lane:") }),
@@ -900,6 +903,51 @@ describe("run routes", () => {
       code: "amendment_refused",
       issues: [{ path: "definition", message: '"agent" has started' }],
     });
+  });
+
+  it("amends a run whose started context's backend is no longer available: started work is not admitted again", async () => {
+    h.script = () => new Promise(() => {});
+    const chain = (docsBrief: string) => ({
+      title: "Chain",
+      contexts: [
+        { key: "api", brief: "Build it", backend: "codex" },
+        { key: "docs", brief: docsBrief, dependsOn: ["api"] },
+      ],
+    });
+    await routes.launchWorkflow(request(chain("Document it"), identity("owner-1")), params());
+    await quiesce(supervision, false);
+    expect(supervision.runs.observe("run-1")?.record.facts.invocations.map((i) => i.key)).toEqual(["api"]);
+    codexWithdrawn = true;
+
+    const amended = await routes.amend(
+      request({ definition: chain("Document the routes") }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
+  });
+
+  it("refuses adding a reviewer to a started context as a change to started work, not as a server error", async () => {
+    h.script = () => new Promise(() => {});
+    const chain = (reviewers: Array<{ authority: "blocking" }>) => ({
+      title: "Chain",
+      contexts: [
+        { key: "api", brief: "Build it", ...(reviewers.length > 0 ? { reviewers } : {}) },
+        { key: "docs", brief: "Document it", dependsOn: ["api"] },
+      ],
+    });
+    await routes.launchWorkflow(request(chain([]), identity("owner-1")), params());
+    await quiesce(supervision, false);
+
+    const amended = await routes.amend(
+      request({ definition: chain([{ authority: "blocking" }]) }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(amended.status).toBe(409);
+    expect(await json(amended)).toMatchObject({
+      code: "amendment_refused",
+      issues: [{ path: "definition", message: expect.stringContaining('"api" has started') }],
+    });
+    expect(supervision.runs.observe("run-1")?.record.facts.definition.revision).toBe(1);
   });
 
   it("keeps a run's lanes where they are when the branch prefix changed after launch", async () => {

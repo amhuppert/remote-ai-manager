@@ -131,7 +131,6 @@ describe("runs repository", () => {
               pass: 1,
               contextId: "run-1.implement.1",
               startCause: "run-1:start:implement:1",
-              request: request("run-1.implement.1"),
             },
           ],
           lanes: {
@@ -178,7 +177,7 @@ describe("runs repository", () => {
         occurrence: "run-1.implement.1:progress:3",
         kind: "question" as const,
         summary: "Fix it: the agent asked you a question.",
-        detail: { contextId: "run-1.implement.1", questionId: "q-1" },
+        detail: { kind: "question" as const, contextId: "run-1.implement.1", questionId: "q-1" },
         recordedAt: "2026-10-03T10:05:00.000Z",
         notifiedAt: "2026-10-03T10:05:01.000Z",
       }),
@@ -186,6 +185,47 @@ describe("runs repository", () => {
         repo.recordBoundary(value);
         if (value.notifiedAt !== null)
           repo.markNotified(value.seq, value.notifiedAt);
+        return value;
+      },
+      reload: (value) =>
+        createRunsRepo(db)
+          .boundaries(value.runId)
+          .find((b) => b.seq === value.seq) ?? null,
+    });
+  });
+
+  it.each([
+    {
+      kind: "halted" as const,
+      detail: {
+        kind: "run_halt" as const,
+        halt: "lane_publication" as const,
+        clearedBy: "retry_lane" as const,
+        lane: "api",
+        otherWorkRemains: true,
+      },
+    },
+    { kind: "succeeded" as const, detail: { kind: "succeeded" as const, outputs: { api: { summary: "Built." }, docs: null } } },
+  ])("round-trips a $detail.kind boundary's detail, with its optional and open fields", async ({ kind, detail }) => {
+    fixture = createPersistenceFixture();
+    const db = fixture.db;
+    const repo = createRunsRepo(db);
+    await assertRoundTripDurability({
+      label: `run boundary (${detail.kind})`,
+      schema: runBoundarySchema,
+      buildMaximalFixture: () => ({
+        seq: 1,
+        runId: "run-1",
+        occurrence: `run-1:${detail.kind}`,
+        kind,
+        summary: "Fix it: something happened.",
+        detail,
+        recordedAt: "2026-10-03T10:05:00.000Z",
+        notifiedAt: "2026-10-03T10:05:01.000Z",
+      }),
+      persist: (value) => {
+        repo.recordBoundary(value);
+        if (value.notifiedAt !== null) repo.markNotified(value.seq, value.notifiedAt);
         return value;
       },
       reload: (value) =>

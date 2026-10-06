@@ -681,6 +681,22 @@ describe("lanes (W4)", () => {
     ).not.toThrow();
   });
 
+  it("refuses a session reader a lane could publish beside, and accepts readers before or after the lane", () => {
+    const definition = (auditAfter: string) => ({
+      title: "Plan, lane, audit",
+      contexts: [
+        { key: "plan", brief: "Plan", scope: readOnly, outputSchema: { type: "object" } },
+        { key: "api", brief: "API", lane: "api", dependsOn: [{ key: "plan", outputOnly: true }] },
+        { key: "audit", brief: "Audit", scope: readOnly, dependsOn: [auditAfter] },
+      ],
+    });
+    const refused = issues(definition("plan"));
+    expect(refused.map((e) => e.path)).toEqual(["contexts.2"]);
+    expect(refused[0]?.message).toMatch(/"audit" is read-only/);
+    expect(refused[0]?.message).toMatch(/lane "api" could publish while it runs/);
+    expect(() => launched(definition("api"))).not.toThrow();
+  });
+
   it("covers a lane member's whole-tree check with the lane's publication checks", () => {
     const definition = (lanes: unknown[]) => ({
       title: "Two writers in a lane",

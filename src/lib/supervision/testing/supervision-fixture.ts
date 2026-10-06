@@ -26,7 +26,7 @@ import {
 } from "@/lib/execution-context/schemas";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createFakeLaneGit } from "@/lib/workspace/testing/fake-lane-git";
-import { createDirectLaneIntegrator } from "@/lib/workspace/lane-integrator";
+import { createDirectLaneIntegrator } from "@/lib/workspace/testing/direct-lane-integrator";
 import type { WorkspaceExecutorDeps } from "@/lib/workspace/executor";
 import type { RunBoundary } from "@/lib/runs/schemas";
 import { composeSupervision, type Supervision } from "../supervision";
@@ -132,6 +132,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     queued: [] as ClaimedQueuedBatch[],
     userMessages: [] as string[],
     queueRecoveries: [] as string[],
+    /** Conversations whose last runtime did not close, with why. */
+    uncollected: new Map<string, string>(),
+    /** How many evidence captures fail before they succeed again. */
+    evidenceFailures: 0,
     /** Conversations whose rows are gone; every other enrolled conversation reads as a row. */
     deletedConversations: new Set<string>(),
     /** What conversations' rows hold; none unless a test composes the real rule. */
@@ -272,7 +276,7 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
               harness.checkpoint.releases.push(`retry:${conversationId}`);
               if (harness.checkpoint.closeFailure !== null) throw new Error(harness.checkpoint.closeFailure);
             },
-            closeFailure: async () => null,
+            closeFailure: async (conversationId) => harness.uncollected.get(conversationId) ?? null,
           },
           async settleTurnReceipts() {},
           now: () => new Date().toISOString(),
@@ -283,7 +287,13 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
         },
         slots: { acquire: async () => () => {} },
         evidence: {
-          capture: async () => "git:tree:digest",
+          async capture() {
+            if (harness.evidenceFailures > 0) {
+              harness.evidenceFailures -= 1;
+              throw new Error("git could not read the worktree");
+            }
+            return "git:tree:digest";
+          },
           sameContent: (a, b) => a === b,
           changedPaths: async () => [],
         },

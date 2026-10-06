@@ -5,7 +5,7 @@ import {
   releaseAllowance,
 } from "./allowances";
 import { recordDecision } from "./approval";
-import { currentCandidate, freezeCandidate, retireCurrent } from "./candidates";
+import { currentCandidate, freezeCandidate, retireCurrent, startWorkEpoch } from "./candidates";
 import {
   activeRound,
   parseReviewVerdict,
@@ -53,7 +53,7 @@ export type ContextInput =
       notes?: string;
       decidedAt: string;
     }
-  | { kind: "disposition"; disposition: HaltDisposition }
+  | { kind: "disposition"; disposition: HaltDisposition; occurrence: string; at: string }
   | { kind: "amend"; contract: ContextContract; reason: string; at: string }
   | { kind: "reconcile_failed"; detail: string };
 
@@ -109,7 +109,7 @@ export function advanceContext(
     case "decide":
       return decide(facts, input);
     case "disposition":
-      return applyDisposition(facts, input.disposition);
+      return applyDisposition(facts, input);
     case "amend":
       return amend(facts, input.contract, input.reason, input.at);
     case "reconcile_failed":
@@ -228,19 +228,7 @@ function applyWorkReport(
 ): ContextFacts {
   let facts =
     request.allowance !== null ? chargeAllowance(initial, cause) : initial;
-  // Any admitted work turn may have changed files: the candidate it worked on
-  // is no longer what was reviewed.
-  facts = retireCurrent(facts, "reworked");
-  facts = {
-    ...facts,
-    candidates: {
-      ...facts.candidates,
-      captured: null,
-      captureFailures: null,
-      unstableCount: 0,
-      verifyPending: null,
-    },
-  };
+  facts = startWorkEpoch(facts);
   if (request.steerId !== undefined) {
     const steerId = request.steerId;
     facts = {
@@ -556,8 +544,9 @@ export const DISPOSITIONS_BY_HALT: Readonly<
 
 function applyDisposition(
   facts: ContextFacts,
-  disposition: HaltDisposition,
+  input: Extract<ContextInput, { kind: "disposition" }>,
 ): ContextFacts {
+  const { disposition } = input;
   const haltKind = currentHalt(facts);
   if (haltKind === null) {
     throw new ContextInputRefusedError("The context is not halted");
@@ -567,10 +556,17 @@ function applyDisposition(
       `Disposition ${disposition.kind} does not clear a ${haltKind} halt`,
     );
   }
-  const cleared =
-    facts.control.halt !== null
-      ? { ...facts, control: { ...facts.control, halt: null } }
-      : facts;
+  const cleared = {
+    ...facts,
+    control: {
+      ...facts.control,
+      halt: null,
+      dispositions: [
+        ...facts.control.dispositions,
+        { occurrence: input.occurrence, halt: haltKind, disposition, at: input.at },
+      ],
+    },
+  };
   switch (disposition.kind) {
     case "grant":
       return grantAllowance(cleared, disposition.allowance, disposition.count);

@@ -121,6 +121,27 @@ describe("conversation rows of a project conversation the core runs", () => {
     ]);
   });
 
+  it("leaves a row its turn already settled as it is, when a restart recovers that turn's attempt", async () => {
+    setUp();
+    recordNotifications();
+    await fixture.seedProjectConversation(
+      PROJECT,
+      makeConversationState({
+        id: "conv-done",
+        scope: "project",
+        name: "Chat conv-done",
+        status: "awaiting",
+        activeTurnSource: null,
+      }),
+    );
+    await createProductionConversationRecords(rowStore()).recordInterrupted(projectIdentity("conv-done"));
+
+    const reloaded = await fixture.recreateStore().getConversation(PROJECT, PROJECT_KEY, "conv-done");
+    expect(reloaded).toMatchObject({ status: "awaiting", activeTurnSource: null });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(persistedNotifications()).toEqual([]);
+  });
+
   it("tells the person when a project conversation's turn hands control back, ready or failed", async () => {
     setUp();
     recordNotifications();

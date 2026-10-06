@@ -159,9 +159,15 @@ export function deriveLaneWorktreePath(input: {
   );
 }
 
+/** Lanes whose coordinates their caller already resolved, as a Run freezes them at launch. */
+export interface FrozenLaneProvisioner {
+  /** Provision a lane at the given coordinates, consulting no branch-prefix configuration. */
+  provisionLaneAt(input: ProvisionLaneInput, targets: LaneTargets): Promise<ProvisionResult>;
+}
+
 export function createParallelWorktrees(
   deps: ParallelWorktreesDeps = {},
-): ParallelWorktrees {
+): ParallelWorktrees & FrozenLaneProvisioner {
   const gitClient = deps.gitClient ?? defaultGitClient;
   const existsSync = deps.existsSync ?? defaultExistsSync;
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
@@ -220,6 +226,14 @@ export function createParallelWorktrees(
       laneId: input.laneId,
       branchPrefix: await resolveLaneBranchPrefix(input.projectPath),
     });
+    return provisionLaneAt(input, targets);
+  }
+
+  async function provisionLaneAt(
+    input: ProvisionLaneInput,
+    targets: LaneTargets,
+  ): Promise<ProvisionResult> {
+    validateLaneId(input.laneId);
     return timed(
       logger,
       "worktree.create",
@@ -653,6 +667,7 @@ export function createParallelWorktrees(
     provisionBatch,
     dispose,
     provisionLane,
+    provisionLaneAt,
     provisionLaneBatch,
     disposeLane,
     cleanupLane,

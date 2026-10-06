@@ -16,9 +16,12 @@ import {
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo";
-import { createContextHost, runControllerId, type ContextHost } from "./host";
+import { createContextHost, type ContextHost } from "./host";
 import type { ConversationReport } from "./reports";
 import { DEFAULT_CONTEXT_POLICY, contextContractSchema } from "./schemas";
+
+/** The permit the Run starts its Contexts under. */
+const RUN_PERMIT = "run:run-1";
 
 const seat = {
   profile: { tier: "builtin" as const, id: "general-reviewer" },
@@ -46,7 +49,7 @@ const startIntent: PendingIntent = {
   requester: { kind: "run", id: "run-1" },
   executor: "context",
   cause: "run-1:start:fix:0",
-  permit: null,
+  permit: { controllerId: RUN_PERMIT, generation: 1 },
   request: {
     contextId: "ctx-1",
     runId: "run-1",
@@ -112,7 +115,7 @@ beforeEach(() => {
   touchedRuns = [];
   released = [];
   permits.issue({
-    controllerId: runControllerId("run-1"),
+    controllerId: RUN_PERMIT,
     parent: null,
     now: "2026-10-03T10:00:00.000Z",
   });
@@ -244,7 +247,7 @@ describe("execution context host", () => {
       { kind: "complete", taskId: "t1" },
     );
     conversation.settle(work.cause, workReport());
-    permits.close(runControllerId("run-1"), "2026-10-03T10:05:00.000Z");
+    permits.close(RUN_PERMIT, "2026-10-03T10:05:00.000Z");
 
     const restarted = newHost();
     await restarted.reconcile("ctx-1");
@@ -257,7 +260,7 @@ describe("execution context host", () => {
       workspace.submitted().map((i) => (i.request as { kind: string }).kind),
     ).toEqual(["bind"]);
 
-    permits.reopen(runControllerId("run-1"), "2026-10-03T10:06:00.000Z");
+    permits.reopen(RUN_PERMIT, "2026-10-03T10:06:00.000Z");
     await restarted.reconcile("ctx-1");
     expect(
       workspace.submitted().map((i) => (i.request as { kind: string }).kind),
@@ -505,6 +508,62 @@ describe("execution context host", () => {
     expect(review?.request).toMatchObject({
       seat: { assignmentId: "reviewer-a", role: "reviewer" },
     });
+  });
+
+  it("waits for a reviewer's answer and continues that reviewer while another still reviews, and plans nothing twice", async () => {
+    const host = newHost();
+    const reviewed = contextContractSchema.parse({
+      ...contract,
+      reviewers: [
+        { id: "reviewer-a", authority: "blocking", ...seat },
+        { id: "reviewer-b", authority: "blocking", ...seat },
+      ],
+    });
+    const request = startIntent.request as Record<string, unknown>;
+    await host.submit({ ...startIntent, request: { ...request, contract: reviewed } });
+    await host.reconcile("ctx-1");
+    const [bind] = workspace.submitted();
+    if (bind === undefined) throw new Error("no bind");
+    workspace.settle(bind.cause, { kind: "bound" });
+    await host.reconcile("ctx-1");
+    const [work] = conversation.submitted();
+    if (work === undefined) throw new Error("no work order");
+    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    conversation.settle(work.cause, workReport());
+    await host.reconcile("ctx-1");
+    const freeze = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "freeze");
+    if (freeze === undefined) throw new Error("no freeze");
+    workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:a:a" });
+    await host.reconcile("ctx-1");
+    const reviewsBy = (id: string) =>
+      conversation.submitted().filter(
+        (i) => (i.request as { seat?: { assignmentId: string } }).seat?.assignmentId === id,
+      );
+    const [reviewA] = reviewsBy("reviewer-a");
+    const [reviewB] = reviewsBy("reviewer-b");
+    if (reviewA === undefined || reviewB === undefined) throw new Error("no reviews");
+    const pass = { verdict: "pass", findings: [], advisories: [] };
+
+    conversation.settle(reviewA.cause, workReport({ openQuestionId: "q-a" }));
+    await host.reconcile("ctx-1");
+    const [answer] = requests.submitted();
+    expect(answer?.request).toEqual({ kind: "answer", questionId: "q-a" });
+
+    requests.settle(answer?.cause ?? "", { kind: "answered", question: "Which file?", answer: "notice.ts" });
+    await host.reconcile("ctx-1");
+    const continuation = reviewsBy("reviewer-a")[1];
+    expect(continuation?.request).toMatchObject({ kind: "review", questionId: "q-a" });
+
+    conversation.settle(reviewB.cause, workReport({ structuredOutput: pass }));
+    await host.reconcile("ctx-1");
+    expect(reviewsBy("reviewer-a")).toHaveLength(2);
+    expect(reviewsBy("reviewer-b")).toHaveLength(1);
+    expect(requests.submitted()).toHaveLength(1);
+    expect(intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.cause)).toEqual([continuation?.cause]);
+
+    conversation.settle(continuation?.cause ?? "", workReport({ structuredOutput: pass }));
+    await host.reconcile("ctx-1");
+    expect(host.observe("ctx-1")?.record.progress).toMatchObject({ obligation: { kind: "accept" } });
   });
 
   it("requires a disposition naming the current occurrence to resume a halted context", async () => {

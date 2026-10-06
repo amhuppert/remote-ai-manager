@@ -1,5 +1,5 @@
 import { adviceStanding } from "./advice";
-import { remainingAllowance } from "./allowances";
+import { allowanceAvailable } from "./allowances";
 import { approvalStanding } from "./approval";
 import {
   candidateUnstable,
@@ -80,7 +80,7 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
     return running({ kind: "work", reason: "initial" });
   }
   if (openTasks(facts).length > 0) {
-    return remainingAllowance(facts, "unfinishedTaskRetries") > 0
+    return allowanceAvailable(facts, "unfinishedTaskRetries")
       ? running({ kind: "work", reason: "retry" })
       : halted(
           "retries_exhausted",
@@ -120,7 +120,7 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
           "A reviewer reported a plan defect",
       );
     case "failed":
-      return remainingAllowance(facts, "validationRetries") > 0
+      return allowanceAvailable(facts, "validationRetries")
         ? running({ kind: "work", reason: "remediate" })
         : halted(
             "retries_exhausted",

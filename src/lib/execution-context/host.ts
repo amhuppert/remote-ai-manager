@@ -65,7 +65,6 @@ export interface ContextHostDeps {
 
 export const contextControllerId = (contextId: string): string =>
   `context:${contextId}`;
-export const runControllerId = (runId: string): string => `run:${runId}`;
 
 const owner = (contextId: string): OwnerRef => ({
   kind: "context",
@@ -326,12 +325,15 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
   const host: ContextHost = {
     submit(intent) {
       const request = contextStartRequestSchema.parse(intent.request);
+      const parent = intent.permit;
+      if (parent === null) throw new Error(`Context ${request.contextId} must start under its Run's permit`);
       deps.transaction(() => {
         if (deps.contexts.getByStartCause(intent.cause) !== null) return;
         const now = deps.now();
         deps.permits.issue({
           controllerId: contextControllerId(request.contextId),
-          parent: runControllerId(request.runId),
+          // The Run that started it controls it through the permit it started it under.
+          parent: parent.controllerId,
           now,
         });
         const facts = initialContextFacts({
@@ -408,9 +410,9 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
           consumed = true;
         }
         const permit = permitOf(contextId);
-        const stillPending = deps.intents.pending(owner(contextId));
-        if (stillPending.length === 0 && deps.permits.admits(permit)) {
-          const planned = planEffects({ facts });
+        if (deps.permits.admits(permit)) {
+          const othersPending = deps.intents.pending(owner(contextId)).length > 0;
+          const planned = planEffects({ facts, othersPending });
           facts = planned.facts;
           for (const effect of planned.effects) {
             deps.intents.record({
@@ -559,6 +561,8 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
           facts = advanceContext(facts, {
             kind: "disposition",
             disposition: disposition.disposition,
+            occurrence: disposition.occurrence,
+            at: deps.now(),
           });
         }
         if (record.facts.control.paused) {

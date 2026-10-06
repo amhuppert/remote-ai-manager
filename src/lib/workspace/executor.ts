@@ -18,6 +18,7 @@ import {
 } from "./lane-git";
 import type { LaneIntegrator } from "./lane-integrator";
 import {
+  laneJobId,
   workspaceOperationSchema,
   type LaneTarget,
   type WorkspaceBindingRecord,
@@ -96,11 +97,15 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 const STOPPED = { kind: "publication_failed", detail: "Stopped before publishing" } as const;
+/** A publication whose permit closed while it waited for the session: it goes back to the queue unrun. */
+const UNADMITTED = Symbol("unadmitted");
 
-/** A lane operation's parked-ref job id: a ref name cannot hold the cause's colons. */
-const jobIdOf = (cause: string): string => cause.replace(/[^A-Za-z0-9._-]/g, "-");
+/** Why an operation was refused: the error's message, or what failed when it carried none. */
+function refusalDetail(operation: WorkspaceOperation, error: unknown): string {
+  return getErrorMessage(error) || `The ${operation.kind} operation failed without a message`;
+}
 
-/** Who may hold a grant to release early, and the grants an operation still holds. */
+/** The grants an operation holds; each is released early when its step ends, and the rest when it settles. */
 interface Held {
   grants: Grant[];
 }
@@ -273,8 +278,10 @@ export function createWorkspaceExecutor(
     }
   }
 
-  /** Takes another grant during an operation; it is released with the rest. */
-  /** Null once the operation is stopped: before, while, or as soon as it is granted. */
+  /**
+   * Takes another grant during an operation; it is released with the rest.
+   * Null once the operation is stopped: before, while, or as soon as it is granted.
+   */
   async function take(
     request: GrantRequest,
     signal: AbortSignal,
@@ -330,6 +337,9 @@ export function createWorkspaceExecutor(
       held,
     );
     if (capture === null) return STOPPED;
+    // Each wait for the session is an admission point: a pause or fault that
+    // landed while it waited stops it here, before it reads or moves anything.
+    if (!stillAdmitted(record)) return UNADMITTED;
     const head = await deps.lanes.head(lane.projectPath, lane.sessionBranch);
     letGo(capture, held);
     // Kept with the running operation, so a restart can name what a found publication incorporated.
@@ -350,6 +360,7 @@ export function createWorkspaceExecutor(
       return { kind: "publication_failed", detail: integrated.detail };
 
     const final = await underSession(lane, record.cause, signal, held, async () => {
+      if (!stillAdmitted(record)) return UNADMITTED;
       const published = await deps.lanes.publish({
         projectPath: lane.projectPath,
         sessionName: lane.sessionName,
@@ -358,7 +369,7 @@ export function createWorkspaceExecutor(
         targetWorktreePath: lane.sessionWorktreePath,
         expectedHead: head,
         message: `Publish lane ${lane.laneId}\n\n${publicationMarker(record.cause)}`,
-        jobId: jobIdOf(record.cause),
+        jobId: laneJobId(record.cause),
       });
       switch (published.kind) {
         case "published":
@@ -450,6 +461,12 @@ export function createWorkspaceExecutor(
     }
   }
 
+  /** A running operation's permit still admits it, at a later admission point such as publication's session grant. */
+  function stillAdmitted(record: WorkspaceOperationRecord): boolean {
+    const current = deps.repo.getOperation(record.cause);
+    return current !== null && deps.permits.admits(current.permit);
+  }
+
   /**
    * Admits the operation: under its permit as stored now (a resubmission
    * refreshes it), and only while it is still queued. Returns false, leaving
@@ -480,6 +497,7 @@ export function createWorkspaceExecutor(
     const controller = new AbortController();
     controllers.set(record.cause, controller);
     const held: Held = { grants: [] };
+    let requeued = false;
     try {
       let request: GrantRequest | null;
       try {
@@ -491,7 +509,7 @@ export function createWorkspaceExecutor(
           kind: operation.kind,
           error: getErrorMessage(error),
         });
-        settle(record, { kind: "refused", detail: getErrorMessage(error) });
+        settle(record, { kind: "refused", detail: refusalDetail(operation, error) });
         return;
       }
       if (request !== null) {
@@ -505,13 +523,21 @@ export function createWorkspaceExecutor(
       let outcome: unknown;
       try {
         outcome = await perform(record, operation, controller.signal, held);
+        if (outcome === UNADMITTED) {
+          // What it did so far is safe to repeat: nothing reached the session.
+          deps.transaction(() =>
+            deps.repo.updateOperation(record.cause, { state: "queued", outcome: null, updatedAt: deps.now() }),
+          );
+          requeued = true;
+          return;
+        }
       } catch (error) {
         deps.log.error("workspace.operation_failed", {
           cause: record.cause,
           kind: operation.kind,
           error: getErrorMessage(error),
         });
-        outcome = { kind: "refused", detail: getErrorMessage(error) };
+        outcome = { kind: "refused", detail: refusalDetail(operation, error) };
       }
       for (const grant of held.grants.splice(0)) deps.admission.release(grant);
       try {
@@ -533,6 +559,8 @@ export function createWorkspaceExecutor(
       runningBindings.delete(record.bindingId);
       if (operation.kind === "publish")
         publishingInto.delete(operation.lane.sessionWorktreePath);
+      // Its requester resubmits it under a permit that admits, or sees it drained, withdrawn or cancelled.
+      if (requeued) deps.touchRequester(record.requester);
     }
   }
 

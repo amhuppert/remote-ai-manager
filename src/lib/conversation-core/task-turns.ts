@@ -12,7 +12,7 @@ import { deriveTaskRunPermissions } from "@/lib/workflows/conversation/task-run-
 import { toPromptActorResult, type TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
 import type { executeAgentCall as ExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { ConversationRecordPort } from "./conversation-record";
+import { resumableRef, type ConversationRecordPort } from "./conversation-record";
 import type { TaskTurn, TaskTurnPort } from "./executor";
 import { failedTurn, recordedOutcome, recordedResult, runRecordedTurn, turnResultOf } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
@@ -100,11 +100,7 @@ export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
         };
         // The caller decides continuity; by default the task continues the conversation's own session.
         const resumeRef =
-          request.resumeRef === undefined
-            ? row.backendRef !== null && row.backendRef.backend === backend
-              ? row.backendRef
-              : null
-            : request.resumeRef;
+          request.resumeRef === undefined ? resumableRef(row, backend) : request.resumeRef;
         const isolated = profile === "isolated-one-shot";
         const result = await deps.executeAgentCall(agentRequest, {
           taskExecution: {

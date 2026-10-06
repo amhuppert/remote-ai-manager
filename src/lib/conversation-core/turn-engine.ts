@@ -80,6 +80,11 @@ export interface TurnRequest {
 export interface TurnEngine {
   /** Runs one admitted turn to an outcome; never throws for a provider failure. */
   runTurn(request: TurnRequest): Promise<TurnExecutionOutcome>;
+  /**
+   * The conversation's runtime is working outside the turn's event stream (a
+   * background task's progress): its running turn is not stalled.
+   */
+  notifyActivity(conversationId: string): void;
 }
 
 /**
@@ -89,7 +94,12 @@ export interface TurnEngine {
  * Settlement belongs to the caller; the engine owns no conversation state.
  */
 export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
+  /** Each conversation's running turn's watchdog, which activity outside its event stream refreshes too. */
+  const watchdogs = new Map<string, () => void>();
   return {
+    notifyActivity(conversationId) {
+      watchdogs.get(conversationId)?.();
+    },
     async runTurn(request) {
       const { conversation } = request;
       const conversationId = conversation.conversationId;
@@ -159,7 +169,10 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       );
       const cancel = () => abort.abortController.abort(request.signal.reason);
       request.signal.addEventListener("abort", cancel, { once: true });
+      const touch = () => abort.notifyActivity();
+      watchdogs.set(conversationId, touch);
       const stopListening = async (): Promise<void> => {
+        if (watchdogs.get(conversationId) === touch) watchdogs.delete(conversationId);
         request.signal.removeEventListener("abort", cancel);
         abort.cleanup();
         if (closing !== null) await closing;

@@ -8,7 +8,7 @@ import {
   type ComposeImplementerLaneWriteEnvelopeInput,
   type ImplementerLaneWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import type { ConversationRecordPort } from "./conversation-record";
+import { resumableRef, type ConversationRecordPort } from "./conversation-record";
 import type { SeatTurnPort } from "./executor";
 import { failedTurn as failed, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
@@ -16,7 +16,7 @@ import type { SeatTurnRequest } from "./schemas";
 import type { TurnEngine } from "./turn-engine";
 
 export interface NativeSeatTurnDeps {
-  engine: TurnEngine;
+  engine: Pick<TurnEngine, "runTurn">;
   records: ConversationRecordPort;
   host: Pick<RuntimeHost, "release">;
   getProjectDisplayName(projectPath: string): string;
@@ -113,7 +113,7 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
             backend,
             executionClass: "governed-execution",
             // A continuation from a different backend cannot be resumed here.
-            persistedRef: row.backendRef !== null && row.backendRef.backend === backend ? row.backendRef : null,
+            persistedRef: resumableRef(row, backend),
             callerIdentity: conversationId,
             profile,
           },

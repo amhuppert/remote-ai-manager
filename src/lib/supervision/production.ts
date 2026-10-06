@@ -47,7 +47,6 @@ import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import { composedSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, SUPERVISION_KEY } from "./handles";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import { composeBoundaryNotice } from "@/lib/runs/notices";
-import { boundaryDetail } from "@/lib/runs/schemas";
 import { composeSupervision, type Supervision } from "./supervision";
 
 const logger = createLogger("runs");
@@ -132,7 +131,7 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
     generate: (input, deps) => generateCheckpoint(input, deps),
     async resolveCaptureModel({ agentBackend, transcriptPath }) {
       const [{ loadConversationTurnDependencies }, { resolveTurnModelSelection }] = await Promise.all([
-        import("@/lib/workflows/conversation/core-coexistence"),
+        import("@/lib/workflows/conversation/core-composition"),
         import("@/lib/workflows/conversation/pre-turn/resolve-model-effort"),
       ]);
       const deps = await loadConversationTurnDependencies();
@@ -263,14 +262,8 @@ function composeProductionSupervision(): Supervision {
       log: createLogger("workspace"),
     }),
     async notifyOwner({ run, boundary }) {
-      const questionId =
-        boundary.kind === "question"
-          ? boundaryDetail(boundary).questionId
-          : undefined;
       const question =
-        typeof questionId === "string" && self !== null
-          ? self.requests.question(questionId)
-          : null;
+        boundary.detail.kind === "question" && self !== null ? self.requests.question(boundary.detail.questionId) : null;
       await enqueueConversationMessage({
         projectPath: run.projectPath,
         sessionName: storeSessionNameFromScopeRef(

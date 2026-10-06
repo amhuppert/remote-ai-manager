@@ -156,10 +156,13 @@ describe("conversation record", () => {
   });
 
   it("takes a first message's backend, and refuses a change once the conversation has run", () => {
-    const fresh = { ...row(), promptCount: 0, agentBackend: "claude" as const };
+    const fresh = { ...row(), promptCount: 0, backendRef: null, agentBackend: "claude" as const };
     applyBackendAdoption(fresh, "codex");
     expect(fresh.agentBackend).toBe("codex");
     expect(() => applyBackendAdoption({ ...row(), agentBackend: "claude" as const }, "codex")).toThrow(/after prompts/);
+    // A fork carries its source's continuation before its own first prompt: that fixes its backend too.
+    const forked = { ...row(), promptCount: 0, backendRef: { backend: "claude" as const, ref: "s-fork" } };
+    expect(() => applyBackendAdoption(forked, "codex")).toThrow();
   });
 
   it("shows a conversation running from the moment its turn is taken up, before it has model capacity", () => {

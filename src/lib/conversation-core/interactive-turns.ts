@@ -30,6 +30,8 @@ import { toPromptActorResult, type TurnExecutionOutcome, type TurnInterruption }
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
 import {
+  backendLocked,
+  resumableRef,
   runtimeDebugMode,
   settlementOf,
   type ConversationIdentity,
@@ -464,12 +466,12 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
       ): Promise<TurnExecutionOutcome> {
         const projectName = deps.getProjectDisplayName(enrollment.projectPath);
         const backend = request.backend ?? row.agentBackend;
-        const persistedRef = row.backendRef !== null && row.backendRef.backend === backend ? row.backendRef : null;
+        const persistedRef = resumableRef(row, backend);
         await settleRetained(conversationId);
         if (backend !== row.agentBackend) {
           // Decided here, inside the conversation's one running turn, so a
           // refused concurrent message can never change it.
-          if (row.promptCount > 0 || row.backendRef !== null) {
+          if (backendLocked(row)) {
             return {
               kind: "not_started",
               reason: "configuration",

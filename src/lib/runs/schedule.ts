@@ -16,10 +16,13 @@ import {
   type RouteGuard,
   type RunDefinitionContext,
   type RunFacts,
+  type RunHaltClearedBy,
+  type RunHaltKind,
   type RunInvocation,
   type RunLoop,
   type RunProgress,
 } from "./schemas";
+import { laneCodePrerequisites, laneMembers, laneSkipped } from "./topology";
 
 /** What the Run last observed of each started context, keyed by Context id. */
 export type ObservedContexts = ReadonlyMap<
@@ -29,6 +32,8 @@ export type ObservedContexts = ReadonlyMap<
     output?: unknown;
     /** An effect of the context is admitted and running: it drains through a pause. */
     active: boolean;
+    /** Questions its seats asked the owner that are still open, whatever its progress says. */
+    openQuestions: number;
   }
 >;
 
@@ -68,19 +73,14 @@ export type LoopState =
       pass: number;
     };
 
-/** A route or loop that cannot proceed until its definition changes. */
+/** A route, loop or lane that cannot proceed on its own, and what clears it. */
 export interface RunHalt {
-  kind:
-    | "route_unevaluable"
-    | "route_cardinality"
-    | "loop_exhausted"
-    | "loop_unevaluable"
-    | "lane_provision"
-    | "lane_publication";
+  kind: RunHaltKind;
   /** Stable while the cause stands, so projecting it again records nothing new. */
   occurrence: string;
   reason: string;
-  /** The lane a lane halt concerns; a new attempt for it clears the halt. */
+  clearedBy: RunHaltClearedBy;
+  /** The lane a lane halt concerns. */
   lane?: string;
 }
 
@@ -255,6 +255,7 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
         : quoted(targets(outcome.activatedEdgeIds));
     halts.push({
       kind: "route_cardinality",
+      clearedBy: "amend",
       occurrence: `route:${source}:cardinality`,
       reason: `route: "${source}" must take ${outcome.policy === "exactlyOne" ? "exactly one" : "at least one"} of its guarded routes (${quoted(targets(outcome.conditionalEdgeIds))}), but its result took ${taken}`,
     });
@@ -267,6 +268,7 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
       .map((edge) => edge.logicalSourceId);
     halts.push({
       kind: "route_unevaluable",
+      clearedBy: "amend",
       // Named by its sources too: an amendment can clear one, and another source can halt the same context later.
       occurrence: `route:${c.key}:unevaluable:${[...new Set(sources)].sort().join(",")}`,
       reason: `route: whether "${c.key}" runs cannot be decided, because the result of ${quoted([...new Set(sources)])} cannot be read`,
@@ -277,12 +279,16 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     if (state.kind === "exhausted")
       halts.push({
         kind: "loop_exhausted",
+        // Raising its maxPasses runs it further.
+        clearedBy: "amend",
         occurrence: `loop:${loop.key}:exhausted:${loop.maxPasses}`,
         reason: `loop "${loop.key}": "${loop.exit}" did not meet the exit condition in ${loop.maxPasses} ${loop.maxPasses === 1 ? "pass" : "passes"}`,
       });
     if (state.kind === "unevaluable")
       halts.push({
         kind: "loop_unevaluable",
+        // A started loop's exit condition cannot be amended.
+        clearedBy: "cancel",
         occurrence: `loop:${loop.key}:unevaluable:${state.pass + 1}`,
         reason: `loop "${loop.key}": the result of "${loop.exit}" in pass ${state.pass + 1} cannot be read, so the exit condition cannot be evaluated`,
       });
@@ -291,9 +297,9 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
   const laneState = (lane: string) => laneStateOf(facts, lane);
   const definedLanes = facts.definition.lanes ?? [];
   const settlementOf = (key: string) => projection.settlementByContextId.get(key);
-  const membersOf = (lane: string) => defined.filter((c) => c.lane === lane);
-  const laneSkipped = (lane: string): boolean =>
-    membersOf(lane).every((c) => settlementOf(c.key) === "skipped");
+  const membersOf = (lane: string) => laneMembers(defined, lane);
+  const isSkipped = (key: string): boolean => settlementOf(key) === "skipped";
+  const skippedLane = (lane: string): boolean => laneSkipped(defined, lane, isSkipped);
   const published = (lane: string): boolean =>
     laneState(lane)?.publication?.outcome.kind === "published";
   const provisioned = (lane: string | undefined): boolean =>
@@ -301,18 +307,27 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     laneState(lane)?.provision.outcome.kind === "provisioned";
   const needsCode = (c: RunDefinitionContext, source: string): boolean =>
     !(c.outputOnly ?? []).includes(source);
+  /** Lanes whose publication waits for `key`: a member that may still run depends on it through contexts that may still run. */
+  const lanesWaitingFor = (key: string): Set<string> => {
+    const reached = new Set([key]);
+    for (const from of reached)
+      for (const c of defined)
+        if (!isSkipped(c.key) && c.dependsOn.includes(from)) reached.add(c.key);
+    return new Set(defined.flatMap((c) => (c.lane !== undefined && reached.has(c.key) ? [c.lane] : [])));
+  };
   /**
-   * Lanes whose code `c` needs through its taken routes and that have not
-   * published. A session writer waits for every lane that may still publish:
-   * publication refuses a session holding its uncommitted results, and a
-   * skipped route can drop the dependency that ordered it after a lane.
+   * Unpublished lanes `c` waits for. A lane context waits for the lanes whose
+   * code it needs through its taken routes. A publication changes the session
+   * worktree, so a session context waits for every lane that may still publish
+   * and does not wait for it: a skipped route can drop the dependency that
+   * ordered it after a lane. The compiler refuses a writer any lane waits for.
    */
   const awaitedPublications = (c: RunDefinitionContext): string[] => {
-    if (c.lane === undefined && c.request.workspace.scope.mode !== "readOnly")
-      return definedLanes.flatMap((lane) =>
-        published(lane.key) || laneSkipped(lane.key) ? [] : [lane.key],
-      );
-    return codeFromLanes(c);
+    if (c.lane !== undefined) return codeFromLanes(c);
+    const before = lanesWaitingFor(c.key);
+    return definedLanes.flatMap((lane) =>
+      published(lane.key) || skippedLane(lane.key) || before.has(lane.key) ? [] : [lane.key],
+    );
   };
   const codeFromLanes = (c: RunDefinitionContext): string[] => [
     ...new Set(
@@ -340,9 +355,10 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
 
   for (const lane of definedLanes) {
     const state = laneState(lane.key);
-    if (state?.provision.outcome.kind === "failed")
+    if (state?.provision.outcome.kind === "refused")
       halts.push({
         kind: "lane_provision",
+        clearedBy: "retry_lane",
         lane: lane.key,
         occurrence: `lane:${lane.key}:provision:${state.provision.attempt}`,
         reason: `lane "${lane.key}": its worktree could not be provisioned: ${state.provision.outcome.detail}`,
@@ -353,6 +369,7 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     if (reason !== null)
       halts.push({
         kind: "lane_publication",
+        clearedBy: "retry_lane",
         lane: lane.key,
         occurrence: `lane:${lane.key}:publication:${publication.attempt}`,
         reason,
@@ -364,20 +381,10 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     const state = laneState(lane.key);
     const members = membersOf(lane.key);
     if (state === undefined) {
-      if (laneSkipped(lane.key)) continue;
+      if (skippedLane(lane.key)) continue;
       // Every lane it needs code from has published, so its base includes that code.
-      const prerequisites = new Set(
-        members.flatMap((c) =>
-          c.dependsOn.flatMap((source) => {
-            const from = byKey.get(source)?.lane;
-            return from !== undefined && from !== lane.key && needsCode(c, source)
-              ? [from]
-              : [];
-          }),
-        ),
-      );
-      const ready = [...prerequisites].every(
-        (from) => published(from) || laneSkipped(from),
+      const ready = [...laneCodePrerequisites(defined, lane.key)].every(
+        (from) => published(from) || skippedLane(from),
       );
       if (ready && members.some(startable))
         laneActions.push({ kind: "provision", lane: lane.key });
@@ -540,13 +547,14 @@ function publicationHaltReason(
     case "published":
     case "cancelled":
       return null;
-    case "blocked":
+    case "publish_blocked":
       return `lane "${lane}": publication blocked: ${outcome.detail}`;
-    case "stale":
+    case "publication_stale":
       return `lane "${lane}": the session branch moved to ${outcome.head} after the lane was checked against it; a new attempt merges the new head and checks again`;
-    case "failed":
+    case "publication_failed":
+    case "refused":
       return `lane "${lane}": publication failed: ${outcome.detail}`;
-    case "uncertain":
+    case "publication_uncertain":
       return `lane "${lane}": publication may or may not have happened: ${outcome.detail}`;
   }
 }
@@ -571,19 +579,21 @@ function bodyInOrder(
 }
 
 /**
- * The contexts to start now. Nothing new starts while the run is paused,
- * cancelled or faulted. Pure.
+ * The contexts to start and the lane steps to request now. Nothing new starts
+ * while the run is paused, cancelled or faulted. Pure.
  */
 export function decideNext(
   facts: RunFacts,
   observed: ObservedContexts,
-): ScheduledStart[] {
+): Pick<RunPlan, "starts" | "laneActions"> {
   const { paused, cancelled, fault } = facts.control;
-  if (paused || cancelled || fault !== null) return [];
-  return planRun(facts, observed).starts;
+  if (paused || cancelled || fault !== null) return { starts: [], laneActions: [] };
+  const { starts, laneActions } = planRun(facts, observed);
+  return { starts, laneActions };
 }
 
-function isTerminal(progress: ContextProgress | null): boolean {
+/** A Context that will do nothing more. */
+export function isTerminal(progress: ContextProgress | null): boolean {
   return progress?.kind === "succeeded" || progress?.kind === "cancelled";
 }
 
@@ -601,14 +611,12 @@ function ownerReasons(facts: RunFacts, observed: ObservedContexts): string[] {
         ? invocation.key
         : `${invocation.key} (pass ${invocation.pass + 1})`;
     if (progress === null) return [];
+    const questions = (observed.get(invocation.contextId)?.openQuestions ?? 0) > 0 ? [`${label}: question`] : [];
     if (progress.kind === "halted")
-      return [`${label}: halted (${progress.halt})`];
-    if (progress.kind !== "waiting") return [];
-    if (progress.obligation.kind === "await_answer")
-      return [`${label}: question`];
-    if (progress.obligation.kind === "await_approval")
-      return [`${label}: approval`];
-    return [];
+      return [...questions, `${label}: halted (${progress.halt})`];
+    if (progress.kind === "waiting" && progress.obligation.kind === "await_approval")
+      return [...questions, `${label}: approval`];
+    return questions;
   });
 }
 

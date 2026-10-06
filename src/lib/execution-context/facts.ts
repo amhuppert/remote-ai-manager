@@ -46,7 +46,7 @@ export function initialContextFacts(input: {
       granted: { unfinishedTaskRetries: 0, validationRetries: 0 },
       charges: [],
     },
-    control: { paused: false, cancelled: false, halt: null, steers: [] },
+    control: { paused: false, cancelled: false, halt: null, dispositions: [], steers: [] },
     requests: { open: [], answered: [] },
     effectSequence: 0,
   };

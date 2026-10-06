@@ -52,7 +52,8 @@ function inputsSection(facts: ContextFacts): string | null {
   return section(
     "Results this work builds on",
     [
-      "Earlier work was accepted with these results; its changes are already in your workspace.",
+      // Whether its changes are in this workspace depends on where it ran and published; only the result is certain.
+      "Earlier work was accepted with these results.",
       ...inputs.map(
         (input) =>
           `### ${input.title} (${input.key})\n\n\`\`\`json\n${JSON.stringify(input.output, null, 2)}\n\`\`\``,

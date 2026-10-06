@@ -144,6 +144,8 @@ interface RunViewData {
   title: string;
   kind: string;
   progress: string;
+  /** While paused: whether admitted work is still finishing. */
+  draining: boolean | null;
   needsOwner: string[];
   revision: number;
   ownerConversationId: string;
@@ -156,9 +158,16 @@ interface RunViewData {
     skipped: boolean;
     loop: string | null;
     lane: string | null;
-    waitingOnLanes: string[];
+    waitingOnLaneProvision: string | null;
+    waitingOnPublications: string[];
     pass: number;
     progress: string | null;
+    /** While paused: whether its admitted work is still finishing. */
+    draining: boolean | null;
+    /** While paused and drained: the step it takes on resume. */
+    next: string | null;
+    /** The step it stands at while running or waiting. */
+    step: string | null;
     halt: string | null;
     occurrence: string | null;
     tasks: Array<{ id: string; title: string; status: string }>;
@@ -186,12 +195,35 @@ interface RunViewData {
   definitionRevision: number;
 }
 
+type ContextProgressView = NonNullable<RunView["contexts"][number]["progress"]>;
+
+/** The step a context's progress stands at: its obligation, or its state when it has none. */
+function stepOf(progress: Exclude<ContextProgressView, { kind: "paused" }>): string {
+  return progress.kind === "running" || progress.kind === "waiting" ? progress.obligation.kind : progress.kind;
+}
+
+/** A pause reads as draining while admitted work still finishes, and as drained once it has. */
+function pausedLabel(draining: boolean | null, next: string | null = null, run = false): string {
+  if (draining === true) return run ? "paused (draining: admitted work is still finishing)" : "paused (draining)";
+  if (next !== null) return `paused (next: ${next})`;
+  return run ? "paused (drained)" : "paused";
+}
+
+/**
+ * A context under its run's pause: the run's permit holds it, not its own
+ * pause, so it reads as finishing while admitted work drains and as held after.
+ */
+function heldByRunPause(draining: boolean, step: string): string {
+  return draining ? "running (admitted work finishing under the run's pause)" : `held by the run's pause (next: ${step})`;
+}
+
 function toViewData(view: RunView): RunViewData {
   return {
     runId: view.runId,
     title: view.title,
     kind: view.kind,
     progress: view.progress.kind,
+    draining: view.progress.kind === "paused" ? view.progress.draining : null,
     needsOwner:
       view.progress.kind === "needs_owner" ? view.progress.reasons : [],
     revision: view.revision,
@@ -205,9 +237,14 @@ function toViewData(view: RunView): RunViewData {
       skipped: context.skipped,
       loop: context.loop,
       lane: context.lane,
-      waitingOnLanes: context.waitingOnLanes,
+      waitingOnLaneProvision: context.waitingOnLaneProvision,
+      waitingOnPublications: context.waitingOnPublications,
       pass: context.pass,
       progress: context.progress?.kind ?? null,
+      draining: context.progress?.kind === "paused" ? context.progress.draining : null,
+      next: context.progress?.kind === "paused" && context.progress.next !== null ? stepOf(context.progress.next) : null,
+      step:
+        context.progress?.kind === "running" || context.progress?.kind === "waiting" ? stepOf(context.progress) : null,
       halt:
         context.progress?.kind === "halted"
           ? `${context.progress.halt}: ${context.progress.detail}`
@@ -240,9 +277,9 @@ function notStartedState(
   context: {
     started: boolean;
     skipped: boolean;
-    lane: string | null;
     waitingOn: readonly string[];
-    waitingOnLanes: readonly string[];
+    waitingOnLaneProvision: string | null;
+    waitingOnPublications: readonly string[];
   },
 ): string {
   if (context.skipped) return "skipped (its route was not taken)";
@@ -252,16 +289,16 @@ function notStartedState(
   if (context.started) return "starting";
   if (context.waitingOn.length > 0)
     return `not started, waits on ${context.waitingOn.join(", ")}`;
-  if (context.waitingOnLanes.length === 1 && context.waitingOnLanes[0] === context.lane)
-    return `not started, waits for lane ${context.lane} to be provisioned`;
-  if (context.waitingOnLanes.length > 0)
-    return `not started, waits for lane ${context.waitingOnLanes.join(", ")} to publish`;
+  if (context.waitingOnLaneProvision !== null)
+    return `not started, waits for lane ${context.waitingOnLaneProvision} to be provisioned`;
+  if (context.waitingOnPublications.length > 0)
+    return `not started, waits for lane ${context.waitingOnPublications.join(", ")} to publish`;
   return "starting";
 }
 
 function viewText(view: JsonData<RunViewData>): string {
   const lines = [
-    `Run ${view.runId} (${view.kind}, definition revision ${view.definitionRevision}): ${view.title} — ${view.progress}`,
+    `Run ${view.runId} (${view.kind}, definition revision ${view.definitionRevision}): ${view.title} — ${view.progress === "paused" ? pausedLabel(view.draining, null, true) : view.progress}`,
   ];
   for (const reason of view.needsOwner) lines.push(`needs you: ${reason}`);
   for (const context of view.contexts) {
@@ -270,7 +307,11 @@ function viewText(view: JsonData<RunViewData>): string {
         ? ` (${context.halt}; occurrence ${context.occurrence ?? "?"})`
         : "";
     const state =
-      context.progress ?? notStartedState(view.progress, context);
+      context.progress === "paused"
+        ? pausedLabel(context.draining, context.next)
+        : view.progress === "paused" && context.step !== null
+          ? heldByRunPause(view.draining === true, context.step)
+          : (context.progress ?? notStartedState(view.progress, context));
     const pass =
       context.loop === null ? "" : ` (loop ${context.loop}, pass ${context.pass})`;
     lines.push(

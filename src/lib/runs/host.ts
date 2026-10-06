@@ -1,12 +1,10 @@
 import type { ControlPermits } from "@/lib/control/permits";
 import type { ContextHost, ContextSummary } from "@/lib/execution-context/host";
 import { contextStartRequestSchema } from "@/lib/execution-context/schemas";
-import { runControllerId } from "@/lib/execution-context/host";
-import type { ContextProgress } from "@/lib/execution-context/schemas";
 import type { Executor, OperationState } from "@/lib/intents/executor";
 import type { IntentLedger } from "@/lib/intents/ledger";
 import type { PendingIntent } from "@/lib/intents/schemas";
-import { workspaceOperationSchema, workspaceReportSchema } from "@/lib/workspace/schemas";
+import { laneBindingId, laneProvisionReportSchema, lanePublicationReportSchema } from "@/lib/workspace/schemas";
 import type { OwnerRef } from "@/lib/intents/schemas";
 import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -15,26 +13,53 @@ import { amendDefinition, type ProposedDefinition } from "./amendment";
 import {
   deriveRunProgress,
   onlyHaltsRemain,
+  decideNext,
+  isTerminal,
   planRun,
   type ObservedContexts,
   type RunPlan,
 } from "./schedule";
 import {
-  boundaryDetail,
   laneStateOf,
   type RunBoundary,
+  type RunBoundaryDetail,
   type RunBoundaryKind,
   type RunDefinitionContext,
   type RunDisposition,
   type RunFacts,
   type RunInvocation,
-  type LanePublicationOutcome,
   type RunLane,
   type RunLaneState,
   type RunLoop,
   type RunProgress,
   type RunRecord,
 } from "./schemas";
+
+/** The permit a Run controls its Contexts and lane steps through. */
+const runControllerId = (runId: string): string => `run:${runId}`;
+
+type LaneStep = "provision" | "publish";
+
+/** A lane step's cause names the run, the step, the lane and the attempt; the Run reads them back from it. */
+const laneStepCause = (runId: string, step: LaneStep, lane: string, attempt: number): string =>
+  `${runId}:${step}:${lane}:${attempt}`;
+
+function parseLaneStepCause(
+  runId: string,
+  cause: string,
+): { step: LaneStep; lane: string; attempt: number } | null {
+  const prefix = `${runId}:`;
+  if (!cause.startsWith(prefix)) return null;
+  const [step, ...rest] = cause.slice(prefix.length).split(":");
+  const attempt = Number(rest.pop());
+  const lane = rest.join(":");
+  if ((step !== "provision" && step !== "publish") || !Number.isInteger(attempt) || lane.length === 0) return null;
+  return { step, lane, attempt };
+}
+
+function withLane(facts: RunFacts, lane: string, state: RunLaneState): RunFacts {
+  return { ...facts, lanes: { ...facts.lanes, [lane]: state } };
+}
 
 export interface RunLaunchInput {
   runId: string;
@@ -83,8 +108,10 @@ export interface RunObservation {
 export interface RunInspection {
   /** Where each defined context, loop and route stands. */
   plan: RunPlan;
-  /** Pending start intents whose Context already settled: a stalled host. */
+  /** Open intents whose executor already settled, or ended uncertain: a stalled host, cleared by reconcile. */
   stalled: string[];
+  /** Each started Context as the plan read it, by Context id; null when it could not be found. */
+  contexts: ReadonlyMap<string, ContextSummary | null>;
 }
 
 export interface RunHost {
@@ -95,19 +122,14 @@ export interface RunHost {
   observe(runId: string): RunObservation | null;
   /** Reads every started Context and pending start. */
   inspect(runId: string): RunInspection | null;
-  /** `expectedRevision` null skips the optimistic check for callers that hold no revision. */
-  pause(runId: string, expectedRevision: number | null): Promise<void>;
-  resume(
-    runId: string,
-    expectedRevision: number | null,
-    dispositions?: RunDisposition[],
-  ): Promise<void>;
-  cancel(runId: string, expectedRevision: number | null): Promise<void>;
+  pause(runId: string): Promise<void>;
+  resume(runId: string, dispositions?: RunDisposition[]): Promise<void>;
+  cancel(runId: string): Promise<void>;
   /**
    * Asks for a new attempt at a lane's halted publication or failed
    * provisioning, after the owner fixed what stopped it.
    */
-  retryLane(runId: string, lane: string, expectedRevision: number | null): Promise<void>;
+  retryLane(runId: string, lane: string): Promise<void>;
   /** Records a human approval decision on one of the Run's Contexts. */
   decide(
     runId: string,
@@ -173,11 +195,40 @@ export class RunAmendmentRefusedError extends RunControlRefusedError {
   }
 }
 
-function isTerminal(progress: ContextProgress | null): boolean {
-  return progress?.kind === "succeeded" || progress?.kind === "cancelled";
+/**
+ * The owner-facing occurrences a Context asks for: each open question once,
+ * whatever else its seats are doing, and its progress's approval or halt.
+ */
+function contextBoundaries(
+  run: RunRecord,
+  invocation: RunInvocation,
+  context: ContextSummary,
+): Array<Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt">> {
+  const questions = context.openQuestions.map((open) => ({
+    runId: run.runId,
+    occurrence: `${invocation.contextId}:question:${open.questionId}`,
+    kind: "question" as const,
+    summary: `${context.title}: the agent asked you a question.`,
+    detail: { kind: "question" as const, contextId: invocation.contextId, questionId: open.questionId },
+  }));
+  const progressBoundary = contextBoundary(run, invocation, context);
+  return progressBoundary === null ? questions : [...questions, progressBoundary];
 }
 
-/** The owner-facing occurrences a Context's progress asks for. */
+/** The halt a Run's own reconcile failure records; a resume clears it. */
+function faultBoundary(
+  facts: RunFacts,
+  fault: { detail: string; at: string },
+): Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt" | "runId"> {
+  return {
+    occurrence: `run:fault:${fault.at}`,
+    kind: "halted",
+    summary: `${facts.title}: the run could not be reconciled: ${fault.detail}. Resume it to retry.`,
+    detail: { kind: "fault", error: fault.detail },
+  };
+}
+
+/** The owner-facing occurrence a Context's progress asks for. */
 function contextBoundary(
   run: RunRecord,
   invocation: RunInvocation,
@@ -191,20 +242,6 @@ function contextBoundary(
   const title = context.title;
   if (
     progress.kind === "waiting" &&
-    progress.obligation.kind === "await_answer"
-  ) {
-    return {
-      ...base,
-      kind: "question",
-      summary: `${title}: the agent asked you a question.`,
-      detail: {
-        contextId: invocation.contextId,
-        questionId: progress.obligation.questionId,
-      },
-    };
-  }
-  if (
-    progress.kind === "waiting" &&
     progress.obligation.kind === "await_approval"
   ) {
     return {
@@ -212,6 +249,7 @@ function contextBoundary(
       kind: "approval",
       summary: `${title}: the result awaits a human decision.`,
       detail: {
+        kind: "approval",
         contextId: invocation.contextId,
         candidateId: progress.obligation.candidateId,
       },
@@ -223,10 +261,11 @@ function contextBoundary(
       kind: "halted",
       summary: `${title}: halted (${progress.halt}). ${progress.detail}`,
       detail: {
+        kind: "context_halt",
         contextId: invocation.contextId,
         halt: progress.halt,
         occurrence,
-        dispositions: context.dispositions,
+        dispositions: [...context.dispositions],
       },
     };
   }
@@ -254,7 +293,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       occurrence: string;
       kind: RunBoundaryKind;
       summary: string;
-      detail: unknown;
+      detail: RunBoundaryDetail;
     },
   ): void {
     deps.runs.recordBoundary({
@@ -274,6 +313,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           progress: v.context?.progress ?? null,
           output: v.context?.accepted?.output,
           active: v.context?.active ?? false,
+          openQuestions: v.context?.openQuestions.length ?? 0,
         },
       ]),
     );
@@ -309,12 +349,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     deps.intents.record({
       requester: owner(record.runId),
       executor: "workspace",
-      cause: `${record.runId}:${step}:${lane.key}:${attempt}`,
+      cause: laneStepCause(record.runId, step, lane.key, attempt),
       permit: deps.permits.current(runControllerId(record.runId)),
       request:
         step === "provision"
-          ? { kind: "provision", bindingId: `lane:${lane.worktreePath}`, lane: target }
-          : { kind: "publish", bindingId: `lane:${lane.worktreePath}`, lane: target, checks: lane.checks },
+          ? { kind: "provision", bindingId: laneBindingId(target), lane: target }
+          : { kind: "publish", bindingId: laneBindingId(target), lane: target, checks: lane.checks },
       recordedAt: deps.now(),
     });
   }
@@ -325,9 +365,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
    * paused, cancelled or faulted. Joins the caller's transaction.
    */
   function startEligible(record: RunRecord, facts: RunFacts): RunFacts {
-    const { paused, cancelled, fault } = facts.control;
-    if (paused || cancelled || fault !== null) return facts;
-    const plan = planRun(facts, observedOf(observeInvocations(facts)));
+    const plan = decideNext(facts, observedOf(observeInvocations(facts)));
     if (plan.starts.length === 0 && plan.laneActions.length === 0) return facts;
     const permit = deps.permits.current(runControllerId(record.runId));
     const byKey = new Map(facts.definition.contexts.map((c) => [c.key, c]));
@@ -345,7 +383,6 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         pass: start.pass,
         contextId: start.contextId,
         startCause: `${record.runId}:start:${start.key}:${start.pass}`,
-        request,
       };
       deps.intents.record({
         requester: owner(record.runId),
@@ -392,78 +429,47 @@ export function createRunHost(deps: RunHostDeps): RunHost {
 
   /** Records that cancelling withdrew a lane step before Workspace admitted it. Pure over facts. */
   function cancelLaneStep(facts: RunFacts, intent: PendingIntent): RunFacts {
-    const operation = workspaceOperationSchema.parse(intent.request);
-    if (operation.kind !== "provision" && operation.kind !== "publish") return facts;
-    const lane = (facts.definition.lanes ?? []).find((l) => l.laneId === operation.lane.laneId);
-    const current = lane === undefined ? undefined : laneStateOf(facts, lane.key);
-    if (lane === undefined || current === undefined) return facts;
-    const attempt = Number(intent.cause.split(":").pop());
+    const step = parseLaneStepCause(facts.runId, intent.cause);
+    const current = step === null ? undefined : laneStateOf(facts, step.lane);
+    if (step === null || current === undefined) return facts;
     const cancelled = { kind: "cancelled" as const };
-    if (operation.kind === "provision")
-      return current.provision.attempt === attempt
-        ? { ...facts, lanes: { ...facts.lanes, [lane.key]: { ...current, provision: { attempt, outcome: cancelled } } } }
+    if (step.step === "provision")
+      return current.provision.attempt === step.attempt
+        ? withLane(facts, step.lane, { ...current, provision: { attempt: step.attempt, outcome: cancelled } })
         : facts;
-    return current.publication?.attempt === attempt
-      ? { ...facts, lanes: { ...facts.lanes, [lane.key]: { ...current, publication: { attempt, outcome: cancelled } } } }
+    return current.publication?.attempt === step.attempt
+      ? withLane(facts, step.lane, { ...current, publication: { attempt: step.attempt, outcome: cancelled } })
       : facts;
   }
 
   /**
-   * Records a lane step's outcome in the Run's facts, unless a newer attempt
-   * replaced the one it answers. Pure over facts.
+   * Records what Workspace reported for a lane step, unless a newer attempt
+   * replaced the one it answers. A step Workspace could not settle reads as
+   * refused (provisioning) or uncertain (publication), with what it knows.
+   * Pure over facts.
    */
   function consumeLaneOutcome(
     facts: RunFacts,
     intent: PendingIntent,
-    state: OperationState,
+    state: Extract<OperationState, { kind: "settled" | "uncertain" }>,
   ): RunFacts {
-    const operation = workspaceOperationSchema.parse(intent.request);
-    if (operation.kind !== "provision" && operation.kind !== "publish") return facts;
-    const lane = (facts.definition.lanes ?? []).find(
-      (l) => l.laneId === operation.lane.laneId,
-    );
-    const current = lane === undefined ? undefined : laneStateOf(facts, lane.key);
-    if (lane === undefined || current === undefined) return facts;
-    const attempt = Number(intent.cause.split(":").pop());
-    const report =
-      state.kind === "settled" ? workspaceReportSchema.safeParse(state.outcome) : null;
-    const detail =
-      state.kind === "uncertain"
-        ? state.evidence
-        : report?.success === true && report.data.kind === "refused"
-          ? report.data.detail
-          : `Workspace reported ${JSON.stringify(state.kind === "settled" ? state.outcome : state.kind)}`;
-    if (operation.kind === "provision") {
-      if (current.provision.attempt !== attempt) return facts;
+    const step = parseLaneStepCause(facts.runId, intent.cause);
+    const current = step === null ? undefined : laneStateOf(facts, step.lane);
+    if (step === null || current === undefined) return facts;
+    if (step.step === "provision") {
+      if (current.provision.attempt !== step.attempt) return facts;
       const outcome =
-        report?.success === true && report.data.kind === "provisioned"
-          ? { kind: "provisioned" as const, baseline: report.data.baseline }
-          : { kind: "failed" as const, detail };
-      return {
-        ...facts,
-        lanes: { ...facts.lanes, [lane.key]: { ...current, provision: { attempt, outcome } } },
-      };
+        state.kind === "uncertain"
+          ? { kind: "refused" as const, detail: state.evidence }
+          : laneProvisionReportSchema.parse(state.outcome);
+      return withLane(facts, step.lane, { ...current, provision: { attempt: step.attempt, outcome } });
     }
-    if (current.publication?.attempt !== attempt) return facts;
-    const data = report?.success === true ? report.data : null;
-    const outcome: LanePublicationOutcome =
+    if (current.publication?.attempt !== step.attempt) return facts;
+    const outcome =
       state.kind === "uncertain"
-        ? { kind: "uncertain", detail }
-        : data?.kind === "published"
-          ? { kind: "published", commit: data.commit, incorporated: data.incorporated }
-          : data?.kind === "publish_blocked"
-            ? { kind: "blocked", detail: data.detail }
-            : data?.kind === "publication_stale"
-              ? { kind: "stale", head: data.head }
-              : data?.kind === "publication_failed"
-                ? { kind: "failed", detail: data.detail }
-                : data?.kind === "publication_uncertain"
-                  ? { kind: "uncertain", detail: data.detail }
-                  : { kind: "failed", detail };
-    return {
-      ...facts,
-      lanes: { ...facts.lanes, [lane.key]: { ...current, publication: { attempt, outcome } } },
-    };
+        ? { kind: "publication_uncertain" as const, detail: state.evidence }
+        : lanePublicationReportSchema.parse(state.outcome);
+    return withLane(facts, step.lane, { ...current, publication: { attempt: step.attempt, outcome } });
   }
 
   /**
@@ -485,7 +491,9 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         kind: "halted",
         summary: `${record.facts.title}: ${halt.reason}.`,
         detail: {
-          runHalt: halt.kind,
+          kind: "run_halt",
+          halt: halt.kind,
+          clearedBy: halt.clearedBy,
           ...(halt.lane !== undefined ? { lane: halt.lane } : {}),
           otherWorkRemains,
         },
@@ -493,21 +501,20 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     }
     // A lane halt clears with a retry the owner can ask for at once; the
     // follow-up is for route and loop halts, which only an amendment or cancelling ends.
-    if (otherWorkRemains || plan.halts.some((halt) => halt.lane !== undefined)) return;
+    if (otherWorkRemains || plan.halts.some((halt) => halt.clearedBy === "retry_lane")) return;
     const boundaries = deps.runs.boundaries(record.runId);
     // A promise counts until a follow-up answers it.
     const answered = Math.max(
       0,
-      ...boundaries
-        .filter((boundary) => boundaryDetail(boundary).runHalt === "stalled")
-        .map((boundary) => boundary.seq),
+      ...boundaries.filter((boundary) => boundary.detail.kind === "stalled").map((boundary) => boundary.seq),
     );
     const occurrences = new Set(plan.halts.map((halt) => halt.occurrence));
     const promised = boundaries.some(
       (boundary) =>
         boundary.seq > answered &&
         occurrences.has(boundary.occurrence) &&
-        boundaryDetail(boundary).otherWorkRemains === true,
+        boundary.detail.kind === "run_halt" &&
+        boundary.detail.otherWorkRemains,
     );
     if (!promised) return;
     recordBoundary(record, {
@@ -515,9 +522,8 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       kind: "halted",
       summary: `${record.facts.title}: only halted routes or loops remain. ${plan.halts.map((halt) => halt.reason).join("; ")}.`,
       detail: {
-        runHalt: "stalled",
-        otherWorkRemains: false,
-        halts: [...new Set(plan.halts.map((halt) => halt.kind))].sort(),
+        kind: "stalled",
+        clearedBy: plan.halts.every((halt) => halt.clearedBy === "cancel") ? "cancel" : "amend",
       },
     });
   }
@@ -527,18 +533,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     const views = observeInvocations(facts);
     for (const view of views) {
       if (view.context === null) continue;
-      const boundary = contextBoundary(record, view.invocation, view.context);
-      if (boundary !== null) recordBoundary(record, boundary);
+      for (const boundary of contextBoundaries(record, view.invocation, view.context))
+        recordBoundary(record, boundary);
     }
-    const fault = facts.control.fault;
-    if (fault !== null) {
-      recordBoundary(record, {
-        occurrence: `run:fault:${fault.at}`,
-        kind: "halted",
-        summary: `${facts.title}: the run could not be reconciled: ${fault.detail}. Resume it to retry.`,
-        detail: { error: fault.detail },
-      });
-    }
+    if (facts.control.fault !== null) recordBoundary(record, faultBoundary(facts, facts.control.fault));
     const observed = observedOf(views);
     const plan = planRun(facts, observed);
     const laneStepRunning = deps.intents
@@ -552,6 +550,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         kind: "succeeded",
         summary: `${facts.title}: finished.`,
         detail: {
+          kind: "succeeded",
           outputs: Object.fromEntries(
             facts.definition.contexts.flatMap((c) => {
               const state = plan.keys.get(c.key);
@@ -567,7 +566,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         occurrence: "run:cancelled",
         kind: "cancelled",
         summary: `${facts.title}: cancelled.`,
-        detail: {},
+        detail: { kind: "cancelled" },
       });
     }
     const updatedAt = deps.now();
@@ -636,18 +635,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
 
   function updateControl(
     runId: string,
-    expectedRevision: number | null,
     change: Partial<RunFacts["control"]>,
     /** Changes the permit, and any facts that change with it, in the same transaction. */
     permitChange: (facts: RunFacts) => RunFacts | void,
   ): RunRecord {
     return deps.transaction(() => {
       const record = requireRecord(runId);
-      if (expectedRevision !== null && record.revision !== expectedRevision) {
-        throw new RunControlRefusedError(
-          `Run ${runId} is at revision ${record.revision}, not ${expectedRevision}`,
-        );
-      }
       if (
         record.progress.kind === "succeeded" ||
         record.progress.kind === "cancelled"
@@ -752,21 +745,14 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         const record = requireRecord(runId);
         if (record.facts.control.fault !== null) return;
         deps.permits.close(runControllerId(runId), deps.now());
-        const facts: RunFacts = {
-          ...record.facts,
-          control: { ...record.facts.control, fault: { detail, at: deps.now() } },
-        };
+        const fault = { detail, at: deps.now() };
+        const facts: RunFacts = { ...record.facts, control: { ...record.facts.control, fault } };
         const progress: RunProgress = facts.control.cancelled
           ? record.progress
           : { kind: "needs_owner", reasons: [`run: ${detail}`] };
         const updatedAt = deps.now();
         deps.runs.update(runId, record.revision, { facts, progress, updatedAt });
-        recordBoundary(record, {
-          occurrence: `run:fault:${facts.control.fault?.at ?? updatedAt}`,
-          kind: "halted",
-          summary: `${facts.title}: the run could not be reconciled: ${detail}. Resume it to retry.`,
-          detail: { error: detail },
-        });
+        recordBoundary(record, faultBoundary(facts, fault));
       });
       void notifyPending(runId);
     },
@@ -782,24 +768,23 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       if (record === null) return null;
       const stalled = deps.intents
         .pending(owner(runId))
-        .filter(
-          (intent) => outcomeOf(intent).kind === "settled",
-        )
+        .filter((intent) => {
+          const state = outcomeOf(intent);
+          return state.kind === "settled" || state.kind === "uncertain";
+        })
         .map((intent) => intent.cause);
-      const plan = planRun(
-        record.facts,
-        observedOf(observeInvocations(record.facts)),
-      );
-      return { plan, stalled };
+      const views = observeInvocations(record.facts);
+      const plan = planRun(record.facts, observedOf(views));
+      return { plan, stalled, contexts: new Map(views.map((v) => [v.invocation.contextId, v.context])) };
     },
 
-    async pause(runId, expectedRevision) {
-      updateControl(runId, expectedRevision, { paused: true }, () =>
+    async pause(runId) {
+      updateControl(runId, { paused: true }, () =>
         deps.permits.close(runControllerId(runId), deps.now()),
       );
     },
 
-    async resume(runId, expectedRevision, dispositions = []) {
+    async resume(runId, dispositions = []) {
       // One transaction: a refused disposition leaves the run paused and every
       // context as it was, rather than half resumed.
       const record = deps.transaction(() => {
@@ -816,7 +801,6 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         // Resume clears a fault too: the owner asked the run to try again.
         const resumed = updateControl(
           runId,
-          expectedRevision,
           { paused: false, fault: null },
           () => {
             const { paused, fault } = current.facts.control;
@@ -850,11 +834,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       await host.reconcile(runId);
     },
 
-    async cancel(runId, expectedRevision) {
+    async cancel(runId) {
       const running: string[] = [];
       const record = updateControl(
         runId,
-        expectedRevision,
         { cancelled: true },
         () => {
           deps.permits.revoke(runControllerId(runId), deps.now());
@@ -873,13 +856,9 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       await host.reconcile(runId);
     },
 
-    async retryLane(runId, laneKey, expectedRevision) {
+    async retryLane(runId, laneKey) {
       deps.transaction(() => {
         const record = requireRecord(runId);
-        if (expectedRevision !== null && record.revision !== expectedRevision)
-          throw new RunControlRefusedError(
-            `Run ${runId} is at revision ${record.revision}, not ${expectedRevision}`,
-          );
         if (record.facts.control.cancelled)
           throw new RunControlRefusedError(`Run ${runId} was cancelled`);
         const lane = (record.facts.definition.lanes ?? []).find((l) => l.key === laneKey);
@@ -898,7 +877,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           const attempt = publication.attempt + 1;
           requestLaneStep(record, lane, "publish", attempt);
           next = { ...state, publication: { attempt, outcome: { kind: "requested" } } };
-        } else if (state?.provision.outcome.kind === "failed") {
+        } else if (state?.provision.outcome.kind === "refused") {
           const attempt = state.provision.attempt + 1;
           requestLaneStep(record, lane, "provision", attempt);
           next = { ...state, provision: { attempt, outcome: { kind: "requested" } } };
@@ -976,7 +955,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
               occurrence: `run:restored_paused:${restored.revision}`,
               kind: "restored_paused",
               summary: `${restored.facts.title}: the server restarted, so this run is paused until someone resumes it.`,
-              detail: {},
+              detail: { kind: "restored_paused" },
             });
           });
         } catch (error) {
@@ -989,7 +968,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       // A cancel the last process did not finish stops its children again; each stop is idempotent.
       for (const run of listed.filter((r) => r.facts.control.cancelled)) {
         try {
-          await host.cancel(run.runId, null);
+          await host.cancel(run.runId);
         } catch (error) {
           deps.log.error("runs.cancel_resume_failed", {
             runId: run.runId,

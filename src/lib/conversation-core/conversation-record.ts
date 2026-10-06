@@ -152,9 +152,26 @@ export function runtimeDebugMode(state: ConversationRow["debugMode"]): RuntimeDe
   return { ...state, debugSessionId: state.debugSessionId };
 }
 
+/**
+ * The backend is fixed once the conversation has run, or carries a
+ * continuation (a fork's, before its own first prompt): only that backend can
+ * resume it.
+ */
+export function backendLocked(row: Pick<ConversationRow, "promptCount" | "backendRef">): boolean {
+  return row.promptCount > 0 || row.backendRef !== null;
+}
+
+/** The continuation a turn on `backend` resumes: the row's own, when it is that backend's. */
+export function resumableRef(
+  row: Pick<ConversationRow, "backendRef">,
+  backend: ConversationState["agentBackend"],
+): AgentSessionRef | null {
+  return row.backendRef !== null && row.backendRef.backend === backend ? row.backendRef : null;
+}
+
 /** Pure over the row draft: the backend is chosen with the first message and fixed from then on. */
 export function applyBackendAdoption(row: ConversationRow, backend: ConversationState["agentBackend"]): void {
-  if (row.promptCount > 0) {
+  if (backendLocked(row)) {
     throw new Error("Cannot change backend after prompts have been sent");
   }
   row.agentBackend = backend;
@@ -242,9 +259,11 @@ export function applyQuestionWithdrawn(row: ConversationRow): boolean {
 /**
  * Pure over the row draft: a restart ended the turn. A durable question it
  * asked (cctl ask) can still be answered; one asked inside the turn died with
- * the turn's transport.
+ * the turn's transport. Null, changing nothing, when the row shows no turn:
+ * its turn settled the row before the restart reached its attempt.
  */
-export function applyTurnInterrupted(row: ConversationRow, now: string): "waiting_for_input" | "awaiting" {
+export function applyTurnInterrupted(row: ConversationRow, now: string): "waiting_for_input" | "awaiting" | null {
+  if (row.activeTurnSource === null && row.status !== "running") return null;
   if (isInTurnQuestionId(row.pendingQuestionId)) {
     row.pendingQuestionId = null;
     row.pendingQuestions = null;

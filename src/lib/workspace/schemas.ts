@@ -155,6 +155,12 @@ export const laneTargetSchema = z
   .strict();
 export type LaneTarget = z.infer<typeof laneTargetSchema>;
 
+/** A lane operation's job id, for the refs and jobs Git work parks under: a ref name cannot hold a cause's colons. */
+export const laneJobId = (cause: string): string => cause.replace(/[^A-Za-z0-9._-]/g, "-");
+
+/** A lane's operations name its worktree as their binding, so the lane runs one of them at a time. */
+export const laneBindingId = (lane: Pick<LaneTarget, "worktreePath">): string => `lane:${lane.worktreePath}`;
+
 /**
  * Operations Workspace executes. Requesters may carry their own labels on a
  * request; Workspace reads only these fields. Lane operations name the lane's
@@ -265,6 +271,47 @@ export type WorkspaceOperationRecord = z.infer<
   typeof workspaceOperationRecordSchema
 >;
 
+const refusedReportSchema = z.object({ kind: z.literal("refused"), detail: z.string().min(1) }).strict();
+
+/** What provisioning a lane reports: its worktree, from a pinned base commit, or why not. */
+export const laneProvisionReportSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("provisioned"), baseline: z.string().min(1) }).strict(),
+  refusedReportSchema,
+]);
+export type LaneProvisionReport = z.infer<typeof laneProvisionReportSchema>;
+
+const publishedReportSchema = z
+  .object({
+    kind: z.literal("published"),
+    commit: z.string().min(1),
+    /** The session head the lane was merged with and checked against. */
+    incorporated: z.string().min(1),
+  })
+  .strict();
+/** The session worktree had changes publication must not overwrite or commit. */
+const publishBlockedReportSchema = z.object({ kind: z.literal("publish_blocked"), detail: z.string().min(1) }).strict();
+/** The session branch moved after the lane was checked against it. */
+const publicationStaleReportSchema = z.object({ kind: z.literal("publication_stale"), head: z.string().min(1) }).strict();
+/** The merge conflicted or a publication check failed. */
+const publicationFailedReportSchema = z
+  .object({ kind: z.literal("publication_failed"), detail: z.string().min(1) })
+  .strict();
+/** Whether the session holds the publication could not be established; the owner checks. */
+const publicationUncertainReportSchema = z
+  .object({ kind: z.literal("publication_uncertain"), detail: z.string().min(1) })
+  .strict();
+
+/** What publishing a lane reports. Only `published` makes the lane's code visible outside it. */
+export const lanePublicationReportSchema = z.discriminatedUnion("kind", [
+  publishedReportSchema,
+  publishBlockedReportSchema,
+  publicationStaleReportSchema,
+  publicationFailedReportSchema,
+  publicationUncertainReportSchema,
+  refusedReportSchema,
+]);
+export type LanePublicationReport = z.infer<typeof lanePublicationReportSchema>;
+
 /** The settled outcome of a Workspace operation, as requesters consume it. */
 export const workspaceReportSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("bound") }).strict(),
@@ -282,19 +329,11 @@ export const workspaceReportSchema = z.discriminatedUnion("kind", [
     .object({ kind: z.literal("accepted"), receipt: z.string().min(1) })
     .strict(),
   z.object({ kind: z.literal("candidate_changed") }).strict(),
-  z.object({ kind: z.literal("refused"), detail: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("provisioned"), baseline: z.string().min(1) }).strict(),
-  z
-    .object({
-      kind: z.literal("published"),
-      commit: z.string().min(1),
-      incorporated: z.string().min(1),
-    })
-    .strict(),
-  z.object({ kind: z.literal("publish_blocked"), detail: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("publication_stale"), head: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("publication_failed"), detail: z.string().min(1) }).strict(),
-  /** Whether the session holds the publication could not be established; the owner checks. */
-  z.object({ kind: z.literal("publication_uncertain"), detail: z.string().min(1) }).strict(),
+  ...laneProvisionReportSchema.options,
+  publishedReportSchema,
+  publishBlockedReportSchema,
+  publicationStaleReportSchema,
+  publicationFailedReportSchema,
+  publicationUncertainReportSchema,
 ]);
 export type WorkspaceReport = z.infer<typeof workspaceReportSchema>;

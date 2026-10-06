@@ -5,7 +5,7 @@ import {
   type ContextProgress,
   type ContextStartRequest,
 } from "@/lib/execution-context/schemas";
-import { amendDefinition, type ProposedDefinition } from "./amendment";
+import { amendDefinition, frozenKeys, type ProposedDefinition } from "./amendment";
 import { planRun, type ObservedContexts } from "./schedule";
 import type {
   RouteGuard,
@@ -52,6 +52,8 @@ function request(key: string, brief = `Brief ${key}`, model = "sonnet"): Context
 
 interface Defined {
   key: string;
+  /** A backend the owner wrote for its implementer; resolution fills one in otherwise. */
+  backend?: string;
   dependsOn?: string[];
   when?: Record<string, RouteGuard>;
   routing?: { cardinality: "independent" | "atLeastOne" | "exactlyOne" };
@@ -84,10 +86,23 @@ const laneEntry = (key: string, checks: string[] = []) => ({
   checks,
 });
 
+/** The context as its owner wrote it: what the run reads back, before seats are resolved. */
+const authoredContext = (d: Defined) => ({
+  key: d.key,
+  brief: d.brief ?? `Brief ${d.key}`,
+  ...(d.dependsOn !== undefined ? { dependsOn: d.dependsOn } : {}),
+  ...(d.when !== undefined ? { when: d.when } : {}),
+  ...(d.routing !== undefined ? { routing: d.routing } : {}),
+  ...(d.lane !== undefined ? { lane: d.lane } : {}),
+  ...(d.backend !== undefined ? { backend: d.backend } : {}),
+  checks: [...(d.checks ?? []), ...(d.deferredChecks ?? [])].sort(),
+});
+
 function definition(defined: Defined[], loops: RunLoop[] = [], laneChecks: Record<string, string[]> = {}): ProposedDefinition {
   const laneKeys = [...new Set(defined.flatMap((d) => (d.lane === undefined ? [] : [d.lane])))];
   return {
     title: "Amended",
+    authored: { title: "Amended", contexts: defined.map(authoredContext) },
     contexts: defined.map(context),
     ...(loops.length > 0 ? { loops } : {}),
     ...(laneKeys.length > 0 ? { lanes: laneKeys.map((key) => laneEntry(key, laneChecks[key])) } : {}),
@@ -109,6 +124,7 @@ function facts(
       contexts: proposed.contexts,
       ...(proposed.loops !== undefined ? { loops: proposed.loops } : {}),
       ...(proposed.lanes !== undefined ? { lanes: proposed.lanes } : {}),
+      ...(proposed.authored !== undefined ? { authored: proposed.authored } : {}),
     },
     ...(options.lanes !== undefined ? { lanes: options.lanes } : {}),
     invocations: started.map(([key, pass]) => ({
@@ -116,7 +132,6 @@ function facts(
       pass,
       contextId: pass === 0 ? `run-1.${key}` : `run-1.${key}.pass${pass + 1}`,
       startCause: `run-1:start:${key}:${pass}`,
-      request: request(key),
     })),
     control: { paused: false, cancelled: false, fault: null },
   };
@@ -130,7 +145,7 @@ const succeeded = (output: unknown) => ({
 const running = { progress: { kind: "running", obligation: { kind: "work", reason: "initial" } } satisfies ContextProgress, active: true };
 
 function observed(entries: Record<string, { progress: ContextProgress; output?: unknown; active: boolean }>): ObservedContexts {
-  return new Map(Object.entries(entries).map(([id, entry]) => [`run-1.${id}`, entry]));
+  return new Map(Object.entries(entries).map(([id, entry]) => [`run-1.${id}`, { openQuestions: 0, ...entry }]));
 }
 
 function amend(current: RunFacts, seen: ObservedContexts, proposed: ProposedDefinition) {
@@ -160,6 +175,40 @@ describe("amending a run's definition", () => {
     expect(result.definition.contexts.map((c) => c.key)).toEqual(["api", "docs", "review"]);
     expect(result.definition.contexts[0]).toEqual(current.definition.contexts[0]);
     expect(result.definition.contexts[1]?.request.contract.brief).toBe("Document the new routes");
+  });
+
+  it("keeps a provisioned lane where it is", () => {
+    const laned: Defined[] = [{ key: "api", lane: "api" }];
+    const current = facts(laned, [["api", 0]], { lanes: { api: { provision: { attempt: 1, outcome: { kind: "requested" } }, publication: null } } });
+    const moved = definition(laned);
+    const lanes = (moved.lanes ?? []).map((lane) => ({ ...lane, worktreePath: "/repo/.worktrees/elsewhere" }));
+    expect(issuesOf(amend(current, observed({ api: running }), { ...moved, lanes }))).toEqual([
+      expect.stringMatching(/lane "api" has been provisioned, or asked to be, so its worktree and branch cannot change/),
+    ]);
+  });
+
+  it("refuses a seat its owner changed on a started context, so the definition it reads back stays true", () => {
+    const current = facts(chain, [["api", 0]]);
+    expect(
+      issuesOf(amend(current, observed({ api: running }), definition([{ key: "api", backend: "codex" }, chain[1] as Defined]))),
+    ).toEqual([expect.stringMatching(/"api" has started, so its request .* cannot change/)]);
+  });
+
+  it("names the contexts an amendment keeps as they started: every started one and a started loop's whole body", () => {
+    const loop: RunLoop = {
+      key: "polish",
+      body: ["implement", "review"],
+      entry: "implement",
+      exit: "review",
+      until: { schema: { type: "object" } },
+      maxPasses: 2,
+    };
+    const looped: Defined[] = [{ key: "plan" }, { key: "implement", dependsOn: ["plan"] }, { key: "review", dependsOn: ["implement"] }];
+    expect([...frozenKeys(facts(looped, [["plan", 0], ["implement", 0]], { loops: [loop] }))].sort()).toEqual([
+      "implement",
+      "plan",
+      "review",
+    ]);
   });
 
   it("names new work beside a started context, which would leave its checks to later work, apart from a changed request", () => {

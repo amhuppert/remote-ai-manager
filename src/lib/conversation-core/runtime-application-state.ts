@@ -1,11 +1,10 @@
 import type { ConversationBackendEvent, ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
-import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
-import {
-  agentCapabilityCascadeKindSchema,
-  type AgentCapabilitiesUpdatedEvent,
-  type AgentCapabilityRuntimeApplicationState,
+import { seededCapabilityRuntimeState } from "@/lib/agent-capabilities/runtime-seed";
+import type {
+  AgentCapabilitiesUpdatedEvent,
+  AgentCapabilityRuntimeApplicationState,
 } from "@/lib/agent-capabilities/schemas";
 import { conversationTargetStoreSessionName, type ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { Logger } from "@/lib/logging";
@@ -105,12 +104,14 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
             await seedMcpRuntimeState(mcp, identity, portableMcp, runtime.mcpConfigDelivery, before);
           const { capabilityState } = composed;
           if (capabilityState !== undefined) {
-            const baseline = reconcileDeliveredCapabilityState(
-              capabilityState,
-              runtime.capabilityConfigDelivery === "input-accepted" ? undefined : runtime.capabilitiesAtCreation,
-            );
             await updateCapabilities(conversation, "conversation_core.seedCapabilityRuntime", (current) =>
-              keepNewerSaves(baseline, current, before.capabilities),
+              seededCapabilityRuntimeState({
+                seeded: capabilityState,
+                delivered:
+                  runtime.capabilityConfigDelivery === "input-accepted" ? undefined : runtime.capabilitiesAtCreation,
+                current,
+                before: before.capabilities,
+              }),
             );
           }
           deps.log.info("conversation_core.runtime_application_seeded", {
@@ -140,24 +141,4 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
       }
     },
   };
-}
-
-/**
- * The seeded capability baseline, except a cascade whose pending change moved
- * since the seeding began: that save is newer than the runtime's configuration
- * and stays pending, with what the runtime applied at creation recorded.
- */
-function keepNewerSaves(
-  baseline: AgentCapabilityRuntimeApplicationState,
-  current: AgentCapabilityRuntimeApplicationState | undefined,
-  before: AgentCapabilityRuntimeApplicationState | undefined,
-): AgentCapabilityRuntimeApplicationState {
-  const cascades = { ...baseline.cascades };
-  for (const kind of agentCapabilityCascadeKindSchema.options) {
-    const now = current?.cascades[kind];
-    if (now === undefined || now.pendingHash === before?.cascades[kind]?.pendingHash) continue;
-    const appliedHash = baseline.cascades[kind]?.appliedHash;
-    cascades[kind] = { ...now, ...(appliedHash !== undefined ? { appliedHash } : {}) };
-  }
-  return { cascades };
 }

@@ -211,6 +211,20 @@ describe("core turn engine", () => {
     expect(entries.map((e) => e.role)).toEqual(["user"]);
   });
 
+  it("keeps a turn whose runtime reports background progress from being taken for stalled", async () => {
+    const quiet = hangingFactory();
+    const { engine } = engineWith(quiet.factory, { timeoutMs: 0, stallTimeoutMs: 40 });
+    const controller = new AbortController();
+    const pending = engine.runTurn(request("claude", { signal: controller.signal }));
+    // A background task's progress, which reaches the runtime outside the turn's event stream.
+    const progress = setInterval(() => engine.notifyActivity("conv-1"), 10);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    clearInterval(progress);
+    expect(quiet.sawAbort()).toBe(false);
+    controller.abort();
+    expect((await pending).interruption?.reason).toBe("user");
+  });
+
   it("stops a turn when its caller cancels it", async () => {
     const hanging = hangingFactory();
     const { engine } = engineWith(hanging.factory);

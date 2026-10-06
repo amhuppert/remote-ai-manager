@@ -67,6 +67,27 @@ export function retireCurrent(
   };
 }
 
+/**
+ * An admitted work turn may have changed files: the candidate it worked on is
+ * no longer what was reviewed, and its output, capture, stability counts and
+ * provenance start again with the new work.
+ */
+export function startWorkEpoch(facts: ContextFacts): ContextFacts {
+  const retired = retireCurrent(facts, "reworked");
+  return {
+    ...retired,
+    candidates: {
+      ...retired.candidates,
+      captured: null,
+      captureFailures: null,
+      unstableCount: 0,
+      verifyPending: null,
+      // New work is reviewed in full, even right after an advisory response.
+      nextProvenance: { kind: "work" },
+    },
+  };
+}
+
 export function freezeCandidate(
   facts: ContextFacts,
   input: { contextId: string; evidence: string },

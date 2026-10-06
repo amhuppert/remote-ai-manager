@@ -1,5 +1,5 @@
 import { computeCascadeRuntimeHash } from "./runtime-hashes";
-import { encodeCascadeKind } from "./schemas";
+import { agentCapabilityCascadeKindSchema, encodeCascadeKind } from "./schemas";
 import { applyTimingForCascade } from "./metadata";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -134,4 +134,28 @@ export function applyDeliveredCapabilityView(
       appliedEnabled: deliveredItems.get(item.itemId),
     })),
   };
+}
+
+/**
+ * What a conversation records once a runtime was created from `seeded`: the
+ * baseline as that runtime received it, except a cascade whose pending change
+ * moved since the seeding began (`before`), which is a save newer than the
+ * runtime's configuration — it stays pending, with what the runtime applied at
+ * creation recorded.
+ */
+export function seededCapabilityRuntimeState(input: {
+  seeded: AgentCapabilityRuntimeApplicationState;
+  delivered: ResolvedCapabilityCascade | undefined;
+  current: AgentCapabilityRuntimeApplicationState | undefined;
+  before: AgentCapabilityRuntimeApplicationState | undefined;
+}): AgentCapabilityRuntimeApplicationState {
+  const baseline = reconcileDeliveredCapabilityState(input.seeded, input.delivered);
+  const cascades = { ...baseline.cascades };
+  for (const kind of agentCapabilityCascadeKindSchema.options) {
+    const now = input.current?.cascades[kind];
+    if (now === undefined || now.pendingHash === input.before?.cascades[kind]?.pendingHash) continue;
+    const appliedHash = baseline.cascades[kind]?.appliedHash;
+    cascades[kind] = { ...now, ...(appliedHash !== undefined ? { appliedHash } : {}) };
+  }
+  return { cascades };
 }

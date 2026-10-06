@@ -198,6 +198,20 @@ describe("task turns on an interactive conversation", () => {
     });
   });
 
+  it("tells the task's caller it failed when the runtime it ran in could not be closed", async () => {
+    const h = harness(() => callResult({ outcome: { kind: "completed", text: "feat: add notices" } }));
+    h.deps.host.release = async () => {
+      throw new Error("the agent process did not exit");
+    };
+    const { outcome } = await h.run(task());
+
+    expect(outcome).toMatchObject({
+      kind: "settlement_failed",
+      code: "runtime_close",
+      message: "The agent runtime could not be closed: the agent process did not exit",
+    });
+  });
+
   it("refuses a task the backend cannot run without touching the conversation", async () => {
     const h = harness(() => callResult({}));
     h.deps.admit = async () => {

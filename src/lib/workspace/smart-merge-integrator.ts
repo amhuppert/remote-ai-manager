@@ -16,6 +16,7 @@ import type { AnalyzeConflictsParams, ResolveConflictsParams } from "@/lib/sessi
 import type { MergeInput, MergeOutput } from "@/lib/workflows/merge/types";
 import type { LaneGit } from "./lane-git";
 import type { LaneIntegrator } from "./lane-integrator";
+import { laneJobId } from "./schemas";
 
 export interface SmartMergeIntegratorDeps {
   /**
@@ -54,7 +55,7 @@ export function createSmartMergeIntegrator(
     async integrate({ lane, head, checks, cause, signal }) {
       if (signal.aborted) return { kind: "failed", detail: "Stopped before integrating" };
       const input: MergeInput = {
-        jobId: `${cause.replace(/[^A-Za-z0-9._-]/g, "-")}-integrate`,
+        jobId: `${laneJobId(cause)}-integrate`,
         projectPath: lane.projectPath,
         projectName: path.basename(lane.projectPath),
         sessionName: lane.sessionName,

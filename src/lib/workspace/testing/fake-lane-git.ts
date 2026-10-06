@@ -76,9 +76,6 @@ export function createFakeLaneGit(initial: Record<string, string> = {}) {
         if (message.includes(marker) && heads.get(branch) === sha) return sha;
       return null;
     },
-    async abortMerge(worktreePath) {
-      state.midMerge.delete(worktreePath);
-    },
     async abortUnresolvedMerge(worktreePath) {
       if (!state.midMerge.has(worktreePath)) return "none";
       state.midMerge.delete(worktreePath);
