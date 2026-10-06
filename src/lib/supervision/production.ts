@@ -18,11 +18,10 @@ import {
   createProductionConversationRecords,
   createProductionDebugRecords,
 } from "@/lib/conversation-core/production-records";
-import { scopeRefFromStoreSessionName, storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createConversation } from "@/lib/conversations/service";
 import { createLogger } from "@/lib/logging";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
-import { enqueueConversationMessage } from "@/lib/prompt/enqueue-conversation-message";
 import {
   deleteGlobalValue,
   getGlobalSingleton,
@@ -46,7 +45,8 @@ import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees
 import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import { composedSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, SUPERVISION_KEY } from "./handles";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
-import { composeBoundaryNotice } from "@/lib/runs/notices";
+import { getSubscriptionService } from "@/lib/subscriptions/service-factory";
+import { reconcileActiveSubscriptionWakes } from "@/lib/subscriptions/active-wait-production";
 import { composeSupervision, type Supervision } from "./supervision";
 
 const logger = createLogger("runs");
@@ -181,7 +181,6 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
 }
 
 function composeProductionSupervision(): Supervision {
-  let self: Supervision | null = null;
   const laneGit = createLaneGit({
     git: defaultGitClient,
     exists: existsSync,
@@ -261,35 +260,23 @@ function composeProductionSupervision(): Supervision {
       },
       log: createLogger("workspace"),
     }),
-    async notifyOwner({ run, boundary }) {
-      const question =
-        boundary.detail.kind === "question" && self !== null ? self.requests.question(boundary.detail.questionId) : null;
-      await enqueueConversationMessage({
-        projectPath: run.projectPath,
-        sessionName: storeSessionNameFromScopeRef(
-          run.ownerSessionName === null
-            ? { scope: "project" }
-            : { scope: "session", sessionName: run.ownerSessionName },
-        ),
-        conversationId: run.ownerConversationId,
-        message: composeBoundaryNotice(
-          run,
-          boundary,
-          question !== null ? { questionText: question.questionText } : {},
-        ),
-        deliveryPolicy: "next_turn",
+    async followOwner(run) {
+      const follow = await getSubscriptionService().autoFollow({
+        recipient: { projectPath: run.projectPath, conversationId: run.ownerConversationId },
+        source: { kind: "run", id: run.runId },
+        reason: "Run launched by this conversation",
+        initialCursor: "0",
+        wakes: true,
       });
-      logger.info("runs.owner_notified", {
-        runId: run.runId,
-        boundary: boundary.seq,
-        kind: boundary.kind,
-        conversationId: run.ownerConversationId,
-      });
+      if (follow === null)
+        logger.warn("runs.owner_not_followable", { runId: run.runId, conversationId: run.ownerConversationId });
+    },
+    boundariesRecorded() {
+      void reconcileActiveSubscriptionWakes();
     },
     now: () => new Date().toISOString(),
     logger: (name) => createLogger(name),
   });
-  self = composed;
   return composed;
 }
 

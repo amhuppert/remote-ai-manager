@@ -186,7 +186,6 @@ interface RunViewData {
     kind: string;
     summary: string;
     recordedAt: string;
-    notified: boolean;
   }>;
   stalled: string[];
   halts: string[];
@@ -390,7 +389,7 @@ async function postLaunch(input: {
 
 const launchedText = (data: JsonData<RunLaunchedResponse>) =>
   quoteLiteralText(
-    `Run ${data.runId} launched (${data.progress.kind}). Its questions, halts and result arrive as run-boundary messages.\n`,
+    `Run ${data.runId} launched (${data.progress.kind}). You follow it: its questions, halts and result wake you as subscription updates.\n`,
   );
 
 async function prepareSession({ app }: { app: CcApplication }) {

@@ -23,6 +23,7 @@ import { readSubscriptionWakeHold } from "@/lib/conversations/message-queue-subs
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
 import { getSubscriptionRuntime } from "./service-factory";
+import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import {
   createSubscriptionOverviewService,
   type SubscriptionOverviewOwner,
@@ -59,6 +60,7 @@ export interface SubscriptionSourcePresentationDeps {
   findJob(
     id: string,
   ): { jobType: string; projectName: string; sessionName: string } | null;
+  findRun(id: string): { projectPath: string; title: string } | null;
 }
 
 export function createSubscriptionSourcePresentationReader(
@@ -138,6 +140,13 @@ export function createSubscriptionSourcePresentationReader(
             }
           : missing;
       }
+      case "run": {
+        // Runs have no page yet; their owner reads them with cctl run show.
+        const row = deps.findRun(source.id);
+        return row?.projectPath === recipient.projectPath
+          ? { title: row.title, href: null }
+          : missing;
+      }
     }
   };
 }
@@ -158,6 +167,7 @@ export function getSubscriptionOverviewService() {
     const queries = createSubscriptionSourceQueriesRepo(db);
     const validations = createValidationRunsRepo(db);
     const jobs = createJobsRepo(db);
+    const runs = createRunsRepo(db);
     const readSource = createSubscriptionSourcePresentationReader({
       findNotepad: (id) => notepads.findListItem(id),
       findTicket: (id) => tickets.findById(id),
@@ -168,6 +178,10 @@ export function getSubscriptionOverviewService() {
         archivedWorkflows.findByExecutionId(id),
       findValidation: (id) => validations.findById(id),
       findJob: (id) => jobs.getJobRecord(id),
+      findRun: (id) => {
+        const run = runs.get(id);
+        return run === null ? null : { projectPath: run.projectPath, title: run.facts.title };
+      },
     });
     return createSubscriptionOverviewService({
       listSubscriptions: (recipient) => runtime.repo.list(recipient),

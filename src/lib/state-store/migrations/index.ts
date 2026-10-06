@@ -1,4 +1,5 @@
 import { retireConsumedFiniteWaitSourcesMigration } from "./0067-retire-consumed-finite-wait-sources";
+import { runSubscriptionSource } from "./0068-run-subscription-source";
 import { repairImportedNoticeHistory } from "./0066-repair-imported-notice-history";
 import { subscriptionWaitGenerations } from "./0065-subscription-wait-generations";
 import { retireAutomaticValidationFollows } from "./0064-retire-automatic-validation-follows";
@@ -171,6 +172,7 @@ export const migrations: readonly StateMigration[] = [
   subscriptionWaitGenerations,
   repairImportedNoticeHistory,
   retireConsumedFiniteWaitSourcesMigration,
+  runSubscriptionSource,
 ];
 
 export type { StateMigration } from "./types";

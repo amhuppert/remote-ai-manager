@@ -19,6 +19,7 @@ export const subscriptionSourceRefSchema = z
       "validation",
       "git_job",
       "conversation",
+      "run",
     ]),
     id: z.string().min(1),
   })
@@ -72,6 +73,8 @@ export const conversationSubscriptionSchema = z
     source: subscriptionSourceRefSchema,
     reason: z.string().min(1),
     mode: z.enum(["passive", "active"]),
+    /** New facts wake the recipient through a wake message instead of waiting for its next turn's briefing. */
+    wakes: z.boolean().default(false),
     eventKinds: z.array(z.string().min(1)).nullable(),
     expiresAt: z.string().nullable(),
     status: z.enum(["following", "unfollowed"]),

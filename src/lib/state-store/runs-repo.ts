@@ -30,12 +30,11 @@ const boundaryRow = z.object({
   summary: z.string(),
   detail_json: z.string(),
   recorded_at: z.string(),
-  notified_at: z.string().nullable(),
 });
 
 const RUN = `run_id, project_path, session_name, owner_conversation_id, owner_session_name, launch_cause,
   facts_json, revision, progress_json, created_at, updated_at`;
-const BOUNDARY = `seq, run_id, occurrence, kind, summary, detail_json, recorded_at, notified_at`;
+const BOUNDARY = `seq, run_id, occurrence, kind, summary, detail_json, recorded_at`;
 
 function runFromRow(raw: unknown): RunRecord {
   const r = runRow.parse(raw);
@@ -64,7 +63,6 @@ function boundaryFromRow(raw: unknown): RunBoundary {
     summary: r.summary,
     detail: JSON.parse(r.detail_json),
     recordedAt: r.recorded_at,
-    notifiedAt: r.notified_at,
   });
 }
 
@@ -87,13 +85,10 @@ export interface RunsRepo {
     expectedRevision: number,
     change: Pick<RunRecord, "facts" | "progress" | "updatedAt">,
   ): number;
-  recordBoundary(boundary: Omit<RunBoundary, "seq" | "notifiedAt">): void;
+  /** False when the run already has a boundary for this occurrence. */
+  recordBoundary(boundary: Omit<RunBoundary, "seq">): boolean;
   boundaries(runId: string, afterSeq?: number): RunBoundary[];
-  unnotifiedBoundaries(runId: string): RunBoundary[];
-  markNotified(seq: number, notifiedAt: string): void;
   latestBoundarySeq(runId: string): number;
-  /** Every run, finished or not, with a boundary its owner has not been told. */
-  runsWithUnnotifiedBoundaries(): string[];
 }
 
 export function createRunsRepo(db: Db): RunsRepo {
@@ -118,17 +113,8 @@ export function createRunsRepo(db: Db): RunsRepo {
     boundaries: db.prepare(
       `SELECT ${BOUNDARY} FROM run_boundaries WHERE run_id = ? AND seq > ? ORDER BY seq`,
     ),
-    unnotified: db.prepare(
-      `SELECT ${BOUNDARY} FROM run_boundaries WHERE run_id = ? AND notified_at IS NULL ORDER BY seq`,
-    ),
-    markNotified: db.prepare(
-      `UPDATE run_boundaries SET notified_at = ? WHERE seq = ?`,
-    ),
     latestSeq: db.prepare(
       `SELECT COALESCE(MAX(seq), 0) AS seq FROM run_boundaries WHERE run_id = ?`,
-    ),
-    unnotifiedRuns: db.prepare(
-      `SELECT DISTINCT run_id FROM run_boundaries WHERE notified_at IS NULL ORDER BY run_id`,
     ),
   };
   return {
@@ -175,33 +161,21 @@ export function createRunsRepo(db: Db): RunsRepo {
       return expectedRevision + 1;
     },
     recordBoundary(boundary) {
-      st.recordBoundary.run({
+      return st.recordBoundary.run({
         runId: boundary.runId,
         occurrence: boundary.occurrence,
         kind: boundary.kind,
         summary: boundary.summary,
         detailJson: JSON.stringify(boundary.detail ?? null),
         recordedAt: boundary.recordedAt,
-      });
+      }).changes > 0;
     },
     boundaries(runId, afterSeq = 0) {
       return st.boundaries.all(runId, afterSeq).map(boundaryFromRow);
     },
-    unnotifiedBoundaries(runId) {
-      return st.unnotified.all(runId).map(boundaryFromRow);
-    },
-    markNotified(seq, notifiedAt) {
-      st.markNotified.run(notifiedAt, seq);
-    },
     latestBoundarySeq(runId) {
       return z.object({ seq: z.number().int() }).parse(st.latestSeq.get(runId))
         .seq;
-    },
-    runsWithUnnotifiedBoundaries() {
-      return z
-        .array(z.object({ run_id: z.string() }))
-        .parse(st.unnotifiedRuns.all())
-        .map((row) => row.run_id);
     },
   };
 }

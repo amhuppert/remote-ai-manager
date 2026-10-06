@@ -278,7 +278,6 @@ export const runBoundarySchema = z
     summary: z.string().min(1),
     detail: runBoundaryDetailSchema,
     recordedAt: z.string().min(1),
-    notifiedAt: z.string().min(1).nullable(),
   })
   .strict();
 export type RunBoundary = z.infer<typeof runBoundarySchema>;
@@ -373,7 +372,6 @@ export const runViewSchema = z
           kind: runBoundaryKindSchema,
           summary: z.string(),
           recordedAt: z.string(),
-          notified: z.boolean(),
         })
         .strict(),
     ),

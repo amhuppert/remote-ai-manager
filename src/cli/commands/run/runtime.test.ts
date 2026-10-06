@@ -47,7 +47,6 @@ const view = {
       kind: "halted",
       summary: "Fix the notice: halted (turn_failed).",
       recordedAt: "2026-10-03T10:05:00.000Z",
-      notified: true,
     },
   ],
   stalled: [],

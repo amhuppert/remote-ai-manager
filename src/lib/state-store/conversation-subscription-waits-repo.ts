@@ -6,6 +6,7 @@ import {
 } from "./subscription-wait-lifecycle";
 import type { Db } from "./schemas";
 import type { WriteQueue } from "./write-queue";
+import { WAKING_FOLLOW } from "./conversation-subscriptions-repo";
 import {
   ActiveWaitConflictError,
   activeSubscriptionWaitSchema,
@@ -349,6 +350,7 @@ export function createConversationSubscriptionWaitsRepo(
           recipient: wait.recipient,
           source: wait.source,
           reason: wait.reason,
+          wakes: false,
           mode: "active",
           eventKinds: null,
           expiresAt: wait.expiresAt,
@@ -451,6 +453,12 @@ export function createConversationSubscriptionWaitsRepo(
   function isBatchDispatchable(batchId: string): boolean {
     const batch = readBatch(batchId);
     if (!batch || (batch.state !== "planned" && batch.state !== "queued"))
+      return false;
+    const followStillWakes = db.prepare(
+      `SELECT 1 FROM conversation_subscription_deliveries d JOIN conversation_subscriptions s ON s.id=d.subscription_id
+      WHERE d.id=? AND d.attempt_id=? AND d.state='queued' AND ${WAKING_FOLLOW}`,
+    );
+    if (batch.followDeliveryIds.some((id) => followStillWakes.get(id, batch.id) === undefined))
       return false;
     return batch.waitIds.every((id, index) => {
       const wait = readWait(id);
@@ -578,6 +586,8 @@ export function createConversationSubscriptionWaitsRepo(
       batch.waitIds.length !== batch.deliveryIds.length
     )
       throw new Error("Wake batch identities disagree");
+    const size = batch.waitIds.length + batch.followDeliveryIds.length;
+    if (size < 1 || size > 6) throw new Error("A wake carries one to six facts");
     const waits = batch.waitIds.map(readWait);
     if (
       waits.some(
@@ -592,7 +602,21 @@ export function createConversationSubscriptionWaitsRepo(
       )
     )
       return null;
+    const follow = db.prepare(
+      `SELECT 1 FROM conversation_subscription_deliveries d JOIN conversation_subscriptions s ON s.id=d.subscription_id
+      WHERE d.id=@id AND d.project_path=@project_path AND d.conversation_id=@conversation_id AND d.state IN ('pending','failed') AND ${WAKING_FOLLOW}`,
+    );
+    if (
+      batch.followDeliveryIds.some(
+        (id) => follow.get({ id, ...scope(batch.recipient) }) === undefined,
+      )
+    )
+      return null;
     writeBatch(batch);
+    for (const id of batch.followDeliveryIds)
+      db.prepare(
+        "UPDATE conversation_subscription_deliveries SET state='queued',attempt_id=@batch_id,attempt_count=attempt_count+1,queued_at=@at,finished_at=NULL,last_error=NULL WHERE id=@id",
+      ).run({ batch_id: batch.id, at: batch.createdAt, id });
     for (const wait of waits) {
       if (!wait) throw new Error("Reserved wait disappeared");
       writeWait({ ...wait, batchId: batch.id, updatedAt: batch.createdAt });
@@ -753,7 +777,9 @@ export function createConversationSubscriptionWaitsRepo(
     async listRecipients() {
       const rows: unknown[] = db
         .prepare(
-          "SELECT DISTINCT project_path AS projectPath,conversation_id AS conversationId FROM conversation_subscription_waits WHERE state IN ('waiting','ready')",
+          `SELECT project_path AS projectPath,conversation_id AS conversationId FROM conversation_subscription_waits WHERE state IN ('waiting','ready')
+          UNION SELECT d.project_path,d.conversation_id FROM conversation_subscription_deliveries d JOIN conversation_subscriptions s ON s.id=d.subscription_id
+          WHERE d.state IN ('pending','failed') AND ${WAKING_FOLLOW}`,
         )
         .all();
       return rows.map((row) => subscriptionRecipientSchema.parse(row));

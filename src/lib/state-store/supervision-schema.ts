@@ -174,7 +174,6 @@ export const SUPERVISION_SCHEMA_DDL = `
     summary TEXT NOT NULL,
     detail_json TEXT NOT NULL,
     recorded_at TEXT NOT NULL,
-    notified_at TEXT,
     UNIQUE (run_id, occurrence)
   );
 `;

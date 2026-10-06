@@ -384,6 +384,7 @@ describe("subscription HTTP boundary", () => {
       source: wait.source,
       reason: wait.reason,
       mode: "active" as const,
+      wakes: false,
       eventKinds: null,
       expiresAt: wait.expiresAt,
       status: "unfollowed" as const,

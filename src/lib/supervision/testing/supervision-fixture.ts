@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { compactionConfigSchema } from "@/lib/config/schemas";
@@ -126,7 +128,14 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     /** The lane Git port, in memory: set heads, dirt or conflicts to steer lane runs. */
     lanes: laneGit.git,
     laneGit,
-    notified: [] as RunBoundary[],
+    /** Every run boundary recorded, in order: what each owner's waking follow delivers. */
+    get notified(): RunBoundary[] {
+      const runs = createRunsRepo(fixture.db);
+      const ids = z.array(z.string()).parse(fixture.db.prepare("SELECT run_id FROM runs ORDER BY rowid").pluck().all());
+      return ids.flatMap((id) => runs.boundaries(id)).sort((a, b) => a.seq - b.seq);
+    },
+    /** Runs whose owner was asked to follow them. */
+    follows: [] as string[],
     turnMessages: [] as string[],
     /** Batches waiting in enrolled conversations' message queues, claimed first in, first out. */
     queued: [] as ClaimedQueuedBatch[],
@@ -300,9 +309,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
         lanes: harness.lanes,
         integrator: createDirectLaneIntegrator({ lanes: harness.lanes, runCheck: checkRunner }),
         runCheck: checkRunner,
-        async notifyOwner({ boundary }) {
-          harness.notified.push(boundary);
+        async followOwner(run) {
+          harness.follows.push(run.runId);
         },
+        boundariesRecorded() {},
         now: () => new Date().toISOString(),
         logger: () => silent,
       });

@@ -5,6 +5,7 @@ import {
   specAuthoringEventTypeSchema,
   specDeliveryPlanEventTypeSchema,
 } from "@/lib/specs/schemas";
+import { runBoundaryKindSchema } from "@/lib/runs/schemas";
 import type { SubscriptionSourceRef } from "./schemas";
 import { subscriptionCatalogSchema } from "./controls-schemas";
 
@@ -12,7 +13,7 @@ const events = (ids: readonly string[]) =>
   ids.map((id) => ({
     id,
     label: id
-      .replace(/^(spec-|graph-workflow-boundary:)/, "")
+      .replace(/^(spec-|graph-workflow-boundary:|run-boundary:)/, "")
       .replaceAll(/[-_]/g, " "),
   }));
 
@@ -60,6 +61,17 @@ export const subscriptionCatalog = subscriptionCatalogSchema.parse({
         graphWorkflowBoundaryKindSchema.options.map(
           (kind) => `graph-workflow-boundary:${kind}`,
         ),
+      ),
+    },
+    {
+      kind: "run",
+      label: "Run",
+      description:
+        "Boundaries of a supervised agent or workflow run: questions, halts, approvals and its result. Its owner follows it with wake from launch.",
+      identityDescription: "Run ID (from run show)",
+      allowedModes: ["passive"],
+      eventKinds: events(
+        runBoundaryKindSchema.options.map((kind) => `run-boundary:${kind}`),
       ),
     },
     {

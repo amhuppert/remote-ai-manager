@@ -29,6 +29,8 @@ import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/gra
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { createJobsRepo } from "@/lib/jobs/repo";
+import { createRunsRepo } from "@/lib/state-store/runs-repo";
+import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { createSubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
 import { createTicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
 import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
@@ -44,6 +46,19 @@ import { createConversationSubscriptionWaitsRepo } from "@/lib/state-store/conve
 import { createSubscriptionInvolvementReader } from "./involvement";
 import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
 export { synchronizeSubscriptionInvolvement } from "./involvement";
+
+function runSourceDeps(db: Db) {
+  const runs = createRunsRepo(db);
+  const core = createConversationCoreRepo(db);
+  return {
+    run(runId: string) {
+      const run = runs.get(runId);
+      return run === null ? null : { runId: run.runId, projectPath: run.projectPath, title: run.facts.title };
+    },
+    boundaries: (runId: string) => runs.boundaries(runId),
+    question: (questionId: string) => core.getQuestion(questionId),
+  };
+}
 
 export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
   const repo = createConversationSubscriptionsRepo(db, writeQueue);
@@ -76,6 +91,7 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     jobs: createJobsRepo(db),
     queries,
     ticketChanges,
+    runs: runSourceDeps(db),
   };
   async function isRecipientEligible(recipient: {
     projectPath: string;
@@ -85,6 +101,17 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
       readConversation(recipient.conversationId),
       recipient.projectPath,
     );
+  }
+  function inboxGetCommand(
+    recipient: { projectPath: string; conversationId: string },
+    deliveryId: string,
+  ): string {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const identity = readConversation(recipient.conversationId);
+    const sessionFlag = identity?.sessionName
+      ? ` --session=${quote(identity.sessionName)}`
+      : "";
+    return `cctl inbox get --project=${quote(projectNameFromPath(recipient.projectPath))}${sessionFlag} --conversation=${quote(recipient.conversationId)} -- ${quote(deliveryId)}`;
   }
   const waitsRepo = createConversationSubscriptionWaitsRepo(db, writeQueue);
   const preferencesRepo = createConversationSubscriptionPreferencesRepo(
@@ -127,6 +154,9 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
         batch.id,
       ));
     },
+    deliveryGetCommand(delivery) {
+      return inboxGetCommand(delivery.recipient, delivery.id);
+    },
     waitGetCommand(wait) {
       const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       const identity = readConversation(wait.recipient.conversationId);
@@ -149,14 +179,7 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     readSource: createSubscriptionSourceReader(sourceDeps),
     now: () => new Date().toISOString(),
     newId: randomUUID,
-    inboxGetCommand(recipient, deliveryId) {
-      const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-      const identity = readConversation(recipient.conversationId);
-      const sessionFlag = identity?.sessionName
-        ? ` --session=${quote(identity.sessionName)}`
-        : "";
-      return `cctl inbox get --project=${quote(projectNameFromPath(recipient.projectPath))}${sessionFlag} --conversation=${quote(recipient.conversationId)} -- ${quote(deliveryId)}`;
-    },
+    inboxGetCommand,
     inboxCommand(recipient) {
       const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       const identity = readConversation(recipient.conversationId);

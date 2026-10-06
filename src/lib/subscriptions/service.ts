@@ -33,6 +33,8 @@ export interface AutomaticFollowInput {
   reason: string;
   initialCursor?: SourceCursor;
   expiresAt?: string | null;
+  /** New facts wake the recipient instead of waiting for its next turn. */
+  wakes?: boolean;
 }
 export interface SubscriptionInvolvement {
   source: SubscriptionSourceRef;
@@ -291,6 +293,7 @@ export function createSubscriptionService(
         source,
         reason: input.reason,
         mode: "passive",
+        wakes: input.wakes ?? false,
         eventKinds: null,
         expiresAt: input.expiresAt ?? null,
         status: "following",
@@ -492,6 +495,8 @@ export function createSubscriptionService(
           (subscription) =>
             subscription.status === "following" &&
             subscription.pausedAt === null &&
+            // A waking follow's facts reach the recipient through wake messages.
+            !subscription.wakes &&
             (canReconcile(subscription, at) ||
               (finiteWaitIds.has(subscription.id) &&
                 subscription.mode === "passive")),

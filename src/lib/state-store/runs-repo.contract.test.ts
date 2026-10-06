@@ -179,12 +179,9 @@ describe("runs repository", () => {
         summary: "Fix it: the agent asked you a question.",
         detail: { kind: "question" as const, contextId: "run-1.implement.1", questionId: "q-1" },
         recordedAt: "2026-10-03T10:05:00.000Z",
-        notifiedAt: "2026-10-03T10:05:01.000Z",
       }),
       persist: (value) => {
         repo.recordBoundary(value);
-        if (value.notifiedAt !== null)
-          repo.markNotified(value.seq, value.notifiedAt);
         return value;
       },
       reload: (value) =>
@@ -221,11 +218,9 @@ describe("runs repository", () => {
         summary: "Fix it: something happened.",
         detail,
         recordedAt: "2026-10-03T10:05:00.000Z",
-        notifiedAt: "2026-10-03T10:05:01.000Z",
       }),
       persist: (value) => {
         repo.recordBoundary(value);
-        if (value.notifiedAt !== null) repo.markNotified(value.seq, value.notifiedAt);
         return value;
       },
       reload: (value) =>

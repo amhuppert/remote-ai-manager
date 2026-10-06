@@ -64,7 +64,6 @@ export function describeRun(
       kind: boundary.kind,
       summary: boundary.summary,
       recordedAt: boundary.recordedAt,
-      notified: boundary.notifiedAt !== null,
     })),
     stalled: [
       ...inspected.stalled,

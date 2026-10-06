@@ -1,3 +1,4 @@
+import { SUBSCRIPTIONS_DDL_BEFORE_RUN_SOURCE } from "../testing/prior-subscription-shape";
 import Database from "better-sqlite3";
 import { afterEach, expect, it } from "vitest";
 import {
@@ -7,7 +8,6 @@ import {
 import { createConversationSubscriptionsRepo } from "../conversation-subscriptions-repo";
 import { createWriteQueue } from "../write-queue";
 import {
-  CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL,
   CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL,
 } from "../state-db";
 import { enforceCurrentSchemaCompatibility } from "../schema-compatibility";
@@ -34,7 +34,7 @@ function legacyDb() {
     CREATE TABLE project_conversations(id TEXT PRIMARY KEY,project_path TEXT,pending_agent_notices TEXT);
   `);
   db.exec(
-    CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replaceAll(",'conversation'", ""),
+    SUBSCRIPTIONS_DDL_BEFORE_RUN_SOURCE.replaceAll(",'conversation'", ""),
   );
   db.exec(CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL);
   return db;

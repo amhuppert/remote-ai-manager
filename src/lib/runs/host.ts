@@ -93,8 +93,13 @@ export interface RunHostDeps {
     interrupt(cause: string): void | Promise<void>;
   };
   touchContext(contextId: string): void;
-  /** Queues an owner-facing boundary into the owner conversation, waking it when idle. */
-  notifyOwner(input: { run: RunRecord; boundary: RunBoundary }): Promise<void>;
+  /**
+   * The owner follows its run's boundaries with wake, so each one reaches it
+   * without a wait. Idempotent: a restart repairs a launch that could not.
+   */
+  followOwner(run: RunRecord): Promise<void>;
+  /** New boundaries were recorded and committed: deliver them now, not at the next delivery pass. */
+  boundariesRecorded(runId: string): void;
   now(): string;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
@@ -203,7 +208,7 @@ function contextBoundaries(
   run: RunRecord,
   invocation: RunInvocation,
   context: ContextSummary,
-): Array<Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt">> {
+): Array<Omit<RunBoundary, "seq" | "recordedAt">> {
   const questions = context.openQuestions.map((open) => ({
     runId: run.runId,
     occurrence: `${invocation.contextId}:question:${open.questionId}`,
@@ -219,7 +224,7 @@ function contextBoundaries(
 function faultBoundary(
   facts: RunFacts,
   fault: { detail: string; at: string },
-): Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt" | "runId"> {
+): Omit<RunBoundary, "seq" | "recordedAt" | "runId"> {
   return {
     occurrence: `run:fault:${fault.at}`,
     kind: "halted",
@@ -233,7 +238,7 @@ function contextBoundary(
   run: RunRecord,
   invocation: RunInvocation,
   context: ContextSummary,
-): Omit<RunBoundary, "seq" | "notifiedAt" | "recordedAt"> | null {
+): Omit<RunBoundary, "seq" | "recordedAt"> | null {
   const { progress, occurrence } = context;
   const base = {
     runId: run.runId,
@@ -287,6 +292,9 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     }));
   }
 
+  /** Runs with a boundary recorded since their last announcement. */
+  const fresh = new Set<string>();
+
   function recordBoundary(
     run: RunRecord,
     boundary: {
@@ -296,11 +304,12 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       detail: RunBoundaryDetail;
     },
   ): void {
-    deps.runs.recordBoundary({
+    const recorded = deps.runs.recordBoundary({
       runId: run.runId,
       ...boundary,
       recordedAt: deps.now(),
     });
+    if (recorded) fresh.add(run.runId);
   }
 
   function observedOf(
@@ -578,43 +587,21 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     return { ...record, facts, progress, revision, updatedAt };
   }
 
-  const notifying = new Map<string, Promise<void>>();
-  const notifyAgain = new Set<string>();
-
-  /** Delivers in boundary order; a failure stops the run's queue until the next attempt or boot. */
-  async function deliverPending(runId: string): Promise<void> {
-    const run = requireRecord(runId);
-    for (const boundary of deps.runs.unnotifiedBoundaries(runId)) {
-      try {
-        await deps.notifyOwner({ run, boundary });
-      } catch (error) {
-        deps.log.error("runs.owner_notify_failed", {
-          runId,
-          boundary: boundary.seq,
-          kind: boundary.kind,
-          error: getErrorMessage(error),
-        });
-        return;
-      }
-      deps.transaction(() => deps.runs.markNotified(boundary.seq, deps.now()));
-    }
+  /** Announces boundaries recorded since the last announcement; call only after their transaction commits. */
+  function announce(runId: string): void {
+    if (fresh.delete(runId)) deps.boundariesRecorded(runId);
   }
 
-  /** One delivery pass per run at a time, so overlapping reconciles never send a boundary twice. */
-  function notifyPending(runId: string): Promise<void> {
-    const inFlight = notifying.get(runId);
-    if (inFlight !== undefined) {
-      notifyAgain.add(runId);
-      return inFlight;
+  async function followOwner(run: RunRecord): Promise<void> {
+    try {
+      await deps.followOwner(run);
+    } catch (error) {
+      deps.log.error("runs.owner_follow_failed", {
+        runId: run.runId,
+        conversationId: run.ownerConversationId,
+        error: getErrorMessage(error),
+      });
     }
-    const pass = (async () => {
-      do {
-        notifyAgain.delete(runId);
-        await deliverPending(runId);
-      } while (notifyAgain.has(runId));
-    })().finally(() => notifying.delete(runId));
-    notifying.set(runId, pass);
-    return pass;
   }
 
   async function submitAdmissible(runId: string): Promise<void> {
@@ -700,6 +687,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         // persisted without the work its definition can begin.
         return project(created, startEligible(created, facts));
       });
+      await followOwner(record);
       await host.reconcile(record.runId);
       return requireRecord(record.runId);
     },
@@ -732,8 +720,8 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         }
         project(record, startEligible(record, facts));
       });
+      announce(runId);
       await submitAdmissible(runId);
-      await notifyPending(runId);
     },
 
     recordReconcileFailure(runId, error) {
@@ -754,7 +742,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         deps.runs.update(runId, record.revision, { facts, progress, updatedAt });
         recordBoundary(record, faultBoundary(facts, fault));
       });
-      void notifyPending(runId);
+      announce(runId);
     },
 
     observe(runId) {
@@ -958,6 +946,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
               detail: { kind: "restored_paused" },
             });
           });
+          announce(run.runId);
         } catch (error) {
           deps.log.error("runs.restore_failed", {
             runId: run.runId,
@@ -976,9 +965,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           });
         }
       }
-      // Finished runs too: a result whose notice was lost must still reach its owner.
-      for (const runId of deps.runs.runsWithUnnotifiedBoundaries())
-        await notifyPending(runId);
+      for (const run of listed) await followOwner(run);
     },
   };
   return host;

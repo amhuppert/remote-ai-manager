@@ -13,7 +13,6 @@ function boundary(kind: RunBoundary["kind"], detail: RunBoundary["detail"]): Run
     summary: "Fix it: something happened.",
     detail,
     recordedAt: "t",
-    notifiedAt: null,
   };
 }
 

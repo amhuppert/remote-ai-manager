@@ -102,7 +102,8 @@ export interface SupervisionPorts {
   /** The worktree an enrolled conversation's turns write in, held for interactive writes while a turn runs. */
   interactiveWorktree?: ConversationCoreDeps["interactiveWorktree"];
   runCheck: WorkspaceExecutorDeps["runCheck"];
-  notifyOwner: RunHostDeps["notifyOwner"];
+  followOwner: RunHostDeps["followOwner"];
+  boundariesRecorded: RunHostDeps["boundariesRecorded"];
   now(): string;
   logger(name: string): Logger;
 }
@@ -261,7 +262,8 @@ export function composeSupervision(
     workspace,
     touchContext: (contextId) =>
       scheduler.touch({ kind: "context", id: contextId }),
-    notifyOwner: ports.notifyOwner,
+    followOwner: ports.followOwner,
+    boundariesRecorded: ports.boundariesRecorded,
     now: ports.now,
     log: ports.logger("runs"),
   });
