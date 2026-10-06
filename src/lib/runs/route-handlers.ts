@@ -72,6 +72,8 @@ export interface RunRouteDeps {
     sessionWorktreePath: string;
   }): Promise<LaunchPlacement["laneTargets"]>;
   supervision(): Supervision;
+  /** Whether the subscription inbox can wake this conversation, which is how a run's owner hears from it. */
+  ownerWakeable(projectPath: string, conversationId: string): Promise<boolean>;
   /** Backend, model selection and admission for every seat the launch names. */
   resolveSeats(input: {
     projectPath: string;
@@ -389,6 +391,18 @@ export function createRunRouteHandlers(
     return null;
   }
 
+  /** A run's questions, halts and result reach its owner only as inbox wakes. */
+  async function refuseUnwakeableOwner(caller: Caller): Promise<Response | null> {
+    if (await deps.ownerWakeable(caller.projectPath, caller.conversationId)) return null;
+    return jsonError(
+      "This conversation cannot be woken by the subscription inbox, so a run's questions and result would never reach it",
+      409,
+      "owner_not_wakeable",
+      undefined,
+      "Launch the run from an ordinary, unarchived conversation that no other execution owns.",
+    );
+  }
+
   /** A seat resolution refusal; a workflow's names the context it belongs to. */
   function seatFailure(
     failure: { status: number; error: string; code?: string },
@@ -462,7 +476,9 @@ export function createRunRouteHandlers(
       );
       if (!body.ok) return body.response;
       const { caller } = resolved;
-      const refused = refuseLaunch(caller, body.value.humanApproval === true);
+      const refused =
+        refuseLaunch(caller, body.value.humanApproval === true) ??
+        (await refuseUnwakeableOwner(caller));
       if (refused !== null) return refused;
       const seats = await deps.resolveSeats({
         projectPath: caller.projectPath,
@@ -490,7 +506,8 @@ export function createRunRouteHandlers(
       );
       if (!body.ok) return body.response;
       const { caller } = resolved;
-      const refused = refuseWorkflow(caller, body.value);
+      const refused =
+        refuseWorkflow(caller, body.value) ?? (await refuseUnwakeableOwner(caller));
       if (refused !== null) return refused;
       const seats = await workflowSeats(caller, body.value);
       if (!seats.ok) return seats.response;

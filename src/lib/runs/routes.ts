@@ -1,3 +1,5 @@
+import { isEligibleSubscriptionRecipient } from "@/lib/conversations/provenance";
+import { getSubscriptionRuntime } from "@/lib/subscriptions/service-factory";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import { resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
@@ -120,6 +122,10 @@ const handlers = createRunRouteHandlers({
   getSession,
   laneTargets,
   supervision: getSupervision,
+  async ownerWakeable(projectPath, conversationId) {
+    const runtime = getSubscriptionRuntime();
+    return isEligibleSubscriptionRecipient(runtime.readConversation(conversationId), projectPath);
+  },
   resolveSeats,
   newRunId,
   log,

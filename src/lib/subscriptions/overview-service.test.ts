@@ -326,6 +326,24 @@ describe("subscription overview projections", () => {
       "uncertain",
     ]);
   });
+  it("links a follow's notice to the wake that carried it, so the wake receipt lists it", async () => {
+    const h = harness();
+    const followWake = subscriptionWakeBatchSchema.parse({
+      ...h.batch,
+      id: "follow-wake",
+      queueMessageId: "follow-wake",
+      waitIds: [],
+      deliveryIds: [],
+      followDeliveryIds: ["run-notice"],
+      state: "accepted",
+    });
+    h.deliveries.push(delivery("run-notice", "first", { state: "accepted", attemptId: "follow-wake", acceptedAt: at }));
+    h.deps.getBatch = async (id) => (id === followWake.id ? followWake : id === h.batch.id ? h.batch : null);
+
+    const page = await h.service.inbox({ conversation: "conversation", state: "all", batchId: "follow-wake" });
+
+    expect(page.items.map((item) => [item.delivery.id, item.wakeBatchId])).toEqual([["run-notice", "follow-wake"]]);
+  });
   it("excludes unfollowed evidence from pending views and counts while retaining it in history", async () => {
     const h = harness();
     h.subscriptions[0] = subscription("first", {

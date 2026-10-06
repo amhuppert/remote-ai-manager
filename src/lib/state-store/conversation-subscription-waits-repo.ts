@@ -2,7 +2,9 @@ import { z } from "zod";
 import { importSubscriptionDelivery } from "./subscription-delivery-import";
 import {
   ensureFiniteWaitSourceCursor,
+  releaseBatchClaims,
   retireConsumedFiniteWaitSources,
+  retireFinishedRunFollows,
 } from "./subscription-wait-lifecycle";
 import type { Db } from "./schemas";
 import type { WriteQueue } from "./write-queue";
@@ -82,7 +84,13 @@ export interface ConversationSubscriptionWaitsRepo {
     at: string,
     discardMissingBatchId?: string,
   ): Promise<ActiveSubscriptionWait | null>;
-  listRecipients(): Promise<SubscriptionRecipient[]>;
+  /** Recipients with a live one-time wait or an unsent fact of a follow that wakes them. */
+  listRecipients(at: string): Promise<SubscriptionRecipient[]>;
+  /**
+   * Ends a wake of follow facts only that never reached the queue (no row, no
+   * acceptance) and returns its facts for another wake. False for any other batch.
+   */
+  releaseUnsent(batchId: string, at: string): Promise<boolean>;
   reserveBatch(
     batch: SubscriptionWakeBatch,
   ): Promise<SubscriptionWakeBatch | null>;
@@ -437,7 +445,7 @@ export function createConversationSubscriptionWaitsRepo(
           .get(batch.id);
         // Unfollowing one coalesced wait spends only that wait. The governor
         // releases after every remaining member is explicitly discarded.
-        if (remaining === undefined)
+        if (remaining === undefined) {
           writeBatch({
             ...batch,
             state: "cancelled",
@@ -445,6 +453,8 @@ export function createConversationSubscriptionWaitsRepo(
             finishedAt: at,
             lastError: error,
           });
+          releaseBatchClaims(db, batch.recipient, batch.id);
+        }
       }
       restorePassive(next, at);
       return next;
@@ -454,11 +464,12 @@ export function createConversationSubscriptionWaitsRepo(
     const batch = readBatch(batchId);
     if (!batch || (batch.state !== "planned" && batch.state !== "queued"))
       return false;
-    const followStillWakes = db.prepare(
-      `SELECT 1 FROM conversation_subscription_deliveries d JOIN conversation_subscriptions s ON s.id=d.subscription_id
-      WHERE d.id=? AND d.attempt_id=? AND d.state='queued' AND ${WAKING_FOLLOW}`,
+    // A follow's fact handed to a wake is delivered whatever later controls say:
+    // pause and unfollow govern facts not yet reserved.
+    const stillClaimed = db.prepare(
+      "SELECT 1 FROM conversation_subscription_deliveries WHERE id=? AND attempt_id=? AND state='queued'",
     );
-    if (batch.followDeliveryIds.some((id) => followStillWakes.get(id, batch.id) === undefined))
+    if (batch.followDeliveryIds.some((id) => stillClaimed.get(id, batch.id) === undefined))
       return false;
     return batch.waitIds.every((id, index) => {
       const wait = readWait(id);
@@ -507,10 +518,8 @@ export function createConversationSubscriptionWaitsRepo(
           if (!member || member.batchId !== batch.id)
             throw new Error("Wake batch lost its wait ownership");
           writeWait({ ...member, batchId: null, updatedAt: at });
-          db.prepare(
-            "UPDATE conversation_subscription_deliveries SET state='pending',attempt_id=NULL,queued_at=NULL,accepted_at=NULL,finished_at=NULL,last_error=NULL WHERE id=? AND attempt_id=? AND state='queued'",
-          ).run(member.deliveryId, batch.id);
         }
+        releaseBatchClaims(db, batch.recipient, batch.id);
       }
       const current = readRecipientWait(recipient, subscriptionId);
       if (
@@ -608,7 +617,9 @@ export function createConversationSubscriptionWaitsRepo(
     );
     if (
       batch.followDeliveryIds.some(
-        (id) => follow.get({ id, ...scope(batch.recipient) }) === undefined,
+        (id) =>
+          follow.get({ id, ...scope(batch.recipient), at: batch.createdAt }) ===
+          undefined,
       )
     )
       return null;
@@ -678,10 +689,27 @@ export function createConversationSubscriptionWaitsRepo(
             ? (error ?? "Wake message cancelled before input acceptance")
             : error,
       });
-      if (state === "accepted" || state === "cancelled")
+      if (state === "accepted" || state === "cancelled") {
         retireConsumedFiniteWaitSources(db, batch.recipient);
+        retireFinishedRunFollows(db, batch.recipient);
+      }
     },
   );
+  const releaseUnsentTx = db.transaction((batchId: string, at: string) => {
+    const batch = readBatch(batchId);
+    if (!batch || batch.state !== "uncertain" || batch.waitIds.length > 0)
+      return false;
+    writeBatch({
+      ...batch,
+      state: "cancelled",
+      updatedAt: at,
+      finishedAt: at,
+      lastError:
+        "Released for another wake: no queue row and no acceptance receipt",
+    });
+    releaseBatchClaims(db, batch.recipient, batch.id);
+    return true;
+  });
   return {
     async applyControl(recipient, subscriptionId, change, at, releaseBatchId) {
       await writeQueue.withWriteQueueSync("subscriptions.wait.control", () =>
@@ -774,14 +802,14 @@ export function createConversationSubscriptionWaitsRepo(
         ),
       );
     },
-    async listRecipients() {
+    async listRecipients(at) {
       const rows: unknown[] = db
         .prepare(
           `SELECT project_path AS projectPath,conversation_id AS conversationId FROM conversation_subscription_waits WHERE state IN ('waiting','ready')
           UNION SELECT d.project_path,d.conversation_id FROM conversation_subscription_deliveries d JOIN conversation_subscriptions s ON s.id=d.subscription_id
           WHERE d.state IN ('pending','failed') AND ${WAKING_FOLLOW}`,
         )
-        .all();
+        .all({ at });
       return rows.map((row) => subscriptionRecipientSchema.parse(row));
     },
     async reserveBatch(batch) {
@@ -818,6 +846,11 @@ export function createConversationSubscriptionWaitsRepo(
           "UPDATE conversation_subscription_deliveries SET state='queued',finished_at=NULL,last_error=NULL WHERE attempt_id=@batch_id AND project_path=@project_path AND conversation_id=@conversation_id AND state IN ('failed','uncertain') AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits AS wait WHERE wait.delivery_id=conversation_subscription_deliveries.id AND wait.state='cancelled')",
         ).run({ batch_id: batch.id, ...scope(batch.recipient) });
       });
+    },
+    async releaseUnsent(batchId, at) {
+      return writeQueue.withWriteQueueSync("subscriptions.wake.release", () =>
+        releaseUnsentTx.immediate(batchId, at),
+      );
     },
     async settleBatch(batchId, state, at, error) {
       await writeQueue.withWriteQueueSync("subscriptions.wake.settle", () =>

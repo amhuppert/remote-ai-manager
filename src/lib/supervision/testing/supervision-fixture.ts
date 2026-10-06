@@ -129,7 +129,7 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     lanes: laneGit.git,
     laneGit,
     /** Every run boundary recorded, in order: what each owner's waking follow delivers. */
-    get notified(): RunBoundary[] {
+    get recorded(): RunBoundary[] {
       const runs = createRunsRepo(fixture.db);
       const ids = z.array(z.string()).parse(fixture.db.prepare("SELECT run_id FROM runs ORDER BY rowid").pluck().all());
       return ids.flatMap((id) => runs.boundaries(id)).sort((a, b) => a.seq - b.seq);

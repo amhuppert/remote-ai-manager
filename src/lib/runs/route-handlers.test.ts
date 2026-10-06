@@ -25,6 +25,8 @@ let seatResolutions: number;
 let codexWithdrawn: boolean;
 /** The branch prefix lanes are named with; configuration can change while a run lives. */
 let branchPrefix: string;
+/** Conversations the inbox cannot wake: owned, archived or not an ordinary conversation. */
+let unwakeable: Set<string>;
 
 function identity(conversationId: string): Record<string, string> {
   return {
@@ -80,6 +82,7 @@ beforeEach(() => {
   seatResolutions = 0;
   codexWithdrawn = false;
   branchPrefix = "csm";
+  unwakeable = new Set();
   let sequence = 0;
   const deps: RunRouteDeps = {
     auth: {
@@ -120,6 +123,9 @@ beforeEach(() => {
       };
     },
     supervision: () => supervision,
+    async ownerWakeable(_projectPath, conversationId) {
+      return !unwakeable.has(conversationId);
+    },
     async resolveSeats({ request: launchRequest }) {
       seatResolutions += 1;
       if (launchRequest.backend === "cursor" || (launchRequest.backend === "codex" && codexWithdrawn)) {
@@ -210,6 +216,14 @@ describe("run routes", () => {
     const response = await routes.launch(request({ brief: "Nested work" }, identity("conv-1")), params());
     expect(response.status).toBe(403);
     expect(await json(response)).toMatchObject({ code: "seat_cannot_launch" });
+  });
+
+  it("refuses a launch from a conversation the inbox cannot wake, since nothing would reach it", async () => {
+    unwakeable.add("other-1");
+    const response = await routes.launch(request({ brief: "Fix the notice" }, identity("other-1")), params());
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: "owner_not_wakeable" });
+    expect(supervision.runs.observe("run-1")).toBeNull();
   });
 
   it("refuses a launch without a verified calling conversation, and an unknown option", async () => {
@@ -767,7 +781,7 @@ describe("run routes", () => {
       ],
     });
     await quiesce(supervision);
-    const approval = h.notified.find((b) => b.kind === "approval");
+    const approval = h.recorded.find((b) => b.kind === "approval");
     const detail = approval?.detail as {
       contextId: string;
       candidateId: string;

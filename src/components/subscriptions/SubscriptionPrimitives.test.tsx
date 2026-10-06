@@ -117,3 +117,20 @@ it.each(["Paused", "Source missing"] as const)(
     expect(screen.queryByText("Expired")).not.toBeInTheDocument();
   },
 );
+
+it("tells a follow that wakes its recipient apart from a passive one, in the list and the detail", () => {
+  const base = subscriptionFixture();
+  const waking: SubscriptionView = {
+    ...base,
+    subscription: { ...base.subscription, source: { kind: "run", id: "run-1" }, wakes: true },
+  };
+  renderRow(waking);
+  expect(screen.getByText("Wakes")).toBeInTheDocument();
+  expect(screen.queryByText("Passive")).not.toBeInTheDocument();
+  cleanup();
+
+  renderWithQuery(<SubscriptionDetail row={waking} onInbox={() => {}} onClose={() => {}} />);
+  expect(screen.getByText("Delivery").nextElementSibling).toHaveTextContent(
+    "Starts a turn at the next safe boundary for each new update.",
+  );
+});

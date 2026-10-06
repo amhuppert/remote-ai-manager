@@ -76,6 +76,8 @@ export interface ActiveWaitService {
     subscriptionId: string,
   ): Promise<ActiveSubscriptionWait | null>;
   listRecipients(): Promise<SubscriptionRecipient[]>;
+  /** Releases a wake of follow facts only that never reached the queue; its facts wake again. */
+  releaseUnsentBatch(batchId: string): Promise<void>;
   prepareBatch(
     recipient: SubscriptionRecipient,
   ): Promise<SubscriptionWakeBatch | null>;
@@ -372,7 +374,7 @@ export function createActiveWaitService(
       body += `${body ? "\n" : ""}${line}`;
     }
     const follows: SubscriptionDelivery[] = [];
-    for (const { delivery, subscription } of await deps.subscriptions.listWakeDeliveries(recipient)) {
+    for (const { delivery, subscription } of await deps.subscriptions.listWakeDeliveries(recipient, at)) {
       if (chosen.length + follows.length === 6) break;
       const details =
         deps.deliveryGetCommand?.(delivery) ??
@@ -617,7 +619,17 @@ export function createActiveWaitService(
       if (result) deps.onChange?.(recipient);
       return result;
     },
-    listRecipients: () => deps.repo.listRecipients(),
+    listRecipients: () => deps.repo.listRecipients(now()),
+    async releaseUnsentBatch(batchId) {
+      const before = await deps.repo.getBatch(batchId);
+      if (!(await deps.repo.releaseUnsent(batchId, now())) || before === null) return;
+      deps.onChange?.(before.recipient);
+      logger.info("subscription.wake.batch_released", {
+        conversationId: before.recipient.conversationId,
+        batchId,
+        followCount: before.followDeliveryIds.length,
+      });
+    },
     prepareBatch,
     listPendingBatches: () => deps.repo.listPendingBatches(),
     getBatch: (batchId) => deps.repo.getBatch(batchId),

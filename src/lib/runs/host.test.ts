@@ -192,7 +192,7 @@ afterEach(async () => {
 });
 
 /** Every boundary recorded, in order: what the owner's follow reads. */
-function notified(): RunBoundary[] {
+function recorded(): RunBoundary[] {
   const ids = z.array(z.string()).parse(fixture.db.prepare("SELECT run_id FROM runs ORDER BY rowid").pluck().all());
   return ids.flatMap((id) => runsRepo.boundaries(id)).sort((a, b) => a.seq - b.seq);
 }
@@ -377,7 +377,7 @@ describe("routes and loops", () => {
 
     await succeedActiveContext("Shipped.");
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
-    expect(notified().map((b) => [b.kind, b.detail])).toEqual([
+    expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
       [
         "succeeded",
         {
@@ -425,13 +425,13 @@ describe("routes and loops", () => {
     expect(contexts.observe("run-1.ship")).toBeNull();
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
     const promised = ["halted", "route:triage:cardinality", { kind: "run_halt", halt: "route_cardinality", clearedBy: "amend", otherWorkRemains: true }];
-    expect(notified().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([promised]);
+    expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([promised]);
 
     // Work that waits on the owner is not finished: the follow-up waits for it.
     await settleFor("run-1.docs", workspace, "bind", { kind: "bound" });
     await settleFor("run-1.docs", conversation, "work", report({ openQuestionId: "q-1" }));
     expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
-    expect(notified().map((b) => b.kind)).toEqual(["halted", "question"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["halted", "question"]);
 
     await settleFor("run-1.docs", requests, "answer", { kind: "answered", question: "Which?", answer: "This." });
     await settleFor("run-1.docs", conversation, "work", report({ finalText: "Docs." }));
@@ -439,7 +439,7 @@ describe("routes and loops", () => {
     await settleFor("run-1.docs", workspace, "accept", { kind: "accepted", receipt: "snapshot:docs" });
 
     expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
-    expect(notified().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
+    expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
       promised,
       ["question", expect.any(String), expect.anything()],
       [
@@ -449,7 +449,7 @@ describe("routes and loops", () => {
       ],
     ]);
     await runs.reconcile("run-1");
-    expect(notified()).toHaveLength(3);
+    expect(recorded()).toHaveLength(3);
   });
 });
 
@@ -649,7 +649,7 @@ describe("lanes", () => {
       kind: "needs_owner",
       reasons: [expect.stringContaining("notes.md")],
     });
-    expect(notified().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
+    expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
       ["halted", "lane:api:publication:1", { kind: "run_halt", halt: "lane_publication", clearedBy: "retry_lane", lane: "api", otherWorkRemains: false }],
     ]);
 
@@ -735,11 +735,11 @@ describe("workflow runs", () => {
       { key: "api", title: "Build the API", output: { summary: "API built." } },
     ]);
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
-    expect(notified()).toEqual([]);
+    expect(recorded()).toEqual([]);
 
     await succeedActiveContext("Docs written.");
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
-    expect(notified().map((b) => [b.kind, b.detail])).toEqual([
+    expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
       [
         "succeeded",
         {
@@ -767,7 +767,7 @@ describe("workflow runs", () => {
       reasons: ["api: halted (turn_failed)"],
     });
     expect(contexts.observe("run-1.docs")).toBeNull();
-    expect(notified().map((b) => b.kind)).toEqual(["halted"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["halted"]);
   });
 
   it("holds a context that became eligible during a pause until resume", async () => {
@@ -813,7 +813,7 @@ describe("workflow runs", () => {
     await scheduler.idle();
     expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("succeeded");
     expect(contexts.observe("run-1.docs")).toBeNull();
-    expect(notified().map((b) => b.kind)).toEqual(["restored_paused"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["restored_paused"]);
 
     await runs.resume("run-1");
     await scheduler.idle();
@@ -862,7 +862,7 @@ describe("workflow runs", () => {
 
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
     expect(intents.pending({ kind: "run", id: "run-1" })).toEqual([]);
-    expect(notified().map((b) => b.kind)).toEqual(["cancelled"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["cancelled"]);
   });
 
   it("cancels what started and never starts the rest", async () => {
@@ -891,13 +891,13 @@ describe("run host", () => {
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
-    expect(notified().map((b) => b.kind)).toEqual(["succeeded"]);
-    expect(notified()[0]?.detail).toEqual({
+    expect(recorded().map((b) => b.kind)).toEqual(["succeeded"]);
+    expect(recorded()[0]?.detail).toEqual({
       kind: "succeeded",
       outputs: { agent: { summary: "Done." } },
     });
     await runs.reconcile("run-1");
-    expect(notified()).toHaveLength(1);
+    expect(recorded()).toHaveLength(1);
   });
 
   it("asks the owner a child's question and continues once it is answered", async () => {
@@ -909,7 +909,7 @@ describe("run host", () => {
       kind: "needs_owner",
       reasons: ["agent: question"],
     });
-    expect(notified().map((b) => [b.kind, b.detail])).toEqual([
+    expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
       ["question", { kind: "question", contextId: "run-1.agent", questionId: "q-1" }],
     ]);
 
@@ -953,7 +953,7 @@ describe("run host", () => {
     await settle(workspace, "freeze", { kind: "frozen", evidence: "ev-1" });
     await settle(conversation, "review", report({ openQuestionId: "q-ra" }));
 
-    expect(notified().map((b) => [b.kind, b.detail])).toEqual([
+    expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
       ["question", { kind: "question", contextId: "run-1.agent", questionId: "q-ra" }],
     ]);
   });
@@ -1027,7 +1027,7 @@ describe("run host", () => {
       kind: "needs_owner",
       reasons: ["run: The definition could not be read"],
     });
-    expect(notified().map((b) => b.kind)).toEqual(["halted"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["halted"]);
     const bind = workspace.submitted()[0];
     if (bind === undefined) throw new Error("no bind");
     expect(workspace.admit(bind.cause)).toBe(false);
@@ -1059,7 +1059,7 @@ describe("run host", () => {
     await runs.restoreAfterRestart();
 
     expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
-    expect(notified().map((b) => b.kind)).toContain("restored_paused");
+    expect(recorded().map((b) => b.kind)).toContain("restored_paused");
     const work = conversation.submitted()[0];
     if (work === undefined) throw new Error("no work order");
     expect(conversation.admit(work.cause)).toBe(false);
@@ -1073,7 +1073,7 @@ describe("run host", () => {
       "work",
       report({ status: "failed", failure: "provider error" }),
     );
-    const halted = notified().find((b) => b.kind === "halted");
+    const halted = recorded().find((b) => b.kind === "halted");
     expect(halted?.summary).toContain("turn_failed");
     expect(conversation.submitted()).toHaveLength(1);
     const occurrence = (halted?.detail as { occurrence: string }).occurrence;
@@ -1098,7 +1098,7 @@ describe("run host", () => {
     await settle(conversation, "work", report());
     await settle(workspace, "freeze", { kind: "frozen", evidence: "git:a:a" });
 
-    const approval = notified().find((b) => b.kind === "approval");
+    const approval = recorded().find((b) => b.kind === "approval");
     const detail = approval?.detail as {
       contextId: string;
       candidateId: string;
@@ -1141,7 +1141,7 @@ describe("run host", () => {
     expect(announced).toEqual([]);
 
     await settle(conversation, "work", report({ openQuestionId: "q-1" }));
-    expect(notified().map((b) => b.kind)).toEqual(["question"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["question"]);
     expect(announced).toEqual(["run-1"]);
 
     await runs.reconcile("run-1");
@@ -1203,7 +1203,7 @@ describe("run host", () => {
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
-    expect(notified().map((b) => b.kind)).toEqual(["succeeded"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["succeeded"]);
   });
 
   it("reports success when the last admitted effect settles while the run is paused", async () => {
@@ -1227,7 +1227,7 @@ describe("run host", () => {
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
-    expect(notified().map((b) => b.kind)).toEqual(["succeeded"]);
+    expect(recorded().map((b) => b.kind)).toEqual(["succeeded"]);
   });
 
   it("cancels its contexts and reports cancellation", async () => {
@@ -1239,6 +1239,6 @@ describe("run host", () => {
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "cancelled",
     });
-    expect(notified().map((b) => b.kind)).toContain("cancelled");
+    expect(recorded().map((b) => b.kind)).toContain("cancelled");
   });
 });

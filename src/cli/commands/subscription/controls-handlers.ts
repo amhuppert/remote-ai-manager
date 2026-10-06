@@ -103,7 +103,7 @@ function detailText({
   getCommand,
 }: JsonData<AddressedDetail>) {
   return quoteLiteralText(
-    `${s.id}  ${s.status}  ${s.mode}${s.pausedAt ? "  paused" : ""}\nsource: ${s.source.kind}:${s.source.id}\nreason: ${s.reason}\nevents: ${s.eventKinds?.join(", ") ?? "all supported"}\ncursor: ${s.cursor ?? "none"}\npaused: ${s.pausedAt ?? "no"}\nexpires: ${s.expiresAt ?? "none"}\n${wait ? `wait: ${wait.id}  ${wait.state}  ${wait.outcome ?? "pending"}\n` : ""}${batch ? `wake batch: ${batch.id}  ${batch.state}\nqueue message: ${batch.queueMessageId ?? "none"}\n` : ""}${s.lastError ? `problem: ${s.lastError}\n` : ""}${wait?.lastError ? `wait problem: ${wait.lastError}\n` : ""}${batch?.lastError ? `wake problem: ${batch.lastError}\n` : ""}${s.missingAt ? `source missing: ${s.missingAt}\n` : ""}get: ${getCommand}\n`,
+    `${s.id}  ${s.status}  ${s.mode}${s.wakes ? "  wakes" : ""}${s.pausedAt ? "  paused" : ""}\nsource: ${s.source.kind}:${s.source.id}\nreason: ${s.reason}\nevents: ${s.eventKinds?.join(", ") ?? "all supported"}\ncursor: ${s.cursor ?? "none"}\npaused: ${s.pausedAt ?? "no"}\nexpires: ${s.expiresAt ?? "none"}\n${wait ? `wait: ${wait.id}  ${wait.state}  ${wait.outcome ?? "pending"}\n` : ""}${batch ? `wake batch: ${batch.id}  ${batch.state}\nqueue message: ${batch.queueMessageId ?? "none"}\n` : ""}${s.lastError ? `problem: ${s.lastError}\n` : ""}${wait?.lastError ? `wait problem: ${wait.lastError}\n` : ""}${batch?.lastError ? `wake problem: ${batch.lastError}\n` : ""}${s.missingAt ? `source missing: ${s.missingAt}\n` : ""}get: ${getCommand}\n`,
   );
 }
 

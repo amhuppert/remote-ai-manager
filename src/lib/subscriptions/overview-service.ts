@@ -540,10 +540,10 @@ export function createSubscriptionOverviewService(
         sources.get(sourceKey) ??
         deps.readSource(delivery.recipient, delivery.source);
       sources.set(sourceKey, sourceRead);
+      // Every fact a wake carried names that wake as its claim, whether a wait's or a follow's.
       const batch = [...state.batches.values()].find(
         (item) =>
-          recipientKey(item.recipient) === key &&
-          item.deliveryIds.includes(delivery.id),
+          recipientKey(item.recipient) === key && item.id === delivery.attemptId,
       );
       const presentation = await sourceRead;
       const subscription = state.subscriptions.find(

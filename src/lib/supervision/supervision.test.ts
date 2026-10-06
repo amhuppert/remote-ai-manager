@@ -100,7 +100,7 @@ describe("run supervision", () => {
     expect(s.runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
-    expect(h.notified.map((b) => [b.runId, b.kind, b.detail])).toEqual([
+    expect(h.recorded.map((b) => [b.runId, b.kind, b.detail])).toEqual([
       ["run-1", "succeeded", { kind: "succeeded", outputs: { agent: { summary: "Done." } } }],
     ]);
 
@@ -131,7 +131,7 @@ describe("run supervision", () => {
       { canAsk: true, attemptId: expect.any(String), openQuestionId: null },
     ]);
     expect(s.seatFor("owner-1")).toBeNull();
-    const question = h.notified.find((b) => b.kind === "question");
+    const question = h.recorded.find((b) => b.kind === "question");
     expect(s.runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
     const questionId = (question?.detail as { questionId: string }).questionId;
     expect(s.requests.answer(questionId, "notice.ts")).toBe(true);
@@ -210,7 +210,7 @@ describe("run supervision", () => {
     expect(
       after.contexts.observe("run-1.agent")?.record.progress,
     ).toMatchObject({ kind: "halted", halt: "interrupted" });
-    expect(h.notified.map((b) => b.kind)).toContain("restored_paused");
+    expect(h.recorded.map((b) => b.kind)).toContain("restored_paused");
   });
 });
 

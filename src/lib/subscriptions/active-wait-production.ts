@@ -144,6 +144,15 @@ function scheduleReconciliation(): void {
   });
 }
 
+/**
+ * Asks for a delivery pass now rather than at the next timer pass. Before boot
+ * starts the timer, after source recovery, the boot pass delivers instead.
+ */
+export function requestSubscriptionWakePass(): void {
+  if (getGlobalValue("__cc_subscription_wake_timer") === undefined) return;
+  scheduleReconciliation();
+}
+
 /** Called after source recovery and conversation rehydration; one timer survives dev HMR. */
 export function startActiveSubscriptionWakes(): void {
   getGlobalSingleton("__cc_subscription_wake_timer", () => {

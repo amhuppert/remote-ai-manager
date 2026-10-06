@@ -46,7 +46,7 @@ import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import { composedSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, SUPERVISION_KEY } from "./handles";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import { getSubscriptionService } from "@/lib/subscriptions/service-factory";
-import { reconcileActiveSubscriptionWakes } from "@/lib/subscriptions/active-wait-production";
+import { requestSubscriptionWakePass } from "@/lib/subscriptions/active-wait-production";
 import { composeSupervision, type Supervision } from "./supervision";
 
 const logger = createLogger("runs");
@@ -272,7 +272,7 @@ function composeProductionSupervision(): Supervision {
         logger.warn("runs.owner_not_followable", { runId: run.runId, conversationId: run.ownerConversationId });
     },
     boundariesRecorded() {
-      void reconcileActiveSubscriptionWakes();
+      requestSubscriptionWakePass();
     },
     now: () => new Date().toISOString(),
     logger: (name) => createLogger(name),

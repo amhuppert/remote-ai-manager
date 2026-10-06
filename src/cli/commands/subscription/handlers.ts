@@ -383,6 +383,7 @@ export const subscriptionListHandler: Read<typeof subscriptionListSpec> = {
           id: subscription.id,
           source: subscription.source,
           mode: subscription.mode,
+          wakes: subscription.wakes,
           status: subscription.status,
           expiresAt: subscription.expiresAt,
           pausedAt: subscription.pausedAt,

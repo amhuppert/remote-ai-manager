@@ -185,6 +185,10 @@ const DB_FILE_NAME = "command-center.db";
  *
  * Version 28 admits explicit wait generations with a terminal baseline.
  * Migration 0065 fences older strict wait readers before storing that field.
+ *
+ * Version 29 admits the `run` source kind and follows that wake their
+ * recipient. Older subscription lists cannot parse a `run` follow, so migration
+ * `0068-run-subscription-source` fences them.
  */
 export const KNOWN_SCHEMA_VERSION = 29;
 
