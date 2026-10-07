@@ -25,6 +25,7 @@ import {
   runAmendedResponseSchema,
   runControlResponseSchema,
   runDefinitionResponseSchema,
+  runDocumentPublishedResponseSchema,
   runLaunchedResponseSchema,
   runViewSchema,
   type RunLaunchedResponse,
@@ -51,6 +52,7 @@ import {
 } from "../../transport";
 import {
   runShowCommand,
+  type contextDocPublishSpec,
   type contextTaskAddSpec,
   type contextTaskCompleteSpec,
   type contextTaskReopenSpec,
@@ -180,6 +182,7 @@ interface RunViewData {
     lastSummary: string | null;
     /** The accepted result, JSON-encoded. */
     output: string | null;
+    froze: RunView["contexts"][number]["froze"];
   }>;
   boundaries: Array<{
     seq: number;
@@ -259,6 +262,7 @@ function toViewData(view: RunView): RunViewData {
         context.output === null || context.output === undefined
           ? null
           : JSON.stringify(context.output),
+      froze: context.froze,
     })),
     boundaries: view.boundaries,
     stalled: view.stalled,
@@ -299,6 +303,19 @@ function notStartedState(
   return "starting";
 }
 
+/** The charter and document revisions a started context froze, or null when it froze none. */
+function frozeText(
+  froze: { charter: number | null; documents: ReadonlyArray<{ path: string; revision: number }> } | null,
+): string | null {
+  if (froze === null || (froze.charter === null && froze.documents.length === 0)) return null;
+  return [
+    ...(froze.charter === null ? [] : [`charter revision ${froze.charter}`]),
+    ...(froze.documents.length === 0
+      ? []
+      : [froze.documents.map((document) => `${document.path} revision ${document.revision}`).join(", ")]),
+  ].join("; ");
+}
+
 function viewText(view: JsonData<RunViewData>): string {
   const lines = [
     `Run ${view.runId} (${view.kind}, definition revision ${view.definitionRevision}): ${view.title} — ${view.progress === "paused" ? pausedLabel(view.draining, null, true) : view.progress}`,
@@ -330,6 +347,8 @@ function viewText(view: JsonData<RunViewData>): string {
     if (context.lastSummary !== null)
       lines.push(`  last summary: ${context.lastSummary}`);
     if (context.output !== null) lines.push(`  result: ${context.output}`);
+    const froze = frozeText(context.froze);
+    if (froze !== null) lines.push(`  froze ${froze}`);
   }
   for (const lane of view.lanes) {
     const attempt = lane.attempt === null ? "" : ` (attempt ${lane.attempt})`;
@@ -349,8 +368,10 @@ function viewText(view: JsonData<RunViewData>): string {
     );
   for (const document of view.documents) {
     const scope = document.appliesTo === undefined ? "" : `, for ${document.appliesTo.join(", ")}`;
+    const origin =
+      document.by !== undefined ? `, published by ${document.by}` : document.reason !== undefined ? `, amended: ${document.reason}` : "";
     const when = document.readWhen === undefined ? "" : ` — read when: ${document.readWhen}`;
-    lines.push(`document ${document.path} (revision ${document.revision}${scope}): ${document.description}${when}`);
+    lines.push(`document ${document.path} (revision ${document.revision}${origin}${scope}): ${document.description}${when}`);
   }
   for (const halt of view.halts)
     if (!view.needsOwner.includes(halt)) lines.push(`cannot proceed: ${halt}`);
@@ -452,6 +473,7 @@ interface AmendData {
   revision: number;
   progress: string | null;
   halts: string[];
+  removedDocuments: string[];
 }
 
 const amendImplementation: Amend = {
@@ -492,6 +514,7 @@ const amendImplementation: Amend = {
             revision: parsed.data.revision,
             progress: parsed.data.progress?.kind ?? null,
             halts: parsed.data.halts,
+            removedDocuments: parsed.data.removedDocuments,
           },
           hint: showHint(app, runId),
         },
@@ -502,6 +525,9 @@ const amendImplementation: Amend = {
         [
           `Run ${data.runId}: definition revision ${data.revision} in force${data.progress === null ? "" : ` (${data.progress})`}.`,
           ...data.halts.map((halt) => `still cannot proceed: ${halt}`),
+          ...data.removedDocuments.map(
+            (documentPath) => `removed document ${documentPath}: work that starts from now no longer reads it`,
+          ),
         ].join("\n") + "\n",
       ),
   }),
@@ -828,6 +854,52 @@ export const taskReopenHandler: Write<typeof contextTaskReopenSpec> = {
     text: ({ taskId }) => quoteLiteralText(`Task ${taskId} reopened.\n`),
   }),
 };
+export const docPublishHandler: Write<typeof contextDocPublishSpec> = {
+  run: writeRunner<
+    Input<typeof contextDocPublishSpec>,
+    { runId: string; path: string; revision: number; unchanged: boolean },
+    CcErrorCode
+  >({
+    async run({ app, ctx }) {
+      const resolved = await resolveCcSession(app);
+      if (!resolved.ok) return { effect: "not_applied" as const, result: resolved };
+      const recovery = recoveryFacts([sessionReference(resolved.value.session)]);
+      const response = await cliRequest(app.host, {
+        ...resolved.value,
+        method: "POST",
+        path: `${sessionPath(resolved.value)}/contexts/documents`,
+        body: {
+          file: ctx.args.file,
+          ...(ctx.flags.as !== undefined ? { as: ctx.flags.as } : {}),
+          ...(ctx.flags.description !== undefined ? { description: ctx.flags.description } : {}),
+          ...(ctx.flags["read-when"] !== undefined ? { readWhen: ctx.flags["read-when"] } : {}),
+        },
+        principalIdentity: resolveCcPrincipal(app),
+      });
+      if (response.kind !== "ok") return ccWriteFailure(response, recovery);
+      const parsed = runDocumentPublishedResponseSchema.safeParse(response.body);
+      if (!parsed.success)
+        return {
+          effect: "unknown" as const,
+          recovery,
+          result: invalid("The publication acknowledgement is invalid."),
+        };
+      const { runId: published, path: documentPath, revision, unchanged } = parsed.data;
+      return {
+        effect: "applied" as const,
+        recovery,
+        result: { ok: true as const, data: { runId: published, path: documentPath, revision, unchanged } },
+      };
+    },
+    text: ({ runId: published, path: documentPath, revision, unchanged }) =>
+      quoteLiteralText(
+        unchanged
+          ? `${documentPath} is unchanged at revision ${revision} of run ${published}.\n`
+          : `Published ${documentPath} as revision ${revision} of run ${published}: work that starts from now reads it.\n`,
+      ),
+  }),
+};
+
 export const taskAddHandler: Write<typeof contextTaskAddSpec> = {
   run: writeRunner<
     Input<typeof contextTaskAddSpec>,

@@ -10,7 +10,14 @@ import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { RunsRepo } from "@/lib/state-store/runs-repo";
 import { amendDefinition, type ProposedDefinition } from "./amendment";
-import { documentsFor, reviseDocuments } from "./documents";
+import {
+  currentDocuments,
+  documentRevisionsFor,
+  documentsFor,
+  publishDocument,
+  reviseDocuments,
+  type DocumentPublication,
+} from "./documents";
 import { charterFor, reviseCharter, type FrozenCharter } from "./charter";
 import {
   deriveRunProgress,
@@ -99,7 +106,7 @@ export interface RunLaunchInput {
   contexts: RunDefinitionContext[];
   loops?: RunLoop[];
   lanes?: RunLane[];
-  /** The workflow as its owner wrote it. */
+  /** The workflow as its owner wrote it, without its documents, which the run keeps as revisions. */
   authored?: Record<string, unknown>;
   /** The run's documents, already frozen as artifacts. */
   documents?: RunDocument[];
@@ -181,7 +188,16 @@ export interface RunHost {
   amend(
     runId: string,
     input: { definition: ProposedDefinition; basedOn: number | null; reason?: string },
-  ): Promise<void>;
+  ): Promise<{ removedDocuments: string[] }>;
+  /**
+   * Records a document a context's seat published as the run's next revision
+   * of its path, for contexts that start afterwards; refuses one a
+   * declaration could not make, or for a run that no context would read it in.
+   */
+  publishDocument(
+    runId: string,
+    publication: Omit<DocumentPublication, "base">,
+  ): { revision: number; unchanged: boolean };
   /** Boot: every active Run restores paused, and its owner is told. */
   restoreAfterRestart(): Promise<void>;
 }
@@ -419,6 +435,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         pass: start.pass,
         contextId: start.contextId,
         startCause: `${record.runId}:start:${start.key}:${start.pass}`,
+        froze: {
+          charter: request.contract.charter?.revision ?? null,
+          documents: documentRevisionsFor(facts.documents, start.key),
+        },
       };
       deps.intents.record({
         requester: owner(record.runId),
@@ -925,8 +945,43 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       deps.contexts.decide(contextId, input);
     },
 
+    publishDocument(runId, publication) {
+      return deps.transaction(() => {
+        const record = requireRecord(runId);
+        const { facts } = record;
+        if (facts.kind !== "workflow")
+          throw new RunControlRefusedError(
+            "Only a workflow run's contexts publish documents: no other context would read them",
+          );
+        if (facts.control.cancelled || record.progress.kind === "succeeded")
+          throw new RunControlRefusedError(`Run ${runId} already finished`);
+        const invocation = facts.invocations.find((started) => started.contextId === publication.by);
+        if (invocation === undefined)
+          throw new RunControlRefusedError(`Context ${publication.by} is not part of run ${runId}`);
+        // The revision the publisher read, so it never replaces one it did not.
+        const base =
+          invocation.froze === undefined
+            ? undefined
+            : (invocation.froze.documents.find((document) => document.path === publication.path)?.revision ?? null);
+        const published = publishDocument(
+          facts.documents,
+          { ...publication, ...(base !== undefined ? { base } : {}) },
+          deps.now(),
+        );
+        if (!published.ok) throw new RunControlRefusedError(published.reason);
+        if (!published.unchanged) project(record, { ...facts, documents: published.revisions });
+        deps.log.info("runs.document_published", {
+          runId,
+          contextId: publication.by,
+          revision: published.revision,
+          unchanged: published.unchanged,
+        });
+        return { revision: published.revision, unchanged: published.unchanged };
+      });
+    },
+
     async amend(runId, { definition: proposed, basedOn, reason }) {
-      const revision = deps.transaction(() => {
+      const outcome = deps.transaction(() => {
         const record = requireRecord(runId);
         const { facts } = record;
         if (facts.kind !== "workflow")
@@ -941,6 +996,20 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           throw new RunControlRefusedError(
             `Run ${runId}'s definition is at revision ${facts.definition.revision}, not ${basedOn}; read run show and amend that revision`,
           );
+        // A declaration must be written against its path's latest revision: a seat may have published since
+        // the owner read it, and replacing a publication its owner never read would silently undo it.
+        const latest = new Map(currentDocuments(facts.documents).map((revision) => [revision.path, revision]));
+        for (const document of proposed.documents ?? []) {
+          const current = latest.get(document.path);
+          if (document.seen !== undefined && current?.revision !== document.seen)
+            throw new RunControlRefusedError(
+              `Document ${document.path} is at revision ${current?.revision ?? "none"} now, not ${document.seen}; read run definition again`,
+            );
+          if (document.seen === undefined && current?.source === "publish")
+            throw new RunControlRefusedError(
+              `Document ${document.path} revision ${current.revision} was published by ${current.by ?? "a context"}; name it to replace it, or keep it`,
+            );
+        }
         const amended = amendDefinition(facts, observedOf(observeInvocations(facts)), proposed);
         if (!amended.ok) throw new RunAmendmentRefusedError(amended.issues);
         const next: RunFacts = {
@@ -948,7 +1017,13 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           title: amended.title,
           definition: amended.definition,
           // Every document and the charter are declared again; work already started keeps what it froze.
-          documents: reviseDocuments(facts.documents, proposed.documents ?? [], "amend", deps.now()),
+          documents: reviseDocuments(
+            facts.documents,
+            (proposed.documents ?? []).map(({ seen: _seen, ...document }) => document),
+            "amend",
+            deps.now(),
+            reason,
+          ),
           charter: reviseCharter(facts.charter, proposed.charter ?? null, {
             source: "amend",
             at: deps.now(),
@@ -956,10 +1031,23 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           }),
         };
         project(record, startEligible(record, next));
-        return { revision: amended.definition.revision, charterRevision: next.charter.at(-1)?.revision ?? null };
+        const remaining = new Set(currentDocuments(next.documents).map((revision) => revision.path));
+        return {
+          revision: amended.definition.revision,
+          charterRevision: next.charter.at(-1)?.revision ?? null,
+          removedDocuments: currentDocuments(facts.documents)
+            .map((revision) => revision.path)
+            .filter((documentPath) => !remaining.has(documentPath)),
+        };
       });
-      deps.log.info("runs.amended", { runId, ...revision });
+      deps.log.info("runs.amended", {
+        runId,
+        revision: outcome.revision,
+        charterRevision: outcome.charterRevision,
+        removedDocuments: outcome.removedDocuments.length,
+      });
       await host.reconcile(runId);
+      return { removedDocuments: outcome.removedDocuments };
     },
 
     async restoreAfterRestart() {

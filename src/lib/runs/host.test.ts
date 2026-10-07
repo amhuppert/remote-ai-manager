@@ -797,6 +797,52 @@ describe("workflow runs", () => {
     ]);
   });
 
+  it("refuses an amendment written against a revision a seat has published past, or replacing a publication it did not name, and reports what it removed", async () => {
+    const plan: RunDocument = { path: "plan.md", artifactId: "sha256:v1", bytes: 2, description: "The plan" };
+    await launchChain([plan]);
+    expect(runs.publishDocument("run-1", { path: "plan.md", artifactId: "sha256:v2", bytes: 2, by: "run-1.api" })).toEqual({
+      revision: 2,
+      unchanged: false,
+    });
+    expect(() =>
+      runs.publishDocument("run-1", { path: "plan.md", artifactId: "sha256:v3", bytes: 2, by: "run-9.elsewhere" }),
+    ).toThrow(/not part of run run-1/);
+
+    await expect(
+      runs.amend("run-1", {
+        definition: {
+          title: "API then docs",
+          contexts: chainContexts(),
+          authored: chainAuthored,
+          documents: [{ ...plan, seen: 1 }],
+        },
+        basedOn: 1,
+      }),
+    ).rejects.toThrow(/plan.md is at revision 2 now, not 1/);
+    await expect(
+      runs.amend("run-1", {
+        definition: {
+          title: "API then docs",
+          contexts: chainContexts(),
+          authored: chainAuthored,
+          documents: [{ ...plan, artifactId: "sha256:mine" }],
+        },
+        basedOn: 1,
+      }),
+    ).rejects.toThrow(/plan.md revision 2 was published by run-1.api/);
+    expect(runs.observe("run-1")?.record.facts.documents.map((r) => [r.revision, r.source])).toEqual([
+      [1, "launch"],
+      [2, "publish"],
+    ]);
+
+    expect(
+      await runs.amend("run-1", {
+        definition: { title: "API then docs", contexts: chainContexts(), authored: chainAuthored, documents: [] },
+        basedOn: 1,
+      }),
+    ).toEqual({ removedDocuments: ["plan.md"] });
+  });
+
   it("gives each context the run's charter as it stands when it starts, as a summary and as a document beside its others", async () => {
     const frozen = (mission: string): FrozenCharter => ({
       charter: { mission, invariants: [{ id: "api-stable", statement: "Keep the API", appliesTo: ["api"] }] },

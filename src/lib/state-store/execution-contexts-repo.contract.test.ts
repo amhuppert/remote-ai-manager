@@ -46,6 +46,7 @@ describe("execution contexts repository", () => {
       inputs: [{ key: "api", title: "Build the API", output: { endpoint: "/v1/x" } }],
       humanApproval: true,
       ownerQuestions: true,
+      documentPublishing: true,
       documents: [
         {
           artifactId: "a-1",

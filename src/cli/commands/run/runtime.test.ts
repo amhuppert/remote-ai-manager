@@ -39,6 +39,7 @@ const view = {
       ],
       lastSummary: null,
       output: null,
+      froze: { charter: 1, documents: [{ path: "plan.md", revision: 2 }] },
     },
   ],
   boundaries: [
@@ -185,6 +186,7 @@ describe("run commands", () => {
               openQuestions: [],
               lastSummary: null,
               output: null,
+              froze: null,
             },
           ],
         }),
@@ -215,6 +217,7 @@ describe("run commands", () => {
       openQuestions: [],
       lastSummary: null,
       output: null,
+      froze: null,
       ...extra,
     });
     const fixture = createCcRuntimeFixture({
@@ -284,6 +287,7 @@ describe("run commands", () => {
       openQuestions: [],
       lastSummary: null,
       output: null,
+      froze: null,
     };
     for (const started of [false, true]) {
       for (const [progress, expected] of [
@@ -495,7 +499,13 @@ describe("run commands", () => {
       env: identityEnv,
       files: { "/workflow.json": JSON.stringify(definition) },
       respond: () =>
-        jsonReply({ ok: true, revision: 3, progress: { kind: "running" }, halts: ['route: "triage" must take exactly one'] }),
+        jsonReply({
+          ok: true,
+          revision: 3,
+          progress: { kind: "running" },
+          halts: ['route: "triage" must take exactly one'],
+          removedDocuments: ["glossary.md"],
+        }),
     });
     const result = await fixture.run(
       ["run", "amend", "run-1", "--file", "/workflow.json", "--based-on", "2", "--reason", "Docs need the API first"],
@@ -511,6 +521,7 @@ describe("run commands", () => {
     ]);
     expect(result.stdout).toContain("revision 3");
     expect(result.stdout).toContain('still cannot proceed: route: "triage" must take exactly one');
+    expect(result.stdout).toContain("removed document glossary.md: work that starts from now no longer reads it");
   });
 
   it("prints a workflow run's definition as written, with its revision, to edit and amend", async () => {
@@ -585,16 +596,43 @@ describe("run commands", () => {
           ...view,
           kind: "workflow",
           documents: [
-            { path: "plan.md", revision: 2, bytes: 7, description: "The plan", readWhen: "Before you start" },
-            { path: "api-notes.md", revision: 1, bytes: 3, description: "API notes", appliesTo: ["api", "docs"] },
+            {
+              path: "plan.md",
+              revision: 2,
+              source: "publish",
+              by: "run-1.api",
+              bytes: 7,
+              description: "The plan",
+              readWhen: "Before you start",
+            },
+            {
+              path: "api-notes.md",
+              revision: 1,
+              source: "launch",
+              bytes: 3,
+              description: "API notes",
+              appliesTo: ["api", "docs"],
+            },
+            { path: "glossary.md", revision: 3, source: "amend", reason: "Terms changed", bytes: 3, description: "Terms" },
           ],
         }),
     });
     const result = await fixture.run(["run", "show", "run-1"], "text");
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("document plan.md (revision 2): The plan — read when: Before you start");
+    expect(result.stdout).toContain(
+      "document plan.md (revision 2, published by run-1.api): The plan — read when: Before you start",
+    );
     expect(result.stdout).toContain("document api-notes.md (revision 1, for api, docs): API notes");
+    expect(result.stdout).toContain("document glossary.md (revision 3, amended: Terms changed): Terms");
+  });
+
+  it("names the charter and document revisions each started context froze", async () => {
+    const fixture = createCcRuntimeFixture({ env: identityEnv, respond: () => jsonReply(view) });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("  froze charter revision 1; plan.md revision 2");
   });
 
   it("names the charter in force, its revision and why it was last amended", async () => {
@@ -676,5 +714,36 @@ describe("run commands", () => {
         { kind: "add", taskId: "t2", title: "Cover the refusal" },
       ],
     ]);
+  });
+
+  it("publishes a file from the seat's working directory as the next revision of a run document", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: { CC_CONVERSATION: "conv-9" },
+      respond: () => jsonReply({ ok: true, runId: "run-1", path: "api.md", revision: 2, unchanged: false }),
+    });
+    const result = await fixture.run(
+      [
+        "context",
+        "doc",
+        "publish",
+        "notes/api.md",
+        "--as",
+        "api.md",
+        "--description",
+        "The API's endpoints",
+        "--read-when",
+        "Before you document it",
+      ],
+      "text",
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)])).toEqual([
+      [
+        "http://cc.test/api/projects/project-one/sessions/session-one/contexts/documents",
+        { file: "notes/api.md", as: "api.md", description: "The API's endpoints", readWhen: "Before you document it" },
+      ],
+    ]);
+    expect(result.stdout).toContain("Published api.md as revision 2 of run run-1: work that starts from now reads it.");
   });
 });

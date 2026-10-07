@@ -58,7 +58,7 @@ export const agentLaunchRequestSchema = z
     /** A limit per backend invocation, not a deadline for the whole run. */
     timeoutMs: z.number().int().positive().optional(),
     /** Documents frozen at launch for the agent to read; see `runDocumentRequestSchema`. */
-    documents: z.array(runDocumentRequestSchema.omit({ appliesTo: true })).optional(),
+    documents: z.array(runDocumentRequestSchema.omit({ appliesTo: true, revision: true })).optional(),
   })
   .strict();
 export type AgentLaunchRequest = z.infer<typeof agentLaunchRequestSchema>;
@@ -107,6 +107,8 @@ export function resolveContextStart(input: {
   deferredChecks?: ReadonlySet<string>;
   /** The lane worktree and branch, for a context placed in a lane. */
   lane?: { worktreePath: string; branch: string };
+  /** Whether later work in its run could read what its implementer publishes. */
+  documentPublishing?: boolean;
 }): ContextStartRequest {
   const { request, seats, placement } = input;
   const reviewerRequests = request.reviewers ?? [];
@@ -147,6 +149,7 @@ export function resolveContextStart(input: {
     humanApproval: request.humanApproval ?? false,
     ownerQuestions: request.ownerQuestions ?? true,
     documents: [],
+    documentPublishing: input.documentPublishing ?? false,
   });
   return {
     contextId: `${placement.runId}.${input.key}`,

@@ -23,6 +23,8 @@ export function describeRun(
     };
     const pass = state.kind === "skipped" ? 0 : state.pass;
     const context = state.kind === "started" ? (inspected.contexts.get(state.contextId) ?? null) : null;
+    const invocation =
+      state.kind === "started" ? record.facts.invocations.find((i) => i.contextId === state.contextId) : undefined;
 
     return {
       key: defined.key,
@@ -47,6 +49,7 @@ export function describeRun(
       })),
       lastSummary: context?.lastSummary ?? null,
       output: context?.accepted?.output ?? null,
+      froze: invocation?.froze ?? null,
       stalled: context?.stalled ?? [],
     };
   });
@@ -94,9 +97,12 @@ export function describeRun(
       };
     }),
     charter: currentCharter(record.facts.charter),
-    documents: currentDocuments(record.facts.documents).map(({ path, revision, document }) => ({
+    documents: currentDocuments(record.facts.documents).map(({ path, revision, source, by, reason, document }) => ({
       path,
       revision,
+      source,
+      ...(by !== undefined ? { by } : {}),
+      ...(reason !== undefined ? { reason } : {}),
       bytes: document.bytes,
       description: document.description,
       ...(document.readWhen !== undefined ? { readWhen: document.readWhen } : {}),

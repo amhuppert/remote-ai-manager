@@ -10,10 +10,11 @@
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/amend  → replace a workflow's definition (owner)
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/decide → human approval decision (people only)
  * - POST /api/projects/[name]/sessions/[session]/contexts/tasks      → a seat's task command
+ * - POST /api/projects/[name]/sessions/[session]/contexts/documents  → a seat publishes a run document
  *
  * The calling conversation is the principal: it owns the runs it launches, and
- * only the owner steers or answers them. A seat conversation changes tasks only
- * in the Context its seat binding names.
+ * only the owner steers or answers them. A seat conversation changes tasks, and
+ * publishes documents, only for the Context its seat binding names.
  */
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
@@ -42,14 +43,20 @@ import {
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import { frozenKeys, writtenEntry } from "./amendment";
-import type { RunCharter, RunDefinitionContext, RunDocument, RunRecord } from "./schemas";
-import type { DocumentIssue, RunDocumentRequest } from "./documents";
+import type { RunCharter, RunDefinitionContext, RunDocumentRevision, RunRecord } from "./schemas";
+import {
+  withCurrentDocuments,
+  type DocumentIssue,
+  type ProposedDocument,
+  type RunDocumentRequest,
+} from "./documents";
 import type { FrozenCharter } from "./charter";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
   workflowContextRequestSchema,
   workflowLaunchRequestSchema,
+  withoutDocuments,
   type WorkflowLaunchRequest,
 } from "./workflow-definition";
 
@@ -88,11 +95,21 @@ export interface RunRouteDeps {
     | { ok: false; status: number; error: string; code?: string }
   >;
   newRunId(): string;
-  /** Freezes a launch's documents as artifacts, reading each `from` file in the session worktree. */
+  /**
+   * Freezes a launch's or amendment's documents as artifacts, reading each
+   * `from` file in the session worktree; a kept revision takes its bytes
+   * from `current`, the run's revisions.
+   */
   snapshotDocuments(
     requests: readonly RunDocumentRequest[],
     worktreePath: string,
-  ): Promise<{ ok: true; documents: RunDocument[] } | { ok: false; issues: DocumentIssue[] }>;
+    current?: readonly RunDocumentRevision[],
+  ): Promise<{ ok: true; documents: ProposedDocument[] } | { ok: false; issues: DocumentIssue[] }>;
+  /** Freezes a file a seat publishes, read inside its working directory, with its path relative to it. */
+  snapshotFile(
+    worktreePath: string,
+    file: string,
+  ): Promise<{ ok: true; path: string; artifactId: string; bytes: number } | { ok: false; message: string }>;
   /** Renders and freezes the charter's bundles. */
   freezeCharter(charter: RunCharter): Promise<FrozenCharter>;
   log: Pick<Logger, "info" | "warn" | "error">;
@@ -137,6 +154,16 @@ const amendSchema = z
     basedOn: z.number().int().min(1).optional(),
     /** Why, recorded with the charter revision the amendment makes. */
     reason: z.string().trim().min(1).optional(),
+  })
+  .strict();
+const publishDocumentSchema = z
+  .object({
+    /** A file in the seat's working directory. */
+    file: z.string().min(1),
+    /** The document's path among the run's documents; the file's path when absent. */
+    as: z.string().min(1).optional(),
+    description: z.string().trim().min(1).optional(),
+    readWhen: z.string().trim().min(1).optional(),
   })
   .strict();
 const taskCommandSchema = z.discriminatedUnion("kind", [
@@ -198,9 +225,10 @@ async function freezeDocuments(
   deps: Pick<RunRouteDeps, "snapshotDocuments">,
   requests: readonly RunDocumentRequest[] | undefined,
   worktreePath: string,
-): Promise<{ ok: true; documents: RunDocument[] } | { ok: false; response: Response }> {
+  current?: readonly RunDocumentRevision[],
+): Promise<{ ok: true; documents: ProposedDocument[] } | { ok: false; response: Response }> {
   if (requests === undefined || requests.length === 0) return { ok: true, documents: [] };
-  const frozen = await deps.snapshotDocuments(requests, worktreePath);
+  const frozen = await deps.snapshotDocuments(requests, worktreePath, current);
   if (frozen.ok) return frozen;
   return {
     ok: false,
@@ -225,7 +253,8 @@ export function createRunRouteHandlers(
   | "control"
   | "amend"
   | "decide"
-  | "tasks",
+  | "tasks"
+  | "publishDocument",
   Handler
 > {
   /** Token, session and a verified calling conversation of that session. */
@@ -588,8 +617,8 @@ export function createRunRouteHandlers(
       };
       const seats = await workflowSeats(caller, asStarted, kept);
       if (!seats.ok) return seats.response;
-      // Every document is read again: an amendment declares the whole workflow.
-      const documents = await freezeDocuments(deps, proposed.documents, caller.worktreePath);
+      // Every document is declared again: kept by its revision, or read anew.
+      const documents = await freezeDocuments(deps, proposed.documents, caller.worktreePath, run.facts.documents);
       if (!documents.ok) return documents.response;
       const charter = await freezeWorkflowCharter(proposed);
       const compiled = compileWorkflow({
@@ -599,20 +628,21 @@ export function createRunRouteHandlers(
         seats: seats.seats,
       });
       const runs = deps.supervision().runs;
+      let removedDocuments: string[];
       try {
-        await runs.amend(run.runId, {
+        ({ removedDocuments } = await runs.amend(run.runId, {
           definition: {
             title: compiled.title,
             contexts: compiled.contexts,
             ...(compiled.loops !== undefined ? { loops: compiled.loops } : {}),
             ...(compiled.lanes !== undefined ? { lanes: compiled.lanes } : {}),
-            authored: proposed,
+            authored: withoutDocuments(proposed),
             documents: documents.documents,
             ...(charter !== undefined ? { charter } : {}),
           },
           basedOn: body.value.basedOn ?? null,
           ...(body.value.reason !== undefined ? { reason: body.value.reason } : {}),
-        });
+        }));
       } catch (error) {
         const issues = amendmentIssuesOf(error);
         if (issues !== null) return amendmentRefused(run.runId, issues);
@@ -626,6 +656,8 @@ export function createRunRouteHandlers(
         revision: amended?.facts.definition.revision ?? 0,
         progress: amended?.progress ?? null,
         halts: runs.inspect(run.runId)?.plan.halts.map((halt) => halt.reason) ?? [],
+        // A document a seat published while the owner wrote the amendment may be among them; say so.
+        removedDocuments,
       });
     },
 
@@ -650,7 +682,10 @@ export function createRunRouteHandlers(
       return NextResponse.json({
         runId: run.runId,
         revision: run.facts.definition.revision,
-        definition: run.facts.definition.authored ?? null,
+        definition:
+          run.facts.definition.authored === undefined
+            ? null
+            : withCurrentDocuments(run.facts.definition.authored, run.facts.documents),
       });
     },
 
@@ -777,6 +812,41 @@ export function createRunRouteHandlers(
       if (result.kind === "refused")
         return jsonError(result.reason, 409, "task_command_refused");
       return NextResponse.json({ ok: true, contextId: seat.contextId });
+    },
+
+    async publishDocument(request, context) {
+      const resolved = await resolveCaller(request, context);
+      if (!resolved.ok) return resolved.response;
+      const body = await readBody(request, publishDocumentSchema, "document publication");
+      if (!body.ok) return body.response;
+      const supervision = deps.supervision();
+      const seat = supervision.core.seatBinding(resolved.caller.conversationId);
+      if (seat === null)
+        return jsonError("Only a supervised seat conversation publishes its run's documents", 403, "not_a_seat");
+      const workplace = supervision.contexts.implementerWorkplace(seat.contextId, seat);
+      if (workplace.kind === "refused") return jsonError(workplace.reason, 409, "document_publish_refused");
+      const frozen = await deps.snapshotFile(workplace.worktreePath, body.value.file);
+      if (!frozen.ok) return jsonError(frozen.message, 400, "invalid_document");
+      // The seat may have been replaced, or its context finished, while the file was read; nothing awaits from here.
+      const still = supervision.contexts.implementerWorkplace(seat.contextId, seat);
+      if (still.kind === "refused") return jsonError(still.reason, 409, "document_publish_refused");
+      const documentPath = body.value.as ?? frozen.path;
+      let published: { revision: number; unchanged: boolean };
+      try {
+        published = supervision.runs.publishDocument(workplace.runId, {
+          path: documentPath,
+          artifactId: frozen.artifactId,
+          bytes: frozen.bytes,
+          ...(body.value.description !== undefined ? { description: body.value.description } : {}),
+          ...(body.value.readWhen !== undefined ? { readWhen: body.value.readWhen } : {}),
+          by: seat.contextId,
+        });
+      } catch (error) {
+        if (!isRefusal(error)) throw error;
+        deps.log.warn("runs.document_publish_refused", { runId: workplace.runId, contextId: seat.contextId, error: error.message });
+        return jsonError(error.message, 409, "document_publish_refused");
+      }
+      return NextResponse.json({ ok: true, runId: workplace.runId, path: documentPath, ...published });
     },
   };
 }

@@ -33,6 +33,7 @@ const contract = contextContractSchema.parse({
   inputs: [{ key: "api", title: "Build the API", output: { endpoint: "/v1/x" } }],
   humanApproval: true,
   ownerQuestions: true,
+  documentPublishing: true,
   documents: [
     {
       artifactId: "a-1",
@@ -177,11 +178,14 @@ describe("runs repository", () => {
             authored: { title: "Fix the notice", contexts: [{ key: "implement", brief: "Fix it", lane: "api" }] },
           },
           documents: [
+            // Every optional field set, though a published revision has no reason and an amended one no publisher.
             {
               path: "notes/plan.md",
               revision: 1,
-              source: "launch" as const,
+              source: "publish" as const,
               at: "2026-10-07T10:00:00.000Z",
+              by: "run-1.implement.1",
+              reason: "The plan changed",
               document: {
                 artifactId: `sha256:${"a".repeat(64)}`,
                 bytes: 7,
@@ -199,6 +203,7 @@ describe("runs repository", () => {
               pass: 1,
               contextId: "run-1.implement.1",
               startCause: "run-1:start:implement:1",
+              froze: { charter: 2, documents: [{ path: "notes/plan.md", revision: 1 }] },
             },
           ],
           lanes: {

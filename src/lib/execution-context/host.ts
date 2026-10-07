@@ -151,6 +151,15 @@ export interface ContextHost extends Executor<ContextProgressReport> {
   /** The stored record, for diagnostics and tests; consumers read `describe`. */
   observe(contextId: string): ContextObservation | null;
   describe(contextId: string): ContextSummary | null;
+  /**
+   * Where this context's current implementer works, for a command it sends
+   * about its work; a refusal when `caller` is not that seat or the context
+   * has finished.
+   */
+  implementerWorkplace(
+    contextId: string,
+    caller: SeatBinding,
+  ): { kind: "current"; runId: string; worktreePath: string } | { kind: "refused"; reason: string };
   /** `caller` is the calling conversation's controller binding, resolved from its record. */
   applyTaskCommand(
     contextId: string,
@@ -179,6 +188,20 @@ export interface ContextHost extends Executor<ContextProgressReport> {
     contract: ContextContract,
     reason: string,
   ): Promise<void>;
+}
+
+/** Why `caller` may not act as this context's implementer now; null when it may. */
+function implementerRefusal(record: ContextRecord, caller: SeatBinding | null): string | null {
+  if (
+    caller === null ||
+    caller.contextId !== record.contextId ||
+    caller.assignmentId !== "implementer" ||
+    caller.replacement !== (record.facts.seats.replacements[caller.assignmentId] ?? 0)
+  )
+    return "Only this context's current implementer may do this";
+  if (isTerminal(record.progress) || record.facts.control.cancelled)
+    return `Context ${record.contextId} has finished`;
+  return null;
 }
 
 export function createContextHost(deps: ContextHostDeps): ContextHost {
@@ -481,6 +504,14 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       };
     },
 
+    implementerWorkplace(contextId, caller) {
+      const record = requireRecord(contextId);
+      const refusal = implementerRefusal(record, caller);
+      return refusal !== null
+        ? { kind: "refused", reason: refusal }
+        : { kind: "current", runId: record.runId, worktreePath: record.workspace.worktreePath };
+    },
+
     applyTaskCommand(contextId, caller, command) {
       const outcome = deps.transaction(
         (): {
@@ -489,31 +520,8 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         } => {
           const record = requireRecord(contextId);
           const facts = record.facts;
-          if (
-            caller === null ||
-            caller.contextId !== contextId ||
-            caller.assignmentId !== "implementer" ||
-            caller.replacement !==
-              (facts.seats.replacements[caller.assignmentId] ?? 0)
-          ) {
-            return {
-              result: {
-                kind: "refused",
-                reason:
-                  "Only this context's current implementer may change its tasks",
-              },
-              change: null,
-            };
-          }
-          if (isTerminal(record.progress) || facts.control.cancelled) {
-            return {
-              result: {
-                kind: "refused",
-                reason: `Context ${contextId} has finished; its tasks no longer change`,
-              },
-              change: null,
-            };
-          }
+          const refusal = implementerRefusal(record, caller);
+          if (refusal !== null) return { result: { kind: "refused", reason: refusal }, change: null };
           const applied = applyTaskCommand(facts, command);
           if (applied.kind === "refused")
             return { result: applied, change: null };

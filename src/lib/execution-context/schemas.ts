@@ -111,6 +111,8 @@ export const contextContractSchema = z
     /** Whether seats may ask their owner questions. */
     ownerQuestions: z.boolean(),
     documents: z.array(contractDocumentSchema),
+    /** Whether its implementer may publish documents for work that starts later: a workflow run's contexts. */
+    documentPublishing: z.boolean().default(false),
     /** The run's charter as it governs this context; none for a run without one. */
     charter: contractCharterSchema.nullable().default(null),
   })

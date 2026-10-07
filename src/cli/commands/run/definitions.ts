@@ -35,6 +35,11 @@ const taskId = {
   description: "Task id from your context's task list",
   value: { kind: "string", minLength: 1 },
 } as const;
+const documentFile = {
+  name: "file",
+  description: "A file in your working directory",
+  value: { kind: "string", minLength: 1 },
+} as const;
 
 export const runLaunchSpec = {
   path: "run launch",
@@ -51,7 +56,7 @@ export const runWorkflowSpec = {
   path: "run workflow",
   summary: "Launch a supervised workflow of several contexts in this session",
   description:
-    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused. A publication changes the session worktree, so each session context must be ordered against each lane's publication, or placed in a lane: a read-only one depends on the lane's work or the lane's work depends on it (outputOnly), and a writing one depends on the lane's work, since its uncommitted results block publication. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. documents, declared once at the top level as for run launch with an optional appliesTo: [context keys], are frozen at launch; a context reads the documents meant for it as they stood when it started. An optional charter {mission, invariants: [{id, statement, appliesTo?}], sourcesOfTruth: [{rank, id, label, type: code|config|document|spec|other, locator, description, appliesTo?}], nonGoals, conventions, vocabulary, testStrategy, knownAmbiguities} states the run's mission, the invariants every change keeps and its sources ranked by authority (1 highest; a locator is read where it stands, never frozen: declare a document to freeze something); each context's first work and review orders summarize the part meant for it, and its seats read the full text in charter.md beside its documents. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones).",
+    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused. A publication changes the session worktree, so each session context must be ordered against each lane's publication, or placed in a lane: a read-only one depends on the lane's work or the lane's work depends on it (outputOnly), and a writing one depends on the lane's work, since its uncommitted results block publication. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. documents, declared once at the top level as for run launch with an optional appliesTo: [context keys], are frozen at launch; a context reads the documents meant for it as they stood when it started, and its implementer can publish a new revision or a new document (context doc publish) for work that starts later. An optional charter {mission, invariants: [{id, statement, appliesTo?}], sourcesOfTruth: [{rank, id, label, type: code|config|document|spec|other, locator, description, appliesTo?}], nonGoals, conventions, vocabulary, testStrategy, knownAmbiguities} states the run's mission, the invariants every change keeps and its sources ranked by authority (1 highest; a locator is read where it stands, never frozen: declare a document to freeze something); each context's first work and review orders summarize the part meant for it, and its seats read the full text in charter.md beside its documents. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones).",
   requires: "cc",
   effects: "write",
   args: [],
@@ -62,7 +67,7 @@ export const runAmendSpec = {
   path: "run amend",
   summary: "Replace a workflow run's definition with a corrected one",
   description:
-    "Submit the whole definition in the run workflow shape, as it should be from now on (run definition prints the current one). Work that has not started may change, be added or be removed, as long as every route already decided stays decided. Started contexts and the body of a started loop stay exactly as they started and in the loop they started in; a route already taken or not taken stays so, and a context or lane a route skipped stays skipped (put new work in a new context or lane), so removing work can be refused when it would turn an else route the other way; a result that broke its routing's cardinality or could not be read may get new routes, which clears that halt; a started loop may only get a higher maxPasses, which runs another pass of an exhausted loop; and a lane that has been provisioned, or asked to be, keeps its contexts, checks and the lanes whose code it started from. Documents and the charter are declared again and frozen anew (from files are read again): leaving the charter out removes it for work that has not started, and contexts that already started keep the documents and charter they started with. --reason says why, and is kept with the charter revision the amendment makes. --based-on names the definition revision you read (run show), so a definition changed since is refused. Each refused change is named.",
+    "Submit the whole definition in the run workflow shape, as it should be from now on (run definition prints the current one). Work that has not started may change, be added or be removed, as long as every route already decided stays decided. Started contexts and the body of a started loop stay exactly as they started and in the loop they started in; a route already taken or not taken stays so, and a context or lane a route skipped stays skipped (put new work in a new context or lane), so removing work can be refused when it would turn an else route the other way; a result that broke its routing's cardinality or could not be read may get new routes, which clears that halt; a started loop may only get a higher maxPasses, which runs another pass of an exhausted loop; and a lane that has been provisioned, or asked to be, keeps its contexts, checks and the lanes whose code it started from. Documents and the charter are declared again: run definition lists each current document as {path, revision, description, ...}, kept as it is while revision is still its latest (a seat may have published since; then read the definition again); from or contents replace it, with the revision they replace named when a seat published it; leaving a document or the charter out removes it for work that has not started (the reply names removed documents). Contexts that already started keep the documents and charter they started with. --reason says why, and is kept with the charter and document revisions the amendment makes. --based-on names the definition revision you read (run show), so a definition changed since is refused. Each refused change is named.",
   requires: "cc",
   effects: "write",
   args: [runId],
@@ -72,7 +77,7 @@ export const runAmendSpec = {
       value: { kind: "integer", min: 1 },
     },
     reason: {
-      description: "Why the definition changes, kept with the charter revision it makes",
+      description: "Why the definition changes, kept with the charter and document revisions it makes",
       value: { kind: "string", minLength: 1 },
     },
   },
@@ -82,7 +87,7 @@ export const runDefinitionSpec = {
   path: "run definition",
   summary: "Read a workflow run's definition as written, to edit and amend",
   description:
-    "Returns the workflow in the run workflow shape as its current revision was written, with that revision. Edit it and submit it with run amend --based-on <revision>.",
+    "Returns the workflow in the run workflow shape as its current revision was written, with that revision; its documents are the run's current ones, each a reference to its latest revision. Edit it and submit it with run amend --based-on <revision>.",
   requires: "cc",
   effects: "read",
   args: [runId],
@@ -345,6 +350,40 @@ export const contextTaskAddCommand = ccCommands.defineCommand(
   },
 );
 
+export const contextDocPublishSpec = {
+  path: "context doc publish",
+  summary: "Publish a file as the next revision of one of your run's documents",
+  description:
+    "For the agent working a supervised context of a workflow run: freeze a file from your working directory as the next revision of a run document, for work that starts from now; work already running, yours included, keeps the revision it started with. The document is the file's path relative to your working directory unless --as names another (to revise a document you read under .cc/run-docs/, copy it, edit the copy and publish that with --as <document path>). A new document needs --description; a revision keeps the document's description, read-when text and the contexts it is for unless you give a new description or read-when. A revision is refused when another context or an amendment changed the document after your context started: publish under another path, or say so in the message that ends your turn. At most 256 KB, and 1 MB for the run's documents together.",
+  requires: "cc",
+  effects: "write",
+  args: [documentFile],
+  flags: {
+    as: {
+      description: "The document's path among the run's documents, when it is not the file's",
+      value: { kind: "string", minLength: 1 },
+    },
+    description: {
+      description: "What the document holds; required for a new document",
+      value: { kind: "string", minLength: 1 },
+    },
+    "read-when": {
+      description: "When later work should read it",
+      value: { kind: "string", minLength: 1 },
+    },
+  },
+} as const;
+export const contextDocPublishCommand = ccCommands.defineCommand(contextDocPublishSpec, {
+  examples: [
+    {
+      why: "Share the API contract with work that starts later",
+      args: { file: "docs/api-contract.md" },
+      flags: { description: "The API's endpoints and errors", "read-when": "Before you call or document the API" },
+    },
+  ],
+  handler: async () => ({ default: (await handlers()).docPublishHandler }),
+});
+
 export const runCommands = [
   runLaunchCommand,
   runWorkflowCommand,
@@ -359,6 +398,7 @@ export const runCommands = [
   contextTaskCompleteCommand,
   contextTaskReopenCommand,
   contextTaskAddCommand,
+  contextDocPublishCommand,
 ] as const;
 export const runGroups = [
   defineGroup({
@@ -377,5 +417,10 @@ export const runGroups = [
     summary: "Report progress on your context's tasks",
     description:
       "Task commands apply to the context your conversation is working.",
+  }),
+  defineGroup({
+    path: "context doc",
+    summary: "Share documents with your run's later work",
+    description: "Document commands apply to the run of the context your conversation is working.",
   }),
 ] as const;

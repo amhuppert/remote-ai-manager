@@ -24,6 +24,9 @@ const ADD_TASK_HELP =
 const QUESTION_HELP =
   "If you cannot proceed without a decision, ask with `cctl ask`; your owner answers, and your work resumes with the answer.";
 
+const PUBLISH_HELP =
+  "To share a document with work that starts later, publish it with `cctl context doc publish <file>` (a new document needs `--description`); work already running keeps the revision it started with.";
+
 function section(title: string, body: string): string {
   return `## ${title}\n\n${body}`;
 }
@@ -192,6 +195,7 @@ function workingRules(facts: ContextFacts): string {
     TASK_COMMANDS_HELP,
     contract.allowTaskAddition ? ADD_TASK_HELP : null,
     contract.ownerQuestions ? QUESTION_HELP : null,
+    contract.documentPublishing ? PUBLISH_HELP : null,
     contract.outputSchema !== null
       ? "When the work is complete you will be asked for a structured result; keep it in mind as you work."
       : null,

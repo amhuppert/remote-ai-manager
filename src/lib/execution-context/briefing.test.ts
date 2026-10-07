@@ -229,6 +229,14 @@ describe("briefing", () => {
     expect(silent).not.toMatch(/ask if you cannot tell/);
   });
 
+  it("tells a workflow context's implementer it can publish documents for later work, and no one else", () => {
+    const publishing = facts({ documentPublishing: true });
+    expect(composeInitialWork(publishing)).toMatch(/`cctl context doc publish <file>`/);
+    expect(composeInitialWork(publishing)).toMatch(/work already running keeps the revision it started with/);
+    expect(composeInitialWork(facts())).not.toMatch(/doc publish/);
+    expect(composeReview(publishing, { candidate, round, seat: reviewer })).not.toMatch(/doc publish/);
+  });
+
   it("says nothing about a charter to work without one", () => {
     expect(composeInitialWork(facts())).not.toContain("## Charter");
   });

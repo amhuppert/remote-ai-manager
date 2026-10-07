@@ -803,6 +803,12 @@ export type WorkflowLaunchRequest = z.infer<typeof workflowLaunchRequestSchema>;
 
 type Seats = { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
 
+/** The workflow as written, minus its documents, which the run keeps as revisions instead. */
+export function withoutDocuments(request: WorkflowLaunchRequest): Omit<WorkflowLaunchRequest, "documents"> {
+  const { documents: _documents, ...rest } = request;
+  return rest;
+}
+
 /**
  * Freezes a parsed workflow definition into a Run launch. Pure. The request
  * must come from workflowLaunchRequestSchema, which already refused every
@@ -839,7 +845,8 @@ export function compileWorkflow(
     ...(input.documents !== undefined ? { documents: input.documents } : {}),
     ...(input.request.loops !== undefined ? { loops: input.request.loops } : {}),
     ...(lanes.length > 0 ? { lanes } : {}),
-    authored: input.request,
+    // Documents are kept as revisions, which `run definition` shows; their inline contents stay out of the record.
+    authored: withoutDocuments(input.request),
     contexts: contexts.map((context, index) => {
       const {
         key,
@@ -871,6 +878,7 @@ export function compileWorkflow(
           scope: scopeOf(context),
           seats,
           deferredChecks: analysis.deferred[index],
+          documentPublishing: true,
           ...(lane !== undefined
             ? { lane: { worktreePath: lane.worktreePath, branch: lane.branch } }
             : {}),

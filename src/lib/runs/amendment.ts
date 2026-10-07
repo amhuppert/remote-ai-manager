@@ -1,11 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { planRun, type ObservedContexts } from "./schedule";
 import type { FrozenCharter } from "./charter";
+import type { ProposedDocument } from "./documents";
 import { laneCodePrerequisites, laneMembers, laneSkipped, loopOf } from "./topology";
 import {
   laneStateOf,
   type RunDefinitionContext,
-  type RunDocument,
   type RunFacts,
   type RunLane,
   type RunLoop,
@@ -17,10 +17,10 @@ export interface ProposedDefinition {
   contexts: RunDefinitionContext[];
   loops?: RunLoop[];
   lanes?: RunLane[];
-  /** The workflow as its owner wrote it. */
+  /** The workflow as its owner wrote it, without its documents, which the run keeps as revisions. */
   authored?: Record<string, unknown>;
   /** Every document the amended workflow declares, frozen as artifacts. */
-  documents?: RunDocument[];
+  documents?: ProposedDocument[];
   /** The amended workflow's charter, each context's bundle frozen; none removes it. */
   charter?: FrozenCharter;
 }

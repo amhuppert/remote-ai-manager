@@ -5,6 +5,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { createRunRouteHandlers, type RunRouteDeps } from "./route-handlers";
+import { currentDocuments } from "./documents";
 import { runViewSchema } from "./schemas";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
@@ -62,6 +63,32 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 
 /** Every request to freeze documents, with the worktree their files were read from. */
 let snapshots: Array<{ worktreePath: string; paths: string[] }>;
+/** The files a seat can publish, by path in its working directory, and every working directory read. */
+let seatFiles: Record<string, string>;
+let seatReads: string[];
+/** When set, freezing a seat's file or an amendment's documents waits on it. */
+let holdSeatFile: (() => Promise<void>) | null;
+let holdDocuments: (() => Promise<void>) | null;
+
+/** A hold the test releases, and a promise that settles once something waits on it. */
+function hold(): { wait: () => Promise<void>; reached: Promise<void>; release: () => void } {
+  let release = () => {};
+  let reach = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    reach = resolve;
+  });
+  return {
+    wait: async () => {
+      reach();
+      await released;
+    },
+    reached,
+    release,
+  };
+}
 
 async function launch(
   body: unknown = { brief: "Fix the duplicate notice" },
@@ -87,6 +114,10 @@ beforeEach(() => {
   branchPrefix = "csm";
   unwakeable = new Set();
   snapshots = [];
+  seatFiles = {};
+  seatReads = [];
+  holdSeatFile = null;
+  holdDocuments = null;
   let sequence = 0;
   const deps: RunRouteDeps = {
     auth: {
@@ -152,23 +183,33 @@ beforeEach(() => {
       return `run-${sequence}`;
     },
     // Freezes each document as the bytes its path names; a path starting "missing" has no file.
-    async snapshotDocuments(requests, worktreePath) {
+    // A kept revision takes the bytes the run's latest revision of its path holds.
+    async snapshotDocuments(requests, worktreePath, current = []) {
       snapshots.push({ worktreePath, paths: requests.map((r) => r.path) });
-      const missing = requests.flatMap((r, index) =>
+      if (holdDocuments !== null) await holdDocuments();
+      const latest = new Map(currentDocuments(current).map((r) => [r.path, r]));
+      const issues = requests.flatMap((r, index) =>
         r.path.startsWith("missing")
           ? [{ path: ["documents", index, "from"], message: `No file at "${r.from ?? ""}" in the session worktree` }]
-          : [],
+          : r.revision !== undefined && latest.get(r.path)?.revision !== r.revision
+            ? [{ path: ["documents", index, "revision"], message: `its latest is revision ${latest.get(r.path)?.revision ?? "none"}` }]
+            : [],
       );
-      if (missing.length > 0) return { ok: false, issues: missing };
+      if (issues.length > 0) return { ok: false, issues };
       return {
         ok: true,
-        documents: requests.map((r) => ({
-          path: r.path,
-          artifactId: `sha256:${r.contents ?? r.from ?? ""}`,
-          bytes: 1,
-          description: r.description,
-          ...(r.appliesTo !== undefined ? { appliesTo: r.appliesTo } : {}),
-        })),
+        documents: requests.map((r) => {
+          const kept = r.revision !== undefined ? latest.get(r.path) : undefined;
+          return {
+            path: r.path,
+            artifactId: kept?.document.artifactId ?? `sha256:${r.contents ?? r.from ?? ""}`,
+            bytes: kept?.document.bytes ?? 1,
+            description: r.description,
+            ...(r.readWhen !== undefined ? { readWhen: r.readWhen } : {}),
+            ...(r.appliesTo !== undefined ? { appliesTo: r.appliesTo } : {}),
+            ...(r.revision !== undefined ? { seen: r.revision } : {}),
+          };
+        }),
       };
     },
     // Freezes the default bundle as the mission, and each named key's as the mission and key.
@@ -181,6 +222,15 @@ beforeEach(() => {
           byKey: Object.fromEntries(named.map((key) => [key, `sha256:${charter.mission}-${key}`])),
         },
       };
+    },
+    // Freezes a seat's file as its contents.
+    async snapshotFile(worktreePath, file) {
+      seatReads.push(worktreePath);
+      if (holdSeatFile !== null) await holdSeatFile();
+      const contents = seatFiles[file];
+      return contents === undefined
+        ? { ok: false, message: `No file at "${file}" in your working directory` }
+        : { ok: true, path: file, artifactId: `sha256:${contents}`, bytes: contents.length };
     },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   };
@@ -236,7 +286,7 @@ describe("run routes", () => {
       { artifactId: "sha256:docs/plan.md", path: `.cc/run-docs/${contextId}/plan.md`, description: "The plan" },
     ]);
     const shown = await json(await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
-    expect(shown.documents).toEqual([{ path: "plan.md", revision: 1, bytes: 1, description: "The plan" }]);
+    expect(shown.documents).toEqual([{ path: "plan.md", revision: 1, source: "launch", bytes: 1, description: "The plan" }]);
   });
 
   it("refuses a launch whose documents cannot be frozen, naming each problem, and launches nothing", async () => {
@@ -1148,5 +1198,318 @@ describe("run routes", () => {
       params(),
     );
     expect(refused.status).toBe(403);
+  });
+});
+
+describe("published documents", () => {
+  const publish = async (body: Record<string, unknown>, conversationId: string) => {
+    const response = await routes.publishDocument(request(body, identity(conversationId)), params());
+    return { status: response.status, ...(await json(response)) };
+  };
+
+  it("publishes a seat's file as a new revision: work that starts later freezes it, the publisher keeps what it froze", async () => {
+    seatFiles = { "docs/plan.md": "v2", "notes/api.md": "endpoints" };
+    const published: Array<Record<string, unknown>> = [];
+    h.script = async (input) => {
+      if (published.length === 0) {
+        published.push(await publish({ file: "docs/plan.md", as: "plan.md" }, input.conversationId));
+        published.push(await publish({ file: "notes/api.md", description: "The API's endpoints" }, input.conversationId));
+      }
+      return done("Done.");
+    };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "API then docs",
+          contexts: [
+            { key: "api", brief: "Build the API" },
+            { key: "docs", brief: "Document it", dependsOn: ["api"] },
+          ],
+          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    expect(published).toEqual([
+      { status: 200, ok: true, runId: "run-1", path: "plan.md", revision: 2, unchanged: false },
+      { status: 200, ok: true, runId: "run-1", path: "notes/api.md", revision: 1, unchanged: false },
+    ]);
+    expect(seatReads).toEqual(["/repo/.worktrees/session", "/repo/.worktrees/session"]);
+    const record = supervision.runs.observe("run-1")?.record;
+    const [api, docs] = record?.facts.invocations ?? [];
+    const frozen = (contextId: string | undefined) =>
+      supervision.contexts.observe(contextId ?? "")?.record.facts.contract.current.documents.map((d) => [d.path, d.artifactId]);
+    expect(frozen(api?.contextId)).toEqual([[`.cc/run-docs/${api?.contextId}/plan.md`, "sha256:v1"]]);
+    expect(frozen(docs?.contextId)).toEqual([
+      [`.cc/run-docs/${docs?.contextId}/plan.md`, "sha256:v2"],
+      [`.cc/run-docs/${docs?.contextId}/notes/api.md`, "sha256:endpoints"],
+    ]);
+    expect(record?.facts.documents.at(-1)).toMatchObject({ path: "notes/api.md", source: "publish", by: api?.contextId });
+
+    const view = runViewSchema.parse(
+      await json(await routes.show(request(undefined, identity("owner-1"), "GET"), params({ runId: "run-1" }))),
+    );
+    expect(view.contexts.map((c) => [c.key, c.froze])).toEqual([
+      ["api", { charter: null, documents: [{ path: "plan.md", revision: 1 }] }],
+      [
+        "docs",
+        {
+          charter: null,
+          documents: [
+            { path: "plan.md", revision: 2 },
+            { path: "notes/api.md", revision: 1 },
+          ],
+        },
+      ],
+    ]);
+  });
+
+  it("refuses a publication from anyone but a workflow context's current implementer, or one a declaration could not make", async () => {
+    seatFiles = { "notes.md": "n" };
+    expect((await publish({ file: "notes.md", description: "N" }, "owner-1")).status).toBe(403);
+
+    let agentSeat: Record<string, unknown> = {};
+    h.script = async (input) => {
+      agentSeat = await publish({ file: "notes.md", description: "N" }, input.conversationId);
+      return done("Done.");
+    };
+    await launch();
+    expect(agentSeat).toMatchObject({ status: 409, error: expect.stringContaining("workflow") });
+
+    const refusals: Array<Record<string, unknown>> = [];
+    h.script = async (input) => {
+      if (refusals.length === 0)
+        for (const body of [
+          { file: "missing.md", description: "M" },
+          { file: "notes.md", as: "charter.md/notes.md", description: "N" },
+          { file: "notes.md", as: "Plan.md", description: "N" },
+        ])
+          refusals.push(await publish(body, input.conversationId));
+      return done("Done.");
+    };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "One",
+          contexts: [{ key: "only", brief: "Do it" }],
+          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    expect(refusals).toEqual([
+      expect.objectContaining({ status: 400, error: expect.stringContaining("No file") }),
+      expect.objectContaining({ status: 409, error: expect.stringContaining("reserved for the run's charter") }),
+      expect.objectContaining({ status: 409, error: expect.stringContaining("only by case") }),
+    ]);
+    expect(supervision.runs.observe("run-2")?.record.facts.documents.map((r) => [r.path, r.revision])).toEqual([["plan.md", 1]]);
+  });
+
+  it("shows the run's current documents in its definition, so an amendment keeps a published revision by naming it", async () => {
+    seatFiles = { "plan.md": "v2", "notes.md": "n" };
+    let published = false;
+    h.script = async (input) => {
+      if (!published) {
+        published = true;
+        await publish({ file: "plan.md" }, input.conversationId);
+        await publish({ file: "notes.md", description: "Notes" }, input.conversationId);
+        return done("Done.");
+      }
+      return new Promise(() => {});
+    };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "API then docs",
+          contexts: [
+            { key: "api", brief: "Build the API" },
+            { key: "docs", brief: "Document it", dependsOn: ["api"] },
+          ],
+          documents: [
+            { path: "plan.md", contents: "v1", description: "The plan" },
+            { path: "glossary.md", contents: "terms", description: "Terms" },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision, false);
+
+    const read = await json(
+      await routes.definition(request(undefined, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    const definition = read.definition as Record<string, unknown>;
+    expect(definition.documents).toEqual([
+      { path: "plan.md", revision: 2, description: "The plan" },
+      { path: "glossary.md", revision: 1, description: "Terms" },
+      { path: "notes.md", revision: 1, description: "Notes" },
+    ]);
+    // Inline contents are frozen once; the run record does not carry them.
+    expect(supervision.runs.observe("run-1")?.record.facts.definition.authored?.documents).toBeUndefined();
+
+    const amended = await routes.amend(
+      request(
+        {
+          definition: {
+            ...definition,
+            contexts: [...(definition.contexts as unknown[]), { key: "extra", brief: "More", dependsOn: ["docs"] }],
+            documents: (definition.documents as Array<{ path: string }>).filter((d) => d.path !== "glossary.md"),
+          },
+          basedOn: read.revision,
+          reason: "The glossary moved",
+        },
+        identity("owner-1"),
+      ),
+      params({ runId: "run-1" }),
+    );
+    const amendedBody = await json(amended);
+    expect(amended.status, JSON.stringify(amendedBody)).toBe(200);
+    expect(amendedBody).toMatchObject({ removedDocuments: ["glossary.md"] });
+    expect(
+      supervision.runs.observe("run-1")?.record.facts.documents.map((r) => [r.path, r.revision, r.source, r.reason ?? null]),
+    ).toEqual([
+      ["plan.md", 1, "launch", null],
+      ["glossary.md", 1, "launch", null],
+      ["plan.md", 2, "publish", null],
+      ["notes.md", 1, "publish", null],
+      ["glossary.md", 2, "amend", "The glossary moved"],
+    ]);
+
+    const stale = await routes.amend(
+      request(
+        { definition: { ...definition, documents: [{ path: "plan.md", revision: 1, description: "The plan" }] } },
+        identity("owner-1"),
+      ),
+      params({ runId: "run-1" }),
+    );
+    expect(stale.status).toBe(400);
+    expect(await json(stale)).toMatchObject({ issues: [{ path: "documents.0.revision" }] });
+  });
+
+  it("refuses a publication whose context finished while its file was being frozen", async () => {
+    seatFiles = { "notes.md": "n" };
+    const held = hold();
+    holdSeatFile = held.wait;
+    const pending: Array<Promise<Record<string, unknown>>> = [];
+    h.script = async (input) => {
+      if (pending.length > 0) return new Promise(() => {});
+      pending.push(publish({ file: "notes.md", description: "Notes" }, input.conversationId));
+      return done("Done.");
+    };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "API then docs",
+          contexts: [
+            { key: "api", brief: "Build the API" },
+            { key: "docs", brief: "Document it", dependsOn: ["api"] },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision, false);
+    const api = supervision.runs.observe("run-1")?.record.facts.invocations[0];
+    expect(supervision.contexts.observe(api?.contextId ?? "")?.record.progress.kind).toBe("succeeded");
+
+    held.release();
+    expect(await pending[0]).toMatchObject({ status: 409, error: expect.stringContaining("has finished") });
+    expect(supervision.runs.observe("run-1")?.record.facts.documents).toEqual([]);
+  });
+
+  it("names every document an amendment removed, even one published while the amendment was being prepared", async () => {
+    seatFiles = { "late.md": "late" };
+    const later: Array<() => Promise<Record<string, unknown>>> = [];
+    h.script = async (input) => {
+      later.push(() => publish({ file: "late.md", description: "Late notes" }, input.conversationId));
+      return new Promise(() => {});
+    };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "API",
+          contexts: [{ key: "api", brief: "Build the API" }],
+          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision, false);
+    const read = await json(
+      await routes.definition(request(undefined, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+    );
+    const definition = read.definition as Record<string, unknown>;
+
+    const held = hold();
+    holdDocuments = held.wait;
+    const amending = routes.amend(
+      request(
+        {
+          definition: {
+            ...definition,
+            contexts: [...(definition.contexts as unknown[]), { key: "extra", brief: "More", dependsOn: ["api"] }],
+          },
+          basedOn: read.revision,
+        },
+        identity("owner-1"),
+      ),
+      params({ runId: "run-1" }),
+    );
+    await held.reached;
+    expect(await later[0]?.()).toMatchObject({ status: 200, path: "late.md", revision: 1 });
+    held.release();
+
+    const amended = await amending;
+    expect(amended.status).toBe(200);
+    expect(await json(amended)).toMatchObject({ removedDocuments: ["late.md"] });
+  });
+
+  it("refuses a publication over a revision another context published after the publisher started", async () => {
+    seatFiles = { "a.md": "from a", "b.md": "from b" };
+    const outcomes: Record<string, Record<string, unknown>> = {};
+    let alphaDone = () => {};
+    const alphaPublished = new Promise<void>((resolve) => {
+      alphaDone = resolve;
+    });
+    h.script = async (input) => {
+      if (input.request.message.includes("Alpha")) {
+        outcomes.alpha = await publish({ file: "a.md", as: "plan.md" }, input.conversationId);
+        alphaDone();
+      } else {
+        await alphaPublished;
+        outcomes.beta = await publish({ file: "b.md", as: "plan.md" }, input.conversationId);
+      }
+      return done("Done.");
+    };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Side by side",
+          contexts: [
+            { key: "alpha", brief: "Alpha work", scope: { mode: "owned", paths: ["src/a"] } },
+            { key: "beta", brief: "Beta work", scope: { mode: "owned", paths: ["src/b"] } },
+          ],
+          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    expect(outcomes.alpha).toMatchObject({ status: 200, revision: 2 });
+    expect(outcomes.beta).toMatchObject({
+      status: 409,
+      error: expect.stringMatching(/plan\.md is at revision 2, published by run-1\.alpha after you started from revision 1/),
+    });
   });
 });

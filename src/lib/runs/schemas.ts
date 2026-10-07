@@ -6,6 +6,14 @@ import {
   haltDispositionSchema,
 } from "@/lib/execution-context/schemas";
 
+/** The charter revision and each document's revision a context froze when it started. */
+export const runFrozenRevisionsSchema = z
+  .object({
+    charter: z.number().int().min(1).nullable(),
+    documents: z.array(z.object({ path: z.string().min(1), revision: z.number().int().min(1) }).strict()),
+  })
+  .strict();
+
 /** One Context invocation a Run started: authored key, loop pass and identity. */
 export const runInvocationSchema = z
   .object({
@@ -13,6 +21,8 @@ export const runInvocationSchema = z
     pass: z.number().int().min(0),
     contextId: z.string().min(1),
     startCause: z.string().min(1),
+    /** Absent for a context started before runs recorded it. */
+    froze: runFrozenRevisionsSchema.optional(),
   })
   .strict();
 export type RunInvocation = z.infer<typeof runInvocationSchema>;
@@ -159,6 +169,10 @@ export const runDocumentRevisionSchema = z
     revision: z.number().int().min(1),
     source: z.enum(["launch", "amend", "publish"]),
     at: z.string().min(1),
+    /** The context whose seat published it. */
+    by: z.string().min(1).optional(),
+    /** Why the owner amended the run, when they said. */
+    reason: z.string().min(1).optional(),
     /** The document as of this revision; null when this revision removed it. */
     document: runDocumentSchema.omit({ path: true }).nullable(),
   })
@@ -261,7 +275,10 @@ export const runFactsSchema = z
         contexts: z.array(runDefinitionContextSchema).min(1),
         loops: z.array(runLoopSchema).optional(),
         lanes: z.array(runLaneSchema).optional(),
-        /** The workflow as its owner wrote this revision, to read back, edit and amend. */
+        /**
+         * The workflow as its owner wrote this revision, to read back, edit and
+         * amend; its documents are kept as revisions instead, and read back from them.
+         */
         authored: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
@@ -478,6 +495,8 @@ export const runViewSchema = z
           ),
           lastSummary: z.string().nullable(),
           output: z.unknown(),
+          /** What it froze when it started; null before it starts. */
+          froze: runFrozenRevisionsSchema.nullable(),
         })
         .strict(),
     ),
@@ -549,6 +568,10 @@ export const runViewSchema = z
         .object({
           path: z.string(),
           revision: z.number().int().min(1),
+          /** How this revision came: declared at launch, by an amendment, or published by a context's seat. */
+          source: z.enum(["launch", "amend", "publish"]),
+          by: z.string().optional(),
+          reason: z.string().optional(),
           bytes: z.number().int().min(0),
           description: z.string(),
           readWhen: z.string().optional(),
@@ -582,9 +605,22 @@ export const runAmendedResponseSchema = z
     progress: runProgressSchema.nullable(),
     /** Routes and loops that still cannot proceed under it. */
     halts: z.array(z.string()),
+    /** Documents the amendment left out, so work that starts from now no longer reads them. */
+    removedDocuments: z.array(z.string()),
   })
   .strict();
 export type RunAmendedResponse = z.infer<typeof runAmendedResponseSchema>;
+
+export const runDocumentPublishedResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    runId: z.string().min(1),
+    path: z.string().min(1),
+    revision: z.number().int().min(1),
+    /** The same bytes and description as the latest revision: nothing new was recorded. */
+    unchanged: z.boolean(),
+  })
+  .strict();
 
 export const runControlResponseSchema = z
   .object({ ok: z.literal(true), progress: runProgressSchema.nullable() })

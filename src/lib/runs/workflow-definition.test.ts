@@ -63,7 +63,7 @@ const owned = (...paths: string[]) => ({ mode: "owned", paths });
 const readOnly = { mode: "readOnly" };
 
 describe("one-context workflow (W1)", () => {
-  it("freezes the same start request as the agent launch of the same contract", () => {
+  it("freezes the same start request as the agent launch of the same contract, but lets its implementer publish documents", () => {
     const fields = {
       brief: "Add the endpoint.\nRefuse unknown ids.",
       tasks: [{ title: "Route" }, { title: "Tests", instructions: "Cover refusal" }],
@@ -85,7 +85,14 @@ describe("one-context workflow (W1)", () => {
 
     expect(workflow.kind).toBe("workflow");
     expect(workflow.title).toBe("Endpoint workflow");
-    expect(workflow.contexts).toEqual(agent.contexts);
+    // Only a workflow has later work to read what its contexts publish.
+    expect(agent.contexts[0]?.request.contract.documentPublishing).toBe(false);
+    expect(workflow.contexts).toEqual(
+      agent.contexts.map((context) => ({
+        ...context,
+        request: { ...context.request, contract: { ...context.request.contract, documentPublishing: true } },
+      })),
+    );
     expect(workflow.contexts[0]?.dependsOn).toEqual([]);
   });
 });

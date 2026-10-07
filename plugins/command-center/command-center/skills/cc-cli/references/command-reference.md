@@ -35,6 +35,11 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--file` (required).
 - `cctl context` — Work inside a supervised context
   - `cctl context <command> [options]`
+- `cctl context doc` — Share documents with your run's later work
+  - `cctl context doc <command> [options]`
+- `cctl context doc publish` — Publish a file as the next revision of one of your run's documents
+  - `cctl context doc publish <file> [options]`
+  - Flags: `--as`, `--description`, `--read-when`.
 - `cctl context task` — Report progress on your context's tasks
   - `cctl context task <command> [options]`
 - `cctl context task add` — Add a task your context's work needs

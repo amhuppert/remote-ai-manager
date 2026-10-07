@@ -16,7 +16,7 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getSession } from "@/lib/state-store";
 import type { ResolvedSeat } from "./launch";
-import { snapshotRunDocuments } from "./documents";
+import { snapshotDocumentFile, snapshotRunDocuments } from "./documents";
 import { freezeCharter } from "./charter";
 import { getArtifactStore } from "@/lib/artifacts/production";
 import { getSupervision } from "@/lib/supervision/production";
@@ -131,8 +131,9 @@ const handlers = createRunRouteHandlers({
   },
   resolveSeats,
   newRunId,
-  snapshotDocuments: (requests, worktreePath) =>
-    snapshotRunDocuments({ requests, worktreePath, store: getArtifactStore() }),
+  snapshotDocuments: (requests, worktreePath, current) =>
+    snapshotRunDocuments({ requests, worktreePath, ...(current !== undefined ? { current } : {}), store: getArtifactStore() }),
+  snapshotFile: (worktreePath, file) => snapshotDocumentFile({ worktreePath, file, store: getArtifactStore() }),
   freezeCharter: (charter) => freezeCharter({ charter, store: getArtifactStore() }),
   log,
 });
@@ -146,3 +147,4 @@ export const controlRunPOST = withTracing(handlers.control);
 export const amendRunPOST = withTracing(handlers.amend);
 export const decideRunPOST = withTracing(handlers.decide);
 export const contextTasksPOST = withTracing(handlers.tasks);
+export const contextDocumentsPOST = withTracing(handlers.publishDocument);
