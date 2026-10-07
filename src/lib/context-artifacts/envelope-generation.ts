@@ -463,10 +463,11 @@ export async function generateCompactionEnvelope(
       modelSelection: request.modelSelection,
       binding: {
         address: request.lane.address,
-        // No ConversationState record exists for this synthetic lane, so the
-        // ephemeral persistence adapter makes every durable side effect inert:
-        // derived-field sync, snapshot persistence, and read/unread transitions
-        // all no-op instead of failing `Conversation not found in session`.
+        // No ConversationState record exists for this lane: a core task lane
+        // records nothing, and the actor's ephemeral persistence adapter makes
+        // every durable side effect inert (derived-field sync, snapshot
+        // persistence, read/unread transitions) instead of failing
+        // `Conversation not found in session`.
         kind: "ephemeral",
         worktreePath: request.lane.worktreePath,
         backend: request.lane.backend,

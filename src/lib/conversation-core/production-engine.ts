@@ -23,7 +23,8 @@ import { persistTurnImages } from "@/lib/conversation-core/contributions/image-p
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
 import { createCheckpointContinuation } from "./checkpoints";
 import type { TaskTurnPort } from "./executor";
-import { createTaskTurns } from "./task-turns";
+import { createTaskLane, createTaskTurns, type TaskLane, type TaskLaneDeps } from "./task-turns";
+import { acquireQuerySlot } from "@/lib/shared/query-semaphore";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 import { getTaskTranscriptProjection, resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
 import { prepareTaskPrompt } from "@/lib/conversation-core/turn/turn-context";
@@ -41,6 +42,8 @@ export interface CoreTurnRuntime {
   engine: TurnEngine;
   interactiveTurns: InteractiveTurns;
   taskTurns: TaskTurnPort;
+  /** A fresh lane for a sequence of related tasks on no conversation (one checkpoint build's generation). */
+  taskLane(): TaskLane;
 }
 
 const log = createLogger("conversation-core");
@@ -303,9 +306,7 @@ export async function createProductionTurnRuntime(options: {
     startDebugVerification: options.startDebugVerification,
     log,
   });
-  const taskTurns = createTaskTurns({
-    records: createProductionConversationRecords(),
-    host,
+  const taskProtocol: Omit<TaskLaneDeps, "acquireSlot"> = {
     async admit({ backend, turn }) {
       await assertBackendExecution(backend, {
         facet: "tasks",
@@ -316,7 +317,6 @@ export async function createProductionTurnRuntime(options: {
         requiresFsWriteRestriction: turn.fsWritePolicy !== undefined,
       });
     },
-    preparePrompt: (input) => prepareTaskPrompt(deps, input),
     async resolveSettings({ projectPath, backend, modelSelection, timeoutMs }) {
       const config = await deps.execution.readConfig();
       const defaults = resolveAgentBackendTurnDefaults({ backend, config, explicit: { modelSelection } });
@@ -335,12 +335,29 @@ export async function createProductionTurnRuntime(options: {
     },
     executeAgentCall: deps.execution.executeAgentCall,
     getTaskRunner: (backend) => deps.execution.getTaskRunner(backend),
+    log,
+  };
+  const taskTurns = createTaskTurns({
+    ...taskProtocol,
+    records: createProductionConversationRecords(),
+    host,
+    preparePrompt: (input) => prepareTaskPrompt(deps, input),
     worktreeOf,
     transcript: deps.transcript,
     projection: getTaskTranscriptProjection,
     getProjectDisplayName,
     lineageCost: (conversationId, lineageId) => readLineageCumulativeCost(conversationId, lineageId),
-    log,
   });
-  return { host, engine, interactiveTurns, taskTurns };
+  return {
+    host,
+    engine,
+    interactiveTurns,
+    taskTurns,
+    // A conversation's task takes its capacity from the executor; a lane task takes its own.
+    taskLane: () =>
+      createTaskLane({
+        ...taskProtocol,
+        acquireSlot: (label, signal) => acquireQuerySlot(label, signal !== undefined ? { signal } : {}),
+      }),
+  };
 }

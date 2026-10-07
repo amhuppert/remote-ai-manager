@@ -1,9 +1,9 @@
 /**
  * Checkpoint generation: captured source in, immutable payload out.
  *
- * This is the owned call checkpoint-maintenance invokes under the conversation
- * manager's reservation. It never runs a turn on the source conversation — the
- * archive is supplied as data to a synthetic compaction lane — and it returns
+ * This is the owned call checkpoint-maintenance invokes while the conversation's
+ * host holds it. It never runs a turn on the source conversation — the archive
+ * is supplied as data to passes on no conversation — and it returns
  * a payload only when the rendered seed already satisfies every budget, so a
  * failed build cannot leave an invalid payload behind.
  */

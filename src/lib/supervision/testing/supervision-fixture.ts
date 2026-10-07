@@ -249,7 +249,7 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           }),
           findArtifact: async () => null,
           resolveConfig: async () => compactionConfigSchema.parse({}),
-          async executeTaskRun() {
+          taskLane: () => async () => {
             throw new Error("Checkpoint generation is faked in this harness");
           },
           generate: (input, deps) => harness.checkpoint.generate(input, deps),

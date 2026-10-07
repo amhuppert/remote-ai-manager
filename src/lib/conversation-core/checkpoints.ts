@@ -12,9 +12,9 @@
  *
  * The owned work itself (the optional capture, generation, the fenced freeze,
  * retirement and readiness) is the conversation lifecycle's checkpoint
- * maintenance, run over a host made of the core's own effects. Generation
- * still runs on the actor's synthetic lane during coexistence. The core runs
- * no capture: a requested handoff is omitted as unavailable and the baseline
+ * maintenance, run over a host made of the core's own effects; generation
+ * runs on a task lane of its own, on no conversation. The core runs no
+ * capture: a requested handoff is omitted as unavailable and the baseline
  * checkpoint continues.
  */
 
@@ -61,15 +61,14 @@ import {
 } from "@/lib/conversation-checkpoints/checkpoint-maintenance";
 import { checkpointKeyLogFields, hydrateCheckpointAuthority } from "@/lib/conversation-checkpoints/checkpoint-restart";
 import { repairQueuedAcceptanceFromCheckpoint } from "@/lib/conversation-checkpoints/checkpoint-queue-repair";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import { prepareCheckpointSeed, type PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
 import { resolveContinuationSeed, type ContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
 import type { ForkSeedDeps } from "@/lib/conversation-checkpoints/fork-seed";
 import type { ConversationCheckpointReconcile, ConversationCheckpointStart, CoreConversationCheckpoints } from "@/lib/conversation-checkpoints/operation-contract";
-import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationIdentity } from "./conversation-record";
 import type { ConversationCore, HoldSource } from "./executor";
 import type { InteractiveEnrollmentRecord } from "./schemas";
+import type { TaskLane } from "./task-turns";
 
 /** A conversation as the state store keys it: the project sentinel for a project conversation. */
 interface StoreIdentity {
@@ -85,8 +84,8 @@ export interface CoreCheckpointPorts {
   readEntries(transcriptPath: string | null): Promise<TranscriptEntriesResult>;
   findArtifact(conversationId: string): Promise<ContextArtifactRow | null>;
   resolveConfig(projectPath: string): Promise<CompactionConfig>;
-  /** The synthetic generation lane. */
-  executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
+  /** A fresh lane for one build's generation passes: tasks on no conversation. */
+  taskLane(): TaskLane;
   generate: typeof generateCheckpoint;
   /** The model a requested handoff records; the core omits the capture itself. */
   resolveCaptureModel(input: {
@@ -479,7 +478,7 @@ export function createCoreCheckpoints(deps: CoreCheckpointDeps): CoreCheckpoints
           readEntries: deps.readEntries,
           findArtifact: deps.findArtifact,
           resolveConfig: deps.resolveConfig,
-          executeTaskRun: deps.executeTaskRun,
+          executeTaskRun: deps.taskLane(),
           generate: deps.generate,
           now: deps.now,
           log,

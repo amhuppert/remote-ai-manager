@@ -10,6 +10,7 @@ import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/s
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type { SeatTurnPort } from "@/lib/conversation-core/executor";
 import { createNativeSeatTurns } from "@/lib/conversation-core/native-seat-turns";
+import type { TaskLane } from "@/lib/conversation-core/task-turns";
 import {
   createProductionTurnRuntime,
   type CoreTurnRuntime,
@@ -124,9 +125,12 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
       ]);
       return resolveCompactionConfig(await readConfig(), await readRepoConfig(projectPath));
     },
-    async executeTaskRun(input) {
-      const { executeWorkflowTaskRun } = await import("@/lib/workflows/conversation/lifecycle");
-      return executeWorkflowTaskRun(input);
+    taskLane() {
+      let lane: Promise<TaskLane> | undefined;
+      return async (input) => {
+        lane ??= coreTurnRuntime().then((runtime) => runtime.taskLane());
+        return (await lane)(input);
+      };
     },
     generate: (input, deps) => generateCheckpoint(input, deps),
     async resolveCaptureModel({ agentBackend, transcriptPath }) {

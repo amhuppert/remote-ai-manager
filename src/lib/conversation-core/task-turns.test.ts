@@ -10,7 +10,8 @@ import type { AgentCallRequest, AgentCallResult } from "@/lib/workflows/primitiv
 import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
 import type { ConversationRecordPort } from "./conversation-record";
 import type { TaskTurn } from "./executor";
-import { createTaskTurns, type TaskTurnDeps } from "./task-turns";
+import { createTaskLane, createTaskTurns, type TaskLaneDeps, type TaskTurnDeps } from "./task-turns";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 
 const enrollment = {
   conversationId: "conv-1",
@@ -223,5 +224,226 @@ describe("task turns on an interactive conversation", () => {
     expect(result).toMatchObject({ status: "failed" });
     expect(h.calls).toEqual([]);
     expect(h.events).toEqual([]);
+  });
+});
+
+describe("a task lane: tasks on no conversation", () => {
+  /** Capacity that never frees: the wait ends only when the task's signal aborts, as the semaphore's does. */
+  function waiting(_label: string, signal: AbortSignal | undefined): Promise<() => void> {
+    return new Promise((_resolve, reject) => {
+      if (signal?.aborted === true) return reject(signal.reason);
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+
+  /** The task protocol with model capacity always free. */
+  function lane(deps: TaskTurnDeps, overrides: Partial<TaskLaneDeps> = {}) {
+    return createTaskLane({ ...deps, acquireSlot: async () => () => {}, ...overrides });
+  }
+  /** A checkpoint generation pass, as the generators submit one. */
+  function pass(overrides: Partial<ExecuteWorkflowTaskRunInput> = {}): ExecuteWorkflowTaskRunInput {
+    return {
+      kind: "task_run",
+      executionClass: "nongoverned-task",
+      executionProfile: "standard",
+      structuredOutputTurns: "work_then_format",
+      prompt: "Summarize the captured conversation",
+      outputFormat: { type: "json_schema", schema: { type: "object" } },
+      timeoutMs: 120_000,
+      modelSelection: { modelId: "opus", parameters: {} },
+      binding: {
+        kind: "ephemeral",
+        address: {
+          projectPath: "/repo",
+          target: { scope: "session", projectName: "repo", sessionName: "session", conversationId: "checkpoint-op-1" },
+        },
+        worktreePath: "/repo/.worktrees/session",
+        backend: "claude",
+        role: null,
+        transcriptPath: null,
+      },
+      ...overrides,
+    };
+  }
+
+  it("runs a task in the lane's worktree, fresh, with no conversation context and nothing recorded", async () => {
+    const h = harness(() =>
+      callResult({
+        backendRef: { backend: "claude", ref: "sdk-9" },
+        usage: { costUsd: 0.1 },
+        outcome: { kind: "completed", text: "", structuredOutput: { summary: "done" } },
+      }),
+    );
+    const result = await lane(h.deps)(pass());
+
+    expect(result).toMatchObject({ kind: "structured", structuredOutput: { summary: "done" }, usage: { costUsd: 0.1 } });
+    expect(h.calls[0]?.request).toMatchObject({
+      kind: "task_run",
+      backend: "claude",
+      prompt: "Summarize the captured conversation",
+      modelSelection: { modelId: "opus", parameters: {} },
+      outputSchema: { type: "object" },
+      structuredOutputTurns: "work_then_format",
+    });
+    expect(h.calls[0]?.deps.taskExecution).toMatchObject({ workingDirectory: "/repo/.worktrees/session", autonomous: true });
+    expect(h.calls[0]?.deps.taskExecution).not.toHaveProperty("resumeRef");
+    expect(h.calls[0]?.deps.taskExecution).not.toHaveProperty("conversationTarget");
+    expect(h.calls[0]?.deps.taskExecution).not.toHaveProperty("ccSessionScope");
+    expect(h.events).toEqual([]);
+    expect(h.entries).toEqual([]);
+  });
+
+  it("resumes only a session the caller names, and charges a resumed run only what it added", async () => {
+    const answers = [
+      callResult({
+        backendRef: { backend: "claude", ref: "sdk-9" },
+        usage: { costUsd: 0.1, cumulativeCostUsd: 0.1 },
+        outcome: { kind: "completed", text: "draft" },
+      }),
+      callResult({
+        backendRef: { backend: "claude", ref: "sdk-9" },
+        usage: { costUsd: 0.25, cumulativeCostUsd: 0.25 },
+        outcome: { kind: "completed", text: "corrected" },
+      }),
+    ];
+    const h = harness(() => {
+      const next = answers.shift();
+      if (next === undefined) throw new Error("no more answers");
+      return next;
+    });
+    const run = lane(h.deps);
+
+    const first = await run(pass({ outputFormat: undefined }));
+    const correction = await run(
+      pass({ outputFormat: undefined, structuredOutputTurns: "single", resumeRef: { backend: "claude", ref: "sdk-9" } }),
+    );
+
+    expect(first).toMatchObject({ kind: "text", usage: { costUsd: 0.1 } });
+    expect(h.calls[1]?.deps.taskExecution).toMatchObject({ resumeRef: { backend: "claude", ref: "sdk-9" } });
+    expect(correction).toMatchObject({ kind: "text", text: "corrected" });
+    expect(correction.usage.costUsd).toBeCloseTo(0.15, 9);
+  });
+
+  it("answers a task the backend cannot run, or one cancelled before it starts, without calling the agent", async () => {
+    const h = harness(() => callResult({}));
+    h.deps.admit = async () => {
+      throw new Error('Backend "cursor" cannot run tasks');
+    };
+    const refused = await lane(h.deps)(pass());
+    const cancel = new AbortController();
+    cancel.abort();
+    const cancelled = await lane(h.deps, { admit: async () => {} })(pass({ signal: cancel.signal }));
+
+    expect(refused).toMatchObject({ kind: "error", error: 'Backend "cursor" cannot run tasks' });
+    expect(cancelled).toMatchObject({ kind: "error", aborted: true });
+    expect(h.calls).toEqual([]);
+  });
+
+  it("refuses to run a task on a conversation's own binding", async () => {
+    const h = harness(() => callResult({}));
+    const durable = pass({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: "/repo",
+          target: { scope: "session", projectName: "repo", sessionName: "session", conversationId: "conv-1" },
+        },
+      },
+    });
+
+    await expect(lane(h.deps)(durable)).rejects.toThrow(/no conversation/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("waits for model capacity before calling the agent, and frees it once the task ends", async () => {
+    const h = harness(() => callResult({ outcome: { kind: "completed", text: "draft" } }));
+    const slots: string[] = [];
+    let grant: () => void = () => {};
+    const run = lane(h.deps, {
+      acquireSlot: (label) =>
+        new Promise((resolve) => {
+          slots.push(`wait:${label}`);
+          grant = () => resolve(() => slots.push("free"));
+        }),
+    });
+
+    const task = run(pass({ outputFormat: undefined }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(h.calls).toEqual([]);
+    grant();
+    await task;
+
+    expect(h.calls).toHaveLength(1);
+    expect(slots).toEqual(["wait:task:checkpoint-op-1", "free"]);
+  });
+
+  it("answers a pass whose wait for capacity expires as not started, without calling the agent", async () => {
+    const h = harness(() => callResult({}));
+    const result = await lane(h.deps, {
+      acquireSlot: async () => {
+        throw new Error("Query semaphore timeout after 300000ms waiting for slot");
+      },
+    })(pass());
+
+    expect(result).toMatchObject({ kind: "error", notStarted: { reason: "query_slot_timeout" } });
+    expect(h.calls).toEqual([]);
+  });
+
+  it("answers a pass cancelled while it waits for capacity as cancelled, and frees capacity when the call itself fails", async () => {
+    const h = harness(() => {
+      throw new Error("facade fault");
+    });
+    const cancel = new AbortController();
+    const cancelled = lane(h.deps, { acquireSlot: waiting })(pass({ signal: cancel.signal }));
+    cancel.abort("user");
+    expect(await cancelled).toMatchObject({ kind: "error", aborted: true, notStarted: { reason: "cancelled" } });
+
+    const freed: string[] = [];
+    await expect(lane(h.deps, { acquireSlot: async () => () => freed.push("free") })(pass())).rejects.toThrow("facade fault");
+    expect(freed).toEqual(["free"]);
+  });
+
+  it("cuts a task at its deadline, whether it is still waiting for capacity or already running", async () => {
+    const h = harness(() => callResult({}));
+    const queued = await lane(h.deps, { acquireSlot: waiting })(pass({ timeoutMs: 20 }));
+    expect(queued).toMatchObject({ kind: "error", notStarted: { reason: "cancelled", cancelReason: "timeout" } });
+    expect(h.calls).toEqual([]);
+
+    // Work, format and repair share the one deadline: the call is cut when it passes.
+    h.deps.executeAgentCall = (request, facadeDeps) =>
+      new Promise((resolve) => {
+        h.calls.push({ request, deps: facadeDeps });
+        facadeDeps.taskExecution?.signal?.addEventListener(
+          "abort",
+          () =>
+            resolve(
+              callResult({ outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } } }),
+            ),
+          { once: true },
+        );
+      });
+    const running = await lane(h.deps)(pass({ timeoutMs: 20 }));
+    expect(running).toMatchObject({ kind: "error", aborted: true, interruption: { reason: "timeout", timeoutMs: 20 } });
+  });
+});
+
+describe("a conversation's task deadline", () => {
+  it("cuts a running task when its own deadline passes", async () => {
+    const h = harness(() => callResult({}));
+    h.deps.executeAgentCall = (request, facadeDeps) =>
+      new Promise((resolve) => {
+        h.calls.push({ request, deps: facadeDeps });
+        facadeDeps.taskExecution?.signal?.addEventListener(
+          "abort",
+          () =>
+            resolve(
+              callResult({ outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } } }),
+            ),
+          { once: true },
+        );
+      });
+    const { outcome } = await h.run(task({ timeoutMs: 20 }));
+
+    expect(outcome).toMatchObject({ kind: "call_result", interruption: { reason: "timeout", timeoutMs: 20 } });
   });
 });

@@ -75,7 +75,10 @@ export interface CheckpointMaintenanceInfrastructure {
   readEntries(transcriptPath: string | null): Promise<TranscriptEntriesResult>;
   findArtifact(conversationId: string): Promise<ContextArtifactRow | null>;
   resolveConfig(projectPath: string): Promise<CompactionConfig>;
-  /** The synthetic generation lane; routed through the same manager as every task run. */
+  /**
+   * Runs one generation pass on no conversation: a core task lane for a
+   * core-owned build, the actor's ephemeral host for an actor-owned one.
+   */
   executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
   generate: typeof generateCheckpoint;
   now(): string;
@@ -88,7 +91,7 @@ export interface CheckpointHostObservation {
   reason: CheckpointRefusalCode | null;
   /** The live opaque provider reference, or null when the host holds none. */
   backendRef: string | null;
-  /** `ManagedConversationRuntime.activityEpoch` at this observation. */
+  /** The host's runtime activity counter at this observation (constant where no runtime lives between turns). */
   activityEpoch: number;
   /**
    * The background-activity channel's epoch at this observation: work that
@@ -99,8 +102,9 @@ export interface CheckpointHostObservation {
 }
 
 /**
- * What the manager lends the maintenance for one operation. Every method is
- * the manager's own effect on its host; nothing here exposes the actor.
+ * What a conversation's host (the actor's manager, or the core's checkpoint
+ * continuation) lends the maintenance for one operation. Every method is the
+ * host's own effect; nothing here exposes an actor or a runtime.
  */
 export interface CheckpointMaintenanceHost {
   readonly key: CheckpointScopeKey;
@@ -134,10 +138,10 @@ export interface CheckpointMaintenanceHost {
   observeDurable(
     conversation: ConversationState | null,
   ): CheckpointRefusalCode | null;
-  /** Update the actor's projection; `ready` also retires its continuation. */
+  /** Update the host's checkpoint projection; `ready` also retires its continuation. */
   project(projection: CheckpointActorProjection | null): void;
   closeRuntime(): Promise<void>;
-  /** The row and snapshot receipts for the actor's latest projection. */
+  /** The host's receipts for its latest projection (immediate where the repositories write before returning). */
   awaitDurable(): Promise<void>;
   recordDurabilityFailure(error: unknown): void;
 }
