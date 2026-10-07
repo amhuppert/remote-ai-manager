@@ -165,6 +165,91 @@ export const runDocumentRevisionSchema = z
   .strict();
 export type RunDocumentRevision = z.infer<typeof runDocumentRevisionSchema>;
 
+/**
+ * A workflow's charter: its mission, the invariants every change must keep,
+ * and its sources of truth ranked by authority (1 is highest). An invariant or
+ * source may name the context keys it is for; it is for all of them otherwise.
+ */
+export const runCharterSchema = z
+  .object({
+    mission: z.string().trim().min(1),
+    conventions: z.array(z.string().trim().min(1)).optional(),
+    nonGoals: z.array(z.string().trim().min(1)).optional(),
+    vocabulary: z.array(z.string().trim().min(1)).optional(),
+    testStrategy: z.string().trim().min(1).optional(),
+    knownAmbiguities: z.array(z.string().trim().min(1)).optional(),
+    invariants: z
+      .array(
+        z
+          .object({
+            id: z.string().trim().min(1),
+            statement: z.string().trim().min(1),
+            appliesTo: z.array(z.string().min(1)).min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    sourcesOfTruth: z
+      .array(
+        z
+          .object({
+            rank: z.number().int().positive(),
+            id: z.string().trim().min(1),
+            label: z.string().trim().min(1),
+            type: z.enum(["code", "config", "document", "spec", "other"]),
+            /** A path, glob or URI the agent reads itself; never resolved by CC. */
+            locator: z.string().trim().min(1),
+            description: z.string().trim().min(1),
+            appliesTo: z.array(z.string().min(1)).min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict()
+  .superRefine((charter, ctx) => {
+    const ranks = new Map<number, string>();
+    const sources = new Set<string>();
+    charter.sourcesOfTruth?.forEach((source, index) => {
+      const holder = ranks.get(source.rank);
+      if (holder !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["sourcesOfTruth", index, "rank"],
+          message: `Rank ${source.rank} is already source "${holder}"'s; each source needs its own rank`,
+        });
+      else ranks.set(source.rank, source.id);
+      if (sources.has(source.id))
+        ctx.addIssue({ code: "custom", path: ["sourcesOfTruth", index, "id"], message: `Source id "${source.id}" is used twice` });
+      sources.add(source.id);
+    });
+    const invariants = new Set<string>();
+    charter.invariants?.forEach((invariant, index) => {
+      if (invariants.has(invariant.id))
+        ctx.addIssue({ code: "custom", path: ["invariants", index, "id"], message: `Invariant id "${invariant.id}" is used twice` });
+      invariants.add(invariant.id);
+    });
+  });
+export type RunCharter = z.infer<typeof runCharterSchema>;
+
+/** One revision of a run's charter and its frozen bundles; both null when this revision removed the charter. */
+export const runCharterRevisionSchema = z
+  .object({
+    revision: z.number().int().min(1),
+    source: z.enum(["launch", "amend"]),
+    at: z.string().min(1),
+    /** Why the owner amended it, when they said. */
+    reason: z.string().min(1).nullable(),
+    charter: runCharterSchema.nullable(),
+    /** The rendered bundles as artifacts: one for every context no appliesTo names, one per key one names. */
+    bundles: z
+      .object({ default: z.string().min(1), byKey: z.record(z.string(), z.string().min(1)) })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+export type RunCharterRevision = z.infer<typeof runCharterRevisionSchema>;
+
 export const runFactsSchema = z
   .object({
     runId: z.string().min(1),
@@ -182,6 +267,8 @@ export const runFactsSchema = z
       .strict(),
     /** Every revision of the run's documents; a context freezes the latest that apply to it when it starts. */
     documents: z.array(runDocumentRevisionSchema).default([]),
+    /** Every revision of the run's charter; a context freezes the latest when it starts. */
+    charter: z.array(runCharterRevisionSchema).default([]),
     /** The contexts started so far, in start order. */
     invocations: z.array(runInvocationSchema),
     /** Each lane the Run asked Workspace to provision, by lane key. */
@@ -469,6 +556,11 @@ export const runViewSchema = z
         })
         .strict(),
     ),
+    /** The charter a context starting now would freeze, by revision; null for a run without one. */
+    charter: z
+      .object({ revision: z.number().int().min(1), mission: z.string(), reason: z.string().nullable() })
+      .strict()
+      .nullable(),
   })
   .strict();
 export type RunView = z.infer<typeof runViewSchema>;

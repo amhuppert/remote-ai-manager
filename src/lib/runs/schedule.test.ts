@@ -71,6 +71,7 @@ function facts(
       ],
     },
     documents: [],
+    charter: [],
     invocations: started.map((key) => ({
       key,
       pass: 0,
@@ -301,6 +302,7 @@ function workflow(
     },
     lanes,
     documents: [],
+    charter: [],
     invocations: started.map(([key, pass]) => ({
       key,
       pass,

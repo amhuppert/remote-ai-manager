@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { planRun, type ObservedContexts } from "./schedule";
+import type { FrozenCharter } from "./charter";
 import { laneCodePrerequisites, laneMembers, laneSkipped, loopOf } from "./topology";
 import {
   laneStateOf,
@@ -20,6 +21,8 @@ export interface ProposedDefinition {
   authored?: Record<string, unknown>;
   /** Every document the amended workflow declares, frozen as artifacts. */
   documents?: RunDocument[];
+  /** The amended workflow's charter, each context's bundle frozen; none removes it. */
+  charter?: FrozenCharter;
 }
 
 export type AmendmentResult =

@@ -1,6 +1,6 @@
 import type { ControlPermits } from "@/lib/control/permits";
 import type { ContextHost, ContextSummary } from "@/lib/execution-context/host";
-import { contextStartRequestSchema } from "@/lib/execution-context/schemas";
+import { contextStartRequestSchema, type ContextContract } from "@/lib/execution-context/schemas";
 import type { Executor, OperationState } from "@/lib/intents/executor";
 import type { IntentLedger } from "@/lib/intents/ledger";
 import type { PendingIntent } from "@/lib/intents/schemas";
@@ -11,6 +11,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { RunsRepo } from "@/lib/state-store/runs-repo";
 import { amendDefinition, type ProposedDefinition } from "./amendment";
 import { documentsFor, reviseDocuments } from "./documents";
+import { charterFor, reviseCharter, type FrozenCharter } from "./charter";
 import {
   deriveRunProgress,
   onlyHaltsRemain,
@@ -36,6 +37,25 @@ import {
   type RunProgress,
   type RunRecord,
 } from "./schemas";
+
+/**
+ * A context's contract as it starts: its inputs bound from the work it
+ * depends on, and the run's documents and charter as they stand now.
+ */
+function contractAtStart(
+  contract: ContextContract,
+  facts: RunFacts,
+  start: { key: string; contextId: string; inputs: ContextContract["inputs"] },
+): ContextContract {
+  const charter = charterFor({ revisions: facts.charter, key: start.key, contextId: start.contextId });
+  const documents = documentsFor({ revisions: facts.documents, contextId: start.contextId, key: start.key });
+  return {
+    ...contract,
+    inputs: start.inputs,
+    documents: charter === null ? documents : [charter.document, ...documents],
+    charter: charter?.charter ?? null,
+  };
+}
 
 /** The permit a Run controls its Contexts and lane steps through. */
 const runControllerId = (runId: string): string => `run:${runId}`;
@@ -83,6 +103,8 @@ export interface RunLaunchInput {
   authored?: Record<string, unknown>;
   /** The run's documents, already frozen as artifacts. */
   documents?: RunDocument[];
+  /** The workflow's charter, each context's bundle already frozen. */
+  charter?: FrozenCharter;
 }
 
 export interface RunHostDeps {
@@ -153,11 +175,12 @@ export interface RunHost {
    * Replaces a workflow's definition with its next revision, unless work it
    * already did forbids the change (design §7.6). `basedOn` names the
    * definition revision the proposal was made from; null applies it to the
-   * definition as it is now.
+   * definition as it is now. `reason` is recorded with the charter revision
+   * the amendment makes, if it makes one.
    */
   amend(
     runId: string,
-    input: { definition: ProposedDefinition; basedOn: number | null },
+    input: { definition: ProposedDefinition; basedOn: number | null; reason?: string },
   ): Promise<void>;
   /** Boot: every active Run restores paused, and its owner is told. */
   restoreAfterRestart(): Promise<void>;
@@ -389,11 +412,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       const request = {
         ...defined.request,
         contextId: start.contextId,
-        contract: {
-          ...defined.request.contract,
-          inputs: start.inputs,
-          documents: documentsFor({ revisions: facts.documents, contextId: start.contextId, key: start.key }),
-        },
+        contract: contractAtStart(defined.request.contract, facts, start),
       };
       const invocation: RunInvocation = {
         key: start.key,
@@ -675,6 +694,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             ...(input.authored !== undefined ? { authored: input.authored } : {}),
           },
           documents: reviseDocuments([], input.documents ?? [], "launch", now),
+          charter: reviseCharter([], input.charter ?? null, { source: "launch", at: now, reason: null }),
           invocations: [],
           control: { paused: false, cancelled: false, fault: null },
         };
@@ -905,7 +925,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       deps.contexts.decide(contextId, input);
     },
 
-    async amend(runId, { definition: proposed, basedOn }) {
+    async amend(runId, { definition: proposed, basedOn, reason }) {
       const revision = deps.transaction(() => {
         const record = requireRecord(runId);
         const { facts } = record;
@@ -927,13 +947,18 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           ...facts,
           title: amended.title,
           definition: amended.definition,
-          // Every document is declared again; work already started keeps what it froze.
+          // Every document and the charter are declared again; work already started keeps what it froze.
           documents: reviseDocuments(facts.documents, proposed.documents ?? [], "amend", deps.now()),
+          charter: reviseCharter(facts.charter, proposed.charter ?? null, {
+            source: "amend",
+            at: deps.now(),
+            reason: reason ?? null,
+          }),
         };
         project(record, startEligible(record, next));
-        return amended.definition.revision;
+        return { revision: amended.definition.revision, charterRevision: next.charter.at(-1)?.revision ?? null };
       });
-      deps.log.info("runs.amended", { runId, revision });
+      deps.log.info("runs.amended", { runId, ...revision });
       await host.reconcile(runId);
     },
 

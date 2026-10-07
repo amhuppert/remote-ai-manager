@@ -100,6 +100,11 @@ describe("declarations delivery could not write", () => {
         { path: "bad\u0000name.md", contents: "e", description: "E" },
         { path: `${"x".repeat(201)}.md`, contents: "f", description: "F" },
         { path: "fine.md", contents: "g", description: "G" },
+        { path: "Charter.md", contents: "h", description: "H" },
+        { path: "charter.md/notes.md", contents: "i", description: "I" },
+        { path: "CHARTER.MD/deep/notes.md", contents: "j", description: "J" },
+        { path: "charter.md-notes.md", contents: "k", description: "K" },
+        { path: "notes2/charter.md", contents: "l", description: "L" },
       ],
       worktreePath: worktree,
       store,
@@ -112,6 +117,9 @@ describe("declarations delivery could not write", () => {
         { path: ["documents", 3, "path"], message: expect.stringContaining('"notes/today.md"') },
         { path: ["documents", 4, "path"], message: expect.stringContaining("control") },
         { path: ["documents", 5, "path"], message: expect.stringContaining("200 bytes") },
+        { path: ["documents", 7, "path"], message: expect.stringContaining("reserved for the run's charter") },
+        { path: ["documents", 8, "path"], message: expect.stringContaining("reserved for the run's charter") },
+        { path: ["documents", 9, "path"], message: expect.stringContaining("reserved for the run's charter") },
       ],
     });
   });

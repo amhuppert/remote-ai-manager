@@ -128,6 +128,7 @@ function facts(
     },
     ...(options.lanes !== undefined ? { lanes: options.lanes } : {}),
     documents: [],
+    charter: [],
     invocations: started.map(([key, pass]) => ({
       key,
       pass,

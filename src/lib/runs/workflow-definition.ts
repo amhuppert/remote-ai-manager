@@ -13,6 +13,7 @@ import {
 } from "@/lib/workspace/schemas";
 import type { RunLaunchInput } from "./host";
 import { runDocumentRequestSchema } from "./documents";
+import type { FrozenCharter } from "./charter";
 import {
   agentLaunchRequestSchema,
   resolveContextStart,
@@ -23,6 +24,7 @@ import {
   routeCardinalitySchema,
   routeGuardSchema,
   runLoopSchema,
+  runCharterSchema,
   type RouteGuard,
   type RunDocument,
   type RunLane,
@@ -766,21 +768,35 @@ export const workflowLaunchRequestSchema = z
     lanes: z.array(workflowLaneRequestSchema).optional(),
     /** Documents frozen at launch; each is for the contexts it names, or for all of them. */
     documents: z.array(runDocumentRequestSchema).optional(),
+    /** The workflow's mission, invariants and ranked sources of truth; each context freezes the part meant for it. */
+    charter: runCharterSchema.optional(),
   })
   .strict()
   .superRefine((request, ctx) => {
     for (const issue of analyzeWorkflow(request).issues)
       ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
     const keys = new Set(request.contexts.map((context) => context.key));
-    request.documents?.forEach((document, index) =>
-      document.appliesTo?.forEach((key, position) => {
+    const unknownKeys = (
+      what: string,
+      appliesTo: readonly string[] | undefined,
+      at: Array<string | number>,
+    ) =>
+      appliesTo?.forEach((key, position) => {
         if (!keys.has(key))
           ctx.addIssue({
             code: "custom",
-            path: ["documents", index, "appliesTo", position],
-            message: `Document "${document.path}" is for context "${key}", which the workflow does not define`,
+            path: [...at, "appliesTo", position],
+            message: `${what} is for context "${key}", which the workflow does not define`,
           });
-      }),
+      });
+    request.documents?.forEach((document, index) =>
+      unknownKeys(`Document "${document.path}"`, document.appliesTo, ["documents", index]),
+    );
+    request.charter?.invariants?.forEach((invariant, index) =>
+      unknownKeys(`Invariant "${invariant.id}"`, invariant.appliesTo, ["charter", "invariants", index]),
+    );
+    request.charter?.sourcesOfTruth?.forEach((source, index) =>
+      unknownKeys(`Source "${source.id}"`, source.appliesTo, ["charter", "sourcesOfTruth", index]),
     );
   });
 export type WorkflowLaunchRequest = z.infer<typeof workflowLaunchRequestSchema>;
@@ -800,6 +816,8 @@ export function compileWorkflow(
     existingLanes?: readonly RunLane[];
     /** The workflow's documents, already frozen. */
     documents?: RunDocument[];
+    /** The workflow's charter, each context's bundle already frozen. */
+    charter?: FrozenCharter;
   },
 ): RunLaunchInput {
   const contexts = input.request.contexts;
@@ -817,6 +835,7 @@ export function compileWorkflow(
     projectPath: input.projectPath,
     sessionName: input.session.sessionName,
     owner: input.owner,
+    ...(input.charter !== undefined ? { charter: input.charter } : {}),
     ...(input.documents !== undefined ? { documents: input.documents } : {}),
     ...(input.request.loops !== undefined ? { loops: input.request.loops } : {}),
     ...(lanes.length > 0 ? { lanes } : {}),

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { composeInitialWork, composeReview } from "./briefing";
+import {
+  composeAdvice,
+  composeInitialWork,
+  composeRemediation,
+  composeRetryWork,
+  composeReview,
+  composeRework,
+  composeSteer,
+} from "./briefing";
 import { initialContextFacts } from "./facts";
 import {
   DEFAULT_CONTEXT_POLICY,
@@ -109,5 +117,119 @@ describe("briefing", () => {
 
     expect(prompt).not.toMatch(/may change only/);
     expect(prompt).not.toMatch(/assembled/);
+  });
+
+  const charter = {
+    revision: 1,
+    mission: "Make the failure notice appear once.",
+    nonGoals: ["Networked filesystems"],
+    invariants: [{ id: "no-mocks", statement: "No vi.mock of internal modules." }],
+    sourcesOfTruth: [
+      { rank: 1, id: "spec", label: "Spec", type: "spec" as const, locator: "specs/notice.md", description: "The notice spec" },
+    ],
+    documentPath: ".cc/run-docs/run-1.docs/charter.md",
+  };
+
+  it("leads the implementer's first order with the charter that governs it, and asks it to keep the invariants and cite sources", () => {
+    const prompt = composeInitialWork(facts({ charter }));
+
+    expect(prompt.indexOf("## Charter")).toBeLessThan(prompt.indexOf("## Tasks"));
+    expect(prompt).toContain("Make the failure notice appear once.");
+    expect(prompt).toContain("`no-mocks`: No vi.mock of internal modules.");
+    expect(prompt).toContain("1. Spec (`specs/notice.md`): The notice spec");
+    expect(prompt).toContain("Networked filesystems");
+    expect(prompt).toContain("`.cc/run-docs/run-1.docs/charter.md`");
+    expect(prompt).toMatch(/cite the governing source/);
+    expect(prompt).toMatch(/non-goal/);
+  });
+
+  it("asks a reviewer to check each invariant and cite its id", () => {
+    const prompt = composeReview(facts({ charter }), { candidate, round, seat: reviewer });
+
+    expect(prompt).toContain("`no-mocks`: No vi.mock of internal modules.");
+    expect(prompt).toMatch(/cite the invariant's id/);
+  });
+
+  it("has the implementer cite and decline in the message that ends its turn, and check invariants concretely", () => {
+    const prompt = composeInitialWork(facts({ charter }));
+
+    expect(prompt).not.toMatch(/task summary/);
+    expect(prompt).toMatch(/cite the governing source in the message that ends your turn/);
+    expect(prompt).toMatch(/decline it in the message that ends your turn/);
+    expect(prompt).toMatch(/with a concrete check/);
+  });
+
+  it("bounds a blocking reviewer by the charter: out-of-mission findings are advice, outcomes keep process invariants, and a criterion against a higher source is a plan defect", () => {
+    const prompt = composeReview(facts({ charter }), { candidate, round, seat: reviewer });
+
+    expect(prompt).toMatch(/only under a non-goal or outside the mission is advice, never a blocking finding/);
+    expect(prompt).toMatch(/how the work was produced is kept when the outcome it protects holds/);
+    expect(prompt).toMatch(/contradicts a higher-ranked source[^\n]*`plan_defect`/);
+
+    const advisory = composeReview(facts({ charter }), { candidate, round, seat: { ...reviewer, authority: "advisory" } });
+    expect(advisory).toMatch(/never a blocking finding/);
+    expect(advisory).not.toMatch(/contradicts a higher-ranked source/);
+  });
+
+  it("shows a reviewer of structured work the implementer's closing report, where its citations and declines are", () => {
+    const structured = facts({ charter, outputSchema: { type: "object" } });
+    const reported = { ...structured, ledger: { ...structured.ledger, lastSummary: "Declined NFS locking: a non-goal." } };
+    const prompt = composeReview(reported, { candidate: { ...candidate, output: { pages: 3 } }, round, seat: reviewer });
+
+    expect(prompt).toContain("## The implementer's closing report");
+    expect(prompt).toContain("Declined NFS locking: a non-goal.");
+
+    const plain = facts({ charter });
+    const summarized = { ...plain, ledger: { ...plain.ledger, lastSummary: "Wrote docs/api.md." } };
+    expect(composeReview(summarized, { candidate, round, seat: reviewer })).not.toContain("closing report");
+  });
+
+  const charterDocument = {
+    artifactId: `sha256:${"c".repeat(64)}`,
+    path: ".cc/run-docs/run-1.docs/charter.md",
+    description: "The run's charter as it governs this work.",
+    readWhen: "Before you start",
+  };
+  const plan = {
+    artifactId: `sha256:${"d".repeat(64)}`,
+    path: ".cc/run-docs/run-1.docs/plan.md",
+    description: "The plan.",
+  };
+
+  it("points every later order at the charter that still governs and the frozen documents, for a seat that never saw the first", () => {
+    const governed = facts({ charter, documents: [charterDocument, plan] });
+    const finding = { title: "Wrong code", description: "It returns 500" };
+    const orders = {
+      retry: composeRetryWork(governed),
+      remediation: composeRemediation(governed, [finding], []),
+      rework: composeRework(governed, null),
+      steer: composeSteer(governed, "Also cover errors."),
+      advice: composeAdvice(governed, [{ id: "a-1", roundId: "r-1", assignmentId: "reviewer-1", title: "Rename", description: "Clearer name" }]),
+    };
+    for (const [order, prompt] of Object.entries(orders)) {
+      expect(prompt, order).toContain("## Charter and documents");
+      expect(prompt, order).toMatch(/charter still governs/);
+      expect(prompt, order).toContain("`.cc/run-docs/run-1.docs/plan.md`");
+    }
+
+    const plain = facts();
+    expect(composeRetryWork(plain)).not.toContain("## Charter and documents");
+    const documented = composeRetryWork(facts({ documents: [plan] }));
+    expect(documented).toContain("## Charter and documents");
+    expect(documented).not.toMatch(/charter still governs/);
+  });
+
+  it("lets remediation decline a finding outside the charter's mission, asking only when the contract allows questions", () => {
+    const finding = { title: "Not NFS-safe", description: "Locks fail on NFS" };
+    const prompt = composeRemediation(facts({ charter, documents: [charterDocument] }), [finding], []);
+    expect(prompt).toMatch(/not yours to build: decline it in the message that ends your turn/);
+    expect(prompt).toMatch(/ask if you cannot tell/);
+
+    const silent = composeRemediation(facts({ charter, documents: [charterDocument], ownerQuestions: false }), [finding], []);
+    expect(silent).not.toMatch(/ask if you cannot tell/);
+  });
+
+  it("says nothing about a charter to work without one", () => {
+    expect(composeInitialWork(facts())).not.toContain("## Charter");
   });
 });

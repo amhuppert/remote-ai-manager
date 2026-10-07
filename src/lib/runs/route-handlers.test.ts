@@ -171,6 +171,17 @@ beforeEach(() => {
         })),
       };
     },
+    // Freezes the default bundle as the mission, and each named key's as the mission and key.
+    async freezeCharter(charter) {
+      const named = [...(charter.invariants ?? []), ...(charter.sourcesOfTruth ?? [])].flatMap((e) => e.appliesTo ?? []);
+      return {
+        charter,
+        bundles: {
+          default: `sha256:${charter.mission}`,
+          byKey: Object.fromEntries(named.map((key) => [key, `sha256:${charter.mission}-${key}`])),
+        },
+      };
+    },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   };
   routes = createRunRouteHandlers(deps);
@@ -931,6 +942,29 @@ describe("run routes", () => {
     });
   });
 
+  it("freezes a workflow's charter for each context, which reads the part meant for it beside its documents", async () => {
+    const launched = await routes.launchWorkflow(
+      request(
+        {
+          title: "Charted",
+          contexts: [{ key: "build", brief: "Build it" }],
+          charter: { mission: "Ship", invariants: [{ id: "no-mocks", statement: "No internal mocks" }] },
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(launched.status).toBe(202);
+    await quiesce(supervision);
+
+    const contextId = supervision.runs.observe("run-1")?.record.facts.invocations[0]?.contextId ?? "";
+    const contract = supervision.contexts.observe(contextId)?.record.facts.contract.current;
+    expect(contract?.charter).toMatchObject({ mission: "Ship", invariants: [{ id: "no-mocks", statement: "No internal mocks" }] });
+    expect(contract?.documents.map((d) => [d.path, d.artifactId])).toEqual([
+      [`.cc/run-docs/${contextId}/charter.md`, "sha256:Ship"],
+    ]);
+  });
+
   it("freezes a workflow's documents again when it is amended, for the work that has not started", async () => {
     h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
     const polish = (maxPasses: number, plan: string) => ({
@@ -955,12 +989,13 @@ describe("run routes", () => {
         },
       ],
       documents: [{ path: "plan.md", contents: plan, description: "The plan" }],
+      charter: { mission: `Polish ${plan}` },
     });
     await routes.launchWorkflow(request(polish(1, "v1"), identity("owner-1")), params());
     await quiesce(supervision);
 
     const amended = await routes.amend(
-      request({ definition: polish(2, "v2"), basedOn: 1 }, identity("owner-1")),
+      request({ definition: polish(2, "v2"), basedOn: 1, reason: "The plan changed" }, identity("owner-1")),
       params({ runId: "run-1" }),
     );
     expect(amended.status).toBe(200);
@@ -972,8 +1007,14 @@ describe("run routes", () => {
       [1, "launch", "sha256:v1"],
       [2, "amend", "sha256:v2"],
     ]);
+    expect(record?.facts.charter.map((r) => [r.revision, r.source, r.charter?.mission, r.reason])).toEqual([
+      [1, "launch", "Polish v1", null],
+      [2, "amend", "Polish v2", "The plan changed"],
+    ]);
     const planOf = (contextId: string | undefined) =>
-      supervision.contexts.observe(contextId ?? "")?.record.facts.contract.current.documents[0]?.artifactId;
+      supervision.contexts
+        .observe(contextId ?? "")
+        ?.record.facts.contract.current.documents.find((d) => d.path.endsWith("/plan.md"))?.artifactId;
     const passes = record?.facts.invocations.filter((i) => i.key === "implement") ?? [];
     expect(passes.map((i) => planOf(i.contextId))).toEqual(["sha256:v1", "sha256:v2"]);
   });

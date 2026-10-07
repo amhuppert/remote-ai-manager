@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "vitest";
 import { contextContractSchema } from "@/lib/execution-context/schemas";
-import { runBoundarySchema, runRecordSchema } from "@/lib/runs/schemas";
+import { runBoundarySchema, runRecordSchema, type RunCharterRevision } from "@/lib/runs/schemas";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -41,6 +41,18 @@ const contract = contextContractSchema.parse({
       readWhen: "Before editing",
     },
   ],
+  charter: {
+    revision: 1,
+    mission: "Fix the notice",
+    conventions: ["Name events with dots"],
+    nonGoals: ["Networked filesystems"],
+    vocabulary: ["notice"],
+    testStrategy: "Behaviour tests",
+    knownAmbiguities: ["Retries"],
+    invariants: [{ id: "no-mocks", statement: "No internal mocks" }],
+    sourcesOfTruth: [{ rank: 1, id: "spec", label: "Spec", type: "spec", locator: "specs/notice.md", description: "The spec" }],
+    documentPath: ".cc/run-docs/run-1.implement.1/charter.md",
+  },
 });
 
 function request(contextId: string) {
@@ -66,6 +78,45 @@ function request(contextId: string) {
     },
   };
 }
+
+/** An amended charter and its removal, every optional field set (the first revision is the one checked in full). */
+const charterRevisions: RunCharterRevision[] = [
+  {
+    revision: 2,
+    source: "amend",
+    at: "2026-10-07T10:00:00.000Z",
+    reason: "Retries are out of scope",
+    charter: {
+      mission: "Fix the notice",
+      conventions: ["Name events with dots"],
+      nonGoals: ["Networked filesystems"],
+      vocabulary: ["notice"],
+      testStrategy: "Behaviour tests",
+      knownAmbiguities: ["Retries"],
+      invariants: [{ id: "no-mocks", statement: "No internal mocks", appliesTo: ["implement"] }],
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "spec",
+          label: "Spec",
+          type: "spec",
+          locator: "specs/notice.md",
+          description: "The spec",
+          appliesTo: ["implement"],
+        },
+      ],
+    },
+    bundles: { default: `sha256:${"a".repeat(64)}`, byKey: { implement: `sha256:${"b".repeat(64)}` } },
+  },
+  {
+    revision: 3,
+    source: "amend",
+    at: "2026-10-07T11:00:00.000Z",
+    reason: "The notice work moved to its own run",
+    charter: null,
+    bundles: null,
+  },
+];
 
 describe("runs repository", () => {
   it("round-trips a run with its invocations, control and observed progress", async () => {
@@ -141,6 +192,7 @@ describe("runs repository", () => {
             },
             { path: "notes/plan.md", revision: 2, source: "amend" as const, at: "2026-10-07T11:00:00.000Z", document: null },
           ],
+          charter: charterRevisions,
           invocations: [
             {
               key: "implement",

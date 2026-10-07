@@ -54,6 +54,20 @@ describe("execution contexts repository", () => {
           readWhen: "Before editing",
         },
       ],
+      charter: {
+        revision: 1,
+        mission: "Make the failure notice appear once.",
+        conventions: ["Name events with dots"],
+        nonGoals: ["Networked filesystems"],
+        vocabulary: ["notice: the failure message"],
+        testStrategy: "Behaviour tests on SQLite",
+        knownAmbiguities: ["Whether retries count"],
+        invariants: [{ id: "no-mocks", statement: "No vi.mock of internal modules" }],
+        sourcesOfTruth: [
+          { rank: 1, id: "spec", label: "Spec", type: "spec", locator: "specs/notice.md", description: "The spec" },
+        ],
+        documentPath: ".cc/run-docs/ctx-1/charter.md",
+      },
     });
     // Deliberately maximal: every optional field set and every array non-empty.
     const facts = contextFactsSchema.parse({

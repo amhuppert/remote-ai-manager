@@ -17,6 +17,8 @@ import type { RunDocument, RunDocumentRevision } from "./schemas";
 export const RUN_DOCUMENTS_DIR = ".cc/run-docs";
 export const MAX_DOCUMENT_BYTES = 262_144;
 export const MAX_RUN_DOCUMENTS_BYTES = 1_048_576;
+/** Where a context's charter is copied, beside its documents; no declared document may take it. */
+export const RESERVED_CHARTER_DOCUMENT = "charter.md";
 
 export const runDocumentRequestSchema = z
   .object({
@@ -54,6 +56,9 @@ function pathProblem(documentPath: string): string | null {
     return `Document path "${documentPath}" contains a control character`;
   if (parts.some((part) => Buffer.byteLength(part) > MAX_NAME_BYTES))
     return `Document path "${documentPath}" has a name longer than ${MAX_NAME_BYTES} bytes`;
+  const folded = documentPath.toLowerCase();
+  if (folded === RESERVED_CHARTER_DOCUMENT || folded.startsWith(`${RESERVED_CHARTER_DOCUMENT}/`))
+    return `Document path "${documentPath}" is reserved for the run's charter`;
   return null;
 }
 

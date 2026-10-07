@@ -46,6 +46,88 @@ function documentsBlock(facts: ContextFacts): string | null {
   ].join("\n");
 }
 
+const clip = (text: string, limit: number): string =>
+  text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+
+/** Out-of-mission work is declined in the turn's closing message, where the owner and reviewers read it. */
+function declineRule(facts: ContextFacts, what: "gap" | "finding"): string {
+  return `A ${what} that arises only under a non-goal or outside the mission is not yours to build: decline it in the message that ends your turn, citing the charter entry${facts.contract.current.ownerQuestions ? ", and ask if you cannot tell" : ""}.`;
+}
+
+/**
+ * The run's charter as it governs this context: the mission, the invariants
+ * and sources meant for it and the non-goals, with where to read the rest,
+ * and what the seat's role owes them.
+ */
+function charterSection(
+  facts: ContextFacts,
+  role: "implementer" | ReviewerAssignment["authority"],
+): string | null {
+  const contract = facts.contract.current;
+  const charter = contract.charter;
+  if (charter === null) return null;
+  const lines = [`Mission: ${charter.mission}`];
+  if (charter.invariants.length > 0)
+    lines.push(
+      "",
+      "Invariants (every change must keep each one):",
+      ...charter.invariants.map((invariant) => `- \`${invariant.id}\`: ${invariant.statement}`),
+    );
+  if (charter.sourcesOfTruth.length > 0)
+    lines.push(
+      "",
+      "Sources of truth, highest authority first (the higher one governs a conflict):",
+      ...charter.sourcesOfTruth.map(
+        (source) => `${source.rank}. ${source.label} (\`${source.locator}\`): ${clip(source.description, 200)}`,
+      ),
+    );
+  if (charter.nonGoals.length > 0) lines.push("", "Non-goals:", ...charter.nonGoals.map((goal) => `- ${goal}`));
+  lines.push("", `The full charter, with its conventions, vocabulary and test strategy: \`${charter.documentPath}\`.`);
+  lines.push("");
+  if (role === "implementer") {
+    lines.push(
+      "When sources disagree, follow the higher-ranked one; when you settle a conflict or an ambiguity, cite the governing source in the message that ends your turn.",
+      ...(charter.invariants.length > 0
+        ? [
+            "Check every invariant against your new and changed code with a concrete check (for example, a search for a banned pattern), especially before you complete the last task; existing code you copy can itself break one.",
+          ]
+        : []),
+      declineRule(facts, "gap"),
+    );
+  } else {
+    lines.push(
+      "A finding that arises only under a non-goal or outside the mission is advice, never a blocking finding.",
+      ...(charter.invariants.length > 0
+        ? [
+            "Check each invariant; for a violation, cite the invariant's id in your finding. Judge what the work is and does: an invariant about how the work was produced is kept when the outcome it protects holds.",
+          ]
+        : []),
+      ...(role === "blocking" && charter.sourcesOfTruth.length > 0
+        ? [
+            "When an acceptance criterion contradicts a higher-ranked source and the work follows the source, return `plan_defect`, not `fail`.",
+          ]
+        : []),
+    );
+  }
+  return section("Charter", lines.join("\n"));
+}
+
+/**
+ * For every order after the first: the seat may be a replacement that never
+ * saw the first order, so name the frozen charter and documents again.
+ */
+function referencesSection(facts: ContextFacts): string | null {
+  const charter = facts.contract.current.charter;
+  const documents = documentsBlock(facts);
+  if (documents === null) return null;
+  return section(
+    "Charter and documents",
+    [charter !== null ? "The charter still governs this work." : null, documents]
+      .filter((line): line is string => line !== null)
+      .join("\n"),
+  );
+}
+
 /** Earlier accepted results this work builds on, each exactly as accepted. */
 function inputsSection(facts: ContextFacts): string | null {
   const inputs = facts.contract.current.inputs;
@@ -127,6 +209,7 @@ export function composeInitialWork(facts: ContextFacts): string {
   return [
     `# ${contract.title}`,
     contract.brief,
+    charterSection(facts, "implementer"),
     inputsSection(facts),
     section("Tasks", tasksBlock(facts, false)),
     section("Acceptance criteria", criteriaBlock(facts)),
@@ -143,8 +226,11 @@ export function composeRetryWork(facts: ContextFacts): string {
     "Your last turn ended with tasks still open. Continue the work and mark each task complete when it is done.",
     section("Open tasks", tasksBlock(facts, true)),
     section("Acceptance criteria", criteriaBlock(facts)),
+    referencesSection(facts),
     section("How to work", workingRules(facts)),
-  ].join("\n\n");
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
 }
 
 export function composeRemediation(
@@ -155,6 +241,7 @@ export function composeRemediation(
   return [
     `# ${facts.contract.current.title}: review found blocking problems`,
     "Fix every blocking finding below. The work is reviewed again afterwards.",
+    facts.contract.current.charter !== null ? declineRule(facts, "finding") : null,
     section("Blocking findings", findingsBlock(findings)),
     carriedAdvice.length > 0
       ? section(
@@ -163,6 +250,7 @@ export function composeRemediation(
         )
       : null,
     section("Acceptance criteria", criteriaBlock(facts)),
+    referencesSection(facts),
     section("How to work", workingRules(facts)),
   ]
     .filter((part): part is string => part !== null)
@@ -181,16 +269,22 @@ export function composeRework(
       notes ?? "No notes were given; review the acceptance criteria again.",
     ),
     section("Acceptance criteria", criteriaBlock(facts)),
+    referencesSection(facts),
     section("How to work", workingRules(facts)),
-  ].join("\n\n");
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
 }
 
 export function composeSteer(facts: ContextFacts, instruction: string): string {
   return [
     `# ${facts.contract.current.title}: instruction from your owner`,
     instruction,
+    referencesSection(facts),
     section("How to work", workingRules(facts)),
-  ].join("\n\n");
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
 }
 
 export function composeContinuation(question: string, answer: string): string {
@@ -210,6 +304,16 @@ export function composeCapture(): string {
   ].join("\n\n");
 }
 
+/**
+ * A structured result cannot carry what the implementer cited or declined;
+ * its closing message can. Unstructured results already are that message.
+ */
+function closingReportSection(facts: ContextFacts): string | null {
+  const report = facts.ledger.lastSummary;
+  if (facts.contract.current.outputSchema === null || report === null) return null;
+  return section("The implementer's closing report", clip(report, 4000));
+}
+
 export function composeReview(
   facts: ContextFacts,
   input: { candidate: Candidate; round: ReviewRound; seat: ReviewerAssignment },
@@ -226,6 +330,7 @@ export function composeReview(
       ? section("Your focus", input.seat.focus)
       : null,
     section("What was asked", facts.contract.current.brief),
+    charterSection(facts, input.seat.authority),
     inputsSection(facts),
     sharedWorkspaceSection(facts),
     section("Acceptance criteria", criteriaBlock(facts)),
@@ -233,6 +338,7 @@ export function composeReview(
       "Result to review",
       `The implementer's changes are in your working directory. The exact result downstream work will consume:\n\n\`\`\`json\n${JSON.stringify(input.candidate.output, null, 2)}\n\`\`\``,
     ),
+    closingReportSection(facts),
     documents !== null ? section("Documents", documents) : null,
     section(
       "Your answer",
@@ -243,7 +349,7 @@ export function composeReview(
     .join("\n\n");
 }
 
-export function composeAdvice(items: readonly AdviceItem[]): string {
+export function composeAdvice(facts: ContextFacts, items: readonly AdviceItem[]): string {
   return [
     "# Respond to review advice",
     "Your work passed review. Reviewers left optional advice. For each item, either act on it or decline it, then report one disposition per advisory id.",
@@ -254,5 +360,8 @@ export function composeAdvice(items: readonly AdviceItem[]): string {
         .join("\n"),
     ),
     "Use `addressed` when you changed the work, `declined` with your reason, or `deferred` with what should follow later.",
-  ].join("\n\n");
+    referencesSection(facts),
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
 }

@@ -460,7 +460,7 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
               ...seatOrder(facts, "write", "implementer"),
               seat: implementerSeat(facts, contextId, "answers_in_turn"),
               roundId,
-              message: composeAdvice(advice.items),
+              message: composeAdvice(facts, advice.items),
               items: advice.items,
               outputSchema: ADVICE_RESPONSE_OUTPUT_SCHEMA,
               timeoutMs,

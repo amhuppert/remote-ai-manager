@@ -36,6 +36,7 @@ import {
   type RunLaunchInput,
 } from "./host";
 import type { RouteGuard, RunBoundary, RunDocument } from "./schemas";
+import type { FrozenCharter } from "./charter";
 
 const now = "2026-10-03T10:00:00.000Z";
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -259,7 +260,7 @@ const chainAuthored = {
 };
 
 /** api builds first; docs builds on its accepted result. */
-async function launchChain(documents?: RunDocument[]): Promise<void> {
+async function launchChain(documents?: RunDocument[], charter?: FrozenCharter): Promise<void> {
   await runs.launch({
     runId: "run-1",
     cause: "launch-1",
@@ -271,6 +272,7 @@ async function launchChain(documents?: RunDocument[]): Promise<void> {
     contexts: chainContexts(),
     authored: chainAuthored,
     ...(documents !== undefined ? { documents } : {}),
+    ...(charter !== undefined ? { charter } : {}),
   });
   await scheduler.idle();
 }
@@ -792,6 +794,42 @@ describe("workflow runs", () => {
       ["plan.md", 1, "launch"],
       ["api-notes.md", 1, "launch"],
       ["plan.md", 2, "amend"],
+    ]);
+  });
+
+  it("gives each context the run's charter as it stands when it starts, as a summary and as a document beside its others", async () => {
+    const frozen = (mission: string): FrozenCharter => ({
+      charter: { mission, invariants: [{ id: "api-stable", statement: "Keep the API", appliesTo: ["api"] }] },
+      bundles: { default: `sha256:${mission}`, byKey: { api: `sha256:${mission}-api` } },
+    });
+    await launchChain([{ path: "plan.md", artifactId: "sha256:plan", bytes: 7, description: "The plan" }], frozen("v1"));
+
+    const api = contexts.observe("run-1.api")?.record.facts.contract.current;
+    expect(api?.charter).toMatchObject({
+      revision: 1,
+      mission: "v1",
+      invariants: [{ id: "api-stable", statement: "Keep the API" }],
+      documentPath: ".cc/run-docs/run-1.api/charter.md",
+    });
+    expect(api?.documents.map((d) => [d.path, d.artifactId])).toEqual([
+      [".cc/run-docs/run-1.api/charter.md", "sha256:v1-api"],
+      [".cc/run-docs/run-1.api/plan.md", "sha256:plan"],
+    ]);
+
+    await runs.amend("run-1", {
+      definition: { title: "API then docs", contexts: chainContexts(), authored: chainAuthored, charter: frozen("v2") },
+      basedOn: 1,
+      reason: "The API is settled",
+    });
+    await scheduler.idle();
+    expect(contexts.observe("run-1.api")?.record.facts.contract.current.charter?.mission).toBe("v1");
+    await succeedActiveContext("API built.");
+    const docs = contexts.observe("run-1.docs")?.record.facts.contract.current;
+    expect(docs?.charter).toMatchObject({ revision: 2, mission: "v2", invariants: [] });
+    expect(docs?.documents.map((d) => d.artifactId)).toEqual(["sha256:v2"]);
+    expect(runs.observe("run-1")?.record.facts.charter.map((r) => [r.revision, r.source, r.reason])).toEqual([
+      [1, "launch", null],
+      [2, "amend", "The API is settled"],
     ]);
   });
 

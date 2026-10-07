@@ -192,6 +192,7 @@ interface RunViewData {
   loops: Array<{ key: string; pass: number; maxPasses: number; state: string }>;
   lanes: RunView["lanes"];
   documents: RunView["documents"];
+  charter: RunView["charter"];
   definitionRevision: number;
 }
 
@@ -265,6 +266,7 @@ function toViewData(view: RunView): RunViewData {
     loops: view.loops,
     lanes: view.lanes,
     documents: view.documents,
+    charter: view.charter,
     definitionRevision: view.definitionRevision,
   };
 }
@@ -340,6 +342,10 @@ function viewText(view: JsonData<RunViewData>): string {
   for (const loop of view.loops)
     lines.push(
       `loop ${loop.key}: pass ${loop.pass} of ${loop.maxPasses}, ${loop.state}`,
+    );
+  if (view.charter !== null)
+    lines.push(
+      `charter (revision ${view.charter.revision}${view.charter.reason === null ? "" : `, amended: ${view.charter.reason}`}): ${view.charter.mission}`,
     );
   for (const document of view.documents) {
     const scope = document.appliesTo === undefined ? "" : `, for ${document.appliesTo.join(", ")}`;
@@ -455,12 +461,17 @@ const amendImplementation: Amend = {
     async run({ app, ctx, payload, prepared }) {
       const runId = ctx.args["run-id"];
       const basedOn = ctx.flags["based-on"];
+      const reason = ctx.flags.reason;
       const recovery = recoveryFacts([{ kind: "run", id: runId }]);
       const response = await cliRequest(app.host, {
         ...prepared.value.context,
         method: "POST",
         path: `${runPath(prepared.value.context, runId)}/amend`,
-        body: { definition: payload, ...(basedOn !== undefined ? { basedOn } : {}) },
+        body: {
+          definition: payload,
+          ...(basedOn !== undefined ? { basedOn } : {}),
+          ...(reason !== undefined ? { reason } : {}),
+        },
         principalIdentity: resolveCcPrincipal(app),
       });
       if (response.kind !== "ok") return ccWriteFailure(response, recovery);

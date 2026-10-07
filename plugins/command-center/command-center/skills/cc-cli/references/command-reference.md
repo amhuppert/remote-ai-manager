@@ -241,10 +241,10 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - `cctl run <command> [options]`
 - `cctl run amend` — Replace a workflow run's definition with a corrected one
   - `cctl run amend <run-id> --file <path> [options]`
-  - Flags: `--based-on`, `--file` (required).
+  - Flags: `--based-on`, `--reason`, `--file` (required).
 - `cctl run amend-check` — Validate: Replace a workflow run's definition with a corrected one
   - `cctl run amend-check <run-id> --file <path> [options]`
-  - Flags: `--based-on`, `--file` (required).
+  - Flags: `--based-on`, `--reason`, `--file` (required).
 - `cctl run answer` — Answer a question an agent in your run asked
   - `cctl run answer <run-id> --question <string> (--text <string> | --text-file <path>) [options]`
   - Flags: `--question` (required), `--text` / `--text-file` (required), `--text-file`.

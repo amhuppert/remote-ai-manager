@@ -156,6 +156,25 @@ describe("workflow definition compiler (W2)", () => {
     ).toEqual([{ path: "contexts.0", message: expect.stringContaining("documents") }]);
   });
 
+  it("refuses a charter invariant or source meant for a context the workflow does not define", () => {
+    expect(
+      issues({
+        title: "Charter",
+        contexts: [{ key: "a", brief: "A" }],
+        charter: {
+          mission: "Ship it",
+          invariants: [{ id: "i1", statement: "Keep it", appliesTo: ["a", "ghost"] }],
+          sourcesOfTruth: [
+            { rank: 1, id: "s1", label: "S", type: "code", locator: "src", description: "S", appliesTo: ["phantom"] },
+          ],
+        },
+      }),
+    ).toEqual([
+      { path: "charter.invariants.0.appliesTo.1", message: 'Invariant "i1" is for context "ghost", which the workflow does not define' },
+      { path: "charter.sourcesOfTruth.0.appliesTo.0", message: 'Source "s1" is for context "phantom", which the workflow does not define' },
+    ]);
+  });
+
   it("refuses an owned path with more than one spelling, at the path", () => {
     expect(
       issues({

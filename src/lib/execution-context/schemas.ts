@@ -52,6 +52,43 @@ export const contractInputSchema = z
   .strict();
 export type ContractInput = z.infer<typeof contractInputSchema>;
 
+/**
+ * The part of a run's charter that governs one context, frozen when it starts:
+ * the run-wide fields, the invariants and sources of truth that apply to it
+ * (sources in rank order, highest authority first), and where the seat finds
+ * the full text.
+ */
+export const contractCharterSchema = z
+  .object({
+    /** The run's charter revision this context froze. */
+    revision: z.number().int().min(1),
+    mission: z.string().min(1),
+    conventions: z.array(z.string()).default([]),
+    nonGoals: z.array(z.string()).default([]),
+    vocabulary: z.array(z.string()).default([]),
+    testStrategy: z.string().nullable().default(null),
+    knownAmbiguities: z.array(z.string()).default([]),
+    invariants: z.array(z.object({ id: z.string().min(1), statement: z.string().min(1) }).strict()).default([]),
+    sourcesOfTruth: z
+      .array(
+        z
+          .object({
+            rank: z.number().int().positive(),
+            id: z.string().min(1),
+            label: z.string().min(1),
+            type: z.enum(["code", "config", "document", "spec", "other"]),
+            locator: z.string().min(1),
+            description: z.string().min(1),
+          })
+          .strict(),
+      )
+      .default([]),
+    /** The full charter's copy in the seat's working directory, among the contract's documents. */
+    documentPath: z.string().min(1),
+  })
+  .strict();
+export type ContractCharter = z.infer<typeof contractCharterSchema>;
+
 export const contextContractSchema = z
   .object({
     title: z.string().trim().min(1),
@@ -74,6 +111,8 @@ export const contextContractSchema = z
     /** Whether seats may ask their owner questions. */
     ownerQuestions: z.boolean(),
     documents: z.array(contractDocumentSchema),
+    /** The run's charter as it governs this context; none for a run without one. */
+    charter: contractCharterSchema.nullable().default(null),
   })
   .strict();
 export type ContextContract = z.infer<typeof contextContractSchema>;

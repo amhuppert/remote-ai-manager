@@ -17,6 +17,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getSession } from "@/lib/state-store";
 import type { ResolvedSeat } from "./launch";
 import { snapshotRunDocuments } from "./documents";
+import { freezeCharter } from "./charter";
 import { getArtifactStore } from "@/lib/artifacts/production";
 import { getSupervision } from "@/lib/supervision/production";
 import {
@@ -132,6 +133,7 @@ const handlers = createRunRouteHandlers({
   newRunId,
   snapshotDocuments: (requests, worktreePath) =>
     snapshotRunDocuments({ requests, worktreePath, store: getArtifactStore() }),
+  freezeCharter: (charter) => freezeCharter({ charter, store: getArtifactStore() }),
   log,
 });
 

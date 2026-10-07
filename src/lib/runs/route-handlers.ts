@@ -42,8 +42,9 @@ import {
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import { frozenKeys, writtenEntry } from "./amendment";
-import type { RunDefinitionContext, RunDocument, RunRecord } from "./schemas";
+import type { RunCharter, RunDefinitionContext, RunDocument, RunRecord } from "./schemas";
 import type { DocumentIssue, RunDocumentRequest } from "./documents";
+import type { FrozenCharter } from "./charter";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
@@ -92,6 +93,8 @@ export interface RunRouteDeps {
     requests: readonly RunDocumentRequest[],
     worktreePath: string,
   ): Promise<{ ok: true; documents: RunDocument[] } | { ok: false; issues: DocumentIssue[] }>;
+  /** Renders and freezes the charter's bundles. */
+  freezeCharter(charter: RunCharter): Promise<FrozenCharter>;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -132,6 +135,8 @@ const amendSchema = z
     definition: workflowLaunchRequestSchema,
     /** The definition revision the proposal was made from. */
     basedOn: z.number().int().min(1).optional(),
+    /** Why, recorded with the charter revision the amendment makes. */
+    reason: z.string().trim().min(1).optional(),
   })
   .strict();
 const taskCommandSchema = z.discriminatedUnion("kind", [
@@ -470,6 +475,10 @@ export function createRunRouteHandlers(
     );
   }
 
+  /** The workflow's charter with its bundles frozen, or none. */
+  const freezeWorkflowCharter = async (workflow: WorkflowLaunchRequest): Promise<FrozenCharter | undefined> =>
+    workflow.charter === undefined ? undefined : deps.freezeCharter(workflow.charter);
+
   const placementOf = async (
     caller: Caller,
     runId: string,
@@ -543,6 +552,7 @@ export function createRunRouteHandlers(
       if (!seats.ok) return seats.response;
       const documents = await freezeDocuments(deps, body.value.documents, caller.worktreePath);
       if (!documents.ok) return documents.response;
+      const charter = await freezeWorkflowCharter(body.value);
       const runId = deps.newRunId();
       return startLaunch(
         caller,
@@ -551,6 +561,7 @@ export function createRunRouteHandlers(
           request: body.value,
           seats: seats.seats,
           documents: documents.documents,
+          ...(charter !== undefined ? { charter } : {}),
         }),
       );
     },
@@ -580,6 +591,7 @@ export function createRunRouteHandlers(
       // Every document is read again: an amendment declares the whole workflow.
       const documents = await freezeDocuments(deps, proposed.documents, caller.worktreePath);
       if (!documents.ok) return documents.response;
+      const charter = await freezeWorkflowCharter(proposed);
       const compiled = compileWorkflow({
         ...(await placementOf(caller, run.runId)),
         existingLanes: run.facts.definition.lanes ?? [],
@@ -596,8 +608,10 @@ export function createRunRouteHandlers(
             ...(compiled.lanes !== undefined ? { lanes: compiled.lanes } : {}),
             authored: proposed,
             documents: documents.documents,
+            ...(charter !== undefined ? { charter } : {}),
           },
           basedOn: body.value.basedOn ?? null,
+          ...(body.value.reason !== undefined ? { reason: body.value.reason } : {}),
         });
       } catch (error) {
         const issues = amendmentIssuesOf(error);

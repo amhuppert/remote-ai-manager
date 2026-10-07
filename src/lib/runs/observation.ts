@@ -3,6 +3,7 @@ import { passContextId } from "./schedule";
 import { laneSkipped, loopOf } from "./topology";
 import type { Supervision } from "@/lib/supervision/supervision";
 import { currentDocuments } from "./documents";
+import { currentCharter } from "./charter";
 
 export function describeRun(
   supervision: Supervision,
@@ -92,6 +93,7 @@ export function describeRun(
         state: skipped ? ("skipped" as const) : state.kind,
       };
     }),
+    charter: currentCharter(record.facts.charter),
     documents: currentDocuments(record.facts.documents).map(({ path, revision, document }) => ({
       path,
       revision,

@@ -54,6 +54,7 @@ const view = {
   loops: [],
   lanes: [],
   documents: [],
+  charter: null,
 };
 
 function bodyOf(init: { body?: unknown }): unknown {
@@ -496,13 +497,16 @@ describe("run commands", () => {
       respond: () =>
         jsonReply({ ok: true, revision: 3, progress: { kind: "running" }, halts: ['route: "triage" must take exactly one'] }),
     });
-    const result = await fixture.run(["run", "amend", "run-1", "--file", "/workflow.json", "--based-on", "2"], "text");
+    const result = await fixture.run(
+      ["run", "amend", "run-1", "--file", "/workflow.json", "--based-on", "2", "--reason", "Docs need the API first"],
+      "text",
+    );
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)])).toEqual([
       [
         "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/amend",
-        { definition, basedOn: 2 },
+        { definition, basedOn: 2, reason: "Docs need the API first" },
       ],
     ]);
     expect(result.stdout).toContain("revision 3");
@@ -591,6 +595,20 @@ describe("run commands", () => {
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain("document plan.md (revision 2): The plan — read when: Before you start");
     expect(result.stdout).toContain("document api-notes.md (revision 1, for api, docs): API notes");
+  });
+
+  it("names the charter in force, its revision and why it was last amended", async () => {
+    const charter = { revision: 2, mission: "Make the notice appear once.", reason: "Retries are out of scope" };
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () => jsonReply({ ...view, kind: "workflow", charter }),
+    });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "charter (revision 2, amended: Retries are out of scope): Make the notice appear once.",
+    );
   });
 
   it("refuses incomplete dispositions without sending them", async () => {
