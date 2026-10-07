@@ -4,6 +4,7 @@ import { laneCodePrerequisites, laneMembers, laneSkipped, loopOf } from "./topol
 import {
   laneStateOf,
   type RunDefinitionContext,
+  type RunDocument,
   type RunFacts,
   type RunLane,
   type RunLoop,
@@ -17,6 +18,8 @@ export interface ProposedDefinition {
   lanes?: RunLane[];
   /** The workflow as its owner wrote it. */
   authored?: Record<string, unknown>;
+  /** Every document the amended workflow declares, frozen as artifacts. */
+  documents?: RunDocument[];
 }
 
 export type AmendmentResult =

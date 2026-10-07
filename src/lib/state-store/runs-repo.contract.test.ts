@@ -125,6 +125,22 @@ describe("runs repository", () => {
             ],
             authored: { title: "Fix the notice", contexts: [{ key: "implement", brief: "Fix it", lane: "api" }] },
           },
+          documents: [
+            {
+              path: "notes/plan.md",
+              revision: 1,
+              source: "launch" as const,
+              at: "2026-10-07T10:00:00.000Z",
+              document: {
+                artifactId: `sha256:${"a".repeat(64)}`,
+                bytes: 7,
+                description: "The plan",
+                readWhen: "Before you start",
+                appliesTo: ["implement"],
+              },
+            },
+            { path: "notes/plan.md", revision: 2, source: "amend" as const, at: "2026-10-07T11:00:00.000Z", document: null },
+          ],
           invocations: [
             {
               key: "implement",

@@ -15,6 +15,8 @@ import type { WorkspaceScope } from "@/lib/workspace/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import type { RunLaunchInput } from "./host";
+import { runDocumentRequestSchema } from "./documents";
+import type { RunDocument } from "./schemas";
 
 const reviewerRequestSchema = z
   .object({
@@ -55,6 +57,8 @@ export const agentLaunchRequestSchema = z
     ownerQuestions: z.boolean().optional(),
     /** A limit per backend invocation, not a deadline for the whole run. */
     timeoutMs: z.number().int().positive().optional(),
+    /** Documents frozen at launch for the agent to read; see `runDocumentRequestSchema`. */
+    documents: z.array(runDocumentRequestSchema.omit({ appliesTo: true })).optional(),
   })
   .strict();
 export type AgentLaunchRequest = z.infer<typeof agentLaunchRequestSchema>;
@@ -178,6 +182,8 @@ export function resolveAgentLaunch(
   input: LaunchPlacement & {
     request: AgentLaunchRequest;
     seats: { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
+    /** The launch's documents, already frozen. */
+    documents?: RunDocument[];
   },
 ): RunLaunchInput {
   return {
@@ -188,6 +194,7 @@ export function resolveAgentLaunch(
     projectPath: input.projectPath,
     sessionName: input.session.sessionName,
     owner: input.owner,
+    ...(input.documents !== undefined ? { documents: input.documents } : {}),
     contexts: [
       {
         key: "agent",

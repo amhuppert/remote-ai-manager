@@ -39,16 +39,24 @@ export const seatRefSchema = z
   .strict();
 export type SeatRef = z.infer<typeof seatRefSchema>;
 
+/** A frozen document a work order carries: copied from its artifact to `path` in the seat's working directory before the turn. */
+export const workOrderDocumentSchema = z
+  .object({ artifactId: z.string().min(1), path: z.string().min(1) })
+  .strict();
+export type WorkOrderDocument = z.infer<typeof workOrderDocumentSchema>;
+
 /**
  * A turn a supervisor asks a seat conversation to take. Requesters may carry
  * their own labels; Conversation reads only these fields.
  */
+
 export const seatTurnRequestSchema = z
   .object({
     kind: z.enum(["work", "capture_output", "review", "advise"]),
     workspace: turnWorkspaceSchema,
     seat: seatRefSchema,
     message: z.string().min(1),
+    documents: z.array(workOrderDocumentSchema).default([]),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
     timeoutMs: z.number().int().min(0).nullable(),
   })

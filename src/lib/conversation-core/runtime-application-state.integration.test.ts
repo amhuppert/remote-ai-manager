@@ -141,6 +141,7 @@ async function runSeatTurn(): Promise<unknown> {
       throw new Error("a full-scope seat needs no envelope");
     },
     fsWriteRestriction: () => "enforced",
+    materializeDocuments: async () => {},
     log,
   }).run({
     conversationId: "conv-1",
@@ -158,6 +159,7 @@ async function runSeatTurn(): Promise<unknown> {
     },
     request: {
       kind: "work",
+      documents: [],
       workspace: {
         projectPath: PROJECT,
         sessionName: SESSION,

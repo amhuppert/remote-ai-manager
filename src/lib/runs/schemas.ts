@@ -138,6 +138,33 @@ export function laneStateOf(
   return lanes !== undefined && Object.hasOwn(lanes, key) ? lanes[key] : undefined;
 }
 
+/** A document as frozen for a run: its bytes by artifact, and what it is for. */
+export const runDocumentSchema = z
+  .object({
+    path: z.string().min(1),
+    artifactId: z.string().min(1),
+    bytes: z.number().int().min(0),
+    description: z.string().min(1),
+    readWhen: z.string().min(1).optional(),
+    /** The authored contexts it is for; every context when absent. */
+    appliesTo: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type RunDocument = z.infer<typeof runDocumentSchema>;
+
+/** One revision of a run document; a later revision of the same path supersedes it. */
+export const runDocumentRevisionSchema = z
+  .object({
+    path: z.string().min(1),
+    revision: z.number().int().min(1),
+    source: z.enum(["launch", "amend", "publish"]),
+    at: z.string().min(1),
+    /** The document as of this revision; null when this revision removed it. */
+    document: runDocumentSchema.omit({ path: true }).nullable(),
+  })
+  .strict();
+export type RunDocumentRevision = z.infer<typeof runDocumentRevisionSchema>;
+
 export const runFactsSchema = z
   .object({
     runId: z.string().min(1),
@@ -153,6 +180,8 @@ export const runFactsSchema = z
         authored: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
+    /** Every revision of the run's documents; a context freezes the latest that apply to it when it starts. */
+    documents: z.array(runDocumentRevisionSchema).default([]),
     /** The contexts started so far, in start order. */
     invocations: z.array(runInvocationSchema),
     /** Each lane the Run asked Workspace to provision, by lane key. */
@@ -424,6 +453,19 @@ export const runViewSchema = z
             "exhausted",
             "unevaluable",
           ]),
+        })
+        .strict(),
+    ),
+    /** The run's current documents: what a context starting now would freeze. */
+    documents: z.array(
+      z
+        .object({
+          path: z.string(),
+          revision: z.number().int().min(1),
+          bytes: z.number().int().min(0),
+          description: z.string(),
+          readWhen: z.string().optional(),
+          appliesTo: z.array(z.string()).optional(),
         })
         .strict(),
     ),

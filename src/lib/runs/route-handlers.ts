@@ -42,7 +42,8 @@ import {
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import { frozenKeys, writtenEntry } from "./amendment";
-import type { RunDefinitionContext, RunRecord } from "./schemas";
+import type { RunDefinitionContext, RunDocument, RunRecord } from "./schemas";
+import type { DocumentIssue, RunDocumentRequest } from "./documents";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
@@ -86,6 +87,11 @@ export interface RunRouteDeps {
     | { ok: false; status: number; error: string; code?: string }
   >;
   newRunId(): string;
+  /** Freezes a launch's documents as artifacts, reading each `from` file in the session worktree. */
+  snapshotDocuments(
+    requests: readonly RunDocumentRequest[],
+    worktreePath: string,
+  ): Promise<{ ok: true; documents: RunDocument[] } | { ok: false; issues: DocumentIssue[] }>;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -176,6 +182,27 @@ async function readBody<T>(
           path: issue.path.join("."),
           message: issue.message,
         })),
+      },
+      { status: 400 },
+    ),
+  };
+}
+
+/** A launch's documents, frozen; or the refusal that names each one that cannot be. */
+async function freezeDocuments(
+  deps: Pick<RunRouteDeps, "snapshotDocuments">,
+  requests: readonly RunDocumentRequest[] | undefined,
+  worktreePath: string,
+): Promise<{ ok: true; documents: RunDocument[] } | { ok: false; response: Response }> {
+  if (requests === undefined || requests.length === 0) return { ok: true, documents: [] };
+  const frozen = await deps.snapshotDocuments(requests, worktreePath);
+  if (frozen.ok) return frozen;
+  return {
+    ok: false,
+    response: NextResponse.json(
+      {
+        error: "Invalid documents",
+        issues: frozen.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
       },
       { status: 400 },
     ),
@@ -485,6 +512,8 @@ export function createRunRouteHandlers(
         request: body.value,
       });
       if (!seats.ok) return seatFailure(seats);
+      const documents = await freezeDocuments(deps, body.value.documents, caller.worktreePath);
+      if (!documents.ok) return documents.response;
       const runId = deps.newRunId();
       return startLaunch(
         caller,
@@ -492,6 +521,7 @@ export function createRunRouteHandlers(
           ...(await placementOf(caller, runId)),
           request: body.value,
           seats: seats.seats,
+          documents: documents.documents,
         }),
       );
     },
@@ -511,6 +541,8 @@ export function createRunRouteHandlers(
       if (refused !== null) return refused;
       const seats = await workflowSeats(caller, body.value);
       if (!seats.ok) return seats.response;
+      const documents = await freezeDocuments(deps, body.value.documents, caller.worktreePath);
+      if (!documents.ok) return documents.response;
       const runId = deps.newRunId();
       return startLaunch(
         caller,
@@ -518,6 +550,7 @@ export function createRunRouteHandlers(
           ...(await placementOf(caller, runId)),
           request: body.value,
           seats: seats.seats,
+          documents: documents.documents,
         }),
       );
     },
@@ -544,6 +577,9 @@ export function createRunRouteHandlers(
       };
       const seats = await workflowSeats(caller, asStarted, kept);
       if (!seats.ok) return seats.response;
+      // Every document is read again: an amendment declares the whole workflow.
+      const documents = await freezeDocuments(deps, proposed.documents, caller.worktreePath);
+      if (!documents.ok) return documents.response;
       const compiled = compileWorkflow({
         ...(await placementOf(caller, run.runId)),
         existingLanes: run.facts.definition.lanes ?? [],
@@ -559,6 +595,7 @@ export function createRunRouteHandlers(
             ...(compiled.loops !== undefined ? { loops: compiled.loops } : {}),
             ...(compiled.lanes !== undefined ? { lanes: compiled.lanes } : {}),
             authored: proposed,
+            documents: documents.documents,
           },
           basedOn: body.value.basedOn ?? null,
         });

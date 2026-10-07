@@ -70,6 +70,7 @@ function facts(
         { key: "integrate", dependsOn: ["api", "ui"], request: request("integrate") },
       ],
     },
+    documents: [],
     invocations: started.map((key) => ({
       key,
       pass: 0,
@@ -299,6 +300,7 @@ function workflow(
       })),
     },
     lanes,
+    documents: [],
     invocations: started.map(([key, pass]) => ({
       key,
       pass,

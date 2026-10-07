@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { advanceContext, type ContextInput } from "./advance";
-import { planEffects, waitsOnPerson, type PlannedEffect } from "./effects";
+import { contextEffectRequestSchema, planEffects, waitsOnPerson, type PlannedEffect } from "./effects";
 import { initialContextFacts } from "./facts";
 import { applyTaskCommand, type TaskCommand } from "./ledger";
 import { deriveProgress } from "./progress";
@@ -210,6 +210,29 @@ describe("execution context acceptance chain", () => {
       kind: "review",
       workspace: { grant: { kind: "stable_read" } },
     });
+  });
+
+  it("hands each seat the contract's documents with every work order, implementer and reviewer alike", () => {
+    const documents = [
+      { artifactId: "sha256:a", path: ".cc/run-docs/run-1.agent/plan.md", description: "The plan", readWhen: "First" },
+    ];
+    const h = harness(contract({ documents, reviewers: [reviewer("reviewer-a", "blocking")] }));
+    const refs = [{ artifactId: "sha256:a", path: ".cc/run-docs/run-1.agent/plan.md" }];
+
+    expect(h.step()[0]?.request).toMatchObject({ kind: "work", documents: refs });
+    h.task({ kind: "complete", taskId: "t1" });
+    h.settle("work", workReport());
+    h.step();
+    h.settle("freeze", frozen("ev-1"));
+    expect(h.step()[0]?.request).toMatchObject({ kind: "review", documents: refs });
+  });
+
+  it("reads a seat order recorded before work orders carried documents as carrying none", () => {
+    const [work] = harness(contract()).step();
+    if (work?.request.kind !== "work") throw new Error("no work order");
+    const { documents: _documents, ...recordedBefore } = work.request;
+
+    expect(contextEffectRequestSchema.parse(recordedBefore)).toMatchObject({ kind: "work", documents: [] });
   });
 
   it("lets seats ask the owner only when the contract allows owner questions", () => {

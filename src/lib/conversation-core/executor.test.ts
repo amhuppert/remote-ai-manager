@@ -212,6 +212,7 @@ function workIntent(overrides: Partial<SeatTurnRequest> = {}): PendingIntent {
   sequence += 1;
   const request: SeatTurnRequest = {
     kind: "work",
+    documents: [],
     workspace: {
       projectPath: "/repo",
       sessionName: "session",

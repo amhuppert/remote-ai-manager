@@ -191,6 +191,7 @@ interface RunViewData {
   halts: string[];
   loops: Array<{ key: string; pass: number; maxPasses: number; state: string }>;
   lanes: RunView["lanes"];
+  documents: RunView["documents"];
   definitionRevision: number;
 }
 
@@ -263,6 +264,7 @@ function toViewData(view: RunView): RunViewData {
     halts: view.halts,
     loops: view.loops,
     lanes: view.lanes,
+    documents: view.documents,
     definitionRevision: view.definitionRevision,
   };
 }
@@ -339,6 +341,11 @@ function viewText(view: JsonData<RunViewData>): string {
     lines.push(
       `loop ${loop.key}: pass ${loop.pass} of ${loop.maxPasses}, ${loop.state}`,
     );
+  for (const document of view.documents) {
+    const scope = document.appliesTo === undefined ? "" : `, for ${document.appliesTo.join(", ")}`;
+    const when = document.readWhen === undefined ? "" : ` — read when: ${document.readWhen}`;
+    lines.push(`document ${document.path} (revision ${document.revision}${scope}): ${document.description}${when}`);
+  }
   for (const halt of view.halts)
     if (!view.needsOwner.includes(halt)) lines.push(`cannot proceed: ${halt}`);
   for (const boundary of view.boundaries.slice(-5)) {

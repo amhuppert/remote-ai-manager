@@ -2,6 +2,7 @@ import { laneStateOf, type RunLaneState, type RunView } from "./schemas";
 import { passContextId } from "./schedule";
 import { laneSkipped, loopOf } from "./topology";
 import type { Supervision } from "@/lib/supervision/supervision";
+import { currentDocuments } from "./documents";
 
 export function describeRun(
   supervision: Supervision,
@@ -91,6 +92,14 @@ export function describeRun(
         state: skipped ? ("skipped" as const) : state.kind,
       };
     }),
+    documents: currentDocuments(record.facts.documents).map(({ path, revision, document }) => ({
+      path,
+      revision,
+      bytes: document.bytes,
+      description: document.description,
+      ...(document.readWhen !== undefined ? { readWhen: document.readWhen } : {}),
+      ...(document.appliesTo !== undefined ? { appliesTo: document.appliesTo } : {}),
+    })),
   };
 }
 

@@ -24,6 +24,7 @@ const binding: SeatBindingRecord = {
 function request(overrides: Partial<SeatTurnRequest> = {}): SeatTurnRequest {
   return {
     kind: "work",
+    documents: [],
     workspace: {
       projectPath: "/repo",
       sessionName: "session",
@@ -130,6 +131,9 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
       };
     },
     fsWriteRestriction: () => "enforced",
+    async materializeDocuments(worktreePath, documents) {
+      if (documents.length > 0) events.push(`documents:${worktreePath}:${documents.map((d) => d.path).join(",")}`);
+    },
     log: createCapturingLogger(),
   };
   const run = (req: SeatTurnRequest, signal = new AbortController().signal) =>
@@ -178,6 +182,24 @@ describe("native seat turns", () => {
     expect(turn?.outputFormat).toBeUndefined();
     expect(h.events).toEqual(["begin:conv-1:workflow", "profile:conv-1", "settle:conv-1:true:workflow"]);
     expect(h.released).toEqual(["conv-1"]);
+  });
+
+  it("copies the work order's documents into the seat's working directory before its turn, and fails a turn whose documents it cannot deliver", async () => {
+    const h = harness(async () => outcomeOf(settledConversationTurn()));
+    const documents = [{ artifactId: "sha256:a", path: ".cc/run-docs/run-1.agent/plan.md" }];
+    await h.run(request({ documents }));
+    expect(h.events.slice(0, 2)).toEqual([
+      "documents:/repo/.worktrees/session:.cc/run-docs/run-1.agent/plan.md",
+      "begin:conv-1:workflow",
+    ]);
+
+    h.deps.materializeDocuments = async () => {
+      throw new Error("Artifact sha256:a is missing from the store");
+    };
+    const turns = h.turns.length;
+    const result = await h.run(request({ documents }));
+    expect(result).toMatchObject({ status: "failed", failure: expect.stringContaining("is missing from the store") });
+    expect(h.turns).toHaveLength(turns);
   });
 
   it("records the seat's continuation the moment the backend announces it", async () => {

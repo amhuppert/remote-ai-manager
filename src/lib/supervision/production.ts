@@ -11,6 +11,8 @@ import { getBackgroundActivityChannel } from "@/lib/conversations/background-act
 import type { SeatTurnPort } from "@/lib/conversation-core/executor";
 import { createNativeSeatTurns } from "@/lib/conversation-core/native-seat-turns";
 import type { TaskLane } from "@/lib/conversation-core/task-turns";
+import { getArtifactStore } from "@/lib/artifacts/production";
+import { CC_ARTIFACTS_IGNORE_PATTERN, ensureCcArtifactsExcluded } from "@/lib/git/worktree";
 import {
   createProductionTurnRuntime,
   type CoreTurnRuntime,
@@ -86,6 +88,15 @@ async function nativeSeatTurns(): Promise<SeatTurnPort> {
     getProjectDisplayName,
     composeWriteEnvelope: (input) => composeImplementerLaneWriteEnvelope(input),
     fsWriteRestriction: getConversationFsWriteRestrictionForBackend,
+    async materializeDocuments(worktreePath, documents) {
+      if (documents.length === 0) return;
+      // The copies live under .cc/, which no commit or lane merge may carry.
+      const outside = documents.find((document) => !document.path.startsWith(CC_ARTIFACTS_IGNORE_PATTERN));
+      if (outside !== undefined)
+        throw new Error(`A document copy must be under ${CC_ARTIFACTS_IGNORE_PATTERN}, not at "${outside.path}"`);
+      await ensureCcArtifactsExcluded(worktreePath);
+      await getArtifactStore().materialize(worktreePath, documents);
+    },
     log: createLogger("conversation-core"),
   });
 }

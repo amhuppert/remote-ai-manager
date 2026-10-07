@@ -127,6 +127,7 @@ function facts(
       ...(proposed.authored !== undefined ? { authored: proposed.authored } : {}),
     },
     ...(options.lanes !== undefined ? { lanes: options.lanes } : {}),
+    documents: [],
     invocations: started.map(([key, pass]) => ({
       key,
       pass,

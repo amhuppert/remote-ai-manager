@@ -53,6 +53,7 @@ const view = {
   halts: [],
   loops: [],
   lanes: [],
+  documents: [],
 };
 
 function bodyOf(init: { body?: unknown }): unknown {
@@ -570,6 +571,26 @@ describe("run commands", () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain("definition revision 2");
+  });
+
+  it("lists the run's documents with their revision, what they are for and when to read them", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () =>
+        jsonReply({
+          ...view,
+          kind: "workflow",
+          documents: [
+            { path: "plan.md", revision: 2, bytes: 7, description: "The plan", readWhen: "Before you start" },
+            { path: "api-notes.md", revision: 1, bytes: 3, description: "API notes", appliesTo: ["api", "docs"] },
+          ],
+        }),
+    });
+    const result = await fixture.run(["run", "show", "run-1"], "text");
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("document plan.md (revision 2): The plan — read when: Before you start");
+    expect(result.stdout).toContain("document api-notes.md (revision 1, for api, docs): API notes");
   });
 
   it("refuses incomplete dispositions without sending them", async () => {

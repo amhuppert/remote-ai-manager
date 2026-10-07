@@ -60,6 +60,9 @@ async function json(response: Response): Promise<Record<string, unknown>> {
   return (await response.json()) as Record<string, unknown>;
 }
 
+/** Every request to freeze documents, with the worktree their files were read from. */
+let snapshots: Array<{ worktreePath: string; paths: string[] }>;
+
 async function launch(
   body: unknown = { brief: "Fix the duplicate notice" },
   caller = "owner-1",
@@ -83,6 +86,7 @@ beforeEach(() => {
   codexWithdrawn = false;
   branchPrefix = "csm";
   unwakeable = new Set();
+  snapshots = [];
   let sequence = 0;
   const deps: RunRouteDeps = {
     auth: {
@@ -147,6 +151,26 @@ beforeEach(() => {
       sequence += 1;
       return `run-${sequence}`;
     },
+    // Freezes each document as the bytes its path names; a path starting "missing" has no file.
+    async snapshotDocuments(requests, worktreePath) {
+      snapshots.push({ worktreePath, paths: requests.map((r) => r.path) });
+      const missing = requests.flatMap((r, index) =>
+        r.path.startsWith("missing")
+          ? [{ path: ["documents", index, "from"], message: `No file at "${r.from ?? ""}" in the session worktree` }]
+          : [],
+      );
+      if (missing.length > 0) return { ok: false, issues: missing };
+      return {
+        ok: true,
+        documents: requests.map((r) => ({
+          path: r.path,
+          artifactId: `sha256:${r.contents ?? r.from ?? ""}`,
+          bytes: 1,
+          description: r.description,
+          ...(r.appliesTo !== undefined ? { appliesTo: r.appliesTo } : {}),
+        })),
+      };
+    },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   };
   routes = createRunRouteHandlers(deps);
@@ -186,6 +210,36 @@ describe("run routes", () => {
         },
       ],
     });
+  });
+
+  it("freezes an agent launch's documents from the session worktree; its context reads them under the run's documents path", async () => {
+    const { response } = await launch({
+      brief: "Fix the duplicate notice",
+      documents: [{ path: "plan.md", from: "docs/plan.md", description: "The plan" }],
+    });
+
+    expect(response.status).toBe(202);
+    expect(snapshots).toEqual([{ worktreePath: "/repo/.worktrees/session", paths: ["plan.md"] }]);
+    const contextId = supervision.runs.observe("run-1")?.record.facts.invocations[0]?.contextId ?? "";
+    expect(supervision.contexts.observe(contextId)?.record.facts.contract.current.documents).toEqual([
+      { artifactId: "sha256:docs/plan.md", path: `.cc/run-docs/${contextId}/plan.md`, description: "The plan" },
+    ]);
+    const shown = await json(await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
+    expect(shown.documents).toEqual([{ path: "plan.md", revision: 1, bytes: 1, description: "The plan" }]);
+  });
+
+  it("refuses a launch whose documents cannot be frozen, naming each problem, and launches nothing", async () => {
+    const { response, payload } = await launch({
+      brief: "Fix the duplicate notice",
+      documents: [{ path: "missing.md", from: "docs/missing.md", description: "Gone" }],
+    });
+
+    expect(response.status).toBe(400);
+    expect(payload).toEqual({
+      error: "Invalid documents",
+      issues: [{ path: "documents.0.from", message: 'No file at "docs/missing.md" in the session worktree' }],
+    });
+    expect(supervision.runs.observe("run-1")).toBeNull();
   });
 
   it("shows a run only within its own session", async () => {
@@ -875,6 +929,53 @@ describe("run routes", () => {
         { path: "definition", message: expect.stringContaining('loop "polish"') },
       ],
     });
+  });
+
+  it("freezes a workflow's documents again when it is amended, for the work that has not started", async () => {
+    h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
+    const polish = (maxPasses: number, plan: string) => ({
+      title: "Polish",
+      contexts: [
+        { key: "implement", brief: "Implement it" },
+        {
+          key: "review",
+          brief: "Review it",
+          dependsOn: ["implement"],
+          outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+        },
+      ],
+      loops: [
+        {
+          key: "polish",
+          body: ["implement", "review"],
+          entry: "implement",
+          exit: "review",
+          until: { schema: { type: "object", properties: { approved: { const: true } } } },
+          maxPasses,
+        },
+      ],
+      documents: [{ path: "plan.md", contents: plan, description: "The plan" }],
+    });
+    await routes.launchWorkflow(request(polish(1, "v1"), identity("owner-1")), params());
+    await quiesce(supervision);
+
+    const amended = await routes.amend(
+      request({ definition: polish(2, "v2"), basedOn: 1 }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(amended.status).toBe(200);
+    await quiesce(supervision);
+
+    expect(snapshots).toHaveLength(2);
+    const record = supervision.runs.observe("run-1")?.record;
+    expect(record?.facts.documents.map((r) => [r.revision, r.source, r.document?.artifactId])).toEqual([
+      [1, "launch", "sha256:v1"],
+      [2, "amend", "sha256:v2"],
+    ]);
+    const planOf = (contextId: string | undefined) =>
+      supervision.contexts.observe(contextId ?? "")?.record.facts.contract.current.documents[0]?.artifactId;
+    const passes = record?.facts.invocations.filter((i) => i.key === "implement") ?? [];
+    expect(passes.map((i) => planOf(i.contextId))).toEqual(["sha256:v1", "sha256:v2"]);
   });
 
   it("reports a refusal as a conflict even when it comes from another copy of the run module, as the boot-time supervision is", async () => {

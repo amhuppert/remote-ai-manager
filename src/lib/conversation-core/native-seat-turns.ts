@@ -12,7 +12,7 @@ import { resumableRef, type ConversationRecordPort } from "./conversation-record
 import type { SeatTurnPort } from "./executor";
 import { failedTurn as failed, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
-import type { SeatTurnRequest } from "./schemas";
+import type { SeatTurnRequest, WorkOrderDocument } from "./schemas";
 import type { TurnEngine } from "./turn-engine";
 
 export interface NativeSeatTurnDeps {
@@ -22,6 +22,7 @@ export interface NativeSeatTurnDeps {
   getProjectDisplayName(projectPath: string): string;
   composeWriteEnvelope(input: ComposeImplementerLaneWriteEnvelopeInput): ImplementerLaneWriteEnvelope;
   fsWriteRestriction(backend: AgentBackendId): FsWriteRestrictionSupport;
+  materializeDocuments(worktreePath: string, documents: readonly WorkOrderDocument[]): Promise<void>;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -88,6 +89,18 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
       };
       const row = await deps.records.read(identity);
       if (row === null) return failed(`Seat conversation ${conversationId} no longer exists`);
+      try {
+        // Read-only copies of the work's frozen documents, at the paths its briefing names.
+        await deps.materializeDocuments(request.workspace.worktreePath, request.documents);
+      } catch (error) {
+        const reason = `A document this work needs could not be delivered: ${getErrorMessage(error)}`;
+        deps.log.error("conversation_core.seat_documents_undelivered", {
+          conversationId,
+          contextId: request.seat.contextId,
+          error: getErrorMessage(error),
+        });
+        return failed(reason);
+      }
       const backend = request.seat.assignment.backend;
       const projectName = deps.getProjectDisplayName(binding.projectPath);
       const outputFormat =

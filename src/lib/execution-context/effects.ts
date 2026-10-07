@@ -29,8 +29,10 @@ import {
 import { nextProgress } from "./progress";
 import {
   seatRefSchema,
+  workOrderDocumentSchema,
   type SeatAssignment,
   type SeatRef,
+  type WorkOrderDocument,
 } from "@/lib/conversation-core/schemas";
 import { turnWorkspaceAccess } from "@/lib/workspace/admission";
 import {
@@ -63,6 +65,8 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("work"),
       workspace: turnWorkspaceSchema,
+      // Absent from orders recorded before work orders carried documents.
+      documents: z.array(workOrderDocumentSchema).default([]),
       reason: z.enum([
         "initial",
         "retry",
@@ -84,6 +88,8 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("capture_output"),
       workspace: turnWorkspaceSchema,
+      // Absent from orders recorded before work orders carried documents.
+      documents: z.array(workOrderDocumentSchema).default([]),
       seat: seatRefSchema,
       message: z.string().min(1),
       outputSchema: outputSchemaSchema,
@@ -94,6 +100,8 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("review"),
       workspace: turnWorkspaceSchema,
+      // Absent from orders recorded before work orders carried documents.
+      documents: z.array(workOrderDocumentSchema).default([]),
       seat: seatRefSchema,
       roundId: z.string().min(1),
       message: z.string().min(1),
@@ -106,6 +114,8 @@ export const contextEffectRequestSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("advise"),
       workspace: turnWorkspaceSchema,
+      // Absent from orders recorded before work orders carried documents.
+      documents: z.array(workOrderDocumentSchema).default([]),
       seat: seatRefSchema,
       roundId: z.string().min(1),
       message: z.string().min(1),
@@ -188,13 +198,19 @@ export function waitsOnPerson(request: ContextEffectRequest): boolean {
 
 const IMPLEMENTER = "implementer";
 
-/** What a seat's turn may do in the Context's workspace, as Workspace rules it. */
-function seatWorkspace(
+/**
+ * What every seat work order carries: what the seat's turn may do in the
+ * Context's workspace, as Workspace rules it, and the contract's frozen documents.
+ */
+function seatOrder(
   facts: ContextFacts,
   need: "write" | "stable_read" | "observe",
   role: SeatRef["role"],
-): TurnWorkspace {
-  return turnWorkspaceAccess({ binding: facts.binding.request, need, role });
+): { workspace: TurnWorkspace; documents: WorkOrderDocument[] } {
+  return {
+    workspace: turnWorkspaceAccess({ binding: facts.binding.request, need, role }),
+    documents: facts.contract.current.documents.map(({ artifactId, path }) => ({ artifactId, path })),
+  };
 }
 
 /** Numbers a new effect so its cause is never reused, even after a withdrawal. */
@@ -335,7 +351,7 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
             cause,
             request: {
               kind: "capture_output",
-              workspace: seatWorkspace(facts, "observe", "implementer"),
+              ...seatOrder(facts, "observe", "implementer"),
               seat: implementerSeat(facts, contextId, "answers_in_turn"),
               message: composeCapture(),
               outputSchema,
@@ -397,7 +413,7 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
           cause: nextCause("review"),
           request: {
             kind: "review",
-            workspace: seatWorkspace(facts, "stable_read", "reviewer"),
+            ...seatOrder(facts, "stable_read", "reviewer"),
             seat: seatRef(
               facts,
               contextId,
@@ -441,7 +457,7 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
             cause,
             request: {
               kind: "advise",
-              workspace: seatWorkspace(facts, "write", "implementer"),
+              ...seatOrder(facts, "write", "implementer"),
               seat: implementerSeat(facts, contextId, "answers_in_turn"),
               roundId,
               message: composeAdvice(advice.items),
@@ -546,7 +562,7 @@ function planWork(
           cause,
           request: {
             kind: "work",
-            workspace: seatWorkspace(facts, "write", "implementer"),
+            ...seatOrder(facts, "write", "implementer"),
             reason,
             seat: implementerSeat(facts, contextId, "may_ask"),
             message,
@@ -614,7 +630,7 @@ function planWork(
         cause,
         request: {
           kind: "work",
-          workspace: seatWorkspace(facts, "write", "implementer"),
+          ...seatOrder(facts, "write", "implementer"),
           reason,
           seat: implementerSeat(facts, contextId, "may_ask"),
           message,
@@ -649,7 +665,7 @@ function planReviewContinuation(
         cause: attemptCause(facts, `${contextId}:review:${round.id}:${assignmentId}:${questionId}`),
         request: {
           kind: "review",
-          workspace: seatWorkspace(facts, "stable_read", "reviewer"),
+          ...seatOrder(facts, "stable_read", "reviewer"),
           seat: seatRef(facts, contextId, assignmentId, "reviewer", assignment, "may_ask"),
           roundId: round.id,
           message,

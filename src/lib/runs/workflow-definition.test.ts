@@ -132,6 +132,30 @@ describe("workflow definition compiler (W2)", () => {
     ).toEqual([{ path: "contexts.1.dependsOn", message: "Dependency cycle: a → c → b → a" }]);
   });
 
+  it("refuses a document meant for a context the workflow does not define, and a document inside a context entry", () => {
+    expect(
+      issues({
+        title: "Documents",
+        contexts: [
+          { key: "a", brief: "A" },
+          { key: "b", brief: "B", dependsOn: ["a"] },
+        ],
+        documents: [{ path: "plan.md", contents: "# Plan", description: "The plan", appliesTo: ["b", "ghost"] }],
+      }),
+    ).toEqual([
+      {
+        path: "documents.0.appliesTo.1",
+        message: 'Document "plan.md" is for context "ghost", which the workflow does not define',
+      },
+    ]);
+    expect(
+      issues({
+        title: "Documents",
+        contexts: [{ key: "a", brief: "A", documents: [{ path: "x.md", contents: "x", description: "X" }] }],
+      }),
+    ).toEqual([{ path: "contexts.0", message: expect.stringContaining("documents") }]);
+  });
+
   it("refuses an owned path with more than one spelling, at the path", () => {
     expect(
       issues({

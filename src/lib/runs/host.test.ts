@@ -35,7 +35,7 @@ import {
   type RunHost,
   type RunLaunchInput,
 } from "./host";
-import type { RouteGuard, RunBoundary } from "./schemas";
+import type { RouteGuard, RunBoundary, RunDocument } from "./schemas";
 
 const now = "2026-10-03T10:00:00.000Z";
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -238,8 +238,28 @@ async function launch(humanApproval = false): Promise<void> {
   await scheduler.idle();
 }
 
+const chainContexts = (): RunLaunchInput["contexts"] => [
+  {
+    key: "api",
+    dependsOn: [],
+    request: startRequest("run-1.api", false, "Build the API"),
+  },
+  {
+    key: "docs",
+    dependsOn: ["api"],
+    request: startRequest("run-1.docs", false, "Document the API"),
+  },
+];
+const chainAuthored = {
+  title: "API then docs",
+  contexts: [
+    { key: "api", dependsOn: [], title: "Build the API", brief: "Make the failure notice appear once." },
+    { key: "docs", dependsOn: ["api"], title: "Document the API", brief: "Make the failure notice appear once." },
+  ],
+};
+
 /** api builds first; docs builds on its accepted result. */
-async function launchChain(): Promise<void> {
+async function launchChain(documents?: RunDocument[]): Promise<void> {
   await runs.launch({
     runId: "run-1",
     cause: "launch-1",
@@ -248,25 +268,9 @@ async function launchChain(): Promise<void> {
     projectPath: "/repo",
     sessionName: "session",
     owner: { conversationId: "owner-1", sessionName: "session" },
-    contexts: [
-      {
-        key: "api",
-        dependsOn: [],
-        request: startRequest("run-1.api", false, "Build the API"),
-      },
-      {
-        key: "docs",
-        dependsOn: ["api"],
-        request: startRequest("run-1.docs", false, "Document the API"),
-      },
-    ],
-    authored: {
-      title: "API then docs",
-      contexts: [
-        { key: "api", dependsOn: [], title: "Build the API", brief: "Make the failure notice appear once." },
-        { key: "docs", dependsOn: ["api"], title: "Document the API", brief: "Make the failure notice appear once." },
-      ],
-    },
+    contexts: chainContexts(),
+    authored: chainAuthored,
+    ...(documents !== undefined ? { documents } : {}),
   });
   await scheduler.idle();
 }
@@ -750,6 +754,44 @@ describe("workflow runs", () => {
           },
         },
       ],
+    ]);
+  });
+
+  it("gives each context the documents meant for it as they stand when it starts; an amendment changes them only for work not yet started", async () => {
+    const declared = (plan: string): RunDocument[] => [
+      { path: "plan.md", artifactId: plan, bytes: 7, description: "The plan", readWhen: "Before you start" },
+      { path: "api-notes.md", artifactId: "sha256:api", bytes: 3, description: "API notes", appliesTo: ["api"] },
+    ];
+    await launchChain(declared("sha256:v1"));
+    // Each context's copies live in a directory of its own, so the two revisions never share a file.
+    const planAt = (contextId: string, artifactId: string) => ({
+      artifactId,
+      path: `.cc/run-docs/${contextId}/plan.md`,
+      description: "The plan",
+      readWhen: "Before you start",
+    });
+    expect(contexts.observe("run-1.api")?.record.facts.contract.current.documents).toEqual([
+      planAt("run-1.api", "sha256:v1"),
+      { artifactId: "sha256:api", path: ".cc/run-docs/run-1.api/api-notes.md", description: "API notes" },
+    ]);
+
+    await runs.amend("run-1", {
+      definition: { title: "API then docs", contexts: chainContexts(), authored: chainAuthored, documents: declared("sha256:v2") },
+      basedOn: 1,
+    });
+    await scheduler.idle();
+    expect(contexts.observe("run-1.api")?.record.facts.contract.current.documents[0]).toEqual(
+      planAt("run-1.api", "sha256:v1"),
+    );
+
+    await succeedActiveContext("API built.");
+    expect(contexts.observe("run-1.docs")?.record.facts.contract.current.documents).toEqual([
+      planAt("run-1.docs", "sha256:v2"),
+    ]);
+    expect(runs.observe("run-1")?.record.facts.documents.map((r) => [r.path, r.revision, r.source])).toEqual([
+      ["plan.md", 1, "launch"],
+      ["api-notes.md", 1, "launch"],
+      ["plan.md", 2, "amend"],
     ]);
   });
 

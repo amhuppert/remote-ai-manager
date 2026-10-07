@@ -12,6 +12,7 @@ import {
   type WorkspaceScope,
 } from "@/lib/workspace/schemas";
 import type { RunLaunchInput } from "./host";
+import { runDocumentRequestSchema } from "./documents";
 import {
   agentLaunchRequestSchema,
   resolveContextStart,
@@ -23,6 +24,7 @@ import {
   routeGuardSchema,
   runLoopSchema,
   type RouteGuard,
+  type RunDocument,
   type RunLane,
   type RunLoop,
 } from "./schemas";
@@ -70,6 +72,8 @@ const workflowLaneRequestSchema = z
   .strict();
 
 export const workflowContextRequestSchema = agentLaunchRequestSchema
+  // A workflow declares its documents once, for the contexts each is meant for.
+  .omit({ documents: true })
   .extend({
     key: keySchema,
     dependsOn: z.array(dependencySchema).optional(),
@@ -760,11 +764,24 @@ export const workflowLaunchRequestSchema = z
     contexts: z.array(workflowContextRequestSchema).min(1),
     loops: z.array(workflowLoopRequestSchema).optional(),
     lanes: z.array(workflowLaneRequestSchema).optional(),
+    /** Documents frozen at launch; each is for the contexts it names, or for all of them. */
+    documents: z.array(runDocumentRequestSchema).optional(),
   })
   .strict()
   .superRefine((request, ctx) => {
     for (const issue of analyzeWorkflow(request).issues)
       ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
+    const keys = new Set(request.contexts.map((context) => context.key));
+    request.documents?.forEach((document, index) =>
+      document.appliesTo?.forEach((key, position) => {
+        if (!keys.has(key))
+          ctx.addIssue({
+            code: "custom",
+            path: ["documents", index, "appliesTo", position],
+            message: `Document "${document.path}" is for context "${key}", which the workflow does not define`,
+          });
+      }),
+    );
   });
 export type WorkflowLaunchRequest = z.infer<typeof workflowLaunchRequestSchema>;
 
@@ -781,6 +798,8 @@ export function compileWorkflow(
     seats: Record<string, Seats>;
     /** An amended run's lanes: a lane the run already named keeps its worktree and branch. */
     existingLanes?: readonly RunLane[];
+    /** The workflow's documents, already frozen. */
+    documents?: RunDocument[];
   },
 ): RunLaunchInput {
   const contexts = input.request.contexts;
@@ -798,6 +817,7 @@ export function compileWorkflow(
     projectPath: input.projectPath,
     sessionName: input.session.sessionName,
     owner: input.owner,
+    ...(input.documents !== undefined ? { documents: input.documents } : {}),
     ...(input.request.loops !== undefined ? { loops: input.request.loops } : {}),
     ...(lanes.length > 0 ? { lanes } : {}),
     authored: input.request,

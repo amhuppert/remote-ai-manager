@@ -16,6 +16,8 @@ import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getSession } from "@/lib/state-store";
 import type { ResolvedSeat } from "./launch";
+import { snapshotRunDocuments } from "./documents";
+import { getArtifactStore } from "@/lib/artifacts/production";
 import { getSupervision } from "@/lib/supervision/production";
 import {
   createRunRouteHandlers,
@@ -128,6 +130,8 @@ const handlers = createRunRouteHandlers({
   },
   resolveSeats,
   newRunId,
+  snapshotDocuments: (requests, worktreePath) =>
+    snapshotRunDocuments({ requests, worktreePath, store: getArtifactStore() }),
   log,
 });
 

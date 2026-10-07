@@ -37,12 +37,13 @@ function criteriaBlock(facts: ContextFacts): string {
 function documentsBlock(facts: ContextFacts): string | null {
   const documents = facts.contract.current.documents;
   if (documents.length === 0) return null;
-  return documents
-    .map(
+  return [
+    "Frozen for this work: read-only copies at these paths in your working directory.",
+    ...documents.map(
       (d) =>
         `- \`${d.path}\` — ${d.description}${d.readWhen ? ` Read when: ${d.readWhen}` : ""}`,
-    )
-    .join("\n");
+    ),
+  ].join("\n");
 }
 
 /** Earlier accepted results this work builds on, each exactly as accepted. */

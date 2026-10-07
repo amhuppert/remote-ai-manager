@@ -10,6 +10,7 @@ import type { Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { RunsRepo } from "@/lib/state-store/runs-repo";
 import { amendDefinition, type ProposedDefinition } from "./amendment";
+import { documentsFor, reviseDocuments } from "./documents";
 import {
   deriveRunProgress,
   onlyHaltsRemain,
@@ -26,6 +27,7 @@ import {
   type RunBoundaryKind,
   type RunDefinitionContext,
   type RunDisposition,
+  type RunDocument,
   type RunFacts,
   type RunInvocation,
   type RunLane,
@@ -79,6 +81,8 @@ export interface RunLaunchInput {
   lanes?: RunLane[];
   /** The workflow as its owner wrote it. */
   authored?: Record<string, unknown>;
+  /** The run's documents, already frozen as artifacts. */
+  documents?: RunDocument[];
 }
 
 export interface RunHostDeps {
@@ -385,7 +389,11 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       const request = {
         ...defined.request,
         contextId: start.contextId,
-        contract: { ...defined.request.contract, inputs: start.inputs },
+        contract: {
+          ...defined.request.contract,
+          inputs: start.inputs,
+          documents: documentsFor({ revisions: facts.documents, contextId: start.contextId, key: start.key }),
+        },
       };
       const invocation: RunInvocation = {
         key: start.key,
@@ -666,6 +674,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             ...(input.lanes !== undefined ? { lanes: input.lanes } : {}),
             ...(input.authored !== undefined ? { authored: input.authored } : {}),
           },
+          documents: reviseDocuments([], input.documents ?? [], "launch", now),
           invocations: [],
           control: { paused: false, cancelled: false, fault: null },
         };
@@ -914,7 +923,13 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           );
         const amended = amendDefinition(facts, observedOf(observeInvocations(facts)), proposed);
         if (!amended.ok) throw new RunAmendmentRefusedError(amended.issues);
-        const next: RunFacts = { ...facts, title: amended.title, definition: amended.definition };
+        const next: RunFacts = {
+          ...facts,
+          title: amended.title,
+          definition: amended.definition,
+          // Every document is declared again; work already started keeps what it froze.
+          documents: reviseDocuments(facts.documents, proposed.documents ?? [], "amend", deps.now()),
+        };
         project(record, startEligible(record, next));
         return amended.definition.revision;
       });
