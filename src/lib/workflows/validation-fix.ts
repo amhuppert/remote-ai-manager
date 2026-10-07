@@ -18,13 +18,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createLogger } from "../logging";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
-import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   AgentTurnDispatch,
   ExecuteFreshTaskRunInput,
-} from "@/lib/workflows/conversation/execute-fresh-task-run";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/workflows/merge/fresh-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 
 const logger = createLogger("validation-fix");
 

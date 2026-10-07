@@ -13,8 +13,8 @@ import { createGraphWorkflowAdvisoryResponseRunner } from "@/lib/workflow-graph/
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 
 const EXECUTION = createWorkflowExecution({ status: "running" });
 const CONTEXT_ID = EXECUTION.workingDefinition.executionContexts[0]?.id ?? "";

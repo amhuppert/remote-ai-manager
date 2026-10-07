@@ -14,7 +14,7 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import {
   assembleUserContentBlocks,
   type AssembledUserContent,
-} from "../assemble-user-blocks";
+} from "@/lib/conversation-core/turn/assemble-user-blocks";
 
 export interface ImagePersistenceDeps {
   getNextImageIndex(conversationId: string): Promise<number>;

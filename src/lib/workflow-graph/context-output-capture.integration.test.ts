@@ -36,7 +36,7 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import { DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS } from "@/lib/workflows/primitives/agent-call-facade";
-import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationTurnSubmission } from "@/lib/conversation-core/turn/turn-spec";
 
 import { createMockBackendRuntime } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";

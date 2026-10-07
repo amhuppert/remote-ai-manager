@@ -1,4 +1,4 @@
-import type { ConversationTurnExecution } from "../manager";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 import type { TurnInterruption } from "../turn-result";

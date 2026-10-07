@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationTurnRequestSchema } from "./turn-spec";
+import { conversationTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 
 describe("conversation input provenance", () => {
   it("preserves explicit user provenance independently of execution mode", () => {

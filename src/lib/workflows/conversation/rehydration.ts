@@ -1,11 +1,7 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import {
-  checkpointScopeKeyForStoreIdentity,
-  conversationTotals,
-  toConversationDurableSeed,
-  type ConversationDurableSeed,
-} from "./actor-input-loader";
-import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
+import { conversationTotals, toConversationDurableSeed, type ConversationDurableSeed } from "./actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
+import type { CheckpointAuthorityHydration } from "@/lib/conversation-checkpoints/checkpoint-restart";
 import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
 import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 /**
@@ -133,7 +129,7 @@ export async function rehydrateOneConversationActor(
   deps: {
     host: ConversationActorHost;
     queue: ConversationQueueDeps;
-    mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
+    mutateConversation: import("@/lib/conversation-core/turn/effects").ConversationDurableEffects["mutateConversation"];
     repairQueuedAcceptance?: RehydrateConversationActorsDeps["repairQueuedAcceptance"];
   },
 ): Promise<boolean> {
@@ -331,7 +327,7 @@ export function collectWorkflowResultRecoveryScopes(
 export interface RehydrateConversationActorsDeps {
   host: ConversationActorHost;
   queue: ConversationQueueDeps;
-  mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
+  mutateConversation: import("@/lib/conversation-core/turn/effects").ConversationDurableEffects["mutateConversation"];
   /**
    * The startup-only whole-state read. Assembles the project/session/
    * conversation tree without touching the snapshot sidecar — resume tokens are
@@ -407,7 +403,7 @@ export async function loadRehydrationInfrastructure(): Promise<
     await import("@/lib/workflow-graph/result-delivery-service");
   const { getConversationCheckpointsRepo } =
     await import("@/lib/conversation-checkpoints/service-factory");
-  const { hydrateCheckpointAuthority } = await import("./checkpoint-restart");
+  const { hydrateCheckpointAuthority } = await import("@/lib/conversation-checkpoints/checkpoint-restart");
   const { coreOwnsConversation } = await import("@/lib/supervision/handles");
   return {
     isCoreOwnedConversation: coreOwnsConversation,

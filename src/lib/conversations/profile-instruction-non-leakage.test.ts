@@ -23,7 +23,7 @@ import {
   type SessionState,
 } from "@/lib/sessions/schemas";
 import { _resetLoggerForTesting } from "@/lib/logging/logger";
-import { resolveConversationProfileInjection } from "@/lib/workflows/conversation/pre-turn/profile-injection";
+import { resolveConversationProfileInjection } from "@/lib/conversation-core/contributions/profile-injection";
 import { redactAgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import {
   PROFILE_SECRET_SENTINEL,

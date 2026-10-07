@@ -1,4 +1,4 @@
-import { createRequiredInputReceipt } from "@/lib/workflows/conversation/pre-turn/required-input-receipt";
+import { createRequiredInputReceipt } from "@/lib/conversation-core/contributions/required-input-receipt";
 import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
 /**
  * Durably enqueue a user message into a conversation and, for backends that
@@ -28,7 +28,7 @@ import {
   prepareAcceptedNotepadReferences,
   productionPassiveSubscriptionDependencies,
   type PassiveSubscriptionContextDependencies,
-} from "@/lib/workflows/conversation/pre-turn/passive-subscription-context";
+} from "@/lib/conversation-core/contributions/passive-subscription-context";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
@@ -36,7 +36,7 @@ import {
   saveTranscriptImage as defaultSaveTranscriptImage,
   getNextImageIndex as defaultGetNextImageIndex,
 } from "@/lib/images/transcript-images";
-import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
+import { buildUserTranscriptBlocks } from "@/lib/conversation-core/turn/build-user-transcript-blocks";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
 import {

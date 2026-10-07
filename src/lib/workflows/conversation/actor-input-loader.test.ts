@@ -12,7 +12,7 @@ import {
   conversationAggregateFields,
 } from "./actor-input-loader";
 import { createActor, fromPromise, waitFor } from "xstate";
-import type { PromptActorResult, ExecutePromptInput } from "./types";
+import type { PromptActorResult, ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 import { conversationMachine } from "./machine";
 import { applySyncDerivedFields } from "./persistence-adapter";
 

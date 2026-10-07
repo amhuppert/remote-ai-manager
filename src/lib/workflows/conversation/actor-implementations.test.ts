@@ -1,4 +1,4 @@
-import { readRuntimeInstructions } from "./runtime-instructions";
+import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import { projectTranscriptUsage } from "@/lib/agent-backends/transcript-projections";
 import { createCursorTaskRunner } from "@/lib/agent-backends/cursor/task-runner";
 import { createScriptedTransport } from "@/lib/agent-backends/cursor/testing/scripted-worker";
@@ -26,7 +26,8 @@ import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testin
 import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { PrepareTurnInput, ExecutePromptInput } from "./types";
+import type { PrepareTurnInput } from "./types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 
 import type {
   ConversationBackendCreateInput,

@@ -10,7 +10,7 @@ import { requestConversationStop } from "@/lib/workflows/conversation/lifecycle"
 import type {
   ConversationAddress,
   TurnCancelReason,
-} from "@/lib/workflows/conversation/turn-spec";
+} from "@/lib/conversation-core/turn/turn-spec";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
 import { type ConversationScopeRef } from "./conversation-target";

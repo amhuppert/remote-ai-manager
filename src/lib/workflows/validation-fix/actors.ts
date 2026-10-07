@@ -26,7 +26,7 @@ import type { ValidationRunResult } from "@/lib/validation/schemas";
 import type { GateFailResult } from "@/lib/workflows/primitives/gate-vocabulary";
 import { scriptValidationGateFromOutcome } from "@/lib/workflows/primitives/script-validation-gate";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type { AgentTurnDispatch } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   MergeValidationSource,
   ValidationCommandSelection,

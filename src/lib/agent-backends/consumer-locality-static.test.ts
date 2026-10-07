@@ -95,22 +95,27 @@ export const CONSUMER_LOCALITY_MAP: readonly ConsumerLocalityEntry[] = [
     status: "enforced",
   },
   {
-    file: "workflows/conversation/pre-turn/resolve-model-effort.ts",
+    file: "conversation-core/contributions/resolve-model-effort.ts",
     category: "E2",
     status: "enforced",
   },
   {
-    file: "workflows/conversation/pre-turn/capability-cascade.ts",
+    file: "conversation-core/contributions/capability-cascade.ts",
     category: "E2",
     status: "enforced",
   },
   {
-    file: "workflows/conversation/pre-turn/fork-seed.ts",
+    file: "workflows/conversation/pre-turn/capability-apply.ts",
     category: "E2",
     status: "enforced",
   },
   {
-    file: "workflows/conversation/execute-workflow-task-run.ts",
+    file: "conversation-checkpoints/fork-seed.ts",
+    category: "E2",
+    status: "enforced",
+  },
+  {
+    file: "conversation-core/turn/execute-workflow-task-run.ts",
     category: "E2",
     status: "enforced",
   },

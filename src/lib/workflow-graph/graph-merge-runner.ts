@@ -2,7 +2,7 @@ import { createActor, toPromise } from "xstate";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { observePhaseTransitions } from "@/lib/jobs/machine-host";
-import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type { AgentTurnDispatch } from "@/lib/workflows/merge/fresh-task-run";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import {
   mergeMachine,

@@ -75,13 +75,13 @@ import {
   executeConversationTurn as defaultExecuteConversationTurn,
   stopConversationActor as defaultStopConversationActor,
 } from "@/lib/workflows/conversation/lifecycle";
-import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import { toTaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import {
   prepareValidatorWorkspace as defaultPrepareValidatorWorkspace,
   type PrepareValidatorWorkspaceInput,
   type ValidatorWorkspace,
 } from "./validator-workspace";
-import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { getConversation as defaultGetConversation } from "@/lib/state-store";

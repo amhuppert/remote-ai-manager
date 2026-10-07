@@ -3,10 +3,8 @@ import {
   createProjectConversationRouteHandlers,
   type ProjectConversationRouteDeps,
 } from "./route-handlers";
-import {
-  BackendMismatchError,
-  ModelSelectionValidationError,
-} from "@/lib/prompt/sdk-driver";
+import { BackendMismatchError } from "@/lib/prompt/sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import { ProjectCollaborationUnsupportedError } from "./collaboration-refusal";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SSEEvent } from "@/lib/api/sse-events";

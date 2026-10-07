@@ -7,27 +7,27 @@ import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import { generateAndApplyConversationName } from "@/lib/conversations/name-generation";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
-import { admitExplicitModelSelection } from "@/lib/prompt/sdk-driver";
+import { admitExplicitModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getConversation, getSession, mutateConversation } from "@/lib/state-store";
-import { resolveCapabilitySeedForNewRuntime } from "@/lib/workflows/conversation/pre-turn/capability-cascade";
+import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
 import {
   resolveBackendStallTimeoutMs,
   resolveBackendTimeoutMs,
   resolveTurnModelSelection,
-} from "@/lib/workflows/conversation/pre-turn/resolve-model-effort";
-import { loadConversationTurnDependencies } from "@/lib/workflows/conversation/core-composition";
-import { prepareRuntimeInstructions } from "@/lib/workflows/conversation/runtime-instructions";
-import { createQueuedDeliveryAccounting } from "@/lib/workflows/conversation/post-turn/queued-delivery-accounting";
-import { persistTurnImages } from "@/lib/workflows/conversation/pre-turn/image-persistence";
+} from "@/lib/conversation-core/contributions/resolve-model-effort";
+import { loadConversationTurnDependencies } from "@/lib/conversation-core/production-turn-dependencies";
+import { prepareRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
+import { createQueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
+import { persistTurnImages } from "@/lib/conversation-core/contributions/image-persistence";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
 import { createCheckpointContinuation } from "./checkpoints";
 import type { TaskTurnPort } from "./executor";
 import { createTaskTurns } from "./task-turns";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 import { getTaskTranscriptProjection, resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
-import { prepareTaskPrompt } from "@/lib/workflows/conversation/turn-context";
-import { readLineageCumulativeCost } from "@/lib/workflows/conversation/task-run-cost";
+import { prepareTaskPrompt } from "@/lib/conversation-core/turn/turn-context";
+import { readLineageCumulativeCost } from "@/lib/conversation-core/turn/task-run-cost";
 import { createInteractiveTurns, type InteractiveTurnDeps, type InteractiveTurns } from "./interactive-turns";
 import { createProductionConversationRecords } from "./production-records";
 import { createRuntimeApplicationState } from "./runtime-application-state";

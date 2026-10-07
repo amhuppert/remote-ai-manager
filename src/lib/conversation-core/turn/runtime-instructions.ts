@@ -1,4 +1,4 @@
-import type { ConversationActorDependencies } from "./actor-dependencies";
+import type { ConversationTurnDependencies } from "./dependencies";
 import type { ExecutePromptInput } from "./types";
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -13,9 +13,9 @@ import {
   PROJECT_SPAWN_INSTRUCTIONS,
 } from "@/lib/project-conversations/system-prompt";
 import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
-import { registerFocusMemoryIfPresent } from "./pre-turn/focus-memory";
-import { resolveAlignmentInstructionForNewRuntime } from "./pre-turn/alignment-gate";
-import { resolveConversationProfileInjection } from "./pre-turn/profile-injection";
+import { registerFocusMemoryIfPresent } from "@/lib/conversation-core/contributions/focus-memory";
+import { resolveAlignmentInstructionForNewRuntime } from "@/lib/conversation-core/contributions/alignment-gate";
+import { resolveConversationProfileInjection } from "@/lib/conversation-core/contributions/profile-injection";
 import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
 import type { PreparedSubscriptionBriefing } from "@/lib/subscriptions/service";
 
@@ -26,7 +26,7 @@ export type RuntimeRecoveryInstructions = Awaited<
 /** Only operational loss context belongs in the new runtime's instructions. */
 export async function prepareRuntimeRecoveryInstructions(
   deps: Pick<
-    ConversationActorDependencies["effects"],
+    ConversationTurnDependencies["effects"],
     "prepareRuntimeLossNotice"
   >,
   input: {
@@ -80,20 +80,20 @@ export async function prepareRuntimeRecoveryInstructions(
 
 type RuntimeInstructionDependencies = {
   execution: Pick<
-    ConversationActorDependencies["execution"],
+    ConversationTurnDependencies["execution"],
     | "getSessionState"
     | "fileExists"
     | "getConversation"
     | "getCodexToolPromptHint"
   >;
   context: Pick<
-    ConversationActorDependencies["context"],
+    ConversationTurnDependencies["context"],
     | "getReferenceDocuments"
     | "getActiveAlignmentInjection"
     | "getWorkflowLaneInstructions"
   >;
   effects: Pick<
-    ConversationActorDependencies["effects"],
+    ConversationTurnDependencies["effects"],
     "createReferenceDocument"
   >;
 };

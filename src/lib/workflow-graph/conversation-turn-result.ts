@@ -1,11 +1,11 @@
 import { getErrorMessage } from "@/lib/shared/errors";
 import { QuerySlotAdmissionTimeoutError } from "@/lib/shared/query-semaphore";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
 import type {
   TurnExecutionOutcome,
   TaskRunResult,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 import {
   AgentTurnFailedError,
   ConversationTurnSettlementError,

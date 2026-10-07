@@ -13,7 +13,7 @@ import {
   CollaborationStartConflictError,
   type CollaborationManager,
 } from "@/lib/workflows/collaboration/manager";
-import { ModelSelectionValidationError } from "./sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 
 // ---------------------------------------------------------------------------
 // Mock deps (no vi.mock needed)

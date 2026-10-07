@@ -10,7 +10,7 @@ import {
   createPromptRouteHandlers,
   type PromptRouteDeps,
 } from "./route-handlers";
-import { ModelSelectionValidationError } from "./sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 
 type Db = InstanceType<typeof Database>;
 

@@ -47,11 +47,11 @@ import type {
   GraphWorkflowValidationAdvisory,
 } from "@/lib/workflow-graph/schemas";
 import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/lifecycle";
-import type { ConversationTurnSpec } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationTurnSpec } from "@/lib/conversation-core/turn/turn-spec";
 import {
   toTaskRunResult,
   type TaskRunResult,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 
 const logger = createLogger("graph-workflow-advisory-response");
 

@@ -28,7 +28,7 @@ import {
   groupActorFixtureDependencies,
 } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import { prepareTurnInput } from "./turn-input";
-import type { PassiveSubscriptionContextDependencies } from "@/lib/workflows/conversation/pre-turn/passive-subscription-context";
+import type { PassiveSubscriptionContextDependencies } from "@/lib/conversation-core/contributions/passive-subscription-context";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { createCheckpointContinuation } from "./checkpoints";
 import { createInteractiveTurns } from "./interactive-turns";

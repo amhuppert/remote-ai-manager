@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { taskTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
+import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 import { createConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
 import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import { fingerprintQueuedRows } from "@/lib/workflows/conversation/checkpoint-queue-repair";
+import { fingerprintQueuedRows } from "@/lib/conversation-checkpoints/checkpoint-queue-repair";
 import type { CoreTurnResult } from "@/lib/conversation-core/executor";
 import {
   createPersistenceFixture,

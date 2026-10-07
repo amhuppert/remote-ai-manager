@@ -31,12 +31,12 @@ import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
 import type {
   ConversationAddress,
   ConversationBinding,
-} from "@/lib/workflows/conversation/turn-spec";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+} from "@/lib/conversation-core/turn/turn-spec";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import type {
   TaskRunResult,
   TaskRunUsage,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 
 import {
   buildCompactionPrompt,

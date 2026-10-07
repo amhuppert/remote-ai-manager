@@ -12,14 +12,14 @@ import type { TranscriptBroadcastMeta, TranscriptEntry } from "@/lib/prompt/tran
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import type { TranscriptDependencies } from "@/lib/workflows/conversation/actor-dependencies";
+import type { TranscriptDependencies } from "@/lib/conversation-core/turn/dependencies";
 import {
   classifyFailureForBackend,
   resolveFailureClassifierForBackend,
-} from "@/lib/workflows/conversation/failure-classification";
-import { wireTurnAbort } from "@/lib/workflows/conversation/pre-turn/abort-wiring";
-import type { TurnExecutionOutcome, TurnInterruption } from "@/lib/workflows/conversation/turn-result";
-import { withRuntimeReplacementRetry } from "@/lib/workflows/conversation/with-runtime-replacement-retry";
+} from "@/lib/conversation-core/turn/failure-classification";
+import { wireTurnAbort } from "@/lib/conversation-core/turn/abort-wiring";
+import type { TurnExecutionOutcome, TurnInterruption } from "@/lib/conversation-core/turn/turn-result";
+import { withRuntimeReplacementRetry } from "@/lib/conversation-core/turn/with-runtime-replacement-retry";
 import type { executeAgentCall as ExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { AgentCallRequest, AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";

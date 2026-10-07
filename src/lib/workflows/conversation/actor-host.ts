@@ -1,16 +1,11 @@
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 
-import { ManagedConversationRuntime } from "./runtime-binding";
+import { ManagedConversationRuntime } from "@/lib/conversation-core/turn/runtime-binding";
 
 import { createActor } from "xstate";
 import { conversationMachine, type ConversationActorRef } from "./machine";
-import type {
-  ConversationInput,
-  ExecutePromptInput,
-  PrepareTurnInput,
-  RunTaskRunInput,
-  SettleTurnInput,
-} from "./types";
+import type { ConversationInput, PrepareTurnInput, RunTaskRunInput, SettleTurnInput } from "./types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 import {
   conversationRuntimeKey,
   type ConversationRuntimeRegistration,
@@ -30,7 +25,7 @@ import type { ConversationRuntimeState } from "./runtime-state";
 const logger = createLogger("conversation-manager");
 export interface ConversationMachineDependencies {
   executeDebugCommand(
-    address: import("./turn-spec").ConversationAddress,
+    address: import("@/lib/conversation-core/turn/turn-spec").ConversationAddress,
     command: import("@/lib/workflows/debug/commands").DebugCommand,
   ): Promise<import("./manager").ConversationCommandOutcome>;
   verifyDebugCleanup: typeof import("@/lib/workflows/debug/cleanup-verification").runDebugCleanupVerification;

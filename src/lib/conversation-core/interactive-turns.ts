@@ -4,19 +4,19 @@ import type { AskQuestionItem, MessageContentBlock } from "@/lib/conversations/s
 import type { InTurnQuestionReply } from "@/lib/conversations/in-turn-question-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { TranscriptBroadcastMeta, TranscriptEntry } from "@/lib/prompt/transcript";
-import type { QueuedDeliveryAccounting } from "@/lib/workflows/conversation/post-turn/queued-delivery-accounting";
+import type { QueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
 import {
   composeUserTranscriptBlocks,
   resolveTurnPromptText,
-} from "@/lib/workflows/conversation/pre-turn/review-feedback";
-import type { QueuedDeliveryMetadata } from "@/lib/workflows/conversation/turn-spec";
+} from "@/lib/conversation-core/contributions/review-feedback";
+import type { QueuedDeliveryMetadata } from "@/lib/conversation-core/turn/turn-spec";
 import type { Logger } from "@/lib/logging";
 import { isRuntimeCreatedWithoutResume } from "@/lib/memory/delivery-decision";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { fingerprintAssembledInput, fingerprintSubmittedInput } from "@/lib/conversation-checkpoints/input-fingerprint";
-import type { PreparedCheckpointSeed } from "@/lib/workflows/conversation/pre-turn/checkpoint-seed";
-import type { ContinuationSeed } from "@/lib/workflows/conversation/pre-turn/continuation-seed";
+import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
+import type { ContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { isInputDeliveryUncertain, markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import {
@@ -26,7 +26,7 @@ import {
   type PreparedTurnInput,
   type TurnInputRequest,
 } from "./turn-input";
-import { toPromptActorResult, type TurnExecutionOutcome, type TurnInterruption } from "@/lib/workflows/conversation/turn-result";
+import { toPromptActorResult, type TurnExecutionOutcome, type TurnInterruption } from "@/lib/conversation-core/turn/turn-result";
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
 import {

@@ -1,4 +1,4 @@
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 /**
  * R6.1/R6.2 — the implementer write envelope along the REAL dispatch path.
  *

@@ -3,7 +3,7 @@ import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/messag
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
 import type { AskQuestionItem, ConversationState } from "@/lib/conversations/schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import { toPromptActorResult, type TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import { toPromptActorResult, type TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import {
   applyDebugCommand,
@@ -365,11 +365,15 @@ export interface ConversationRecordPort {
   /** The backend announced a continuation mid-turn: a restart must still be able to resume it. */
   recordContinuity(identity: ConversationIdentity, ref: AgentSessionRef): Promise<void>;
   /**
-   * A restart dropped a person's message before it started: the whole message
-   * goes back to them for review, to send again or discard. Repeatable for one
-   * `cause`, which a crash mid-recovery replays.
+   * A person's message will not start (a restart dropped it, or a hold stopped
+   * it): the whole message goes back to them for review, to send again or
+   * discard, saying why. Repeatable for one `cause`, which a crash mid-recovery
+   * replays.
    */
-  recordWithdrawn(identity: ConversationIdentity, unsent: { cause: string; request: UserTurnRequest }): Promise<void>;
+  recordWithdrawn(
+    identity: ConversationIdentity,
+    unsent: { cause: string; request: UserTurnRequest; reason: string },
+  ): Promise<void>;
   /** A restart interrupted this conversation's turn: idle again, with a notice explaining why. */
   recordInterrupted(identity: ConversationIdentity): Promise<void>;
   /** Synchronous, so a stop can answer at once whether there is anything to stop. */

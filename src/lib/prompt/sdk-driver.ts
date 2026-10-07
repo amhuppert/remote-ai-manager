@@ -1,6 +1,6 @@
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { z } from "zod";
-import { conversationTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
+import { conversationTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 /**
  * Prompt execution facade — delegates to the conversation lifecycle module.
@@ -12,16 +12,11 @@ import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/messag
  */
 
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
-import type {
-  ConversationBackendFactory,
-  WorkflowLaneIdentity,
-} from "@/lib/agent-backends/conversation";
+import type { WorkflowLaneIdentity } from "@/lib/agent-backends/conversation";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
-import { getErrorMessage } from "@/lib/shared/errors";
 import {
   DEFAULT_AGENT_BACKEND_ID,
   type AgentBackendId,
@@ -32,8 +27,8 @@ import type {
   ConversationBinding,
   ConversationTurnSubmission,
   TurnAdmission,
-} from "@/lib/workflows/conversation/turn-spec";
-import { toPromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-spec";
+import { toPromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
@@ -59,6 +54,7 @@ import {
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { readConfig } from "@/lib/config/loader";
 import { getConversationBackendFactory } from "@/lib/agent-backends/registry";
+import { admitExplicitModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { randomUUID } from "node:crypto";
 
 const logger = createLogger("prompt");
@@ -698,106 +694,6 @@ export class BackendMismatchError extends Error {
     );
     this.name = "BackendMismatchError";
   }
-}
-
-export interface ModelSelectionValidationErrorInput {
-  code: string;
-  message: string;
-  modelId: string;
-  parameterId?: string;
-}
-
-export class ModelSelectionValidationError extends Error {
-  readonly statusCode = 400;
-  readonly code: string;
-  readonly modelId: string;
-  readonly parameterId?: string;
-
-  constructor(input: ModelSelectionValidationErrorInput) {
-    super(input.message);
-    this.name = "ModelSelectionValidationError";
-    this.code = input.code;
-    this.modelId = input.modelId;
-    this.parameterId = input.parameterId;
-  }
-}
-
-function modelSelectionErrorDetails(
-  error: unknown,
-  selection: BackendModelSelection,
-): ModelSelectionValidationErrorInput {
-  if (error instanceof ModelSelectionPolicyError) {
-    const issue = error.issues[0];
-    return {
-      code: issue?.code ?? "selection_invalid",
-      message: error.message,
-      modelId: issue?.modelId ?? selection.modelId,
-      ...(issue?.parameterId !== undefined
-        ? { parameterId: issue.parameterId }
-        : {}),
-    };
-  }
-
-  return {
-    code: "selection_invalid",
-    message: getErrorMessage(error),
-    modelId: selection.modelId,
-  };
-}
-
-/** Validates a model selection for the project and returns its canonical form. */
-export async function admitExplicitModelSelection(input: {
-  projectPath: string;
-  backend: AgentBackendId;
-  selection: BackendModelSelection;
-  factory: ConversationBackendFactory;
-}): Promise<BackendModelSelection> {
-  const { projectPath, backend, selection, factory } = input;
-
-  if (factory.validateModelSelection) {
-    try {
-      factory.validateModelSelection(selection);
-    } catch (error) {
-      const details = modelSelectionErrorDetails(error, selection);
-      logger.warn("model_selection.rejected", {
-        backend,
-        modelId: details.modelId,
-        code: details.code,
-        ...(details.parameterId !== undefined
-          ? { parameterId: details.parameterId }
-          : {}),
-      });
-      throw new ModelSelectionValidationError(details);
-    }
-  }
-
-  let canonicalSelection = selection;
-  if (factory.validateProjectModelSelection) {
-    const validation = await factory.validateProjectModelSelection({
-      projectPath,
-      modelSelection: selection,
-    });
-    if (!validation.ok) {
-      logger.warn("model_selection.rejected", {
-        backend,
-        modelId: validation.modelId,
-        code: validation.code,
-        ...(validation.parameterId !== undefined
-          ? { parameterId: validation.parameterId }
-          : {}),
-      });
-      throw new ModelSelectionValidationError(validation);
-    }
-    canonicalSelection = validation.modelSelection;
-  }
-
-  logger.debug("model_selection.resolved", {
-    backend,
-    modelId: canonicalSelection.modelId,
-    parameterIds: Object.keys(canonicalSelection.parameters).sort(),
-    sourceLayer: "request",
-  });
-  return canonicalSelection;
 }
 
 /**

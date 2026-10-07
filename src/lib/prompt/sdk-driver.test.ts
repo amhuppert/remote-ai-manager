@@ -1,4 +1,4 @@
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -10,8 +10,8 @@ import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection"
 import type {
   ConversationTurnSubmission,
   TurnAdmission,
-} from "@/lib/workflows/conversation/turn-spec";
-import type { SettledConversationTurn } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-spec";
+import type { SettledConversationTurn } from "@/lib/conversation-core/turn/turn-result";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
@@ -38,10 +38,10 @@ vi.mock("@/lib/logging", () => ({
 import {
   createPromptExecutor,
   BackendMismatchError,
-  ModelSelectionValidationError,
   ConversationCommandDispatcherUnavailableError,
   type PromptDeps,
 } from "./sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import {
   TDD_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS,

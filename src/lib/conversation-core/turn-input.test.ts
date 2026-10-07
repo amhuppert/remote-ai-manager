@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { NotepadInjectionSource } from "@/lib/notepads/injection";
 import type { PreparedSubscriptionBriefing } from "@/lib/subscriptions/service";
-import type { PreparedCheckpointSeed } from "@/lib/workflows/conversation/pre-turn/checkpoint-seed";
+import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
 import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import {
   classifyDelivery,

@@ -1,4 +1,4 @@
-import { ephemeralConversationPersistence } from "./persistence-adapter";
+import { ephemeralConversationPersistence } from "@/lib/workflows/conversation/persistence-adapter";
 import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
 import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/actor-input-loader";
@@ -69,9 +69,9 @@ import {
   _resetForTesting as resetRuntime,
   getConversationRuntime,
   conversationRuntimeKey,
-} from "./runtime-state";
+} from "@/lib/workflows/conversation/runtime-state";
 
-import { createActorDependenciesFixture } from "./testing/actor-deps-fixture";
+import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import type {
   AgentTaskRequest,
   AgentTaskResult,
@@ -181,7 +181,7 @@ function runTask(
 }
 
 function createTestMachine(
-  adapter: import("./persistence-adapter").ConversationPersistenceAdapter,
+  adapter: import("@/lib/workflows/conversation/persistence-adapter").ConversationPersistenceAdapter,
 ) {
   return managerFixture.providedMachine(adapter).provide({
     actions: {

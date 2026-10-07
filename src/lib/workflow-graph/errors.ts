@@ -2,7 +2,7 @@ import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
-import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 export type DirtyPath = {
   path: string;

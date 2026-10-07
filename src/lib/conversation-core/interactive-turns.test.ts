@@ -10,8 +10,8 @@ import type {
 import { InputDeliveryUncertainError, isPromptNotDeliveredFailure, markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
-import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationRecordPort } from "./conversation-record";
 import type { UserTurnRequest } from "./schemas";
 import {

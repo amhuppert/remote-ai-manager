@@ -24,13 +24,8 @@ import {
   type DebugAdapter,
 } from "@/lib/workflows/conversation/debug-adapter";
 import { runDebugCleanupVerification } from "./cleanup-verification";
-import type {
-  ConversationInput,
-  ExecutePromptInput,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  PromptActorResult,
-} from "@/lib/workflows/conversation/types";
+import type { ConversationInput, PrepareTurnInput, PrepareTurnOutput } from "@/lib/workflows/conversation/types";
+import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
 
 // ============================================================
 // Result payload fixtures

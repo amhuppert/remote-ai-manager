@@ -24,8 +24,8 @@
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { formatNotepadFeedbackPrompt } from "@/lib/notepads/format-feedback";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import type { ConversationTurnSpec } from "../turn-spec";
-import { buildUserTranscriptBlocks } from "../build-user-transcript-blocks";
+import type { ConversationTurnSpec } from "@/lib/conversation-core/turn/turn-spec";
+import { buildUserTranscriptBlocks } from "@/lib/conversation-core/turn/build-user-transcript-blocks";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 
 export interface ResolvedTurnPromptText {

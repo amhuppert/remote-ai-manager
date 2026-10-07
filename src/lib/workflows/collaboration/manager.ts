@@ -64,7 +64,7 @@ import {
   type CollaborationSessionContext,
   type CollaborationSessionContextCapture,
 } from "./session-context";
-import { isAlignmentEligibleContext } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
+import { isAlignmentEligibleContext } from "@/lib/conversation-core/contributions/alignment-gate";
 import { type IdleRuntimeRelease } from "@/lib/workflows/conversation/manager";
 import { releaseIdleConversationRuntime as defaultReleaseIdleConversationRuntime } from "@/lib/workflows/conversation/lifecycle";
 import { getSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
@@ -141,7 +141,7 @@ import {
   publishScopedStatus,
   type PublishScopedStatusInput,
 } from "@/lib/events/publication";
-import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
+import { assembleUserContentBlocks } from "@/lib/conversation-core/turn/assemble-user-blocks";
 import {
   appendTranscriptEntryOnce,
   getTranscriptPath,

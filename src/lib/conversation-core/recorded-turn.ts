@@ -4,7 +4,7 @@ import {
   toTaskRunResult,
   type TaskRunResult,
   type TurnExecutionOutcome,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationBackendTurnInput } from "@/lib/agent-backends/conversation";
 import {
   settlementOf,

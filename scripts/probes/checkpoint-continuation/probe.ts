@@ -25,7 +25,7 @@ import type {
   CheckpointPayload,
 } from "@/lib/conversation-checkpoints/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import {
@@ -36,7 +36,7 @@ import {
   type AssembledExpectation,
 } from "@/lib/conversation-checkpoints/fixtures/continuity-corpus";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
-import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import { getCompactionService } from "@/lib/context-artifacts/production";
 import { createHistoryImageService } from "@/lib/conversations/history-image-service";
 import type { ImagePayload } from "@/lib/images/schemas";

@@ -12,7 +12,7 @@ vi.mock("@/lib/logging", () => ({
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backend";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createSessionAlignmentRepo } from "@/lib/session-alignment/repo";

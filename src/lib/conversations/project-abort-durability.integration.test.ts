@@ -34,12 +34,8 @@ import { applySyncDerivedFields } from "@/lib/workflows/conversation/persistence
 
 import { registerAbortController } from "@/lib/conversations/abort-registry";
 import { _resetAbortRegistryForTesting } from "@/lib/shared/abort-registry";
-import type {
-  ExecutePromptInput,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  PromptActorResult,
-} from "@/lib/workflows/conversation/types";
+import type { PrepareTurnInput, PrepareTurnOutput } from "@/lib/workflows/conversation/types";
+import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
 import { createProjectAskQuestionHandlers } from "./ask-route-handlers";
 import { createProjectAbortHandlers } from "./abort-route-handlers";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";

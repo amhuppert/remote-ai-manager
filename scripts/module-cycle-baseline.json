@@ -50,6 +50,12 @@
       "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
     },
     {
+      "from": "src/lib/conversation-core/production-turn-dependencies.ts",
+      "to": "src/lib/session-alignment/service-factory.ts",
+      "reason": "The shared turn dependencies compose the session-alignment service, whose authoring still enqueues messages through the conversation actor's lifecycle while both engines run.",
+      "removeWhen": "Cutover step 8 switches message enqueue to the core and deletes the actor's lifecycle and production modules; remove this allowance with them."
+    },
+    {
       "from": "src/lib/conversations/in-turn-question-service.ts",
       "to": "src/lib/workflows/conversation/lifecycle.ts",
       "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
@@ -381,13 +387,13 @@
     },
     {
       "from": "src/lib/workflows/conversation/production.ts",
-      "to": "src/lib/conversations/message-queue-production.ts",
-      "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
-      "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
+      "to": "src/lib/conversation-core/production-turn-dependencies.ts",
+      "reason": "The conversation actor builds its dependencies from the shared core's production turn dependencies while both engines run; the cycle closes only through the actor's lifecycle, which shared dispatchers (message enqueue, in-turn questions) still route through during coexistence, for core-owned conversations too.",
+      "removeWhen": "Cutover step 8 deletes the conversation actor (workflows/conversation/production.ts and lifecycle.ts); remove this allowance with them."
     },
     {
       "from": "src/lib/workflows/conversation/production.ts",
-      "to": "src/lib/session-alignment/service-factory.ts",
+      "to": "src/lib/conversations/message-queue-production.ts",
       "reason": "Application command, session and conversation production composition coordinates jobs, messages and ticket operations; mixed defaults still form return paths.",
       "removeWhen": "Replace default command/session backedges with production-supplied ports, preserving transcript-before-dispatch ordering, queue ownership and actor identity; remove this allowance when the return path disappears."
     },

@@ -48,13 +48,8 @@ import {
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 import { conversationMachine } from "./machine";
 import { validateRestoredSnapshot } from "./persistence";
-import type {
-  ConversationInput,
-  ExecutePromptInput,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  PromptActorResult,
-} from "./types";
+import type { ConversationInput, PrepareTurnInput, PrepareTurnOutput } from "./types";
+import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   createCapturingLogger,

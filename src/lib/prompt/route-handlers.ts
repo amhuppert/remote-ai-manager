@@ -33,10 +33,10 @@ import {
 import {
   executePromptStream as defaultExecutePromptStream,
   BackendMismatchError,
-  ModelSelectionValidationError,
   CollabBriefRequiredError,
   CollabDispatcherUnavailableError,
 } from "@/lib/prompt/sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import {
   hasCollabPrefix,
   stripCollabPrefix,

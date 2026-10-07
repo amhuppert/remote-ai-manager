@@ -1,4 +1,4 @@
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";

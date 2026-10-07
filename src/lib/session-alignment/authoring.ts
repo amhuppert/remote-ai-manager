@@ -6,7 +6,7 @@
  * incorporation, while proposals persist for review.
  */
 import type { ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
-import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 
 import {

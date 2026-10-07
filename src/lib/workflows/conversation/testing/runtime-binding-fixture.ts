@@ -3,9 +3,9 @@ import {
   PROJECT_SPAWN_INSTRUCTIONS,
 } from "@/lib/project-conversations/system-prompt";
 import { runtimeConfigurationFixture } from "./runtime-configuration-fixture";
-import type { DesiredRuntimeConfiguration } from "../pre-turn/runtime-recreate";
+import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import { ManagedConversationRuntime } from "../runtime-binding";
+import { ManagedConversationRuntime } from "@/lib/conversation-core/turn/runtime-binding";
 
 export function createManagedRuntimeFixture(
   key: string,

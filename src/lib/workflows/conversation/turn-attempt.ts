@@ -5,16 +5,17 @@ import { QuerySlotAdmissionTimeoutError } from "@/lib/shared/query-semaphore";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
-import type { ConversationContext, PromptActorResult } from "./types";
+import type { ConversationContext } from "./types";
+import type { PromptActorResult } from "@/lib/conversation-core/turn/types";
 import type {
   SettledConversationTurn,
   TurnExecutionOutcome,
   TurnInterruption,
-} from "./turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 import type {
   ConversationExecutionContext,
   TurnCancelReason,
-} from "./turn-spec";
+} from "@/lib/conversation-core/turn/turn-spec";
 
 const logger = createLogger("conversation.turn-attempt");
 

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { createLifecycleFixture } from "./testing/lifecycle-fixture";
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
 it("accounts a normalized dispatch failure's partial spend even without content blocks", async () => {

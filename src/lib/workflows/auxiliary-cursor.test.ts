@@ -11,7 +11,7 @@ import { createValidationFixer } from "./validation-fix";
 import {
   executeFreshTaskRun,
   type ExecuteFreshTaskRunInput,
-} from "./conversation/execute-fresh-task-run";
+} from "./merge/fresh-task-run";
 
 const modelSelection = {
   modelId: "composer-2.5",

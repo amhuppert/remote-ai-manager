@@ -2,13 +2,13 @@ import type { HoldHolder, TaskTurn } from "@/lib/conversation-core/executor";
 import type { CoreDebugCommandOutcome } from "@/lib/conversation-core/debug-mode";
 import type { CoreCheckpoints } from "@/lib/conversation-core/checkpoints";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
-import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import {
   createProductionConversationQuestions,
   createProductionConversationRecords,
 } from "@/lib/conversation-core/production-records";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { QuestionCommand } from "@/lib/workflows/conversation/manager";
+import type { QuestionCommand } from "@/lib/conversation-core/turn/types";
 import type { CoreTurnRuntime } from "@/lib/conversation-core/production-engine";
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
 import type { DeliveryClass } from "@/lib/conversation-core/turn-input";

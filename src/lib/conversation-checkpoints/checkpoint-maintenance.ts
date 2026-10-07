@@ -2,24 +2,24 @@
  * The owned asynchronous work of one checkpoint operation: capture, build,
  * recheck, freeze, retire, publish.
  *
- * Not a scheduler. The conversation manager reserves the host, admits the
- * operation and runs this exactly once per admitted operation; every host
- * effect — the actor's checkpoint projection, the runtime close, the row and
- * snapshot barrier — goes back through the manager-supplied host, so this
- * module never reaches an actor, a runtime handle or a queue itself.
+ * Not a scheduler. A conversation's host (the actor's manager, or the core's
+ * checkpoint continuation) reserves the conversation, admits the operation and
+ * runs this exactly once per admitted operation; every host effect — the
+ * host's checkpoint projection, the runtime close, the row and snapshot
+ * barrier — goes back through the host it is given, so this module never
+ * reaches an actor, a runtime handle or a queue itself.
  *
  * The order is the design's: durable admission → immutable payload plus
- * `retiring` → awaited runtime close → actor projection and reference clear →
+ * `retiring` → awaited runtime close → host projection and reference clear →
  * readiness commit → row and snapshot receipts → release. Optional capture
  * settles its execution and audit before generation. A failed build preserves
  * recorded history and releases only resumable continuity; uncertain cleanup,
  * lost continuity and failures after freeze stay owned for reconciliation.
  *
- * Private to the manager: `boundaries.arch.test.ts` refuses imports of this
- * module from outside `lib/workflows/conversation/`, so the HTTP and CLI
- * surfaces reach a checkpoint only through `checkConversationCheckpoint`,
- * `startConversationCheckpoint` and `cancelConversationCheckpoint`. The work
- * ends at readiness: delivering the frozen seed to a fresh runtime, and
+ Only those hosts run it: the HTTP and CLI surfaces reach a checkpoint
+ * through the host's check, start and cancel operations
+ * (`checkConversationCheckpoint`, `startConversationCheckpoint`,
+ * `cancelConversationCheckpoint`). The work ends at readiness: delivering the frozen seed to a fresh runtime, and
  * repairing an operation a restart interrupted, are separate owners over the
  * same repository.
  */
@@ -67,8 +67,8 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { Logger } from "@/lib/logging";
 import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
 
-import type { ExecuteWorkflowTaskRunInput } from "./execute-workflow-task-run";
-import type { TaskRunResult } from "./turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 
 export interface CheckpointMaintenanceInfrastructure {
   repo: ConversationCheckpointsRepo;

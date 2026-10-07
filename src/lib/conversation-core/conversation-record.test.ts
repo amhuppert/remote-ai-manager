@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { debugModeStateSchema } from "@/lib/debug-log/schemas";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
-import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import type { DebugModePhase, DebugModeState } from "@/lib/debug-log/schemas";
 import {
   applyBackendAdoption,

@@ -8,15 +8,12 @@ import {
   type ConversationState,
 } from "@/lib/conversations/schemas";
 import type { AgentCapabilityRuntimeApplicationState } from "@/lib/agent-capabilities/schemas";
+import type { CapabilityTurnContext } from "@/lib/conversation-core/contributions/capability-cascade";
 import {
   buildCapabilityApplyInput,
-  resolveCapabilitySeedForNewRuntime,
   seedRuntimeCapabilityState,
   applyCapabilityCascadeAtTurnStart,
-  type CapabilityTurnContext,
-  type CapabilitySeed,
-  type ProjectCapabilitySeed,
-} from "./capability-cascade";
+} from "./capability-apply";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -70,57 +67,6 @@ describe("buildCapabilityApplyInput", () => {
       worktreePath: "/p/.worktrees/s",
       backend: "claude",
     });
-  });
-});
-
-describe("resolveCapabilitySeedForNewRuntime", () => {
-  const sessionSeed: CapabilitySeed = {
-    capabilities: { backend: "claude", kinds: [] },
-    runtimeState: { cascades: {} },
-  };
-
-  it("composes the session cascade for a session conversation", async () => {
-    const deps = {
-      composeCapabilityConfigForConversation: vi.fn(async () => sessionSeed),
-      composeCapabilityConfigForProjectConversation: vi.fn(
-        async (): Promise<ProjectCapabilitySeed | undefined> => undefined,
-      ),
-    };
-    const ctx = makeCtx();
-
-    const seed = await resolveCapabilitySeedForNewRuntime(deps, ctx);
-
-    expect(seed).toBe(sessionSeed);
-    expect(
-      deps.composeCapabilityConfigForProjectConversation,
-    ).not.toHaveBeenCalled();
-    expect(deps.composeCapabilityConfigForConversation).toHaveBeenCalledWith({
-      projectPath: "/p",
-      projectName: "proj",
-      sessionName: "s",
-      conversationId: "conv-1",
-      worktreePath: "/p/.worktrees/s",
-      backend: "claude",
-    });
-  });
-
-  it("returns undefined and surfaces a non-blocking stream error when project composition throws", async () => {
-    const deps = {
-      composeCapabilityConfigForConversation: vi.fn(async () => sessionSeed),
-      composeCapabilityConfigForProjectConversation: vi.fn(async () => {
-        throw new Error("compose boom");
-      }),
-    };
-    const ctx = makeCtx({ isProjectConversation: true });
-
-    const seed = await resolveCapabilitySeedForNewRuntime(deps, ctx);
-
-    expect(seed).toBeUndefined();
-    expect(ctx.streamErrors).toEqual([
-      "Project conversation capability configuration could not be fully composed: compose boom",
-    ]);
-    // Project conversations never fall back to the session cascade.
-    expect(deps.composeCapabilityConfigForConversation).not.toHaveBeenCalled();
   });
 });
 

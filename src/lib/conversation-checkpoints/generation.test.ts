@@ -44,8 +44,8 @@ import { PROMPT_VERSION } from "@/lib/context-artifacts/generation";
 import { NORMALIZER_VERSION } from "@/lib/conversations/transcript-render";
 import { compactionConfigSchema } from "@/lib/config/schemas";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
 
 const USAGE = {

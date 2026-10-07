@@ -131,8 +131,8 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
     generate: (input, deps) => generateCheckpoint(input, deps),
     async resolveCaptureModel({ agentBackend, transcriptPath }) {
       const [{ loadConversationTurnDependencies }, { resolveTurnModelSelection }] = await Promise.all([
-        import("@/lib/workflows/conversation/core-composition"),
-        import("@/lib/workflows/conversation/pre-turn/resolve-model-effort"),
+        import("@/lib/conversation-core/production-turn-dependencies"),
+        import("@/lib/conversation-core/contributions/resolve-model-effort"),
       ]);
       const deps = await loadConversationTurnDependencies();
       const [config, priorMessages] = await Promise.all([

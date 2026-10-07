@@ -1,5 +1,5 @@
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import { toTaskRunResult } from "./turn-result";
+import { toTaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 /**
  * One-shot agent turn with the `TaskRunResult` contract of
  * {@link executeWorkflowTaskRun}, but no conversation.
@@ -23,8 +23,8 @@ import type {
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
-import type { StructuredOutputFormat } from "./turn-spec";
-import type { TaskRunResult } from "./turn-result";
+import type { StructuredOutputFormat } from "@/lib/conversation-core/turn/turn-spec";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 const logger = createLogger("conversation.execute-fresh-task-run");

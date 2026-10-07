@@ -1,17 +1,17 @@
 import { stableStringify } from "@/lib/shared/stable-stringify";
 import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
-import { toPromptActorResult } from "./turn-result";
+import { toPromptActorResult } from "@/lib/conversation-core/turn/turn-result";
+import { prepareTaskPrompt } from "@/lib/conversation-core/turn/turn-context";
 import {
   prepareConversationTurnContext,
-  prepareTaskPrompt,
   type PreparedConversationTurnContext,
 } from "./turn-context";
 import {
   prepareRuntimeInstructions,
   prepareRuntimeRecoveryInstructions,
   type RuntimeRecoveryInstructions,
-} from "./runtime-instructions";
+} from "@/lib/conversation-core/turn/runtime-instructions";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationActorDependencies } from "./actor-dependencies";
@@ -24,21 +24,15 @@ import type { ExecutionClass } from "@/lib/agent-backends/execution-schemas";
  */
 
 import { randomUUID } from "node:crypto";
-import type {
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  ExecutePromptInput,
-  PromptActorResult,
-  RunTaskRunInput,
-  FinalizeQueuedDeliveryInput,
-} from "./types";
-import { deriveTaskRunPermissions } from "./task-run-permissions";
+import type { PrepareTurnInput, PrepareTurnOutput, RunTaskRunInput, FinalizeQueuedDeliveryInput } from "./types";
+import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
+import { deriveTaskRunPermissions } from "@/lib/conversation-core/turn/task-run-permissions";
 
 import { getErrorMessage } from "@/lib/shared/errors";
 import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
-import { attributeTaskRunCost } from "./task-run-cost";
+import { attributeTaskRunCost } from "@/lib/conversation-core/turn/task-run-cost";
 import {
   costSettlementFrame,
   recordConversationCostSettlement,
@@ -80,13 +74,13 @@ import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import {
   classifyFailureForBackend,
   resolveFailureClassifierForBackend,
-} from "./failure-classification";
+} from "@/lib/conversation-core/turn/failure-classification";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import {
   withRuntimeReplacementRetry,
   type RuntimeReplacementRetryDeps,
-} from "./with-runtime-replacement-retry";
+} from "@/lib/conversation-core/turn/with-runtime-replacement-retry";
 
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
@@ -98,14 +92,14 @@ import {
 import {
   runtimeConfigurationChanges,
   type DesiredRuntimeConfiguration,
-} from "./pre-turn/runtime-recreate";
+} from "@/lib/conversation-core/turn/runtime-recreate";
 import { isRuntimeCreatedWithoutResume } from "@/lib/memory/delivery-decision";
-import { resolveContinuationSeed } from "./pre-turn/continuation-seed";
+import { resolveContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
 import {
   prepareCheckpointSeed,
   type PreparedCheckpointSeed,
-} from "./pre-turn/checkpoint-seed";
-import { checkpointScopeKeyForStoreIdentity } from "./actor-input-loader";
+} from "@/lib/conversation-checkpoints/checkpoint-seed";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import {
   fingerprintAssembledInput,
   fingerprintSubmittedInput,
@@ -129,30 +123,26 @@ import {
   resolveAgentBackendTurnDefaults,
 } from "@/lib/agent-backends/conversation-policy";
 
-import type { ActorConfig } from "./pre-turn/resolve-model-effort";
+import type { ActorConfig } from "@/lib/conversation-core/contributions/resolve-model-effort";
 import {
   resolveTurnModelSelection,
   resolveBackendTimeoutMs,
   resolveBackendStallTimeoutMs,
-} from "./pre-turn/resolve-model-effort";
+} from "@/lib/conversation-core/contributions/resolve-model-effort";
 import {
   resolveTurnPromptText,
   composeUserTranscriptBlocks,
-} from "./pre-turn/review-feedback";
-import { persistTurnImages } from "./pre-turn/image-persistence";
+} from "@/lib/conversation-core/contributions/review-feedback";
+import { persistTurnImages } from "@/lib/conversation-core/contributions/image-persistence";
 
-import type { CapabilityTurnContext } from "./pre-turn/capability-cascade";
-import {
-  buildCapabilityApplyInput,
-  resolveCapabilitySeedForNewRuntime,
-  seedRuntimeCapabilityState,
-  applyCapabilityCascadeAtTurnStart,
-} from "./pre-turn/capability-cascade";
-import { recordSeenAlignmentVersion } from "./pre-turn/alignment-gate";
+import type { CapabilityTurnContext } from "@/lib/conversation-core/contributions/capability-cascade";
+import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
+import { buildCapabilityApplyInput, seedRuntimeCapabilityState, applyCapabilityCascadeAtTurnStart } from "./pre-turn/capability-apply";
+import { recordSeenAlignmentVersion } from "@/lib/conversation-core/contributions/alignment-gate";
 import { createBackgroundTasksLostHandler } from "./pre-turn/background-tasks-lost";
 
-import { wireTurnAbort } from "./pre-turn/abort-wiring";
-import { createQueuedDeliveryAccounting } from "./post-turn/queued-delivery-accounting";
+import { wireTurnAbort } from "@/lib/conversation-core/turn/abort-wiring";
+import { createQueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
 import {
   buildFailedTurnResult,
   buildAbortedTurnResult,

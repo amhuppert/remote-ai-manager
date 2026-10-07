@@ -62,7 +62,7 @@ import {
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/pre-turn/focus-memory";
+import { registerFocusMemoryIfPresent } from "@/lib/conversation-core/contributions/focus-memory";
 
 interface CapturedRegistryCall {
   type: "write" | "writeOptional" | "register";

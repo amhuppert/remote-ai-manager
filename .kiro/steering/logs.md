@@ -103,7 +103,7 @@ and spreads it:
 | Actor lifecycle | `workflows/conversation/manager.ts` | `conversation-manager.actor_started`, `.turn_rejected`, `.turn_failed`, `.ensure_and_drain` |
 | Resource acquisition | `prompt/single-flight.ts`, `shared/query-semaphore.ts` | `conversation-lock.{acquired,released,rejected}`, `semaphore.*` |
 | Turn runtime | `workflows/conversation/actor-implementations.ts` | `prompt.runtime_create`, `prompt.mcp_seeded`, `prompt.sdk_error`, `task_run.*` |
-| Retry policy | `workflows/conversation/with-runtime-replacement-retry.ts` | `prompt.runtime_retry`, `prompt.continuation_pair_contradiction` |
+| Retry policy | `conversation-core/turn/with-runtime-replacement-retry.ts` | `prompt.runtime_retry`, `prompt.continuation_pair_contradiction` |
 | Transcript | `prompt/transcript.ts` | `documents-index.index_failed`, `notice_appended` |
 | Message queue | `prompt/queue.ts`, `conversations/message-queue-drain.ts` | `queue.accepted`, `queue.drain_*` |
 
@@ -113,7 +113,7 @@ rule:
 | Stage | Module | Events |
 | --- | --- | --- |
 | Startup rehydration | `workflows/conversation/rehydration.ts` | `conversation-manager.rehydrated`, `queue.recover_failed` |
-| Workflow task run (project compaction, ticket generation) | `workflows/conversation/execute-workflow-task-run.ts` | `conversation.execute_workflow_task_run.{dispatch,finalized}` |
+| Workflow task run (project compaction, ticket generation) | `conversation-core/turn/execute-workflow-task-run.ts` | `conversation.execute_workflow_task_run.{dispatch,finalized}` |
 | State-store reads | `state-store/accessors.ts` | `state.read.timing` |
 | Conversation draft | `prompt/route-handlers.ts` (`persistPendingPromptText`) | `pending_prompt.{update_completed,compare_and_clear_completed,update_failed}` |
 

@@ -12,7 +12,7 @@ import type {
 } from "@/lib/workflow-graph/execution-mutation";
 import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";

@@ -28,7 +28,7 @@ import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-t
 import type { Logger } from "@/lib/logging";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 
-import { checkpointScopeKeyForStoreIdentity } from "./actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "./scope-key";
 
 export interface CheckpointQueueRepairInfrastructure {
   repo: Pick<

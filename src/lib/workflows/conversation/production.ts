@@ -1,32 +1,22 @@
 import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
-import { readRuntimeInstructions } from "./runtime-instructions";
-import { productionPassiveSubscriptionDependencies } from "./pre-turn/passive-subscription-context";
+import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import {
   createSubscriptionWakeAdmissionReader,
   readSubscriptionWakeHold,
 } from "@/lib/conversations/message-queue-subscription-admission";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
-import type { AgentBackendId } from "@/lib/shared/schemas";
-import type {
-  TranscriptEntry,
-  TranscriptBroadcastMeta,
-} from "@/lib/prompt/transcript";
 
 import {
   getConversationRuntime,
   applyHostedCostSettlement,
 } from "./runtime-state";
 import { createLogger } from "@/lib/logging";
+import { loadConversationTurnDependencies } from "@/lib/conversation-core/production-turn-dependencies";
 
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-
-import {
-  createConversationRuntimePolicy,
-  type ConversationPolicyInfrastructure,
-} from "./runtime-policy";
+import { createConversationRuntimePolicy } from "./runtime-policy";
+import type { ConversationPolicyInfrastructure } from "@/lib/conversation-core/turn/dependencies";
 import { createConversationPolicyState } from "./policy-state";
 import { conversationRuntimeKey } from "./runtime-state";
-import { readLineageCumulativeCost } from "./task-run-cost";
 import type { ConversationActorDependencies } from "./actor-dependencies";
 import {
   coreCheckpoints,
@@ -38,7 +28,6 @@ import {
   retireCoreConversation,
   stopCoreConversation,
 } from "@/lib/supervision/handles";
-const logger = createLogger("conversation-actor");
 
 type ProductionActorDependencies = Omit<
   ConversationActorDependencies,
@@ -46,252 +35,44 @@ type ProductionActorDependencies = Omit<
 > & { policy: ConversationPolicyInfrastructure };
 
 export async function loadProductionActorDependencies(): Promise<ProductionActorDependencies> {
-  const [
-    lockMod,
-    semaphoreMod,
-    transcriptMod,
-    configMod,
-    transcriptImagesMod,
-    registryMod,
-    runtimeRegistryMod,
-    childEnvMod,
-    commandsMod,
-    codexToolMod,
-    projectResolverMod,
-    debugLogMod,
-    stateMod,
-    composeForConversationMod,
-    globalStoreMod,
-    discoveryMod,
-    capabilitiesDepsMod,
-    messageQueueMod,
-    alignmentServiceFactoryMod,
-    ticketStorageMod,
-    notepadServiceFactoryMod,
-    modelSelectionAdmissionMod,
-    memoryServiceFactoryMod,
-    validatorInstructionsMod,
-    repoConfigMod,
-  ] = await Promise.all([
+  const [turn, lockMod, semaphoreMod, registryMod, runtimeRegistryMod, childEnvMod, commandsMod] = await Promise.all([
+    loadConversationTurnDependencies(),
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
-    import("@/lib/prompt/transcript"),
-    import("@/lib/config/loader"),
-    import("@/lib/images/transcript-images"),
     import("@/lib/agent-backends/registry"),
     import("@/lib/agent-backends/runtime-registry"),
     import("@/lib/shared/child-env"),
     import("@/lib/commands/service"),
-    import("@/lib/agent-runs/tool-hint"),
-    import("@/lib/projects/resolver"),
-    import("@/lib/debug-log/service"),
-    import("@/lib/state-store"),
-    import("@/lib/mcp/compose-for-conversation"),
-    import("@/lib/mcp/global-store"),
-    import("@/lib/mcp/discovery"),
-    import("@/lib/agent-capabilities/default-deps"),
-    import("@/lib/conversations/message-queue-service"),
-    import("@/lib/session-alignment/service-factory"),
-    import("@/lib/tickets/storage-production"),
-    import("@/lib/notepads/service-factory"),
-    import("@/lib/agent-backends/model-selection-admission"),
-    import("@/lib/memory/service-factory"),
-    import("@/lib/workflow-graph/validator-runtime-instructions"),
-    import("@/lib/projects/repo-config"),
   ]);
-
-  // The alignment service holds a repo bound to the live DB; construct it once
-  // here (the production dependency loader runs lazily) rather than per turn.
-  const alignmentService =
-    alignmentServiceFactoryMod.createSessionAlignmentServiceForProduction();
-
-  const composePortableMcpForConversation =
-    composeForConversationMod.createComposePortableMcpForConversation({
-      readGlobalOverrides: () =>
-        globalStoreMod.defaultGlobalOverrideStore.read(),
-      readProjectOverrides: async (projectPath) => {
-        return stateMod.getProjectMcpOverrides(projectPath);
-      },
-      readSessionOverrides: async (projectPath, sessionName) => {
-        const session = await stateMod.getSession(projectPath, sessionName);
-        return session?.mcpOverrides;
-      },
-      readConversationOverrides: async (projectPath, target) => {
-        const conversation = await stateMod.getConversation(
-          projectPath,
-          conversationTargetStoreSessionName(target),
-          target.conversationId,
-        );
-        return conversation?.mcpOverrides;
-      },
-      discoverSources: (input) => discoveryMod.discoverAllSources(input),
-      globalConfigPath: () =>
-        globalStoreMod.getDefaultGlobalMcpDefinitionPath(),
-    });
-
   return {
-    subscriptions: productionPassiveSubscriptionDependencies,
+    ...turn,
     execution: {
+      ...turn.execution,
+      async requestUserQuestion(scope, questions, signal) {
+        const { inTurnQuestionService } = await import("@/lib/conversations/in-turn-question-service");
+        return inTurnQuestionService.request(scope, questions, signal);
+      },
       acquireConversationLock: lockMod.acquireConversationLock,
       acquireQuerySlot: semaphoreMod.acquireQuerySlot,
-      readConfig: configMod.readConfig,
-      getConversationBackendFactory: registryMod.getConversationBackendFactory,
       backendSupportsCheckpointFork: (backend) =>
-        registryMod.getBackendDescriptor(backend).conversation?.capabilities
-          .checkpointFork ?? false,
-      admitConfiguredModelSelection: (input) =>
-        modelSelectionAdmissionMod.admitConfiguredModelSelection(input),
-      getConversationCapabilities: (backend: AgentBackendId) =>
-        registryMod.getBackendDescriptor(backend).conversation?.capabilities,
+        registryMod.getBackendDescriptor(backend).conversation?.capabilities.checkpointFork ?? false,
+      getConversationCapabilities: (backend) => registryMod.getBackendDescriptor(backend).conversation?.capabilities,
       registerBackendRuntime: runtimeRegistryMod.registerRuntime,
       unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
       buildChildEnv: childEnvMod.buildChildEnv,
       resolvePluginPaths: commandsMod.resolvePluginPaths,
-      getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
-      getProjectDisplayName: projectResolverMod.getProjectDisplayName,
-      getConversation: stateMod.getConversation,
-      getSessionState: stateMod.getSession,
-      fileExists: (await import("node:fs")).existsSync,
-      executeAgentCall: defaultExecuteAgentCall,
-      async requestUserQuestion(scope, questions, signal) {
-        const { inTurnQuestionService } =
-          await import("@/lib/conversations/in-turn-question-service");
-        return inTurnQuestionService.request(scope, questions, signal);
-      },
-      getTaskRunner: registryMod.getTaskRunner,
       getRuntime: getConversationRuntime,
       applyCostSettlementToHostedActor: applyHostedCostSettlement,
     },
-    transcript: {
-      getTranscriptPath: transcriptMod.getTranscriptPath,
-      readLineageCumulativeCost,
-      appendTranscriptEntryOnce: (cid, entry, meta) =>
-        transcriptMod.appendTranscriptEntryOnce(cid, entry, undefined, meta),
-      safeAppendTranscriptEntry: (
-        cid: string,
-        entry: TranscriptEntry,
-        meta?: TranscriptBroadcastMeta,
-      ) =>
-        transcriptMod.safeAppendTranscriptEntry(
-          cid,
-          entry,
-          undefined,
-          undefined,
-          meta,
-        ),
-      safeAppendTranscriptEntryOnce: (
-        cid: string,
-        entry: TranscriptEntry & { id: string },
-        meta?: TranscriptBroadcastMeta,
-      ) =>
-        transcriptMod.safeAppendTranscriptEntryOnce(
-          cid,
-          entry,
-          undefined,
-          undefined,
-          meta,
-        ),
-      saveTranscriptImage: transcriptImagesMod.saveTranscriptImage,
-      getNextImageIndex: transcriptImagesMod.getNextImageIndex,
-      readConversationMessages: transcriptMod.readConversationMessages,
-    },
-    effects: {
-      notifyRuntimeCleanup: async (input) => {
-        const [{ notifyRuntimeCleanup }, { dispatchAgentNotification }] =
-          await Promise.all([
-            import("./runtime-cleanup-notification"),
-            import("@/lib/push-notification/dispatcher"),
-          ]);
-        await notifyRuntimeCleanup(input, {
-          appendNotice: transcriptMod.appendNotice,
-          push: dispatchAgentNotification,
-          log: logger,
-        });
-      },
-      mutateConversation: stateMod.mutateConversation,
-      async recordRuntimeLossNotice(input) {
-        const { getSubscriptionService } =
-          await import("@/lib/subscriptions/service-factory");
-        return getSubscriptionService().recordRuntimeLossNotice(input);
-      },
-      async prepareRuntimeLossNotice(input) {
-        const { getSubscriptionService } =
-          await import("@/lib/subscriptions/service-factory");
-        return getSubscriptionService().prepareRuntimeLossNotice(input);
-      },
-      recordNotepadDeliveries: (input) =>
-        notepadServiceFactoryMod
-          .getNotepadAcceptedContextRecorder()
-          .recordDelivered(input),
-      recordMemoryIndexDeliveries: (input) =>
-        memoryServiceFactoryMod.getMemoryTelemetryService().recordDelivery({
-          conversationId: input.conversationId,
-          channel: "index",
-          kind: input.kind,
-          composedAt: input.composedAt,
-          notes: input.notes,
-        }),
-      resetMemoryIndexDelivery: (conversationId) =>
-        memoryServiceFactoryMod
-          .getMemoryTelemetryService()
-          .resetIndexDelivery(conversationId),
-      createReferenceDocument: stateMod.createReferenceDocument,
-      confirmQueuedDelivery:
-        messageQueueMod.messageQueueService.confirmDelivery,
-      markQueuedPending: messageQueueMod.messageQueueService.markPending,
-      markQueuedFailed: messageQueueMod.messageQueueService.markFailed,
-      markQueuedUncertain: messageQueueMod.messageQueueService.markUncertain,
-    },
-    context: {
-      getWorkflowLaneInstructions:
-        validatorInstructionsMod.createValidatorRuntimeInstructionReader({
-          getActiveExecution: stateMod.getActiveGraphWorkflowExecution,
-          readValidationConfig: async (projectPath) =>
-            (await repoConfigMod.readRepoConfig(projectPath))?.validation,
-        }),
-      getActiveAlignmentInjection: (projectPath: string, sessionName: string) =>
-        alignmentService.getActiveInjection(projectPath, sessionName),
-      getActiveAlignmentVersion: (projectPath: string, sessionName: string) =>
-        alignmentService.getActiveVersion(projectPath, sessionName),
-      getLiveTicketBlock: (projectPath: string, sessionName: string) =>
-        ticketStorageMod
-          .getLiveTicketContextProvider()
-          .getForSession(projectPath, sessionName),
-      getMemoryIndexBlock: (request) =>
-        memoryServiceFactoryMod
-          .getMemoryIndexContextProvider()
-          .getForConversation(request),
-      readLiveReference: async (target) =>
-        (await import("@/lib/live-references/reader")).liveReferenceReader.read(
-          target,
-        ),
-      readNotepadForInjection: (notepadId: string) =>
-        notepadServiceFactoryMod
-          .getNotepadInjectionReader()
-          .readForInjection(notepadId),
-      getReferenceDocuments: stateMod.getReferenceDocuments,
-    },
-    policy: {
-      composePortableMcp: composePortableMcpForConversation,
-      composeCapabilities: capabilitiesDepsMod.defaultComposeForConversation,
-      composeDurableProject:
-        capabilitiesDepsMod.composeCapabilityConfigForProjectConversation,
-      applyRuntimeConfig:
-        capabilitiesDepsMod.applyRuntimeConfigToConversationRuntime,
-    },
-    debug: {
-      getDebugLogUrl: debugLogMod.getDebugLogUrl,
-    },
     checkpoint: {
       async repo() {
-        const { getConversationCheckpointsRepo } =
-          await import("@/lib/conversation-checkpoints/service-factory");
+        const { getConversationCheckpointsRepo } = await import("@/lib/conversation-checkpoints/service-factory");
         return getConversationCheckpointsRepo();
       },
       now: () => new Date().toISOString(),
     },
-    log: logger,
-  } satisfies ProductionActorDependencies;
+    log: createLogger("conversation-actor"),
+  };
 }
 import type { ConversationManagerDependencies } from "./manager";
 import {
@@ -315,12 +96,12 @@ import {
   unregisterAbortController,
 } from "@/lib/conversations/abort-registry";
 import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
-import { ephemeralConversationEffects } from "./effects";
+import { ephemeralConversationEffects } from "@/lib/conversation-core/turn/effects";
 import { conversationCapabilitiesForBackend } from "@/lib/agent-backends/catalog";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
-import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
+import type { CheckpointAuthorityHydration } from "@/lib/conversation-checkpoints/checkpoint-restart";
 
 const ACTOR_REGISTRY_KEY = "__cc_conversation_actors";
 function productionActorRegistry(): Map<string, ConversationActorRef> {
@@ -341,7 +122,7 @@ async function hydrateProductionCheckpointAuthority(
   const [{ getConversationCheckpointsRepo }, { hydrateCheckpointAuthority }] =
     await Promise.all([
       import("@/lib/conversation-checkpoints/service-factory"),
-      import("./checkpoint-restart"),
+      import("@/lib/conversation-checkpoints/checkpoint-restart"),
     ]);
   return hydrateCheckpointAuthority(key, {
     repo: getConversationCheckpointsRepo(),
@@ -391,7 +172,7 @@ export function createProductionConversationManagerDependencies(): ConversationM
         { messageQueueService },
       ] = await Promise.all([
         import("./rehydration"),
-        import("./checkpoint-queue-repair"),
+        import("@/lib/conversation-checkpoints/checkpoint-queue-repair"),
         import("@/lib/conversation-checkpoints/service-factory"),
         import("@/lib/state-store"),
         import("@/lib/prompt/transcript"),

@@ -34,11 +34,8 @@ import {
   isProjectSentinel,
 } from "@/lib/conversations/project-conversation-scope";
 import type { GenerateConversationNameInput } from "@/lib/conversations/name-generation";
-import type {
-  ConversationContext,
-  ActiveTurn,
-  ConversationPersistenceMode,
-} from "./types";
+import type { ConversationContext, ActiveTurn } from "./types";
+import type { ConversationPersistenceMode } from "@/lib/conversation-core/turn/types";
 import type {
   ConversationState,
   ActiveTurnSource,

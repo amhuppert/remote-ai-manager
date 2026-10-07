@@ -71,7 +71,7 @@ describe("spawn instructions are project-conversation-only", () => {
   it("is injected into the system prompt only behind the isProjectConversation gate", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const instructionSrc = readFileSync(
-      resolve(here, "../workflows/conversation/runtime-instructions.ts"),
+      resolve(here, "../conversation-core/turn/runtime-instructions.ts"),
       "utf8",
     );
     // The constant flows into `sessionInstructions` exclusively through the

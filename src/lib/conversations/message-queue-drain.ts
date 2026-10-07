@@ -11,7 +11,7 @@ import { conversationStoreIdentity } from "./conversation-target";
  */
 
 import { createLogger } from "@/lib/logging";
-import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type {
   DocumentFeedbackPayload,
@@ -32,7 +32,7 @@ import type {
   ConversationTurnSubmission,
   QueuedDeliveryMetadata,
   TurnAdmission,
-} from "@/lib/workflows/conversation/turn-spec";
+} from "@/lib/conversation-core/turn/turn-spec";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 

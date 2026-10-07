@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
-import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import type { ConversationTurnSubmission } from "@/lib/conversation-core/turn/turn-spec";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { AgentTurnFailedError } from "./errors";

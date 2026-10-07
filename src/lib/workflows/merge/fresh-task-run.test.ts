@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { executeFreshTaskRun } from "./execute-fresh-task-run";
+import { executeFreshTaskRun } from "./fresh-task-run";
 import type { AgentTaskRequest } from "@/lib/agent-backends/task";
 const input = {
   projectPath: "/repo",

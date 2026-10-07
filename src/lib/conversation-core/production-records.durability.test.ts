@@ -234,7 +234,7 @@ describe("conversation rows of a project conversation the core runs", () => {
     expect(persistedNotifications()).toEqual([]);
   });
 
-  it("gives a message a restart withdrew back for review, with the backend a fresh conversation's first message chose", async () => {
+  it("gives a withdrawn message back for review with its reason, and the backend a fresh conversation's first message chose", async () => {
     setUp();
     fixture.seedSession(PROJECT, SESSION);
     await fixture.seedConversation(
@@ -245,14 +245,22 @@ describe("conversation rows of a project conversation the core runs", () => {
     const records = createProductionConversationRecords(rowStore());
     await records.recordWithdrawn(
       { projectPath: PROJECT, storeSessionName: SESSION, conversationId: "conv-s" },
-      { cause: "user:conv-s:1", request: { kind: "user_message", text: "Hello", backend: "codex", inputOrigin: "user" } },
+      {
+        cause: "user:conv-s:1",
+        request: { kind: "user_message", text: "Hello", backend: "codex", inputOrigin: "user" },
+        reason: "Review queued deliveries before sending another prompt.",
+      },
     );
 
     // The queue row carries no backend: a retry runs on the row's, so the choice is taken now.
     const row = await fixture.store.getConversation(PROJECT, SESSION, "conv-s");
     expect(row?.agentBackend).toBe("codex");
     expect(row?.pendingQueue).toEqual([
-      expect.objectContaining({ status: "failed", content: [{ type: "text", text: "Hello" }] }),
+      expect.objectContaining({
+        status: "failed",
+        error: "Review queued deliveries before sending another prompt.",
+        content: [{ type: "text", text: "Hello" }],
+      }),
     ]);
   });
 });

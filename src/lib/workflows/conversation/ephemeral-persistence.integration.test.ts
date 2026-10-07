@@ -113,13 +113,8 @@ import {
   _resetProjectConversationStatusNotificationDepsForTesting,
 } from "@/lib/project-conversations/status-notifications";
 import type { Db } from "@/lib/state-store/schemas";
-import type {
-  ConversationInput,
-  PromptActorResult,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  RunTaskRunInput,
-} from "./types";
+import type { ConversationInput, PrepareTurnInput, PrepareTurnOutput, RunTaskRunInput } from "./types";
+import type { PromptActorResult } from "@/lib/conversation-core/turn/types";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 // ============================================================

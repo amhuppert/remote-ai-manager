@@ -5,7 +5,6 @@ import {
   createStallWatchdog,
   type StallWatchdog,
 } from "@/lib/agent-backends/stall-watchdog";
-import type { ConversationRuntimeState } from "../runtime-state";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 
 const logger = createLogger("conversation-actor");
@@ -23,10 +22,10 @@ export interface TurnAbortWiring {
 }
 
 export function wireTurnAbort(input: {
-  runtimeState: Pick<
-    ConversationRuntimeState,
-    "abortController" | "timeoutHandle"
-  >;
+  runtimeState: {
+    abortController: AbortController;
+    timeoutHandle?: ReturnType<typeof setTimeout>;
+  };
   conversationId: string;
   sessionName: string;
   backend: string;

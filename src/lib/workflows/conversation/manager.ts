@@ -1,5 +1,5 @@
-import { taskTurnRequestSchema } from "./turn-spec";
-import type { TurnExecutionOutcome } from "./turn-result";
+import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import type { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { conversationTranscriptFrame } from "@/lib/agent-backends/transcript";
@@ -12,16 +12,26 @@ import type { CheckpointCaptureRuntimeInput } from "./actor-implementations";
 import {
   omittedCaptureResult,
   pendingCheckpointCapture,
-} from "./checkpoint-capture";
+} from "@/lib/conversation-checkpoints/checkpoint-capture";
 import type {
   BackendModelSelection,
   CaptureAvailability,
 } from "@/lib/agent-backends/schemas";
-import type { CheckpointHandoffRequest } from "@/lib/conversation-checkpoints/schemas";
 import type { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
-import type { AskQuestionItem } from "@/lib/conversations/schemas";
-import type { readRuntimeInstructions } from "./runtime-instructions";
-import type { DesiredRuntimeConfiguration } from "./pre-turn/runtime-recreate";
+import type {
+  ConversationCheckpointCancel,
+  ConversationCheckpointCheck,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointReconcileRequest,
+  ConversationCheckpointRequest,
+  ConversationCheckpointSkip,
+  ConversationCheckpointStart,
+  CoreConversationCheckpoints,
+} from "@/lib/conversation-checkpoints/operation-contract";
+import type { PendingConversationQuestion, QuestionCommand } from "@/lib/conversation-core/turn/types";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import type { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
+import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
 import {
@@ -33,11 +43,10 @@ import {
   type TurnAdmission,
   type TurnAdmissionRefusal,
   type TurnCancelReason,
-} from "./turn-spec";
-import type { SettledConversationTurn } from "./turn-result";
+} from "@/lib/conversation-core/turn/turn-spec";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
 import { TurnAttempt } from "./turn-attempt";
-import { conversationTurnSpecSchema } from "./turn-spec";
+import { conversationTurnSpecSchema } from "@/lib/conversation-core/turn/turn-spec";
 import {
   registerAbortController,
   unregisterAbortController,
@@ -60,11 +69,8 @@ import {
   forgetConversationPersistence,
 } from "./persistence-adapter";
 import { createLogger } from "@/lib/logging";
-import {
-  ConversationBindingNotFoundError,
-  checkpointScopeKeyForStoreIdentity,
-  type EnsureActorInputData,
-} from "./actor-input-loader";
+import { ConversationBindingNotFoundError, type EnsureActorInputData } from "./actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 
 import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -86,7 +92,6 @@ import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostic
 import type { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import {
   CHECKPOINT_CAPTURE_POLICY,
-  type CheckpointReceipt,
   type CheckpointHandoffEligibility,
 } from "@/lib/conversation-checkpoints/receipt";
 import type { ConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
@@ -114,17 +119,17 @@ import {
   runCheckpointMaintenance,
   type CheckpointMaintenanceHost,
   restoredGateFor,
-} from "./checkpoint-maintenance";
+} from "@/lib/conversation-checkpoints/checkpoint-maintenance";
 import {
   checkpointKeyLogFields,
   hydrateCheckpointAuthority,
   type CheckpointAuthorityHydration,
   readCheckpointAuthority,
-} from "./checkpoint-restart";
-import { repairQueuedAcceptanceFromCheckpoint } from "./checkpoint-queue-repair";
+} from "@/lib/conversation-checkpoints/checkpoint-restart";
+import { repairQueuedAcceptanceFromCheckpoint } from "@/lib/conversation-checkpoints/checkpoint-queue-repair";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
-import type { ExecuteWorkflowTaskRunInput } from "./execute-workflow-task-run";
-import type { TaskRunResult } from "./turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationCheckpointMaintenance } from "./runtime-state";
 
 const logger = createLogger("conversation-manager");
@@ -138,18 +143,7 @@ export interface ActiveConversationTurnDescription {
   readonly originMessageId: string | null;
 }
 
-/** The outcome belongs to the admitted attempt; refusals contain no preceding turn result. */
-export type ConversationTurnExecution =
-  | TurnAdmissionRefusal
-  | { kind: "settled"; turn: SettledConversationTurn };
 
-interface ConversationQuestionBatch {
-  questionId: string;
-  questions: AskQuestionItem[];
-}
-export type QuestionCommand =
-  | ({ kind: "register_question" } & ConversationQuestionBatch)
-  | { kind: "clear_question"; questionId: string };
 
 export interface ConversationAdmissionDeps {
   readState(identity: {
@@ -232,93 +226,6 @@ export interface ConversationCheckpointDependencies {
   getBackgroundActivityEpoch(conversationId: string): number;
   generate: typeof generateCheckpoint;
   now(): string;
-}
-
-export interface ConversationCheckpointRequest {
-  handoff?: CheckpointHandoffRequest;
-  address: ConversationAddress;
-  /** Caller-generated UUID: the operation id, and the reuse key on retransmit. */
-  requestId: string;
-  /**
-   * Explicit recovery: the recovery-required operation this build supersedes.
-   * Absent for an ordinary checkpoint, which cannot supersede anything.
-   */
-  recover?: string | null;
-}
-
-export type ConversationCheckpointReconcile =
-  | { kind: "repaired"; operation: CheckpointOperation }
-  | {
-      kind: "blocked";
-      operation: CheckpointOperation;
-      refusal: CheckpointRefusal;
-    }
-  | { kind: "unchanged"; operation: CheckpointOperation }
-  | { kind: "refused"; refusal: CheckpointRefusal };
-
-export type ConversationCheckpointStart =
-  | {
-      kind: "admitted" | "reused";
-      operation: CheckpointOperation;
-      receipt: CheckpointReceipt;
-      /** Settles with the operation's durable outcome; never rejects. */
-      completion: Promise<CheckpointOperation>;
-    }
-  | { kind: "refused"; refusal: CheckpointRefusal };
-
-export interface ConversationCheckpointCheck {
-  handoff: CheckpointHandoffEligibility;
-  eligible: boolean;
-  /** Every failing predicate, primary first; empty when eligible. */
-  refusals: CheckpointRefusal[];
-  /** The operation holding the slot, when one does. */
-  active: CheckpointReceipt | null;
-  hosted: boolean;
-}
-
-export type ConversationCheckpointCancel =
-  | { kind: "cancelled"; operation: CheckpointOperation }
-  | { kind: "completed"; operation: CheckpointOperation }
-  | { kind: "refused"; refusal: CheckpointRefusal };
-
-export type ConversationCheckpointSkip =
-  | {
-      kind: "stopping" | "handoff_already_settled";
-      operation: CheckpointOperation;
-    }
-  | { kind: "refused"; refusal: CheckpointRefusal };
-
-export interface ConversationCheckpointReconcileRequest {
-  address: ConversationAddress;
-  operationId: string;
-  captureExecutionStopped?: boolean;
-  source?: "cli" | "ui" | "api";
-}
-
-/**
- * The checkpoint owner of the conversations the shared conversation core
- * runs. The manager hands each checkpoint operation on such a conversation to
- * it whole, as it does a debug command; the actor never hosts one.
- */
-export interface CoreConversationCheckpoints {
-  check(
-    address: ConversationAddress,
-    options: { recover: string | null },
-  ): Promise<ConversationCheckpointCheck>;
-  start(input: ConversationCheckpointRequest): Promise<ConversationCheckpointStart>;
-  cancel(input: {
-    address: ConversationAddress;
-    operationId: string;
-  }): Promise<ConversationCheckpointCancel>;
-  skipHandoff(input: {
-    address: ConversationAddress;
-    operationId: string;
-  }): Promise<ConversationCheckpointSkip>;
-  reconcile(
-    input: ConversationCheckpointReconcileRequest,
-  ): Promise<ConversationCheckpointReconcile>;
-  /** Queued input waits for the checkpoint instead of being refused as not running. */
-  acceptsQueuedInput(conversationId: string): boolean;
 }
 
 /** The manager's owned reservation; `runtime.maintenance` aliases it once hosted. */
@@ -1834,7 +1741,7 @@ export function createConversationManager(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    question: ConversationQuestionBatch,
+    question: PendingConversationQuestion,
   ): Promise<boolean> {
     return runQuestionCommand(projectPath, sessionName, conversationId, {
       kind: "register_question",
@@ -4310,7 +4217,7 @@ export function createConversationManager(
   function getConversationRuntimeConfiguration(
     conversationId: string,
   ):
-    | Readonly<import("./pre-turn/runtime-recreate").RecreateRuntimeSnapshot>
+    | Readonly<import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot>
     | undefined {
     for (const [key, actor] of host.entries()) {
       if (

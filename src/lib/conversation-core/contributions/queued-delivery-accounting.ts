@@ -19,7 +19,7 @@
 
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
-import type { QueuedDeliveryMetadata } from "../turn-spec";
+import type { QueuedDeliveryMetadata } from "@/lib/conversation-core/turn/turn-spec";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("conversation-actor");

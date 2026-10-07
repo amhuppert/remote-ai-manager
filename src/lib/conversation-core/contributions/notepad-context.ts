@@ -1,20 +1,20 @@
 import { expandNotepadRefsForAgent } from "@/lib/notepads/injection";
 import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { ConversationActorDependencies } from "../actor-dependencies";
-import type { PreparedTurnContribution } from "../turn-context";
+import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/dependencies";
+import type { PreparedTurnContribution } from "@/lib/conversation-core/turn/turn-context";
 import { createRequiredInputReceipt } from "./required-input-receipt";
 
 type NotepadContextDependencies = {
   context: Pick<
-    ConversationActorDependencies["context"],
+    ConversationTurnDependencies["context"],
     "readNotepadForInjection"
   >;
   effects: Pick<
-    ConversationActorDependencies["effects"],
+    ConversationTurnDependencies["effects"],
     "recordNotepadDeliveries"
   >;
-  log: ConversationActorDependencies["log"];
+  log: ConversationTurnDependencies["log"];
 };
 
 export async function prepareNotepadContext(

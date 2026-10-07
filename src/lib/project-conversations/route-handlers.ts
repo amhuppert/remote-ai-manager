@@ -1,4 +1,4 @@
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { commandRequestRefusal } from "@/lib/commands/route-admission";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 /**
@@ -13,10 +13,8 @@ import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission"
 import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
-import {
-  BackendMismatchError,
-  ModelSelectionValidationError,
-} from "@/lib/prompt/sdk-driver";
+import { BackendMismatchError } from "@/lib/prompt/sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
 import {
   changeConversationProfileRequestSchema,

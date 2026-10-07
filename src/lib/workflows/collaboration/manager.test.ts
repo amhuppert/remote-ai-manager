@@ -66,7 +66,7 @@ import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/
 import { createWorkflowEnvelopeRepository } from "@/lib/workflows/primitives/workflow-envelope-repository";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
-import { assembleUserContentBlocks } from "@/lib/workflows/conversation/assemble-user-blocks";
+import { assembleUserContentBlocks } from "@/lib/conversation-core/turn/assemble-user-blocks";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { PublishScopedStatusInput } from "@/lib/events/publication";
 import {

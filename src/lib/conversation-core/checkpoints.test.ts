@@ -18,7 +18,7 @@ import type { Supervision } from "@/lib/supervision/supervision";
 import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import { taskTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
+import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 
 const PROJECT = "/repo";
 const SESSION = "session";

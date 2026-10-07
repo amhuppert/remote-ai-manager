@@ -10,7 +10,7 @@ import {
   documentFeedbackPayloadSchema,
   notepadFeedbackPayloadSchema,
 } from "@/lib/conversations/message-content-schemas";
-import { queuedDeliveryMetadataSchema } from "@/lib/workflows/conversation/turn-spec";
+import { queuedDeliveryMetadataSchema, taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 
 /** Who works a seat: its profile, focus, backend and model. One shape for contracts and turn requests. */
 export const seatAssignmentSchema = z
@@ -124,6 +124,14 @@ export const interactiveEnrollmentRecordSchema = z
   })
   .strict();
 export type InteractiveEnrollmentRecord = z.infer<typeof interactiveEnrollmentRecordSchema>;
+
+/** What a mailbox item asks its conversation to run: a person's message, a workflow's task or a seat's work order. */
+export const mailboxRequestSchema = z.discriminatedUnion("kind", [
+  userTurnRequestSchema,
+  taskTurnRequestSchema,
+  seatTurnRequestSchema,
+]);
+export type MailboxRequest = z.infer<typeof mailboxRequestSchema>;
 
 export const mailboxItemStateSchema = z.enum(["queued", "consumed"]);
 

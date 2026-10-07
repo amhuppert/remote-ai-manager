@@ -24,7 +24,7 @@ import {
   _resetForTesting as resetRuntimeRegistry,
 } from "./runtime-state";
 import type { ConversationRuntimeState } from "./runtime-state";
-import type { ExecutePromptInput } from "./types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 import type { ConversationRole } from "@/lib/conversations/schemas";
 
 const PROJECT_PATH = "/repo-launch";

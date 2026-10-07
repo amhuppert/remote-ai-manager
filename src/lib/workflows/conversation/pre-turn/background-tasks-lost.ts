@@ -4,7 +4,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import type { ConversationDurableEffects } from "../effects";
+import type { ConversationDurableEffects } from "@/lib/conversation-core/turn/effects";
 
 interface BackgroundTasksLostDependencies extends Pick<
   ConversationDurableEffects,

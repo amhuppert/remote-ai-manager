@@ -17,7 +17,7 @@ import {
   willNextTurnCreateRuntime,
   type DesiredRuntimeConfiguration,
   type RecreateRuntimeSnapshot,
-} from "./runtime-recreate";
+} from "@/lib/conversation-core/turn/runtime-recreate";
 
 export interface NextTurnContextLoss {
   readonly runtimeCreatedWithoutResume: boolean;

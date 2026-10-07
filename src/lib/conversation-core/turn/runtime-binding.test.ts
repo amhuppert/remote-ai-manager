@@ -1,8 +1,8 @@
-import { runtimeConfigurationFixture } from "./testing/runtime-configuration-fixture";
+import { runtimeConfigurationFixture } from "@/lib/workflows/conversation/testing/runtime-configuration-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { ManagedConversationRuntime } from "./runtime-binding";
-import { createExternalTurnHandler } from "./external-turn-handler";
-import { createMockBackendRuntime } from "./testing/actor-deps-fixture";
+import { createExternalTurnHandler } from "@/lib/workflows/conversation/external-turn-handler";
+import { createMockBackendRuntime } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 
 function deferred() {
   let resolve!: () => void;

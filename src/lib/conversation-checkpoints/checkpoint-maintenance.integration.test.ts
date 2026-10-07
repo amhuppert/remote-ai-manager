@@ -25,22 +25,22 @@ import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import type { ConversationBackgroundActivity } from "@/lib/conversations/schemas";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
 
-import { createMockBackendRuntime } from "./testing/actor-deps-fixture";
+import { createMockBackendRuntime } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   createLifecycleFixture,
   type LifecycleFixtureOptions,
-} from "./testing/lifecycle-fixture";
-import { checkpointScopeKeyForStoreIdentity } from "./actor-input-loader";
+} from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+import { checkpointScopeKeyForStoreIdentity } from "./scope-key";
 import {
   createCheckpointHarness as createHandoffHarness,
   seededPrompt,
-} from "./testing/checkpoint-harness";
+} from "@/lib/workflows/conversation/testing/checkpoint-harness";
 import { enqueueQueuedMessage } from "@/lib/prompt/queue-operations";
 import { toQueuedMessageView } from "@/lib/conversations/message-queue-service";
 import {
   conversationRuntimeKey,
   getConversationRuntime,
-} from "./runtime-state";
+} from "@/lib/workflows/conversation/runtime-state";
 
 const TRANSCRIPT = "/lifecycle-fixture/transcripts/c.jsonl";
 const LIVE_REF = { backend: "claude", ref: "sdk-session-live" } as const;
@@ -978,7 +978,7 @@ describe("checkpoint retirement", () => {
     const original =
       fixture!.persistence.store.upsertConversationMachineSnapshot;
     let failSnapshots = false;
-    const { setPersistenceDeps } = await import("./persistence");
+    const { setPersistenceDeps } = await import("@/lib/workflows/conversation/persistence");
     setPersistenceDeps({
       getConversationMachineSnapshot:
         fixture!.persistence.store.getConversationMachineSnapshot,
@@ -1753,7 +1753,7 @@ describe.each(["session", "project"] as const)(
           gate.resolve();
         };
         const store = fixture!.persistence.store;
-        const { setPersistenceDeps } = await import("./persistence");
+        const { setPersistenceDeps } = await import("@/lib/workflows/conversation/persistence");
         setPersistenceDeps({
           getConversationMachineSnapshot: store.getConversationMachineSnapshot,
           deleteConversationMachineSnapshot:

@@ -1,4 +1,4 @@
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
@@ -8,7 +8,7 @@ import type { ExecutionTarget } from "./execution-target-resolver";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { ConversationTurnSettlementError } from "./errors";
 import { ConversationTurnNotStartedError } from "./conversation-turn-result";
-import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   return {

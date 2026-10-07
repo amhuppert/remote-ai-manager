@@ -33,7 +33,7 @@ import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib
 import {
   toTaskRunResult,
   type TaskRunResult,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 
 const logger = createLogger("graph-workflow-output-capture");
 

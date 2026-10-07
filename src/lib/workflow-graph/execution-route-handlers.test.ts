@@ -5,7 +5,7 @@ import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/e
 import { WorkflowDefinitionNotFoundError } from "./workflow-manager";
 import { ResetExecutionContextError } from "./reset-context";
 import { ResetAssignmentError } from "./reset-assignment";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "@/lib/sessions/schemas";

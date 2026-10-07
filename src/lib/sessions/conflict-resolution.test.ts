@@ -6,8 +6,8 @@ import {
   DEFAULT_RESOLUTION_TIMEOUT_MS,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 
 // ============================================================

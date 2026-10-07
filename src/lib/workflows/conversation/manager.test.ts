@@ -1,10 +1,8 @@
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
-import type {
-  ConversationManagerDependencies,
-  CoreConversationCheckpoints,
-} from "@/lib/workflows/conversation/manager";
+import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
+import type { CoreConversationCheckpoints } from "@/lib/conversation-checkpoints/operation-contract";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/actor-input-loader";
 let machineFactory: NonNullable<
   Parameters<typeof createConversationManagerFixture>[0]
@@ -118,12 +116,8 @@ import {
 } from "@/lib/conversations/profile-admission";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { conversationMachine } from "./machine";
-import type {
-  PrepareTurnOutput,
-  PrepareTurnInput,
-  PromptActorResult,
-  ExecutePromptInput,
-} from "./types";
+import type { PrepareTurnOutput, PrepareTurnInput } from "./types";
+import type { PromptActorResult, ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 import { applySyncDerivedFields, deriveActiveTurnSource } from "./manager";
 import { type ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
 import {

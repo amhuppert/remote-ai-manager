@@ -13,9 +13,10 @@ import type {
   WorkspaceAdmission,
 } from "@/lib/workspace/admission";
 import type { z } from "zod";
-import { taskTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
-import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import {
+  mailboxRequestSchema,
   seatTurnRequestSchema,
   userTurnRequestSchema,
   type InteractiveEnrollmentRecord,
@@ -42,9 +43,74 @@ export interface TurnStream {
   emit(event: string, data: unknown): void;
 }
 
+/** Why a mailbox item will not run; see `unstarted` for what each means for each kind of item. */
+type Unstarted =
+  | { why: "held"; message: string }
+  | { why: "not_admitted"; reason: string; attemptId: string }
+  | { why: "stopping" }
+  | { why: "failed"; failure: string }
+  | { why: "restart" }
+  | { why: "retired" }
+  | { why: "cancelled" };
+
+const RETIRED = "The conversation was removed";
+const RESTARTED_UNSENT = "The server restarted before this message could start, so it was not sent";
+
+/** What a task's caller hears when its task did not start. */
+function taskNotStarted(why: Exclude<Unstarted, { why: "restart" }>): TurnExecutionOutcome {
+  switch (why.why) {
+    case "held":
+      return { kind: "not_started", reason: "configuration", message: why.message };
+    case "not_admitted":
+      return { kind: "not_started", reason: "cancelled", message: why.reason };
+    case "stopping":
+      return {
+        kind: "not_started",
+        reason: "cancelled",
+        message: "The server stopped before the task could start",
+        interruption: { reason: "shutdown" },
+      };
+    case "failed":
+      return { kind: "not_started", reason: "configuration", message: why.failure };
+    case "retired":
+      return { kind: "not_started", reason: "cancelled", message: RETIRED };
+    case "cancelled":
+      return { kind: "not_started", reason: "cancelled", message: "The task was cancelled before it started" };
+  }
+}
+
+/** Why a person's message did not start, as its port and its sender hear it. */
+function messageNotStarted(why: Exclude<Unstarted, { why: "stopping" }>): {
+  reason: string;
+  endedBy: "person" | "server" | "failure";
+} {
+  switch (why.why) {
+    case "held":
+      return { reason: why.message, endedBy: "failure" };
+    case "not_admitted":
+      return { reason: why.reason, endedBy: "person" };
+    case "failed":
+      return { reason: why.failure, endedBy: "failure" };
+    case "restart":
+      return { reason: "the server restarted before it started", endedBy: "server" };
+    case "retired":
+      return { reason: RETIRED, endedBy: "person" };
+    case "cancelled":
+      return { reason: "The message was cancelled before it started", endedBy: "person" };
+  }
+}
+
+function unstartedReport(
+  conversationId: string,
+  status: "failed" | "cancelled" | "interrupted",
+  failure: string,
+): SeatTurnReport {
+  return { status, conversationId, finalText: null, structuredOutput: null, outputIssue: null, openQuestionId: null, failure };
+}
+
 /** Dispatch for one admitted turn of an interactive conversation. */
 export interface UserTurnPort {
-  /** A message that never started: stopped by the person, or refused while the server stops. */
+  /** A message that will not start, and why; it settles what the message owes (a queued batch's rows, a debug turn's phase). */
   notStarted?(input: {
     conversationId: string;
     enrollment: InteractiveEnrollmentRecord;
@@ -308,6 +374,8 @@ export function createConversationCore(
   const pollMs = deps.permitPollMs ?? 1000;
   /** Conversations going away: they start nothing more. */
   const retired = new Set<string>();
+  /** Items answered as never starting whose mailbox removal failed: they never run (see `leaveMailbox`). */
+  const unremoved = new Set<string>();
   /** Resolves when each running or acquiring turn has ended, by cause. */
   const turnsEnded = new Map<string, Promise<void>>();
   /** Grants kept for turns whose processes could not be confirmed stopped, by holder, with the reason. */
@@ -493,33 +561,156 @@ export function createConversationCore(
     | { kind: "seat"; request: SeatTurnRequest; grant: GrantRequest | null }
     | { kind: "user"; request: UserTurnRequest; enrollment: InteractiveEnrollmentRecord }
     | { kind: "task"; request: TaskTurn; enrollment: InteractiveEnrollmentRecord } {
-    const user = userTurnRequestSchema.safeParse(item.request);
-    const task = user.success ? null : taskTurnRequestSchema.safeParse(item.request);
-    if (user.success || task?.success === true) {
-      const enrollment = deps.repo.getInteractive(item.conversationId);
-      if (enrollment === null) throw new Error(`Conversation ${item.conversationId} is not run by the core`);
-      if (user.success) return { kind: "user", request: user.data, enrollment };
-      if (task?.success === true) return { kind: "task", request: task.data, enrollment };
+    const request = mailboxRequestSchema.parse(item.request);
+    if (request.kind !== "user_message" && request.kind !== "task_run")
+      return { kind: "seat", request, grant: grantFor(request, item.cause) };
+    const enrollment = deps.repo.getInteractive(item.conversationId);
+    if (enrollment === null) throw new Error(`Conversation ${item.conversationId} is not run by the core`);
+    return request.kind === "user_message"
+      ? { kind: "user", request, enrollment }
+      : { kind: "task", request, enrollment };
+  }
+
+  /**
+   * Removes an item that will not run. When the removal fails the item still
+   * never runs: selection tries again instead, and until a removal (or the next
+   * boot's recovery) succeeds it holds its conversation.
+   */
+  function leaveMailbox(cause: string, conversationId: string): void {
+    try {
+      deps.transaction(() => deps.repo.deleteMailbox(cause));
+      unremoved.delete(cause);
+    } catch (error) {
+      unremoved.add(cause);
+      deps.log.error("conversation_core.mailbox_withdraw_failed", { conversationId, cause, error: getErrorMessage(error) });
     }
-    const request = seatTurnRequestSchema.parse(item.request);
-    return { kind: "seat", request, grant: grantFor(request, item.cause) };
+  }
+
+  /**
+   * What happens to a mailbox item that will not run, decided in one place by
+   * why and by what it carries. "Told" means its port settles what the message
+   * owes (a queued batch's rows, a debug turn's phase); "handed back" means the
+   * person gets the message back for review, with the reason.
+   *
+   * | why          | task (its caller)    | person's direct message            | queued batch                  | seat work order    |
+   * | held         | removed, not started | told, handed back, removed, failed | told, removed, failed         | stays queued       |
+   * | not_admitted | removed, cancelled   | told, consumed, cancelled          | told, removed, cancelled      | stays queued       |
+   * | stopping     | stays, cancelled     | stays, interrupted                 | stays, interrupted            | stays queued       |
+   * | failed       | removed, not started | told, removed, failed              | told, removed, failed         | stays queued       |
+   * | restart      | removed              | told, handed back, removed         | told (to send again), removed | stays queued       |
+   * | retired      | removed, cancelled   | removed, cancelled                 | removed, cancelled            | removed, cancelled |
+   * | cancelled    | removed, cancelled   | told, removed, cancelled           | told, removed, cancelled      | stays queued       |
+   *
+   * Only a task's caller cancels; a server stop answers the tasks still waiting
+   * behind another turn as `stopping` does, and what stays is the next boot's to
+   * dispose of. An item no schema reads is removed whatever the reason, except
+   * at a stop. Outside this table, a requester's `withdraw` removes its seat
+   * order, and work whose workspace is quarantined ends as a failed attempt.
+   *
+   * A seat's work order waits for its requester to submit it again under a
+   * fresh permit. A person's message is told and handed back before its
+   * mailbox copy goes, so a crash in between does that again rather than
+   * losing it.
+   */
+  async function unstarted(
+    item: { cause: string; conversationId: string; request: unknown },
+    why: Unstarted,
+  ): Promise<void> {
+    const { cause, conversationId } = item;
+    const parsed = mailboxRequestSchema.safeParse(item.request);
+    if (!parsed.success) {
+      // Nothing can ever run it; left queued, it would hold its conversation for good.
+      deps.log.error("conversation_core.mailbox_item_unreadable", { conversationId, cause, why: why.why });
+      if (why.why !== "stopping") leaveMailbox(cause, conversationId);
+      return;
+    }
+    const request = parsed.data;
+    if (request.kind === "task_run") {
+      if (why.why !== "stopping") leaveMailbox(cause, conversationId);
+      // After a restart, its caller went with the process.
+      if (why.why !== "restart") resolveTask(cause, taskNotStarted(why));
+      return;
+    }
+    if (request.kind !== "user_message") {
+      if (why.why !== "retired") return;
+      leaveMailbox(cause, conversationId);
+      resolveWaiters(cause, unstartedReport(conversationId, "cancelled", RETIRED));
+      return;
+    }
+    if (why.why === "stopping") {
+      // The mailbox keeps the only copy: the next boot hands it back to its owner
+      // (a direct message to its sender for review, a queued batch to the queue).
+      resolveWaiters(cause, unstartedReport(conversationId, "interrupted", "The server stopped before this message could start"));
+      return;
+    }
+    streams.delete(cause);
+    const { reason, endedBy } = messageNotStarted(why);
+    const direct = request.queuedDelivery === undefined;
+    const enrollment = deps.repo.getInteractive(conversationId);
+    if (enrollment !== null && why.why !== "retired") {
+      // Settled before the mailbox copy goes: a queued batch the queue still holds as
+      // delivering would otherwise block it until restart.
+      await settleNotStarted(item, enrollment, request, reason, endedBy);
+      if (direct && (why.why === "held" || why.why === "restart")) {
+        await deps.records
+          .recordWithdrawn(
+            { projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId },
+            { cause, request, reason: why.why === "held" ? why.message : RESTARTED_UNSENT },
+          )
+          .catch((error: unknown) =>
+            deps.log.error("conversation_core.withdrawn_message_lost", { conversationId, error: getErrorMessage(error) }),
+          );
+      }
+    }
+    // A direct message stopped before admission stays on record as consumed (a debug retry sends it again).
+    if (why.why === "not_admitted" && direct)
+      deps.transaction(() => deps.repo.consumeMailbox(cause, why.attemptId, deps.now()));
+    else leaveMailbox(cause, conversationId);
+    if (why.why === "restart") return;
+    resolveWaiters(cause, unstartedReport(conversationId, why.why === "held" || why.why === "failed" ? "failed" : "cancelled", reason));
+  }
+
+  async function settleNotStarted(
+    item: { cause: string; conversationId: string },
+    enrollment: InteractiveEnrollmentRecord,
+    request: UserTurnRequest,
+    reason: string,
+    endedBy: "person" | "server" | "failure",
+  ): Promise<void> {
+    await Promise.resolve(
+      deps.userTurns.notStarted?.({ conversationId: item.conversationId, enrollment, request, cause: item.cause, reason, endedBy }),
+    ).catch((error: unknown) =>
+      deps.log.error("conversation_core.not_started_settle_failed", {
+        conversationId: item.conversationId,
+        cause: item.cause,
+        error: getErrorMessage(error),
+      }),
+    );
   }
 
   /** One turn lifetime: every exit after `open` records exactly one terminal. */
   async function runTurn(
     item: MailboxItemRecord,
   ): Promise<"settled" | "not_admitted"> {
+    if (unremoved.has(item.cause)) {
+      leaveMailbox(item.cause, item.conversationId);
+      return "not_admitted";
+    }
     const turn = turnOf(item);
     if (turn.kind === "task" && deps.holds !== undefined) {
       // Its turn has come: the turn before it may have left a hold (a lost checkpoint continuation).
       const held = await deps.holds.refusal(item.conversationId, "task", { betweenTurns: true });
       if (held !== null) {
-        deps.transaction(() => deps.repo.deleteMailbox(item.cause));
-        resolveTask(item.cause, { kind: "not_started", reason: "configuration", message: held.message });
+        await unstarted(item, { why: "held", message: held.message });
         return "not_admitted";
       }
       // Its caller, a retirement or a stop may have withdrawn it during the read (answering it already).
-      if (deps.repo.getMailbox(item.cause)?.state !== "queued" || retired.has(item.conversationId) || stopping) {
+      if (
+        deps.repo.getMailbox(item.cause)?.state !== "queued" ||
+        unremoved.has(item.cause) ||
+        retired.has(item.conversationId) ||
+        stopping
+      ) {
         return "not_admitted";
       }
     }
@@ -528,32 +719,15 @@ export function createConversationCore(
       // something for the person to review first; the queue decides for its own deliveries.
       const held = await deps.holds.refusal(item.conversationId, "message", { betweenTurns: true });
       if (held !== null) {
-        deps.transaction(() => deps.repo.deleteMailbox(item.cause));
-        streams.delete(item.cause);
-        // The person's words go back to them for review, as a restart hands back what never started.
-        await deps.records
-          .recordWithdrawn(
-            { projectPath: turn.enrollment.projectPath, storeSessionName: turn.enrollment.sessionName, conversationId: item.conversationId },
-            { cause: item.cause, request: turn.request },
-          )
-          .catch((error: unknown) =>
-            deps.log.error("conversation_core.withdrawn_message_lost", {
-              conversationId: item.conversationId,
-              error: getErrorMessage(error),
-            }),
-          );
-        resolveWaiters(item.cause, {
-          status: "failed",
-          conversationId: item.conversationId,
-          finalText: null,
-          structuredOutput: null,
-          outputIssue: null,
-          openQuestionId: null,
-          failure: held.message,
-        });
+        await unstarted(item, { why: "held", message: held.message });
         return "not_admitted";
       }
-      if (deps.repo.getMailbox(item.cause)?.state !== "queued" || retired.has(item.conversationId) || stopping) {
+      if (
+        deps.repo.getMailbox(item.cause)?.state !== "queued" ||
+        unremoved.has(item.cause) ||
+        retired.has(item.conversationId) ||
+        stopping
+      ) {
         return "not_admitted";
       }
     }
@@ -617,63 +791,12 @@ export function createConversationCore(
         );
         // A person's message has no permit to reopen: stopped before it began, it
         // is withdrawn, and its port settles what it owes (such as queue rows).
-        if (turn.kind === "task") {
-          deps.transaction(() => deps.repo.deleteMailbox(item.cause));
-          resolveTask(item.cause, {
-            kind: "not_started",
-            reason: "cancelled",
-            message: acquired.reason,
-            ...(stopping ? { interruption: { reason: "shutdown" as const } } : {}),
-          });
-        }
-        if (turn.kind === "user" && (stopping || controller.signal.reason === "shutdown")) {
-          // The mailbox keeps the only copy: the next boot hands it back to its owner
-          // (a direct message to its sender for review, a queued batch to the queue).
-          resolveWaiters(item.cause, {
-            status: "interrupted",
-            conversationId: item.conversationId,
-            finalText: null,
-            structuredOutput: null,
-            outputIssue: null,
-            openQuestionId: null,
-            failure: "The server stopped before this message could start",
-          });
-          return "not_admitted";
-        }
-        if (turn.kind === "user") {
-          // A direct message stays on record as consumed (a debug retry sends it again);
-          // a queued batch's content belongs to the queue, which notStarted settles.
-          deps.transaction(() =>
-            turn.request.queuedDelivery === undefined
-              ? deps.repo.consumeMailbox(item.cause, attemptId, deps.now())
-              : deps.repo.deleteMailbox(item.cause),
-          );
-          await Promise.resolve(
-            deps.userTurns.notStarted?.({
-              conversationId: item.conversationId,
-              enrollment: turn.enrollment,
-              request: turn.request,
-              cause: item.cause,
-              reason: acquired.reason,
-              endedBy: "person",
-            }),
-          ).catch((error: unknown) =>
-            deps.log.error("conversation_core.not_started_settle_failed", {
-              conversationId: item.conversationId,
-              cause: item.cause,
-              error: getErrorMessage(error),
-            }),
-          );
-          resolveWaiters(item.cause, {
-            status: "cancelled",
-            conversationId: item.conversationId,
-            finalText: null,
-            structuredOutput: null,
-            outputIssue: null,
-            openQuestionId: null,
-            failure: acquired.reason,
-          });
-        }
+        await unstarted(
+          item,
+          stopping || controller.signal.reason === "shutdown"
+            ? { why: "stopping" }
+            : { why: "not_admitted", reason: acquired.reason, attemptId },
+        );
         return "not_admitted";
       }
       deps.transaction(() => deps.repo.admitAttempt(attemptId));
@@ -778,81 +901,20 @@ export function createConversationCore(
     }
   }
 
-  /**
-   * A person's message whose turn failed before it could settle: its sender is
-   * answered and it leaves the mailbox, which would otherwise hold the
-   * conversation busy. Nothing resubmits it, unlike a supervised request.
-   */
-  function abandonMessage(item: MailboxItemRecord, failure: string): void {
-    if (taskWaiters.has(item.cause)) {
-      try {
-        deps.transaction(() => deps.repo.deleteMailbox(item.cause));
-      } catch (error) {
-        deps.log.error("conversation_core.task_withdraw_failed", {
-          conversationId: item.conversationId,
-          cause: item.cause,
-          error: getErrorMessage(error),
-        });
-      }
-      resolveTask(item.cause, { kind: "not_started", reason: "configuration", message: failure });
-      return;
-    }
-    const message = userTurnRequestSchema.safeParse(item.request);
-    if (!message.success) return;
-    streams.delete(item.cause);
-    const enrollment = deps.repo.getInteractive(item.conversationId);
-    if (message.data.queuedDelivery !== undefined && enrollment !== null) {
-      // The queue still holds the batch as delivering; a failure it never hears of would block it until restart.
-      void Promise.resolve(
-        deps.userTurns.notStarted?.({
-          conversationId: item.conversationId,
-          enrollment,
-          request: message.data,
-          cause: item.cause,
-          reason: failure,
-          endedBy: "failure",
-        }),
-      ).catch((error: unknown) =>
-        deps.log.error("conversation_core.not_started_settle_failed", {
-          conversationId: item.conversationId,
-          cause: item.cause,
-          error: getErrorMessage(error),
-        }),
-      );
-    }
-    try {
-      deps.transaction(() => deps.repo.deleteMailbox(item.cause));
-    } catch (error) {
-      deps.log.error("conversation_core.message_withdraw_failed", {
-        conversationId: item.conversationId,
-        cause: item.cause,
-        error: getErrorMessage(error),
-      });
-    }
-    resolveWaiters(item.cause, {
-      status: "failed",
-      conversationId: item.conversationId,
-      finalText: null,
-      structuredOutput: null,
-      outputIssue: null,
-      openQuestionId: null,
-      failure,
-    });
-  }
-
   async function drainConversation(conversationId: string): Promise<void> {
     for (;;) {
       if (stopping) return;
       rerun.delete(conversationId);
       const item = deps.repo.nextQueued(conversationId);
       if (item === null) return;
-      const result = await runTurn(item).catch((error) => {
+      const result = await runTurn(item).catch(async (error: unknown) => {
         deps.log.error("conversation_core.turn_failed", {
           conversationId,
           cause: item.cause,
           error: getErrorMessage(error),
         });
-        abandonMessage(item, getErrorMessage(error));
+        // Its turn failed before it could settle: nothing resubmits a person's message or a task.
+        await unstarted(item, { why: "failed", failure: getErrorMessage(error) });
         return "not_admitted" as const;
       });
       // An unadmitted item still queued waits for a resubmission under a fresh
@@ -1045,23 +1107,9 @@ export function createConversationCore(
           );
           claimed.add(attempt.conversationId);
         }
-        // A message still waiting to start lost its sender with the process;
-        // left queued, it would hold the conversation busy for good. Each goes
-        // back to its owner below (a queued batch to the queue, a direct
-        // message to its sender for review) before its mailbox copy goes.
-        const unsent: { conversationId: string; cause: string; request: UserTurnRequest }[] = [];
-        for (const conversationId of deps.repo.conversationsWithQueued()) {
-          for (const item of deps.repo.queuedFor(conversationId)) {
-            // A task's caller went with the process; nothing would collect its outcome.
-            if (taskTurnRequestSchema.safeParse(item.request).success) {
-              deps.repo.deleteMailbox(item.cause);
-              continue;
-            }
-            const message = userTurnRequestSchema.safeParse(item.request);
-            if (!message.success) continue;
-            unsent.push({ conversationId, cause: item.cause, request: message.data });
-          }
-        }
+        // Whatever still waits to start lost its sender with the process; left
+        // queued, a message or task would hold the conversation busy for good.
+        const unsent = deps.repo.conversationsWithQueued().flatMap((conversationId) => deps.repo.queuedFor(conversationId));
         return { interrupted: [...conversations], claimed: [...claimed], unsent };
       });
       // A turn that was still waiting to start left its conversation claimed (running).
@@ -1074,32 +1122,7 @@ export function createConversationCore(
             deps.log.error("conversation_core.claim_end_failed", { conversationId, error: getErrorMessage(error) }),
           );
       }
-      for (const { conversationId, cause, request } of unsent) {
-        const enrollment = deps.repo.getInteractive(conversationId);
-        if (enrollment !== null) {
-          const returned =
-            request.queuedDelivery !== undefined
-              ? Promise.resolve(
-                  deps.userTurns.notStarted?.({
-                    conversationId,
-                    enrollment,
-                    request,
-                    cause,
-                    reason: "the server restarted before it started",
-                    endedBy: "server",
-                  }),
-                )
-              : deps.records.recordWithdrawn(
-                  { projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId },
-                  { cause, request },
-                );
-          await returned.catch((error: unknown) =>
-            // Still removed: run on a later boot, it would send what its sender never saw go.
-            deps.log.error("conversation_core.withdrawn_message_lost", { conversationId, error: getErrorMessage(error) }),
-          );
-        }
-        deps.transaction(() => deps.repo.deleteMailbox(cause));
-      }
+      for (const item of unsent) await unstarted(item, { why: "restart" });
       for (const conversationId of interrupted) {
         const owner = deps.repo.getSeat(conversationId) ?? deps.repo.getInteractive(conversationId);
         if (owner === null) continue;
@@ -1123,14 +1146,7 @@ export function createConversationCore(
       for (const lease of leases.values()) lease.controller.abort("shutdown");
       while (runners.size > 0) await Promise.all([...runners.values()]);
       // Tasks still waiting behind a turn never start; their callers are answered (the next boot drops them).
-      for (const cause of [...taskWaiters.keys()]) {
-        resolveTask(cause, {
-          kind: "not_started",
-          reason: "cancelled",
-          message: "The server stopped before the task could start",
-          interruption: { reason: "shutdown" },
-        });
-      }
+      for (const cause of [...taskWaiters.keys()]) resolveTask(cause, taskNotStarted({ why: "stopping" }));
     },
     async idle() {
       while (runners.size > 0) await Promise.all([...runners.values()]);
@@ -1201,8 +1217,7 @@ export function createConversationCore(
           return;
         }
         // Still waiting behind another turn: it never starts.
-        deps.transaction(() => deps.repo.deleteMailbox(cause));
-        resolveTask(cause, { kind: "not_started", reason: "cancelled", message: "The task was cancelled before it started" });
+        void unstarted({ cause, conversationId, request: turn }, { why: "cancelled" });
       };
       signal?.addEventListener("abort", cancel, { once: true });
       wake(conversationId);
@@ -1244,23 +1259,8 @@ export function createConversationCore(
       retired.add(conversationId);
       leases.get(conversationId)?.controller.abort("user");
       const running = activeCauses.get(conversationId);
-      const withdrawn = deps.transaction(() => {
-        const queued = deps.repo.queuedFor(conversationId).filter((item) => item.cause !== running);
-        for (const item of queued) deps.repo.deleteMailbox(item.cause);
-        return queued;
-      });
-      for (const item of withdrawn) {
-        resolveTask(item.cause, { kind: "not_started", reason: "cancelled", message: "The conversation was removed" });
-        resolveWaiters(item.cause, {
-          status: "cancelled",
-          conversationId,
-          finalText: null,
-          structuredOutput: null,
-          outputIssue: null,
-          openQuestionId: null,
-          failure: "The conversation was removed",
-        });
-      }
+      for (const item of deps.repo.queuedFor(conversationId).filter((queued) => queued.cause !== running))
+        await unstarted(item, { why: "retired" });
       if (running !== undefined) controllers.get(running)?.abort("user");
       while (runners.has(conversationId)) await runners.get(conversationId);
       deps.transaction(() => deps.repo.unenrollInteractive(conversationId));

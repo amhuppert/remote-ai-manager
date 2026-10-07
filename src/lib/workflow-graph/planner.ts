@@ -22,8 +22,8 @@ import {
   deletePlannerDraft as defaultDeletePlannerDraft,
 } from "@/lib/workflows/workflow-draft/registry";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import { generateWorkflowLayout } from "./layout";
 import { createWorkflowStorageService } from "./storage";
 import { validateWorkflowDefinition } from "./definition-validation";

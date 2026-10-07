@@ -29,7 +29,7 @@ import type {
   RunValidationInput,
 } from "./actors";
 import { isRemediableValidationFailure } from "./actors";
-import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type { AgentTurnDispatch } from "@/lib/workflows/merge/fresh-task-run";
 
 const logger = createLogger("validation-fix-states");
 

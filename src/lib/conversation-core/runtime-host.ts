@@ -12,11 +12,11 @@ import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import {
   runtimeConfigurationChanges,
   type DesiredRuntimeConfiguration,
-} from "@/lib/workflows/conversation/pre-turn/runtime-recreate";
+} from "@/lib/conversation-core/turn/runtime-recreate";
 import {
   ManagedConversationRuntime,
   type BackendRuntimeIndex,
-} from "@/lib/workflows/conversation/core-coexistence";
+} from "@/lib/conversation-core/turn/runtime-binding";
 
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
 import type { ComposedTooling, RuntimeApplicationState } from "./runtime-application-state";

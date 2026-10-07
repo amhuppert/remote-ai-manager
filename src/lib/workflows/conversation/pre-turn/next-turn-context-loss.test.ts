@@ -2,7 +2,7 @@ import {
   PROJECT_CC_CONTEXT,
   PROJECT_SPAWN_INSTRUCTIONS,
 } from "@/lib/project-conversations/system-prompt";
-import { readRuntimeInstructions } from "../runtime-instructions";
+import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import { createActorDependenciesFixture } from "../testing/actor-deps-fixture";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -26,7 +26,7 @@ import {
   willNextTurnCreateRuntime,
   type DesiredRuntimeConfiguration,
   type RecreateRuntimeSnapshot,
-} from "./runtime-recreate";
+} from "@/lib/conversation-core/turn/runtime-recreate";
 
 const MODEL: BackendModelSelection = {
   modelId: "claude-opus-5",

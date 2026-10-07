@@ -42,7 +42,7 @@ import {
 import { collaborationArtifactSchema } from "./types";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
-import { recordSeenAlignmentVersion } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
+import { recordSeenAlignmentVersion } from "@/lib/conversation-core/contributions/alignment-gate";
 
 export interface CreateCollaborationDepsInput {
   projectPath: string;

@@ -21,10 +21,10 @@ import {
   composeImplementerLaneWriteEnvelope,
   type ImplementerLaneWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
-import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
+import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {

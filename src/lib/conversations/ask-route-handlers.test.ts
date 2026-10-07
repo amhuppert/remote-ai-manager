@@ -23,12 +23,8 @@ import { type ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { conversationMachine } from "@/lib/workflows/conversation/machine";
 
-import type {
-  ExecutePromptInput,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  PromptActorResult,
-} from "@/lib/workflows/conversation/types";
+import type { PrepareTurnInput, PrepareTurnOutput } from "@/lib/workflows/conversation/types";
+import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import {
   createAskQuestionHandlers,

@@ -38,7 +38,7 @@ import {
 import {
   composeUserTranscriptBlocks,
   resolveTurnPromptText,
-} from "@/lib/workflows/conversation/pre-turn/review-feedback";
+} from "@/lib/conversation-core/contributions/review-feedback";
 import {
   buildNotepadFeedbackPayload,
   deliverNotepadFeedback,

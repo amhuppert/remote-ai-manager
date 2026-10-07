@@ -1,4 +1,4 @@
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
@@ -117,7 +117,7 @@ import {
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
-import type { ExecutePromptInput } from "@/lib/workflows/conversation/types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 import {
   conversationRuntimeKey,
   registerConversationRuntime,

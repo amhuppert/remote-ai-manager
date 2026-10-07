@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkFsWritePolicy } from "@/lib/agent-backends/fs-write-policy";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import type {
   TaskRunResult,
   TaskRunUsage,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 import { createPlanRepairAgentRunner } from "./agent-runner";
 import type { PlanRepairAgentInvocation } from "./supervisor";
 

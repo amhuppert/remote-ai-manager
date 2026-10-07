@@ -9,17 +9,13 @@ import type {
   AgentFailureClassification,
   ContinuationDisposition,
 } from "@/lib/agent-backends/errors";
-import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type { ConversationStatus, MessageContentBlock } from "@/lib/conversations/schemas";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-schemas";
-import type {
-  ConversationContext,
-  PromptActorResult,
-  StructuredOutputGateRepair,
-} from "./types";
+import type { PendingConversationQuestion, PromptActorResult, StructuredOutputGateRepair } from "./types";
 
 import type { StructuredOutputFormat } from "./turn-spec";
-import type { TurnCancelReason } from "./turn-spec";
+import type { TurnAdmissionRefusal, TurnCancelReason } from "./turn-spec";
 
 export interface TurnInterruption {
   reason: TurnCancelReason;
@@ -47,11 +43,16 @@ export type TurnExecutionOutcome = (
     }
 ) & { interruption?: TurnInterruption };
 
+/** The outcome belongs to the admitted attempt; refusals contain no preceding turn result. */
+export type ConversationTurnExecution =
+  | TurnAdmissionRefusal
+  | { kind: "settled"; turn: SettledConversationTurn };
+
 export interface SettledConversationTurn {
   attemptId: string;
   outcome: TurnExecutionOutcome;
-  status: ConversationContext["status"];
-  pendingQuestion: ConversationContext["pendingQuestion"];
+  status: ConversationStatus;
+  pendingQuestion: PendingConversationQuestion | null;
 }
 
 interface TurnPresentationOptions {

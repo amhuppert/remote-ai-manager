@@ -42,7 +42,7 @@ import {
   validationFixLoopError,
 } from "../validation-fix/actors";
 import { createConflictResolver } from "@/lib/sessions/conflict-resolution";
-import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import { toTaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
 // ============================================================

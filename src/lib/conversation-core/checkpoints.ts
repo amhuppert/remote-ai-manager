@@ -52,26 +52,21 @@ import type { Logger } from "@/lib/logging";
 import type { TranscriptEntriesResult, TranscriptEntry } from "@/lib/prompt/transcript";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
-import { omittedCaptureResult, pendingCheckpointCapture } from "@/lib/workflows/conversation/checkpoint-capture";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
+import { omittedCaptureResult, pendingCheckpointCapture } from "@/lib/conversation-checkpoints/checkpoint-capture";
 import {
   captureCheckpointSourceForHost,
-  checkpointKeyLogFields,
-  hydrateCheckpointAuthority,
-  repairQueuedAcceptanceFromCheckpoint,
   runCheckpointMaintenance,
   type CheckpointMaintenanceHost,
-} from "@/lib/workflows/conversation/core-coexistence";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import { prepareCheckpointSeed, type PreparedCheckpointSeed } from "@/lib/workflows/conversation/pre-turn/checkpoint-seed";
-import { resolveContinuationSeed, type ContinuationSeed } from "@/lib/workflows/conversation/pre-turn/continuation-seed";
-import type { ForkSeedDeps } from "@/lib/workflows/conversation/pre-turn/fork-seed";
-import type {
-  ConversationCheckpointReconcile,
-  ConversationCheckpointStart,
-  CoreConversationCheckpoints,
-} from "@/lib/workflows/conversation/manager";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-checkpoints/checkpoint-maintenance";
+import { checkpointKeyLogFields, hydrateCheckpointAuthority } from "@/lib/conversation-checkpoints/checkpoint-restart";
+import { repairQueuedAcceptanceFromCheckpoint } from "@/lib/conversation-checkpoints/checkpoint-queue-repair";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import { prepareCheckpointSeed, type PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
+import { resolveContinuationSeed, type ContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
+import type { ForkSeedDeps } from "@/lib/conversation-checkpoints/fork-seed";
+import type { ConversationCheckpointReconcile, ConversationCheckpointStart, CoreConversationCheckpoints } from "@/lib/conversation-checkpoints/operation-contract";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationIdentity } from "./conversation-record";
 import type { ConversationCore, HoldSource } from "./executor";
 import type { InteractiveEnrollmentRecord } from "./schemas";

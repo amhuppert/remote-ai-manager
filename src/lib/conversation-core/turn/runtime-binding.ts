@@ -7,8 +7,29 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   DesiredRuntimeConfiguration,
   RecreateRuntimeSnapshot,
-} from "./pre-turn/runtime-recreate";
-import type { ExternalTurnHandler } from "./external-turn-handler";
+} from "./runtime-recreate";
+import type { ConversationBackendEvent } from "@/lib/agent-backends/conversation";
+
+/** Follows turns the provider starts on its own, such as a Claude auto-continuation. */
+export interface ExternalTurnHandler {
+  (event: ConversationBackendEvent): void;
+  /**
+   * True from an accepted turn start until its completion, set synchronously
+   * on receipt so an observer sees the turn before any frame reaches the
+   * archive or the machine.
+   */
+  readonly activeTurn: boolean;
+  /** Accepted events so far; two equal readings bracket a window with none. */
+  readonly activity: number;
+  /**
+   * Resolves once no external turn is in flight: immediately when none is,
+   * otherwise at that turn's completion or at this handler's stop. Ordinary
+   * admission waits on it rather than polling `activeTurn`.
+   */
+  settled(): Promise<void>;
+  drain(): Promise<void>;
+  stopAndDrain(): Promise<void>;
+}
 
 const logger = createLogger("conversation-runtime");
 type CleanupFailure = NonNullable<

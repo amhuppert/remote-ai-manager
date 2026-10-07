@@ -14,9 +14,9 @@ import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-dr
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 
-import { setPersistenceDeps, validateRestoredSnapshot } from "./persistence";
-import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
-import { rehydrateConversationActors } from "./rehydration";
+import { setPersistenceDeps, validateRestoredSnapshot } from "@/lib/workflows/conversation/persistence";
+import { toPersistedConversationSnapshot } from "@/lib/workflows/conversation/persisted-snapshot-codec";
+import { rehydrateConversationActors } from "@/lib/workflows/conversation/rehydration";
 import {
   capturedHandoffResult,
   createCheckpointHarness,
@@ -24,7 +24,7 @@ import {
   gatedGenerator,
   seededPrompt,
   type CheckpointHarness,
-} from "./testing/checkpoint-harness";
+} from "@/lib/workflows/conversation/testing/checkpoint-harness";
 
 let harness: CheckpointHarness | undefined;
 let releaseHeld: (() => void) | undefined;

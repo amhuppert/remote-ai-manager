@@ -16,12 +16,13 @@ import type {
   ConversationState,
 } from "@/lib/conversations/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import type {
   CheckpointActorProjection,
   CheckpointScopeKey,
 } from "@/lib/conversation-checkpoints/schemas";
-import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
-import type { ConversationPersistenceMode } from "./types";
+import type { CheckpointAuthorityHydration } from "@/lib/conversation-checkpoints/checkpoint-restart";
+import type { ConversationPersistenceMode } from "@/lib/conversation-core/turn/types";
 
 export class ConversationBindingNotFoundError extends Error {
   override readonly name = "ConversationBindingNotFoundError";
@@ -142,26 +143,6 @@ export interface ActorInputLoaderDeps {
   hydrateCheckpointAuthority(
     key: CheckpointScopeKey,
   ): Promise<CheckpointAuthorityHydration>;
-}
-
-export function checkpointScopeKeyForStoreIdentity(identity: {
-  projectPath: string;
-  sessionName: string;
-  conversationId: string;
-}): CheckpointScopeKey {
-  return isProjectSentinel(identity.sessionName)
-    ? {
-        scope: "project",
-        projectPath: identity.projectPath,
-        sessionName: null,
-        conversationId: identity.conversationId,
-      }
-    : {
-        scope: "session",
-        projectPath: identity.projectPath,
-        sessionName: identity.sessionName,
-        conversationId: identity.conversationId,
-      };
 }
 
 function actorInputFor(

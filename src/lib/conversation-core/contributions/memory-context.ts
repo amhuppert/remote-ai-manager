@@ -3,19 +3,19 @@ import type {
   PreparedMemoryIndexDelivery,
 } from "@/lib/memory/index-live-context";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { ConversationActorDependencies } from "../actor-dependencies";
-import type { PreparedTurnContribution } from "../turn-context";
+import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/dependencies";
+import type { PreparedTurnContribution } from "@/lib/conversation-core/turn/turn-context";
 
 type MemoryContextDependencies = {
   context: Pick<
-    ConversationActorDependencies["context"],
+    ConversationTurnDependencies["context"],
     "getMemoryIndexBlock"
   >;
   effects: Pick<
-    ConversationActorDependencies["effects"],
+    ConversationTurnDependencies["effects"],
     "recordMemoryIndexDeliveries"
   >;
-  log: ConversationActorDependencies["log"];
+  log: ConversationTurnDependencies["log"];
 };
 
 export async function prepareMemoryContext(

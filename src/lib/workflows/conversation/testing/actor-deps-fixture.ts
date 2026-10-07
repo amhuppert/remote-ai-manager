@@ -1,18 +1,18 @@
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
-import { ManagedConversationRuntime } from "../runtime-binding";
+import { ManagedConversationRuntime } from "@/lib/conversation-core/turn/runtime-binding";
 import type { ConversationActorDependencies } from "../actor-dependencies";
 import {
   createConversationActorImplementations,
   type ConversationActorImplementations,
 } from "../actor-implementations";
-import { ephemeralConversationEffects } from "../effects";
+import { ephemeralConversationEffects } from "@/lib/conversation-core/turn/effects";
 import { createConversationPolicyState } from "../policy-state";
 import {
   getConversationRuntime,
   conversationRuntimeKey,
 } from "../runtime-state";
 import type { Logger } from "@/lib/logging";
-import type { CheckpointDeliveryDependencies } from "../pre-turn/checkpoint-seed";
+import type { CheckpointDeliveryDependencies } from "@/lib/conversation-checkpoints/checkpoint-seed";
 /**
  * Actor dependency fixture for tests that drive the REAL conversation actor
  * implementations (`runTaskRunTurnForMachine`, `executePromptForMachine`).

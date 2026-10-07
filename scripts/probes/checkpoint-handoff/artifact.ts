@@ -5,7 +5,7 @@ import {
   getProjectConversation,
   getStateDb,
 } from "@/lib/state-store";
-import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import { assertIsolated } from "../checkpoint-continuation/environment";
 import type { loadArtifactEnvironment } from "./artifact-environment";
 import { digest } from "./evidence";

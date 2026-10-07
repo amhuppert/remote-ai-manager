@@ -1,5 +1,5 @@
 import { assertCheckpointForkBackend } from "@/lib/conversation-checkpoints/fork-submission";
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { createLogger } from "@/lib/logging";
 import { readConfig } from "@/lib/config/loader";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
@@ -14,7 +14,7 @@ import {
 } from "@/lib/state-store";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
-import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";

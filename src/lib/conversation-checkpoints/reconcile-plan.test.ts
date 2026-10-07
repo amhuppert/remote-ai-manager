@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pendingCheckpointCapture } from "@/lib/workflows/conversation/checkpoint-capture";
+import { pendingCheckpointCapture } from "@/lib/conversation-checkpoints/checkpoint-capture";
 
 import { planCheckpointReconcile } from "./reconcile-plan";
 import type { CheckpointHandoff, CheckpointOperation } from "./schemas";

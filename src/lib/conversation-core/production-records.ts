@@ -247,7 +247,7 @@ export function createProductionConversationRecords(
         },
       );
     },
-    async recordWithdrawn(identity, { cause, request }) {
+    async recordWithdrawn(identity, { cause, request, reason }) {
       // A queue row carries no backend: a fresh conversation takes its first message's choice now,
       // at boot before anything drains, so the retried message runs where it was sent.
       const chosen = request.backend;
@@ -271,7 +271,7 @@ export function createProductionConversationRecords(
         inputOrigin: request.inputOrigin,
         content: queueContentOfTurnInput(request),
         ...(request.modelSelection !== undefined ? { modelSelection: request.modelSelection } : {}),
-        failure: "The server restarted before this message could start, so it was not sent",
+        failure: reason,
       });
       logger.info("conversation_core.unsent_message_kept_for_review", { conversationId: identity.conversationId });
     },

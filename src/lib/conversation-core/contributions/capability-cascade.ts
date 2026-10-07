@@ -1,20 +1,15 @@
 /**
- * Pre-turn step: agent-capability cascade composition, seeding, and apply.
+ * Pre-turn step: the agent-capability seed a new runtime is created with.
  *
- * Hides the scope decision for capability config around a turn: project
- * conversations compose from the project composer (fixed backend, no session
- * layer) with non-blocking diagnostics, session conversations compose from
- * the full cascade; a project seed composed for a different backend is
- * dropped with a warning rather than switching the conversation's backend.
- * Also owns persisting the runtime seed baseline and turn-start apply.
+ * Hides the scope decision for capability config: project conversations
+ * compose from the project composer (fixed backend, no session layer) with
+ * non-blocking diagnostics, session conversations compose from the full
+ * cascade; a project seed composed for a different backend is dropped with a
+ * warning rather than switching the conversation's backend.
  */
 
 import { createLogger } from "@/lib/logging";
-import type {
-  AgentCapabilityDiagnostic,
-  AgentCapabilityRuntimeApplicationState,
-} from "@/lib/agent-capabilities/schemas";
-import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
+import type { AgentCapabilityDiagnostic } from "@/lib/agent-capabilities/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -36,10 +31,8 @@ export function isRuntimeProjectCapabilitySeed(
   return seed !== undefined && seed.kind !== "diagnostics-only";
 }
 
-export interface CapabilityCascadeDeps {
-  applyCapabilityAtTurnStart(
-    input: ApplyConversationIdentity,
-  ): Promise<unknown>;
+/** The two capability composers a new runtime's seed comes from. */
+export interface CapabilitySeedComposers {
   composeCapabilityConfigForConversation(input: {
     projectPath: string;
     projectName: string;
@@ -55,7 +48,6 @@ export interface CapabilityCascadeDeps {
     projectName: string;
     conversationId: string;
   }): Promise<ProjectCapabilitySeed | undefined>;
-  state: import("../policy-state").ConversationPolicyState;
 }
 
 export interface CapabilityTurnContext {
@@ -68,42 +60,6 @@ export interface CapabilityTurnContext {
   isProjectConversation: boolean;
   /** Non-blocking error surface toward the live prompt stream. */
   emitStreamError(message: string): void;
-}
-
-/**
- * Build the capability-apply identity for the turn: project conversations are
- * session-less and address the project scope directly.
- */
-export function buildCapabilityApplyInput(
-  ctx: Pick<
-    CapabilityTurnContext,
-    | "projectPath"
-    | "projectName"
-    | "sessionName"
-    | "conversationId"
-    | "worktreePath"
-    | "backend"
-    | "isProjectConversation"
-  >,
-): ApplyConversationIdentity {
-  if (ctx.isProjectConversation) {
-    return {
-      conversationScope: "project",
-      projectPath: ctx.projectPath,
-      projectName: ctx.projectName,
-      conversationId: ctx.conversationId,
-      worktreePath: ctx.worktreePath,
-      backend: ctx.backend,
-    };
-  }
-  return {
-    projectPath: ctx.projectPath,
-    projectName: ctx.projectName,
-    sessionName: ctx.sessionName,
-    conversationId: ctx.conversationId,
-    worktreePath: ctx.worktreePath,
-    backend: ctx.backend,
-  };
 }
 
 function emitProjectCapabilityDiagnostics(
@@ -130,10 +86,7 @@ function emitProjectCapabilityDiagnostics(
 }
 
 async function composeProjectConversationCapabilitySeed(
-  deps: Pick<
-    CapabilityCascadeDeps,
-    "composeCapabilityConfigForProjectConversation"
-  >,
+  deps: Pick<CapabilitySeedComposers, "composeCapabilityConfigForProjectConversation">,
   ctx: CapabilityTurnContext,
 ): Promise<ProjectCapabilitySeed | undefined> {
   try {
@@ -167,11 +120,7 @@ async function composeProjectConversationCapabilitySeed(
  * a different backend never switches the conversation's backend.
  */
 export async function resolveCapabilitySeedForNewRuntime(
-  deps: Pick<
-    CapabilityCascadeDeps,
-    | "composeCapabilityConfigForConversation"
-    | "composeCapabilityConfigForProjectConversation"
-  >,
+  deps: CapabilitySeedComposers,
   ctx: CapabilityTurnContext,
 ): Promise<CapabilitySeed | RuntimeProjectCapabilitySeed | undefined> {
   const projectCapabilitySeed = ctx.isProjectConversation
@@ -210,52 +159,4 @@ export async function resolveCapabilitySeedForNewRuntime(
   }
 
   return capabilitySeed;
-}
-
-/**
- * Persist the runtime seed baseline so the apply service can compare
- * subsequent mutations against the state the runtime was seeded with.
- */
-export async function seedRuntimeCapabilityState(
-  deps: Pick<CapabilityCascadeDeps, "state">,
-  ctx: CapabilityTurnContext,
-  seed: AgentCapabilityRuntimeApplicationState,
-): Promise<void> {
-  await deps.state.updateCapabilities(
-    buildCapabilityApplyInput(ctx),
-    () => seed,
-  );
-  logger.info("prompt.capability_runtime_seeded", {
-    ...scopeRefFromStoreSessionName(ctx.sessionName),
-    backend: ctx.backend,
-    conversationId: ctx.conversationId,
-    seededCascadeKinds: Object.keys(seed.cascades),
-  });
-}
-
-/**
- * Attempt delivery of pending capability changes at the start of a turn.
- * Failures never block the turn: they are logged and the turn proceeds.
- */
-export async function applyCapabilityCascadeAtTurnStart(
-  deps: Pick<CapabilityCascadeDeps, "applyCapabilityAtTurnStart">,
-  ctx: CapabilityTurnContext,
-  extra: { isNewRuntime: boolean },
-): Promise<void> {
-  try {
-    logger.info("prompt.capability_turn_start_apply", {
-      ...scopeRefFromStoreSessionName(ctx.sessionName),
-      backend: ctx.backend,
-      conversationId: ctx.conversationId,
-      isNewRuntime: extra.isNewRuntime,
-    });
-    await deps.applyCapabilityAtTurnStart(buildCapabilityApplyInput(ctx));
-  } catch (err) {
-    logger.error("prompt.capability_turn_start_failed", {
-      ...scopeRefFromStoreSessionName(ctx.sessionName),
-      backend: ctx.backend,
-      conversationId: ctx.conversationId,
-      error: getErrorMessage(err),
-    });
-  }
 }

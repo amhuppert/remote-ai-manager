@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import { createDefaultPlannerRunner } from "./planner";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 const STUB_PORTABLE_MCP: PortableMcpConfig = {

@@ -93,6 +93,9 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // decide WHICH repository holds the conversation (project vs session) and
   // emits nothing — no URL, key, payload, label, or log field.
   ["lib/workflows/conversation/actor-input-loader.ts", "internal-adapter"],
+  // A conversation's checkpoint scope from its store key: the project variant
+  // carries `sessionName: null`, never the sentinel.
+  ["lib/conversation-checkpoints/scope-key.ts", "scope-derivation"],
   ["lib/workflows/conversation/persistence.ts", "internal-adapter"],
   ["lib/workflows/conversation/persistence-adapter.ts", "internal-adapter"],
   ["lib/workflows/conversation/rehydration.ts", "internal-adapter"],

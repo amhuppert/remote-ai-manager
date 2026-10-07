@@ -24,9 +24,9 @@ import {
   type TaskTurn,
   type TaskTurnPort,
 } from "./executor";
-import { taskTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
-import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import {
   createConversationRequests,
   type ConversationRequests,
@@ -143,6 +143,21 @@ function records(): ConversationCoreDeps["records"] {
       if (!questionsPending.delete(identity.conversationId)) return false;
       questionWithdrawals.push(identity.conversationId);
       return true;
+    },
+  };
+}
+
+/** The real repository, whose first `failures` mailbox removals fail as a storage error would. */
+function failingDeletes(repo: ConversationCoreDeps["repo"], failures: number): ConversationCoreDeps["repo"] {
+  let left = failures;
+  return {
+    ...repo,
+    deleteMailbox(cause) {
+      if (left > 0) {
+        left -= 1;
+        throw new Error("disk I/O error");
+      }
+      repo.deleteMailbox(cause);
     },
   };
 }
@@ -496,6 +511,7 @@ describe("conversation core for seats", () => {
 
       const repo = createConversationCoreRepo(fixture.db);
       const heldWhileRecording: number[] = [];
+      const reasons: string[] = [];
       const restarted = newCore({
         records: {
           ...records(),
@@ -503,11 +519,13 @@ describe("conversation core for seats", () => {
             // The mailbox keeps the only copy until its replacement is durable.
             heldWhileRecording.push(repo.queuedFor("conv-u").length);
             withdrawn.push(JSON.stringify(unsent.request.images));
+            reasons.push(unsent.reason);
           },
         },
       });
       await restarted.recover();
       expect(heldWhileRecording).toEqual([1]);
+      expect(reasons).toEqual(["The server restarted before this message could start, so it was not sent"]);
       // The person gets the whole message back, images included, to send again.
       expect(withdrawn).toEqual([JSON.stringify([image])]);
       const sent = await restarted.sendUserMessage({ conversationId: "conv-u", text: "Again", inputOrigin: "user" });
@@ -691,7 +709,16 @@ describe("conversation core for seats", () => {
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       let held: { code: "queue_review"; message: string } | null = null;
       const reads: Array<(value: null) => void> = [];
+      const repo = createConversationCoreRepo(fixture.db);
+      const handedBack: Array<{ reason: string; mailbox: string | null }> = [];
       const core = newCore({
+        records: {
+          ...records(),
+          async recordWithdrawn(_identity, unsent) {
+            withdrawn.push(`conv-u:${unsent.request.text}`);
+            handedBack.push({ reason: unsent.reason, mailbox: repo.getMailbox(unsent.cause)?.state ?? null });
+          },
+        },
         holds: {
           refusal: (_conversationId, turn, options) =>
             options?.betweenTurns === true
@@ -721,8 +748,10 @@ describe("conversation core for seats", () => {
         failure: "Review queued deliveries before sending another prompt.",
       });
       expect(userCalls.map((call) => call.text)).toEqual(["Queued"]);
-      // The person's words go back to them for review rather than being dropped.
+      // The person's words go back to them for review rather than being dropped, saying why,
+      // while the mailbox still holds them: a crash in between hands them back again.
       expect(withdrawn).toEqual(["conv-u:Direct"]);
+      expect(handedBack).toEqual([{ reason: "Review queued deliveries before sending another prompt.", mailbox: "queued" }]);
     });
 
     it("passes a durable hold's own code through to every entry", async () => {
@@ -1145,11 +1174,20 @@ describe("conversation core for seats", () => {
     it("settles a queued delivery as failed when the core itself fails to run it", async () => {
       enroll();
       const repo = createConversationCoreRepo(fixture.db);
+      const order: string[] = [];
       const core = newCore({
         repo: {
           ...repo,
           admitAttempt() {
             throw new Error("database is locked");
+          },
+        },
+        userTurns: {
+          ...userTurns,
+          async notStarted(input) {
+            await userTurns.notStarted?.(input);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            order.push(`queue told, mailbox ${repo.getMailbox(input.cause)?.state ?? "empty"}`);
           },
         },
       });
@@ -1161,8 +1199,12 @@ describe("conversation core for seats", () => {
       });
       if (sent.kind !== "accepted") throw new Error(sent.message);
       expect(await sent.settled).toMatchObject({ status: "failed", failure: "database is locked" });
+      order.push("sender answered");
       await core.conversationIdle("conv-u");
       expect(notStarted).toEqual([{ cause: "queue:conv-u:att-5", reason: "database is locked", endedBy: "failure" }]);
+      // The queue hears before the mailbox lets go of the batch and before its sender is answered.
+      expect(order).toEqual(["queue told, mailbox queued", "sender answered"]);
+      expect(repo.queuedFor("conv-u")).toEqual([]);
     });
 
     it("runs a workflow's task in the conversation's own turn order and hands back its outcome", async () => {
@@ -1203,6 +1245,79 @@ describe("conversation core for seats", () => {
         kind: "not_started",
         reason: "configuration",
       });
+    });
+
+    it("never runs a task it answered as cancelled, even when removing it failed at first", async () => {
+      enroll();
+      let finish: (result: CoreTurnResult) => void = () => {};
+      nextUserResult = () => new Promise((resolve) => (finish = resolve));
+      const repo = createConversationCoreRepo(fixture.db);
+      const core = newCore({ repo: failingDeletes(repo, 1) });
+      await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const cancel = new AbortController();
+      const task = core.runTask({ conversationId: "conv-u", turn: commitTask(), signal: cancel.signal });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      cancel.abort();
+      expect(await task).toMatchObject({ kind: "not_started", reason: "cancelled" });
+
+      finish(ok());
+      await core.conversationIdle("conv-u");
+      expect(taskCalls).toEqual([]);
+      expect(repo.queuedFor("conv-u")).toEqual([]);
+      expect(core.isBusy("conv-u")).toBe(false);
+    });
+
+    it("after a restart, never runs an orphaned task whose removal failed", async () => {
+      enroll();
+      const crashed = newCore({
+        slots: {
+          acquire: (_label, signal) =>
+            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+        },
+      });
+      void crashed.runTask({ conversationId: "conv-u", turn: commitTask() });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const core = newCore({ repo: failingDeletes(createConversationCoreRepo(fixture.db), 1) });
+      await core.recover();
+      const summary = taskTurnRequestSchema.parse({
+        kind: "task_run",
+        promptText: "Summarize the session",
+        executionClass: "nongoverned-task",
+      });
+      expect(await core.runTask({ conversationId: "conv-u", turn: summary })).toEqual(taskOutcome("feat: add notices"));
+      expect(taskCalls).toEqual(["Summarize the session"]);
+      await crashed.shutdown();
+    });
+
+    it("removes a mailbox item no request schema reads, rather than letting it hold the conversation", async () => {
+      enroll();
+      const repo = createConversationCoreRepo(fixture.db);
+      const unreadable = (cause: string) =>
+        repo.insertMailboxIfAbsent({
+          cause,
+          conversationId: "conv-u",
+          requester: null,
+          request: { kind: "user_message", text: 42 },
+          permit: null,
+          state: "queued",
+          attemptId: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+      fixture.db.transaction(() => unreadable("user:conv-u:old-shape"))();
+      const core = newCore();
+
+      const task = core.runTask({ conversationId: "conv-u", turn: commitTask() });
+      expect(await Promise.race([task, new Promise((resolve) => setTimeout(() => resolve("stuck"), 300))])).toEqual(
+        taskOutcome("feat: add notices"),
+      );
+
+      await core.conversationIdle("conv-u");
+      fixture.db.transaction(() => unreadable("user:conv-u:old-shape-2"))();
+      await core.retireConversation("conv-u");
+      expect(repo.queuedFor("conv-u")).toEqual([]);
     });
 
     it("refuses a message once the server is stopping, rather than leaving its sender waiting", async () => {

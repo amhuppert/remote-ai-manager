@@ -1,8 +1,9 @@
-import type { TaskRunResult } from "./turn-result";
+import type { ConversationTurnExecution, TaskRunResult } from "./turn-result";
 import {
   taskTurnRequestSchema,
   type TaskTurnRequest,
   type ConversationBinding,
+  type ConversationTurnSubmission,
 } from "./turn-spec";
 import { toTaskRunResult } from "./turn-result";
 /**
@@ -43,12 +44,14 @@ export interface ExecuteWorkflowTaskRunDeps {
   log?: Logger;
 }
 
-export function createWorkflowTaskRunExecutor(
-  lifecycle: Pick<
-    import("./manager").ConversationManager,
-    "executeConversationTurn"
-  >,
-) {
+/** Admits and runs one conversation turn; the conversation manager offers it. */
+export interface ConversationTurnExecutor {
+  executeConversationTurn(
+    input: ConversationTurnSubmission,
+  ): Promise<ConversationTurnExecution>;
+}
+
+export function createWorkflowTaskRunExecutor(lifecycle: ConversationTurnExecutor) {
   return async function executeWorkflowTaskRun(
     input: ExecuteWorkflowTaskRunInput,
     deps: ExecuteWorkflowTaskRunDeps = {},

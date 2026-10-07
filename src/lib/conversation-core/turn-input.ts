@@ -5,15 +5,15 @@ import { getDebugManifestPath } from "@/lib/debug-log/service";
 import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { buildDebugPromptContext } from "@/lib/workflows/debug/prompt-policy";
-import type { ConversationActorDependencies } from "@/lib/workflows/conversation/actor-dependencies";
-import { prepareMemoryContext } from "@/lib/workflows/conversation/pre-turn/memory-context";
-import { prepareNotepadContext } from "@/lib/workflows/conversation/pre-turn/notepad-context";
+import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/dependencies";
+import { prepareMemoryContext } from "@/lib/conversation-core/contributions/memory-context";
+import { prepareNotepadContext } from "@/lib/conversation-core/contributions/notepad-context";
 import {
   preparePassiveSubscriptionContext,
   type PassiveSubscriptionContextDependencies,
-} from "@/lib/workflows/conversation/pre-turn/passive-subscription-context";
-import type { PreparedCheckpointSeed } from "@/lib/workflows/conversation/pre-turn/checkpoint-seed";
-import { assembleTurnPrompt, type TurnContextExecution } from "@/lib/workflows/conversation/turn-context";
+} from "@/lib/conversation-core/contributions/passive-subscription-context";
+import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
+import { assembleTurnPrompt, type TurnContextExecution } from "@/lib/conversation-core/turn/turn-context";
 
 /** How input reaches the agent: as a turn's own input, or into a turn already running. */
 export type InputMode = "turn" | "live";
@@ -34,13 +34,13 @@ export function classifyDelivery(delivery: InputDelivery): DeliveryClass {
 
 export interface TurnInputDependencies {
   context: Pick<
-    ConversationActorDependencies["context"],
+    ConversationTurnDependencies["context"],
     "getLiveTicketBlock" | "getMemoryIndexBlock" | "readLiveReference" | "readNotepadForInjection"
   >;
-  effects: Pick<ConversationActorDependencies["effects"], "recordNotepadDeliveries" | "recordMemoryIndexDeliveries">;
+  effects: Pick<ConversationTurnDependencies["effects"], "recordNotepadDeliveries" | "recordMemoryIndexDeliveries">;
   subscriptions?: PassiveSubscriptionContextDependencies;
-  debug: Pick<ConversationActorDependencies["debug"], "getDebugLogUrl">;
-  log: ConversationActorDependencies["log"];
+  debug: Pick<ConversationTurnDependencies["debug"], "getDebugLogUrl">;
+  log: ConversationTurnDependencies["log"];
 }
 
 export interface TurnInputRequest {

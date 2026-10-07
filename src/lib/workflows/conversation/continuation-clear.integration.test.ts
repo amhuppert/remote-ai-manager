@@ -50,13 +50,8 @@ import type { ConversationBackendTurnResult } from "@/lib/agent-backends/convers
 import { turnContinuationSchema } from "@/lib/agent-backends/errors";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
-import type {
-  ConversationInput,
-  ExecutePromptInput,
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  PromptActorResult,
-} from "./types";
+import type { ConversationInput, PrepareTurnInput, PrepareTurnOutput } from "./types";
+import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
 
 const PROJECT_PATH = "/test/project";
 const PROJECT_NAME = "test-project";

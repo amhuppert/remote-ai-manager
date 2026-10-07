@@ -31,11 +31,11 @@ import {
   renderedTranscriptToMarkdown,
   renderOptionsSchema,
 } from "@/lib/conversations/transcript-render";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import type {
   TaskRunResult,
   TaskRunUsage,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 
 import {
   buildCheckpointSeed,

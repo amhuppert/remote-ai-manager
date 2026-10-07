@@ -4,8 +4,8 @@ import {
   createValidationFixer,
   type ValidationFixDeps,
 } from "./validation-fix";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 
 const PROJECT_PATH = "/projects/repo";
 const SESSION_NAME = "feature-branch";
