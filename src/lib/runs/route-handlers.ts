@@ -6,15 +6,17 @@
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]        → the run view
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]/definition → the workflow as written
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/answer → answer a seat's question
- * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel | retry (a lane)
+ * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel | retry (a lane) (owner or person)
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/amend  → replace a workflow's definition (owner)
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/decide → human approval decision (people only)
  * - POST /api/projects/[name]/sessions/[session]/contexts/tasks      → a seat's task command
  * - POST /api/projects/[name]/sessions/[session]/contexts/documents  → a seat publishes a run document
  *
  * The calling conversation is the principal: it owns the runs it launches, and
- * only the owner steers or answers them. A seat conversation changes tasks, and
- * publishes documents, only for the Context its seat binding names.
+ * only the owner answers or amends them. A person in Command Center, whose
+ * request carries no agent credential, reads and steers runs beside their
+ * owners and alone decides human approval. A seat conversation changes tasks,
+ * and publishes documents, only for the Context its seat binding names.
  */
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
@@ -47,6 +49,7 @@ import type {
   RunCharter,
   RunDefinitionContext,
   RunDocumentRevision,
+  RunPrincipal,
   RunRecord,
 } from "./schemas";
 import {
@@ -381,31 +384,28 @@ export function createRunRouteHandlers(
     return { ok: true, caller: resolved.caller, run };
   }
 
-  /** A run of this session, for a request no agent credential may make. */
-  async function resolvePersonRun(
+  /**
+   * Whether an agent or a person sent the request. Agents present a token or
+   * an identity; a request with no agent credential at all comes from a
+   * person in Command Center.
+   */
+  async function senderOf(
     request: Request,
-    context: RouteContext,
-    refusal: string,
-    hint: string,
-  ): Promise<{ ok: true; run: RunRecord } | { ok: false; response: Response }> {
+  ): Promise<{ ok: true; sender: "agent" | "person" } | { ok: false; response: Response }> {
     const transport = await deps.auth.validateOptionalToken(request);
     if (transport.kind === "invalid")
       return { ok: false, response: jsonError("Invalid token", 401) };
-    const presentsAgent =
+    const agent =
       transport.kind === "valid" ||
       request.headers.has(CONVERSATION_IDENTITY_HEADER) ||
       request.headers.has(LANE_IDENTITY_HEADER);
-    if (presentsAgent)
-      return {
-        ok: false,
-        response: jsonError(
-          refusal,
-          403,
-          "human_decision_required",
-          undefined,
-          hint,
-        ),
-      };
+    return { ok: true, sender: agent ? "agent" : "person" };
+  }
+
+  /** The run the route names, when it belongs to the route's session. */
+  async function sessionRun(
+    context: RouteContext,
+  ): Promise<{ ok: true; run: RunRecord } | { ok: false; response: Response }> {
     const { name, session, runId } = await context.params;
     const resolved = await resolveProjectSessionOr404(
       deps,
@@ -417,6 +417,61 @@ export function createRunRouteHandlers(
       projectPath: resolved.value.projectPath,
       sessionName: resolved.value.session.sessionName,
     });
+  }
+
+  /** A run of this session, for a request no agent credential may make. */
+  async function resolvePersonRun(
+    request: Request,
+    context: RouteContext,
+    refusal: string,
+    hint: string,
+  ): Promise<{ ok: true; run: RunRecord } | { ok: false; response: Response }> {
+    const sent = await senderOf(request);
+    if (!sent.ok) return sent;
+    if (sent.sender === "agent")
+      return {
+        ok: false,
+        response: jsonError(
+          refusal,
+          403,
+          "human_decision_required",
+          undefined,
+          hint,
+        ),
+      };
+    return sessionRun(context);
+  }
+
+  /** A run its owner conversation, or a person, steers; any other agent is refused. */
+  async function resolveSteeredRun(
+    request: Request,
+    context: RouteContext,
+  ): Promise<
+    | { ok: true; run: RunRecord; by: RunPrincipal }
+    | { ok: false; response: Response }
+  > {
+    const sent = await senderOf(request);
+    if (!sent.ok) return sent;
+    if (sent.sender === "person") {
+      const found = await sessionRun(context);
+      return found.ok ? { ...found, by: "person" } : found;
+    }
+    const owned = await resolveOwnedRun(request, context);
+    return owned.ok ? { ok: true, run: owned.run, by: "owner" } : owned;
+  }
+
+  /** A run of this session, read by any of its conversations or by a person. */
+  async function resolveReadRun(
+    request: Request,
+    context: RouteContext,
+  ): Promise<{ ok: true; run: RunRecord } | { ok: false; response: Response }> {
+    const sent = await senderOf(request);
+    if (!sent.ok) return sent;
+    if (sent.sender === "person") return sessionRun(context);
+    const resolved = await resolveCaller(request, context);
+    if (!resolved.ok) return resolved;
+    const { runId } = await context.params;
+    return runInSession(runId, resolved.caller);
   }
 
   function refuseWorkflow(
@@ -753,21 +808,16 @@ export function createRunRouteHandlers(
     },
 
     async show(request, context) {
-      const resolved = await resolveCaller(request, context);
-      if (!resolved.ok) return resolved.response;
-      const { runId } = await context.params;
-      const found = runInSession(runId, resolved.caller);
+      const found = await resolveReadRun(request, context);
       if (!found.ok) return found.response;
-      const view = describeRun(deps.supervision(), found.run.runId);
+      const { runId } = found.run;
+      const view = describeRun(deps.supervision(), runId);
       if (view === null) return notFound(`Run "${runId}" not found`);
       return NextResponse.json(view);
     },
 
     async definition(request, context) {
-      const resolved = await resolveCaller(request, context);
-      if (!resolved.ok) return resolved.response;
-      const { runId } = await context.params;
-      const found = runInSession(runId, resolved.caller);
+      const found = await resolveReadRun(request, context);
       if (!found.ok) return found.response;
       const { run } = found;
       return NextResponse.json({
@@ -817,26 +867,29 @@ export function createRunRouteHandlers(
       return NextResponse.json({ ok: true });
     },
 
+    // The owner steers its run, and so does a person in Command Center.
     async control(request, context) {
-      const owned = await resolveOwnedRun(request, context);
-      if (!owned.ok) return owned.response;
+      const steered = await resolveSteeredRun(request, context);
+      if (!steered.ok) return steered.response;
       const body = await readBody(request, controlSchema, "run control");
       if (!body.ok) return body.response;
       const runs = deps.supervision().runs;
-      const { runId } = owned.run;
-      // The CLI holds no revision, so the act applies to the run as it is now.
+      const { run, by } = steered;
+      const { runId } = run;
+      // Neither the CLI nor the page holds a revision, so the act applies to the run as it is now.
       try {
-        if (body.value.action === "pause") await runs.pause(runId);
+        if (body.value.action === "pause") await runs.pause(runId, by);
         if (body.value.action === "resume")
-          await runs.resume(runId, body.value.dispositions ?? []);
-        if (body.value.action === "cancel") await runs.cancel(runId);
+          await runs.resume(runId, by, body.value.dispositions ?? []);
+        if (body.value.action === "cancel") await runs.cancel(runId, by);
         if (body.value.action === "retry")
-          await runs.retryLane(runId, body.value.lane);
+          await runs.retryLane(runId, by, body.value.lane);
       } catch (error) {
         if (!isRefusal(error)) throw error;
         deps.log.warn("runs.control_refused", {
           runId,
           action: body.value.action,
+          by,
           error: error.message,
         });
         return jsonError(error.message, 409, "run_control_refused");
@@ -844,6 +897,7 @@ export function createRunRouteHandlers(
       deps.log.info("runs.control_applied", {
         runId,
         action: body.value.action,
+        by,
       });
       return NextResponse.json({
         ok: true,

@@ -50,6 +50,7 @@ const view = {
       recordedAt: "2026-10-03T10:05:00.000Z",
     },
   ],
+  acts: [],
   stalled: [],
   halts: [],
   loops: [],
@@ -381,6 +382,48 @@ describe("run commands", () => {
     expect(drained.stdout).toContain(
       "- agent [run-1.agent]: paused (next: freeze)",
     );
+  });
+
+  it("tells the owner when Alex paused its run, so it does not resume it unasked", async () => {
+    const at = "2026-10-03T10:04:00.000Z";
+    const show = async (acts: unknown[]) => {
+      const fixture = createCcRuntimeFixture({
+        env: identityEnv,
+        respond: () =>
+          jsonReply({
+            ...view,
+            progress: { kind: "paused", draining: false },
+            acts,
+          }),
+      });
+      return fixture.run(["run", "show", "run-1"], "text");
+    };
+    const alexPaused = `Alex paused this run in Command Center at ${at}; leave it paused unless Alex asks you to resume it.`;
+
+    expect(
+      (await show([{ action: "pause", by: "person", at }])).stdout,
+    ).toContain(alexPaused);
+    // A lane retry does not lift the pause, so Alex's still holds.
+    expect(
+      (
+        await show([
+          { action: "pause", by: "person", at },
+          { action: "retry_lane", by: "owner", at, lane: "api" },
+        ])
+      ).stdout,
+    ).toContain(alexPaused);
+    expect(
+      (await show([{ action: "pause", by: "owner", at }])).stdout,
+    ).not.toContain("Alex paused");
+    // Resumed since, and paused again by a restart, which records no act.
+    expect(
+      (
+        await show([
+          { action: "pause", by: "person", at },
+          { action: "resume", by: "person", at, dispositions: [] },
+        ])
+      ).stdout,
+    ).not.toContain("Alex paused");
   });
 
   it("shows a context the run's pause holds as held, with its next step, once admitted work has finished", async () => {

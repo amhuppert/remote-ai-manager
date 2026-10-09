@@ -87,6 +87,7 @@ function facts(
       startCause: `run-1:start:${key}:0`,
     })),
     control,
+    acts: [],
   };
 }
 
@@ -378,6 +379,7 @@ function workflow(
       startCause: `run-1:start:${key}:${pass}`,
     })),
     control: { paused: false, cancelled: false, fault: null },
+    acts: [],
   };
 }
 

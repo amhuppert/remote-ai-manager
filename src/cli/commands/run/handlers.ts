@@ -148,6 +148,8 @@ interface RunViewData {
   progress: string;
   /** While paused: whether admitted work is still finishing. */
   draining: boolean | null;
+  /** When the run is paused because Alex paused it in Command Center. */
+  pausedByPersonAt: string | null;
   needsOwner: string[];
   revision: number;
   ownerConversationId: string;
@@ -234,6 +236,22 @@ function heldByRunPause(draining: boolean, step: string): string {
     : `held by the run's pause (next: ${step})`;
 }
 
+/**
+ * When the pause that holds the run is Alex's. Every resume lifts the run's
+ * pause, so the last pause or resume act is the one that explains it; a
+ * restart's pause records no act, and so follows a resume.
+ */
+function pausedByPersonAt(view: RunView): string | null {
+  const last = view.acts.findLast(
+    (act) => act.action === "pause" || act.action === "resume",
+  );
+  return view.progress.kind === "paused" &&
+    last?.action === "pause" &&
+    last.by === "person"
+    ? last.at
+    : null;
+}
+
 function toViewData(view: RunView): RunViewData {
   return {
     runId: view.runId,
@@ -241,6 +259,7 @@ function toViewData(view: RunView): RunViewData {
     kind: view.kind,
     progress: view.progress.kind,
     draining: view.progress.kind === "paused" ? view.progress.draining : null,
+    pausedByPersonAt: pausedByPersonAt(view),
     needsOwner:
       view.progress.kind === "needs_owner" ? view.progress.reasons : [],
     revision: view.revision,
@@ -351,6 +370,10 @@ function viewText(view: JsonData<RunViewData>): string {
   const lines = [
     `Run ${view.runId} (${view.kind}, definition revision ${view.definitionRevision}): ${view.title} — ${view.progress === "paused" ? pausedLabel(view.draining, null, true) : view.progress}`,
   ];
+  if (view.pausedByPersonAt !== null)
+    lines.push(
+      `Alex paused this run in Command Center at ${view.pausedByPersonAt}; leave it paused unless Alex asks you to resume it.`,
+    );
   for (const reason of view.needsOwner) lines.push(`needs you: ${reason}`);
   for (const context of view.contexts) {
     const halt =

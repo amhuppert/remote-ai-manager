@@ -31,6 +31,7 @@ import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
+import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import { createSubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
 import { createTicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
 import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
@@ -50,6 +51,7 @@ export { synchronizeSubscriptionInvolvement } from "./involvement";
 function runSourceDeps(db: Db) {
   const runs = createRunsRepo(db);
   const core = createConversationCoreRepo(db);
+  const contexts = createExecutionContextsRepo(db);
   return {
     run(runId: string) {
       const run = runs.get(runId);
@@ -63,6 +65,8 @@ function runSourceDeps(db: Db) {
     },
     boundaries: (runId: string) => runs.boundaries(runId),
     question: (questionId: string) => core.getQuestion(questionId),
+    contextOccurrence: (contextId: string) =>
+      contexts.get(contextId)?.progressOccurrence ?? null,
   };
 }
 

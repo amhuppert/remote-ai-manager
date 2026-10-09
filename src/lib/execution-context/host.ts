@@ -145,6 +145,16 @@ export interface ContextSummary {
   stalled: string[];
 }
 
+/**
+ * What a resume changed: whether it lifted the Context's own pause, and the
+ * disposition it applied to a halt. A disposition for a Context no longer
+ * halted is ignored, so it changes nothing.
+ */
+export interface ContextResumption {
+  unpaused: boolean;
+  applied: HaltDisposition | null;
+}
+
 export interface ContextHost extends Executor<ContextProgressReport> {
   reconcile(contextId: string): Promise<void>;
   recordReconcileFailure(contextId: string, error: unknown): void;
@@ -173,7 +183,7 @@ export interface ContextHost extends Executor<ContextProgressReport> {
     contextId: string,
     expectedRevision: number,
     disposition?: { occurrence: string; disposition: HaltDisposition },
-  ): void;
+  ): ContextResumption;
   cancel(contextId: string, expectedRevision: number): Promise<void>;
   steer(contextId: string, expectedRevision: number, instruction: string): void;
   decide(
@@ -581,6 +591,7 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
 
     resume(contextId, expectedRevision, disposition) {
       let before: ContextRecord | null = null;
+      let resumption: ContextResumption = { unpaused: false, applied: null };
       const after = deps.transaction(() => {
         const record = requireRecord(contextId);
         if (record.revision !== expectedRevision) {
@@ -607,14 +618,17 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
             occurrence: disposition.occurrence,
             at: deps.now(),
           });
+          resumption = { ...resumption, applied: disposition.disposition };
         }
         if (record.facts.control.paused) {
+          resumption = { ...resumption, unpaused: true };
           deps.permits.reopen(contextControllerId(contextId), deps.now());
         }
         facts = advanceContext(facts, { kind: "resume" });
         return persist(record, facts, deps.intents.pending(owner(contextId)));
       });
       if (before !== null) afterCommit(before, after);
+      return resumption;
     },
 
     async cancel(contextId, expectedRevision) {

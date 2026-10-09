@@ -40,7 +40,12 @@ function reader() {
     jobs: createJobsRepo(fixture.db),
     queries: createSubscriptionSourceQueriesRepo(fixture.db),
     ticketChanges: createTicketStatusChangesRepo(fixture.db),
-    runs: { run: () => null, boundaries: () => [], question: () => null },
+    runs: {
+      run: () => null,
+      boundaries: () => [],
+      question: () => null,
+      contextOccurrence: () => null,
+    },
   });
 }
 

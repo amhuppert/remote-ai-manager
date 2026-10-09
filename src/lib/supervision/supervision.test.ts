@@ -167,7 +167,7 @@ describe("run supervision", () => {
       halt: "workspace_refused",
     });
 
-    await s.runs.resume("run-1", [
+    await s.runs.resume("run-1", "owner", [
       {
         contextId: "run-1.agent",
         occurrence: halted?.occurrence ?? "",

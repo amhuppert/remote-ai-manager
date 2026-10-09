@@ -35,13 +35,16 @@ import {
   type ObservedContexts,
   type RunPlan,
 } from "./schedule";
+import { contextBoundaryOccurrence } from "./notices";
 import {
   laneStateOf,
   type RunBoundary,
   type RunBoundaryDetail,
   type RunBoundaryKind,
   type RunDefinitionContext,
+  type RunControlAct,
   type RunDisposition,
+  type RunPrincipal,
   type RunDocument,
   type RunFacts,
   type RunInvocation,
@@ -191,14 +194,19 @@ export interface RunHost {
   observe(runId: string): RunObservation | null;
   /** Reads every started Context and pending start. */
   inspect(runId: string): RunInspection | null;
-  pause(runId: string): Promise<void>;
-  resume(runId: string, dispositions?: RunDisposition[]): Promise<void>;
-  cancel(runId: string): Promise<void>;
+  /** Each control act names who asked for it: the run's owner or a person. */
+  pause(runId: string, by: RunPrincipal): Promise<void>;
+  resume(
+    runId: string,
+    by: RunPrincipal,
+    dispositions?: RunDisposition[],
+  ): Promise<void>;
+  cancel(runId: string, by: RunPrincipal): Promise<void>;
   /**
    * Asks for a new attempt at a lane's halted publication or failed
    * provisioning, after the owner fixed what stopped it.
    */
-  retryLane(runId: string, lane: string): Promise<void>;
+  retryLane(runId: string, by: RunPrincipal, lane: string): Promise<void>;
   /** Records a human approval decision on one of the Run's Contexts. */
   decide(
     runId: string,
@@ -329,7 +337,7 @@ function contextBoundary(
   const { progress, occurrence } = context;
   const base = {
     runId: run.runId,
-    occurrence: `${invocation.contextId}:${occurrence}`,
+    occurrence: contextBoundaryOccurrence(invocation.contextId, occurrence),
   };
   const title = context.title;
   if (
@@ -705,10 +713,17 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       });
     }
     if (progress.kind === "cancelled") {
+      const cancelledBy = facts.acts.findLast(
+        (act) => act.action === "cancel",
+      )?.by;
       recordBoundary(record, {
         occurrence: "run:cancelled",
         kind: "cancelled",
-        summary: `${facts.title}: cancelled.`,
+        // The owner did not ask for this, so it must not take it for a failure to recover from.
+        summary:
+          cancelledBy === "person"
+            ? `${facts.title}: Alex cancelled it in Command Center.`
+            : `${facts.title}: cancelled.`,
         detail: { kind: "cancelled" },
       });
     }
@@ -754,28 +769,75 @@ export function createRunHost(deps: RunHostDeps): RunHost {
     }
   }
 
+  /** A finished run takes no control act, and a cancelled one only finishes stopping. */
+  function refuseControl(
+    record: RunRecord,
+    change: Partial<RunFacts["control"]>,
+  ): void {
+    if (
+      record.progress.kind === "succeeded" ||
+      record.progress.kind === "cancelled"
+    ) {
+      throw new RunControlRefusedError(
+        `Run ${record.runId} already finished (${record.progress.kind})`,
+      );
+    }
+    if (record.facts.control.cancelled && change.cancelled !== true)
+      throw new RunControlRefusedError(`Run ${record.runId} was cancelled`);
+  }
+
   function updateControl(
     runId: string,
     change: Partial<RunFacts["control"]>,
     /** Changes the permit, and any facts that change with it, in the same transaction. */
     permitChange: (facts: RunFacts) => RunFacts | void,
+    /** The act to record, read from the facts before the change; null when it changes nothing. */
+    act: (before: RunFacts) => RunControlAct | null = () => null,
   ): RunRecord {
     return deps.transaction(() => {
       const record = requireRecord(runId);
-      if (
-        record.progress.kind === "succeeded" ||
-        record.progress.kind === "cancelled"
-      ) {
-        throw new RunControlRefusedError(
-          `Run ${runId} already finished (${record.progress.kind})`,
-        );
-      }
+      refuseControl(record, change);
+      const recorded = act(record.facts);
       const facts = permitChange(record.facts) ?? record.facts;
       return project(record, {
         ...facts,
         control: { ...facts.control, ...change },
+        acts: recorded === null ? facts.acts : [...facts.acts, recorded],
       });
     });
+  }
+
+  /**
+   * Revokes the run's permit and stops its children. `by` asks for it; a
+   * restart finishing a cancel the last process began asks again as no one.
+   */
+  async function stop(runId: string, by: RunPrincipal | null): Promise<void> {
+    const running: string[] = [];
+    const record = updateControl(
+      runId,
+      { cancelled: true },
+      () => {
+        deps.permits.revoke(runControllerId(runId), deps.now());
+        // One running is stopped and awaited; reconcile closes what never started.
+        for (const intent of deps.intents.pending(owner(runId)))
+          if (
+            intent.executor === "workspace" &&
+            outcomeOf(intent).kind === "running"
+          )
+            running.push(intent.cause);
+      },
+      (before) =>
+        by === null || before.control.cancelled
+          ? null
+          : { action: "cancel", by, at: deps.now() },
+    );
+    for (const cause of running) void deps.workspace.interrupt(cause);
+    for (const invocation of record.facts.invocations) {
+      const context = deps.contexts.describe(invocation.contextId);
+      if (context === null || isTerminal(context.progress)) continue;
+      await deps.contexts.cancel(invocation.contextId, context.revision);
+    }
+    await host.reconcile(runId);
   }
 
   const host: RunHost = {
@@ -810,6 +872,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           }),
           invocations: [],
           control: { paused: false, cancelled: false, fault: null },
+          acts: [],
         };
         const created: RunRecord = {
           runId: input.runId,
@@ -924,13 +987,19 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       };
     },
 
-    async pause(runId) {
-      updateControl(runId, { paused: true }, () =>
-        deps.permits.close(runControllerId(runId), deps.now()),
+    async pause(runId, by) {
+      updateControl(
+        runId,
+        { paused: true },
+        () => deps.permits.close(runControllerId(runId), deps.now()),
+        (before) =>
+          before.control.paused
+            ? null
+            : { action: "pause", by, at: deps.now() },
       );
     },
 
-    async resume(runId, dispositions = []) {
+    async resume(runId, by, dispositions = []) {
       // One transaction: a refused disposition leaves the run paused and every
       // context as it was, rather than half resumed.
       const record = deps.transaction(() => {
@@ -944,64 +1013,69 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             `Context ${foreign.contextId} does not belong to run ${runId}`,
           );
         }
-        // Resume clears a fault too: the owner asked the run to try again.
-        const resumed = updateControl(
-          runId,
-          { paused: false, fault: null },
-          () => {
-            const { paused, fault } = current.facts.control;
-            if (paused || fault !== null)
-              deps.permits.reopen(runControllerId(runId), deps.now());
-          },
-        );
-        for (const invocation of resumed.facts.invocations) {
+        const named = new Set<string>();
+        for (const { contextId } of dispositions) {
+          if (named.has(contextId))
+            throw new RunControlRefusedError(
+              `Context ${contextId} is named more than once`,
+            );
+          named.add(contextId);
+        }
+        refuseControl(current, { paused: false });
+        // Only what the resume changes is its act: a disposition someone
+        // already applied, or one naming no halt, clears nothing.
+        let contextsResumed = false;
+        const applied: Array<{ contextId: string; disposition: string }> = [];
+        for (const invocation of current.facts.invocations) {
           const disposition = dispositions.find(
             (d) => d.contextId === invocation.contextId,
           );
           const context = deps.contexts.describe(invocation.contextId);
-          if (context === null) continue;
-          if (disposition !== undefined || context.paused) {
-            deps.contexts.resume(
-              invocation.contextId,
-              context.revision,
-              disposition === undefined
-                ? undefined
-                : {
-                    occurrence: disposition.occurrence,
-                    disposition: disposition.disposition,
-                  },
-            );
-          }
+          if (context === null || (disposition === undefined && !context.paused))
+            continue;
+          const resumption = deps.contexts.resume(
+            invocation.contextId,
+            context.revision,
+            disposition === undefined
+              ? undefined
+              : {
+                  occurrence: disposition.occurrence,
+                  disposition: disposition.disposition,
+                },
+          );
+          if (resumption.unpaused || resumption.applied !== null)
+            contextsResumed = true;
+          if (resumption.applied !== null)
+            applied.push({
+              contextId: invocation.contextId,
+              disposition: resumption.applied.kind,
+            });
         }
-        return resumed;
+        const { paused, fault } = current.facts.control;
+        // Resume clears a fault too: the owner asked the run to try again.
+        return updateControl(
+          runId,
+          { paused: false, fault: null },
+          () => {
+            if (paused || fault !== null)
+              deps.permits.reopen(runControllerId(runId), deps.now());
+          },
+          () =>
+            paused || fault !== null || contextsResumed
+              ? { action: "resume", by, at: deps.now(), dispositions: applied }
+              : null,
+        );
       });
       for (const invocation of record.facts.invocations)
         deps.touchContext(invocation.contextId);
       await host.reconcile(runId);
     },
 
-    async cancel(runId) {
-      const running: string[] = [];
-      const record = updateControl(runId, { cancelled: true }, () => {
-        deps.permits.revoke(runControllerId(runId), deps.now());
-        // One running is stopped and awaited; reconcile closes what never started.
-        for (const intent of deps.intents.pending(owner(runId)))
-          if (
-            intent.executor === "workspace" &&
-            outcomeOf(intent).kind === "running"
-          )
-            running.push(intent.cause);
-      });
-      for (const cause of running) void deps.workspace.interrupt(cause);
-      for (const invocation of record.facts.invocations) {
-        const context = deps.contexts.describe(invocation.contextId);
-        if (context === null || isTerminal(context.progress)) continue;
-        await deps.contexts.cancel(invocation.contextId, context.revision);
-      }
-      await host.reconcile(runId);
+    async cancel(runId, by) {
+      await stop(runId, by);
     },
 
-    async retryLane(runId, laneKey) {
+    async retryLane(runId, by, laneKey) {
       deps.transaction(() => {
         const record = requireRecord(runId);
         if (record.facts.control.cancelled)
@@ -1044,6 +1118,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         project(record, {
           ...record.facts,
           lanes: { ...record.facts.lanes, [laneKey]: next },
+          acts: [
+            ...record.facts.acts,
+            { action: "retry_lane", by, at: deps.now(), lane: laneKey },
+          ],
         });
       });
       await host.reconcile(runId);
@@ -1204,6 +1282,8 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         try {
           deps.transaction(() => {
             const record = requireRecord(run.runId);
+            // A run already paused keeps its pause, and who made it: nothing changed for its owner.
+            if (record.facts.control.paused) return;
             const restored = project(record, {
               ...record.facts,
               control: { ...record.facts.control, paused: true },
@@ -1226,7 +1306,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       // A cancel the last process did not finish stops its children again; each stop is idempotent.
       for (const run of listed.filter((r) => r.facts.control.cancelled)) {
         try {
-          await host.cancel(run.runId);
+          await stop(run.runId, null);
         } catch (error) {
           deps.log.error("runs.cancel_resume_failed", {
             runId: run.runId,

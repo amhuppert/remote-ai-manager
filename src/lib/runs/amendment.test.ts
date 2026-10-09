@@ -162,6 +162,7 @@ function facts(
       startCause: `run-1:start:${key}:${pass}`,
     })),
     control: { paused: false, cancelled: false, fault: null },
+    acts: [],
   };
 }
 

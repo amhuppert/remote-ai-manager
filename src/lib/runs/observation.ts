@@ -79,6 +79,7 @@ export function describeRun(
       summary: boundary.summary,
       recordedAt: boundary.recordedAt,
     })),
+    acts: record.facts.acts,
     stalled: [
       ...inspected.stalled,
       ...contexts.flatMap((context) => context.stalled),

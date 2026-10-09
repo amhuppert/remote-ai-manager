@@ -30,6 +30,7 @@ import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo
 import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo";
 import { createRunsRepo, type RunsRepo } from "@/lib/state-store/runs-repo";
+import { createRunSourceReader } from "@/lib/subscriptions/run-source";
 import { createRunHost, type RunHost, type RunLaunchInput } from "./host";
 import type { RouteGuard, RunBoundary, RunDocument } from "./schemas";
 import type { FrozenCharter } from "./charter";
@@ -871,7 +872,7 @@ describe("lanes", () => {
       ],
     ]);
 
-    await runs.retryLane("run-1", "api");
+    await runs.retryLane("run-1", "owner", "api");
     await scheduler.idle();
     expect(workspace.submitted().map((i) => i.cause)).toContain(
       "run-1:publish:api:2",
@@ -882,7 +883,7 @@ describe("lanes", () => {
       incorporated: "h1",
     });
     expect(contexts.observe("run-1.integrate")).not.toBeNull();
-    await expect(runs.retryLane("run-1", "api")).rejects.toThrow(
+    await expect(runs.retryLane("run-1", "owner", "api")).rejects.toThrow(
       /nothing to retry/,
     );
   });
@@ -903,7 +904,7 @@ describe("lanes under pause and cancel", () => {
   it("withdraws a publication not yet admitted when cancelled, and is cancelled at once", async () => {
     const cause = await readyToPublish();
     expect(workspace.outcome(cause).kind).toBe("queued");
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
     expect(workspace.withdrawn).toContain(cause);
     expect(runs.observe("run-1")?.record.progress).toEqual({
@@ -917,7 +918,7 @@ describe("lanes under pause and cancel", () => {
   it("interrupts a running publication when cancelled and keeps stopping until it settles", async () => {
     const cause = await readyToPublish();
     workspace.admit(cause);
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
     expect(workspace.interrupted).toContain(cause);
     expect(runs.observe("run-1")?.record.progress).toEqual({
@@ -935,10 +936,28 @@ describe("lanes under pause and cancel", () => {
     });
   });
 
+  it("refuses to pause or resume a run that is stopping, recording no act", async () => {
+    const cause = await readyToPublish();
+    workspace.admit(cause);
+    await runs.cancel("run-1", "owner");
+    await scheduler.idle();
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("stopping");
+
+    await expect(runs.pause("run-1", "person")).rejects.toThrow(
+      /was cancelled/,
+    );
+    await expect(runs.resume("run-1", "person")).rejects.toThrow(
+      /was cancelled/,
+    );
+    expect(runs.observe("run-1")?.record.facts.acts).toEqual([
+      { action: "cancel", by: "owner", at: now },
+    ]);
+  });
+
   it("withdraws a lane step a restart returned to the queue while the run was stopping, and finishes cancelling", async () => {
     const cause = await readyToPublish();
     workspace.admit(cause);
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "stopping",
@@ -950,6 +969,10 @@ describe("lanes under pause and cancel", () => {
     scheduler.touch({ kind: "run", id: "run-1" });
     await scheduler.idle();
     expect(workspace.withdrawn).toContain(cause);
+    // Finishing the cancel the last process began is not another act.
+    expect(runs.observe("run-1")?.record.facts.acts).toEqual([
+      { action: "cancel", by: "owner", at: now },
+    ]);
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "cancelled",
     });
@@ -960,15 +983,15 @@ describe("lanes under pause and cancel", () => {
 
   it("reports a pause as draining while a lane's publication runs, and drained while it only waits", async () => {
     const cause = await readyToPublish();
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "paused",
       draining: false,
     });
-    await runs.resume("run-1");
+    await runs.resume("run-1", "owner");
     await scheduler.idle();
     workspace.admit(cause);
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "paused",
       draining: true,
@@ -1241,7 +1264,7 @@ describe("workflow runs", () => {
       .find((i) => (i.request as { kind?: string }).kind === "accept");
     if (accept === undefined) throw new Error("no accept");
     expect(workspace.admit(accept.cause)).toBe(true);
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
     workspace.settle(accept.cause, {
       kind: "accepted",
       receipt: "snapshot:api",
@@ -1255,7 +1278,7 @@ describe("workflow runs", () => {
     expect(contexts.observe("run-1.docs")).toBeNull();
     expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
 
-    await runs.resume("run-1");
+    await runs.resume("run-1", "owner");
     await scheduler.idle();
     expect(
       contexts.observe("run-1.docs")?.record.facts.contract.current.inputs,
@@ -1288,7 +1311,7 @@ describe("workflow runs", () => {
     expect(contexts.observe("run-1.docs")).toBeNull();
     expect(recorded().map((b) => b.kind)).toEqual(["restored_paused"]);
 
-    await runs.resume("run-1");
+    await runs.resume("run-1", "owner");
     await scheduler.idle();
     expect(
       contexts.observe("run-1.docs")?.record.facts.contract.current.inputs,
@@ -1302,7 +1325,7 @@ describe("workflow runs", () => {
     beforeContextSubmit = () => {
       if (paused) return;
       paused = true;
-      void runs.pause("run-1");
+      void runs.pause("run-1", "owner");
     };
     await runs.launch({
       runId: "run-1",
@@ -1333,7 +1356,7 @@ describe("workflow runs", () => {
       ),
     ).toHaveLength(1);
 
-    await runs.resume("run-1");
+    await runs.resume("run-1", "owner");
     await scheduler.idle();
     expect(contexts.observe("run-1.b")).not.toBeNull();
   });
@@ -1344,7 +1367,7 @@ describe("workflow runs", () => {
     expect(contexts.observe("run-1.api")).toBeNull();
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
 
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
 
     expect(runs.observe("run-1")?.record.progress).toEqual({
@@ -1357,7 +1380,7 @@ describe("workflow runs", () => {
   it("cancels what started and never starts the rest", async () => {
     await launchChain();
     await settle(workspace, "bind", { kind: "bound" });
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
 
     expect(contexts.observe("run-1.api")?.record.progress.kind).toBe(
@@ -1476,7 +1499,7 @@ describe("run host", () => {
     requests.admit(wait.cause);
 
     // As a restart leaves it when the process stopped before the wait was withdrawn.
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "stopping",
@@ -1499,7 +1522,7 @@ describe("run host", () => {
     const work = conversation.submitted()[0];
     if (work === undefined) throw new Error("no work order");
     expect(conversation.admit(work.cause)).toBe(true);
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "paused",
       draining: true,
@@ -1561,7 +1584,7 @@ describe("run host", () => {
     if (bind === undefined) throw new Error("no bind");
     expect(workspace.admit(bind.cause)).toBe(false);
 
-    await runs.resume("run-1");
+    await runs.resume("run-1", "owner");
     await scheduler.idle();
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
     expect(workspace.admit(bind.cause)).toBe(true);
@@ -1570,14 +1593,14 @@ describe("run host", () => {
   it("admits nothing while paused and continues after resume", async () => {
     await launch();
     await settle(workspace, "bind", { kind: "bound" });
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
 
     const work = conversation.submitted()[0];
     if (work === undefined) throw new Error("no work order");
     expect(conversation.admit(work.cause)).toBe(false);
     expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
 
-    await runs.resume("run-1");
+    await runs.resume("run-1", "owner");
     await scheduler.idle();
     expect(conversation.admit(work.cause)).toBe(true);
   });
@@ -1607,7 +1630,7 @@ describe("run host", () => {
     expect(conversation.submitted()).toHaveLength(1);
     const occurrence = (halted?.detail as { occurrence: string }).occurrence;
 
-    await runs.resume("run-1", [
+    await runs.resume("run-1", "owner", [
       {
         contextId: "run-1.agent",
         occurrence,
@@ -1619,6 +1642,153 @@ describe("run host", () => {
     expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe(
       "running",
     );
+  });
+
+  it("records each control act with who asked for it, and tells the owner when a person cancelled its run", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(
+      conversation,
+      "work",
+      report({ status: "failed", failure: "provider error" }),
+    );
+    const halted = recorded().find((b) => b.kind === "halted");
+    const occurrence = (halted?.detail as { occurrence: string }).occurrence;
+
+    await runs.pause("run-1", "person");
+    // Pausing a paused run changes nothing, so it is no act.
+    await runs.pause("run-1", "owner");
+    await expect(
+      runs.resume("run-1", "person", [
+        {
+          contextId: "run-9.agent",
+          occurrence,
+          disposition: { kind: "continue" },
+        },
+      ]),
+    ).rejects.toThrow(/does not belong/);
+    await runs.resume("run-1", "owner", [
+      {
+        contextId: "run-1.agent",
+        occurrence,
+        disposition: { kind: "continue" },
+      },
+    ]);
+    await runs.cancel("run-1", "person");
+    await scheduler.idle();
+
+    expect(runs.observe("run-1")?.record.facts.acts).toEqual([
+      { action: "pause", by: "person", at: now },
+      {
+        action: "resume",
+        by: "owner",
+        at: now,
+        dispositions: [{ contextId: "run-1.agent", disposition: "continue" }],
+      },
+      { action: "cancel", by: "person", at: now },
+    ]);
+    expect(recorded().find((b) => b.kind === "cancelled")?.summary).toBe(
+      "Fix the notice: Alex cancelled it in Command Center.",
+    );
+  });
+
+  it("records only what a resume applied: a disposition someone already applied, or one naming no halt, is no act", async () => {
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(
+      conversation,
+      "work",
+      report({ status: "failed", failure: "provider error" }),
+    );
+    const halted = recorded().find((b) => b.kind === "halted");
+    const occurrence = (halted?.detail as { occurrence: string }).occurrence;
+    const continueAt = (at: string) => ({
+      contextId: "run-1.agent",
+      occurrence: at,
+      disposition: { kind: "continue" as const },
+    });
+    await expect(
+      runs.resume("run-1", "person", [
+        continueAt(occurrence),
+        { ...continueAt(occurrence), disposition: { kind: "retry" } },
+      ]),
+    ).rejects.toThrow(/more than once/);
+
+    await runs.resume("run-1", "person", [continueAt(occurrence)]);
+    await scheduler.idle();
+    // The owner follows its notice after Alex already resolved the halt.
+    await runs.resume("run-1", "owner", [continueAt(occurrence)]);
+    // A disposition naming the running context's own occurrence clears nothing either.
+    const running = contexts.describe("run-1.agent")?.occurrence ?? "";
+    await runs.resume("run-1", "owner", [continueAt(running)]);
+
+    expect(runs.observe("run-1")?.record.facts.acts).toEqual([
+      {
+        action: "resume",
+        by: "person",
+        at: now,
+        dispositions: [{ contextId: "run-1.agent", disposition: "continue" }],
+      },
+    ]);
+    expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe(
+      "running",
+    );
+  });
+
+  it("leaves a run someone paused as it was across a restart, without telling its owner to resume it", async () => {
+    await launch();
+    await runs.pause("run-1", "person");
+    await runs.restoreAfterRestart();
+    await scheduler.idle();
+
+    expect(recorded().map((b) => b.kind)).not.toContain("restored_paused");
+    expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
+    expect(runs.observe("run-1")?.record.facts.acts).toEqual([
+      { action: "pause", by: "person", at: now },
+    ]);
+  });
+
+  it("withdraws the owner's halt notice once someone resolved the halt before it was delivered", async () => {
+    const contextsRepo = createExecutionContextsRepo(fixture.db);
+    const read = createRunSourceReader({
+      run: (runId) => {
+        const run = runsRepo.get(runId);
+        return run === null
+          ? null
+          : { runId, projectPath: run.projectPath, title: run.facts.title };
+      },
+      boundaries: (runId) => runsRepo.boundaries(runId),
+      question: () => null,
+      contextOccurrence: (contextId) =>
+        contextsRepo.get(contextId)?.progressOccurrence ?? null,
+    });
+    const ownerFollow = { projectPath: "/repo", conversationId: "owner-1" };
+    await launch();
+    await settle(workspace, "bind", { kind: "bound" });
+    await settle(
+      conversation,
+      "work",
+      report({ status: "failed", failure: "provider error" }),
+    );
+    const halted = recorded().find((b) => b.kind === "halted");
+    expect(
+      (await read(ownerFollow, { id: "run-1" }, "0")).facts.map(
+        (fact) => fact.occurrenceId,
+      ),
+    ).toEqual([halted?.occurrence]);
+
+    await runs.resume("run-1", "person", [
+      {
+        contextId: "run-1.agent",
+        occurrence: (halted?.detail as { occurrence: string }).occurrence,
+        disposition: { kind: "continue" },
+      },
+    ]);
+    await scheduler.idle();
+
+    const after = await read(ownerFollow, { id: "run-1" }, "0");
+    expect(after.withdrawnOccurrenceIds).toEqual([halted?.occurrence]);
+    expect(after.facts).toEqual([]);
   });
 
   it("asks the owner for a human decision and accepts the approved candidate", async () => {
@@ -1685,11 +1855,11 @@ describe("run host", () => {
       "work",
       report({ status: "failed", failure: "provider error" }),
     );
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
     const occurrence = contexts.describe("run-1.agent")?.occurrence ?? "";
 
     await expect(
-      runs.resume("run-1", [
+      runs.resume("run-1", "owner", [
         {
           contextId: "run-1.agent",
           occurrence: "stale",
@@ -1698,7 +1868,7 @@ describe("run host", () => {
       ]),
     ).rejects.toThrow(/occurrence/);
     await expect(
-      runs.resume("run-1", [
+      runs.resume("run-1", "owner", [
         {
           contextId: "elsewhere",
           occurrence,
@@ -1725,8 +1895,8 @@ describe("run host", () => {
       receipt: "snapshot:git:a:a",
     });
 
-    await expect(runs.cancel("run-1")).rejects.toThrow(/already finished/);
-    await expect(runs.pause("run-1")).rejects.toThrow(/already finished/);
+    await expect(runs.cancel("run-1", "owner")).rejects.toThrow(/already finished/);
+    await expect(runs.pause("run-1", "owner")).rejects.toThrow(/already finished/);
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });
@@ -1743,7 +1913,7 @@ describe("run host", () => {
       .find((i) => (i.request as { kind: string }).kind === "accept");
     if (accept === undefined) throw new Error("no accept");
     workspace.admit(accept.cause);
-    await runs.pause("run-1");
+    await runs.pause("run-1", "owner");
     workspace.settle(accept.cause, {
       kind: "accepted",
       receipt: "snapshot:git:a:a",
@@ -1760,7 +1930,7 @@ describe("run host", () => {
   it("cancels its contexts and reports cancellation", async () => {
     await launch();
     await settle(workspace, "bind", { kind: "bound" });
-    await runs.cancel("run-1");
+    await runs.cancel("run-1", "owner");
     await scheduler.idle();
 
     expect(runs.observe("run-1")?.record.progress).toEqual({

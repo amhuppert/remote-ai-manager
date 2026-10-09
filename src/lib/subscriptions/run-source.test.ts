@@ -15,7 +15,7 @@ function boundary(
     seq,
     runId: "run-1",
     occurrence,
-    kind: detail.kind,
+    kind: detail.kind === "context_halt" ? "halted" : detail.kind,
     summary,
     detail,
     recordedAt: `2026-10-06T10:0${seq}:00.000Z`,
@@ -56,6 +56,7 @@ const read = createRunSourceReader({
       : null,
   boundaries: () => boundaries,
   question: (questionId) => questions[questionId] ?? null,
+  contextOccurrence: () => null,
 });
 
 describe("run subscription source", () => {
@@ -91,6 +92,54 @@ describe("run subscription source", () => {
     expect(question?.sourceText).toContain(
       "cctl run answer run-1 --question q-2",
     );
+  });
+
+  it("withdraws an approval or halt someone already settled: its context moved on", async () => {
+    const halt = (
+      contextId: string,
+      occurrence: string,
+    ): RunBoundary["detail"] => ({
+      kind: "context_halt",
+      contextId,
+      halt: "turn_failed",
+      occurrence,
+      dispositions: ["continue"],
+    });
+    const current: Record<string, string> = {
+      decided: "occ-9",
+      resumed: "occ-8",
+      halted: "occ-3",
+    };
+    const readSettled = createRunSourceReader({
+      run: (runId) => ({ runId, projectPath: "/repo", title: "Fix" }),
+      boundaries: () => [
+        boundary(
+          1,
+          "decided:occ-1",
+          { kind: "approval", contextId: "decided", candidateId: "c-1" },
+          "Decided: the result awaits a human decision.",
+        ),
+        boundary(
+          2,
+          "resumed:occ-2",
+          halt("resumed", "occ-2"),
+          "Resumed: halted.",
+        ),
+        boundary(3, "halted:occ-3", halt("halted", "occ-3"), "Halted."),
+      ],
+      question: () => null,
+      contextOccurrence: (contextId) => current[contextId] ?? null,
+    });
+
+    const result = await readSettled(owner, source, "0");
+
+    expect(result.withdrawnOccurrenceIds).toEqual([
+      "decided:occ-1",
+      "resumed:occ-2",
+    ]);
+    expect(result.facts.map((fact) => fact.occurrenceId)).toEqual([
+      "halted:occ-3",
+    ]);
   });
 
   it("reads nothing new past the latest boundary", async () => {

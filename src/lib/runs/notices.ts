@@ -1,5 +1,16 @@
 import type { RunBoundary, RunHaltClearedBy, RunRecord } from "./schemas";
 
+/**
+ * The occurrence of a boundary a Context's progress asks for (an approval or
+ * a halt): it no longer asks once the Context's progress occurrence moves on.
+ */
+export function contextBoundaryOccurrence(
+  contextId: string,
+  progressOccurrence: string,
+): string {
+  return `${contextId}:${progressOccurrence}`;
+}
+
 /** What the owner needs beyond the boundary record to act without another read. */
 export interface BoundaryNoticeExtras {
   questionText?: string;

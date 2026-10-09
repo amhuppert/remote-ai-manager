@@ -550,7 +550,7 @@ describe("run routes", () => {
     );
   });
 
-  it("pauses, resumes and cancels a run for its owner only", async () => {
+  it("pauses, resumes and cancels a run for its owner, refusing another conversation", async () => {
     h.script = () => new Promise(() => {});
     await routes.launch(
       request({ brief: "Long work" }, identity("owner-1")),
@@ -1174,6 +1174,71 @@ describe("run routes", () => {
     expect(await json(response)).toMatchObject({
       code: "human_approval_unavailable",
     });
+  });
+
+  it("lets a person read and steer a run beside its owner, and records who acted", async () => {
+    h.script = () => new Promise(() => {});
+    await routes.launch(
+      request({ brief: "Long work" }, identity("owner-1")),
+      params(),
+    );
+    await quiesce(supervision, false);
+    const asPerson = (body: unknown) =>
+      routes.control(request(body, {}), params({ runId: "run-1" }));
+
+    expect((await asPerson({ action: "pause" })).status).toBe(200);
+    expect(supervision.runs.observe("run-1")?.record.progress.kind).toBe(
+      "paused",
+    );
+    // An agent credential never stands for a person: another conversation is still refused.
+    const byOther = await routes.control(
+      request(
+        { action: "resume" },
+        { authorization: "Bearer test", ...identity("other-1") },
+      ),
+      params({ runId: "run-1" }),
+    );
+    expect(byOther.status).toBe(403);
+    tokenValid = false;
+    const forged = await routes.control(
+      request({ action: "resume" }, { authorization: "Bearer wrong" }),
+      params({ runId: "run-1" }),
+    );
+    expect(forged.status).toBe(401);
+    tokenValid = true;
+    const byOwner = await routes.control(
+      request({ action: "resume" }, identity("owner-1")),
+      params({ runId: "run-1" }),
+    );
+    expect(byOwner.status).toBe(200);
+    expect((await asPerson({ action: "cancel" })).status).toBe(200);
+    expect(
+      supervision.runs.observe("run-1")?.record.facts.acts.map((act) => [
+        act.action,
+        act.by,
+      ]),
+    ).toEqual([
+      ["pause", "person"],
+      ["resume", "owner"],
+      ["cancel", "person"],
+    ]);
+
+    const shown = await routes.show(
+      request(null, {}, "GET"),
+      params({ runId: "run-1" }),
+    );
+    expect(shown.status).toBe(200);
+    const view = runViewSchema.parse(await json(shown));
+    expect(view.acts.map((act) => [act.action, act.by])).toEqual([
+      ["pause", "person"],
+      ["resume", "owner"],
+      ["cancel", "person"],
+    ]);
+    const definition = await routes.definition(
+      request(null, {}, "GET"),
+      params({ runId: "run-1" }),
+    );
+    expect(definition.status).toBe(200);
   });
 
   it("lets only a person, never an agent, decide a result awaiting human approval", async () => {

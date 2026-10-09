@@ -279,6 +279,22 @@ describe("runs repository", () => {
               at: "2026-10-03T10:04:00.000Z",
             },
           },
+          acts: [
+            {
+              action: "resume" as const,
+              by: "person" as const,
+              at: "2026-10-03T10:03:00.000Z",
+              dispositions: [
+                { contextId: "run-1.implement", disposition: "continue" },
+              ],
+            },
+            {
+              action: "retry_lane" as const,
+              by: "owner" as const,
+              at: "2026-10-03T10:03:30.000Z",
+              lane: "api",
+            },
+          ],
         },
         revision: 4,
         progress: {

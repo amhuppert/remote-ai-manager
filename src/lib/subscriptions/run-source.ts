@@ -1,4 +1,7 @@
-import { composeBoundaryNotice } from "@/lib/runs/notices";
+import {
+  composeBoundaryNotice,
+  contextBoundaryOccurrence,
+} from "@/lib/runs/notices";
 import type { RunBoundary } from "@/lib/runs/schemas";
 import type {
   SourceCursor,
@@ -15,6 +18,8 @@ export interface RunSourceDeps {
   question(
     questionId: string,
   ): { questionText: string; state: "open" | "answered" | "withdrawn" } | null;
+  /** The Context's current progress occurrence; null when there is no such Context. */
+  contextOccurrence(contextId: string): string | null;
 }
 
 /** One owner-facing boundary as a source fact; its text is the notice the owner acts on. */
@@ -46,9 +51,32 @@ function boundaryFact(
 }
 
 /**
- * Run boundaries after the cursor (a boundary sequence number). A question
- * that is no longer open needs nobody: its boundary yields no fact, and a
- * delivery of it not yet sent is withdrawn.
+ * Whether a boundary asks for something already settled, by the owner or by a
+ * person in Command Center: a question no longer open, or an approval or
+ * Context halt that is no longer its Context's current progress occurrence.
+ * Run-level halts, faults and restored pauses are delivered regardless.
+ */
+function settled(
+  deps: RunSourceDeps,
+  boundary: RunBoundary,
+  question: { state: string } | null,
+): boolean {
+  const { detail } = boundary;
+  if (detail.kind === "question")
+    return question !== null && question.state !== "open";
+  if (detail.kind !== "approval" && detail.kind !== "context_halt")
+    return false;
+  const current = deps.contextOccurrence(detail.contextId);
+  return (
+    current !== null &&
+    boundary.occurrence !== contextBoundaryOccurrence(detail.contextId, current)
+  );
+}
+
+/**
+ * Run boundaries after the cursor (a boundary sequence number). A boundary
+ * already settled needs nobody: it yields no fact, and a delivery of it not
+ * yet sent is withdrawn.
  */
 export function createRunSourceReader(deps: RunSourceDeps) {
   return async (
@@ -73,7 +101,7 @@ export function createRunSourceReader(deps: RunSourceDeps) {
         boundary.detail.kind === "question"
           ? deps.question(boundary.detail.questionId)
           : null;
-      if (question !== null && question.state !== "open") {
+      if (settled(deps, boundary, question)) {
         withdrawnOccurrenceIds.push(boundary.occurrence);
         continue;
       }

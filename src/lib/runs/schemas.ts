@@ -295,6 +295,53 @@ export const runCharterRevisionSchema = z
   .strict();
 export type RunCharterRevision = z.infer<typeof runCharterRevisionSchema>;
 
+/** Who steers a run: the conversation that owns it, or a person in Command Center. */
+export const runPrincipalSchema = z.enum(["owner", "person"]);
+export type RunPrincipal = z.infer<typeof runPrincipalSchema>;
+
+/** One pause, resume, cancel or lane retry the run applied, with who asked for it. */
+export const runControlActSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("pause"),
+      by: runPrincipalSchema,
+      at: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("resume"),
+      by: runPrincipalSchema,
+      at: z.string().min(1),
+      /** The halt dispositions the resume passed on, by kind. */
+      dispositions: z.array(
+        z
+          .object({
+            contextId: z.string().min(1),
+            disposition: z.string().min(1),
+          })
+          .strict(),
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("cancel"),
+      by: runPrincipalSchema,
+      at: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("retry_lane"),
+      by: runPrincipalSchema,
+      at: z.string().min(1),
+      lane: z.string().min(1),
+    })
+    .strict(),
+]);
+export type RunControlAct = z.infer<typeof runControlActSchema>;
+
 export const runFactsSchema = z
   .object({
     runId: z.string().min(1),
@@ -336,6 +383,8 @@ export const runFactsSchema = z
           .default(null),
       })
       .strict(),
+    /** Every control act the run applied, in order. */
+    acts: z.array(runControlActSchema).default([]),
   })
   .strict();
 export type RunFacts = z.infer<typeof runFactsSchema>;
@@ -563,6 +612,8 @@ export const runViewSchema = z
         })
         .strict(),
     ),
+    /** Who paused, resumed, cancelled or retried the run, in order. */
+    acts: z.array(runControlActSchema),
     /** Settled effects nothing has consumed yet; resume reconciles them. */
     stalled: z.array(z.string()),
     /** Routes and loops that cannot proceed until the definition changes. */
