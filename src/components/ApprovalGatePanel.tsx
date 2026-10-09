@@ -60,6 +60,7 @@ interface ApprovalGatePanelProps {
   iteration?: number | null;
   /** ISO timestamp of when the gate parked; drives the wait-time readout. */
   requestedAt: string;
+  now?: number;
   isSubmitting: boolean;
   conversationBusy: boolean;
   executionSuspended: boolean;
@@ -157,12 +158,12 @@ function CandidateState({
           {icon}
         </span>
         <span className="font-mono text-[0.72rem] font-medium">{label}</span>
-        <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+        <span className="ml-auto font-mono text-[0.7rem] text-text-primary">
           {aside}
         </span>
       </div>
       {detail !== null && (
-        <span className="font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+        <span className="font-mono text-[0.7rem] leading-[1.5] text-text-primary">
           {detail}
         </span>
       )}
@@ -171,7 +172,7 @@ function CandidateState({
 }
 
 /** The frozen bytes themselves, under the state that vouches for them. */
-function ScopedChangesSection({
+export function ScopedChangesSection({
   ownedPaths,
   diff,
 }: {
@@ -196,7 +197,12 @@ function ScopedChangesSection({
           )}
         </div>
       ) : (
-        <div className="max-h-[320px] overflow-auto py-sm font-mono text-[0.7rem] leading-[1.5]">
+        <div
+          role="region"
+          aria-label="Candidate diff"
+          tabIndex={0}
+          className="max-h-[320px] overflow-auto rounded-md py-sm font-mono text-[0.7rem] leading-[1.5] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:-outline-offset-2"
+        >
           {diff.files.map((file) => (
             <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
               <div className={DIFF_FILE_HEADER_CLASS}>
@@ -228,10 +234,10 @@ function ScopedChangesSection({
   );
 }
 
-function formatWaitTime(isoDate: string): string | null {
+function formatWaitTime(isoDate: string, now?: number): string | null {
   const timestamp = new Date(isoDate).getTime();
   if (!Number.isFinite(timestamp)) return null;
-  const diffMs = Math.max(0, Date.now() - timestamp);
+  const diffMs = Math.max(0, (now ?? Date.now()) - timestamp);
   const minutes = Math.floor(diffMs / 60_000);
   if (minutes < 1) return "waiting <1m";
   if (minutes < 60) return `waiting ${minutes}m`;
@@ -255,6 +261,7 @@ export default function ApprovalGatePanel({
   workflowName,
   iteration = null,
   requestedAt,
+  now,
   isSubmitting,
   conversationBusy,
   executionSuspended,
@@ -278,7 +285,7 @@ export default function ApprovalGatePanel({
     scopedChanges.status !== "ready";
   const trimmedMessage = message.trim();
   const needsFeedback = trimmedMessage === "" && !rejectVoiceBusy;
-  const waitLabel = formatWaitTime(requestedAt);
+  const waitLabel = formatWaitTime(requestedAt, now);
 
   const busyHint = conversationBusy
     ? "Chat turn in progress — actions re-enable when it completes."
@@ -322,7 +329,7 @@ export default function ApprovalGatePanel({
               : "Context approval"}
           </span>
           {meta.length > 0 && (
-            <span className="ml-auto flex items-baseline gap-sm font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
+            <span className="ml-auto flex items-baseline gap-sm font-mono text-[0.7rem] whitespace-nowrap text-text-secondary">
               {meta.map((part) => (
                 <span key={part}>{part}</span>
               ))}
