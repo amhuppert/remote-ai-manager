@@ -486,7 +486,9 @@ describe("drainConversationQueueInto progress", () => {
       submitted.push(turn.promptText);
       return "accepted" as const;
     };
-    expect(await drainConversationQueueInto(DRAIN_CONTEXT, makeQueueDeps(), submit)).toBe("idle");
+    expect(
+      await drainConversationQueueInto(DRAIN_CONTEXT, makeQueueDeps(), submit),
+    ).toBe("idle");
     expect(
       await drainConversationQueueInto(
         DRAIN_CONTEXT,

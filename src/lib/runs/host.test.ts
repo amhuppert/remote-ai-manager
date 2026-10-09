@@ -30,11 +30,7 @@ import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo
 import { createExecutionContextsRepo } from "@/lib/state-store/execution-contexts-repo";
 import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo";
 import { createRunsRepo, type RunsRepo } from "@/lib/state-store/runs-repo";
-import {
-  createRunHost,
-  type RunHost,
-  type RunLaunchInput,
-} from "./host";
+import { createRunHost, type RunHost, type RunLaunchInput } from "./host";
 import type { RouteGuard, RunBoundary, RunDocument } from "./schemas";
 import type { FrozenCharter } from "./charter";
 
@@ -152,11 +148,13 @@ beforeEach(() => {
     contexts: {
       ...contextHost,
       describe(contextId) {
-        if (contextsUnreadable) throw new Error(`Context ${contextId} could not be read`);
+        if (contextsUnreadable)
+          throw new Error(`Context ${contextId} could not be read`);
         return contextHost.describe(contextId);
       },
       outcome(cause) {
-        if (contextsUnreadable) throw new Error(`Context for ${cause} could not be read`);
+        if (contextsUnreadable)
+          throw new Error(`Context for ${cause} could not be read`);
         return contextHost.outcome(cause);
       },
       async submit(intent) {
@@ -194,8 +192,17 @@ afterEach(async () => {
 
 /** Every boundary recorded, in order: what the owner's follow reads. */
 function recorded(): RunBoundary[] {
-  const ids = z.array(z.string()).parse(fixture.db.prepare("SELECT run_id FROM runs ORDER BY rowid").pluck().all());
-  return ids.flatMap((id) => runsRepo.boundaries(id)).sort((a, b) => a.seq - b.seq);
+  const ids = z
+    .array(z.string())
+    .parse(
+      fixture.db
+        .prepare("SELECT run_id FROM runs ORDER BY rowid")
+        .pluck()
+        .all(),
+    );
+  return ids
+    .flatMap((id) => runsRepo.boundaries(id))
+    .sort((a, b) => a.seq - b.seq);
 }
 
 /** Settles the single pending operation of `executor` and lets reconciles run. */
@@ -254,13 +261,26 @@ const chainContexts = (): RunLaunchInput["contexts"] => [
 const chainAuthored = {
   title: "API then docs",
   contexts: [
-    { key: "api", dependsOn: [], title: "Build the API", brief: "Make the failure notice appear once." },
-    { key: "docs", dependsOn: ["api"], title: "Document the API", brief: "Make the failure notice appear once." },
+    {
+      key: "api",
+      dependsOn: [],
+      title: "Build the API",
+      brief: "Make the failure notice appear once.",
+    },
+    {
+      key: "docs",
+      dependsOn: ["api"],
+      title: "Document the API",
+      brief: "Make the failure notice appear once.",
+    },
   ],
 };
 
 /** api builds first; docs builds on its accepted result. */
-async function launchChain(documents?: RunDocument[], charter?: FrozenCharter): Promise<void> {
+async function launchChain(
+  documents?: RunDocument[],
+  charter?: FrozenCharter,
+): Promise<void> {
   await runs.launch({
     runId: "run-1",
     cause: "launch-1",
@@ -281,7 +301,10 @@ async function launchChain(documents?: RunDocument[], charter?: FrozenCharter): 
 async function succeedActiveContext(summary: string): Promise<void> {
   await settle(workspace, "bind", { kind: "bound" });
   await settle(conversation, "work", report({ finalText: summary }));
-  await settle(workspace, "freeze", { kind: "frozen", evidence: `git:${summary}` });
+  await settle(workspace, "freeze", {
+    kind: "frozen",
+    evidence: `git:${summary}`,
+  });
   await settle(workspace, "accept", {
     kind: "accepted",
     receipt: `snapshot:${summary}`,
@@ -312,11 +335,20 @@ async function settleFor(
 }
 
 /** Drives the single active context with an output schema through work, capture and acceptance. */
-async function succeedWithOutput(output: Record<string, unknown>): Promise<void> {
+async function succeedWithOutput(
+  output: Record<string, unknown>,
+): Promise<void> {
   await settle(workspace, "bind", { kind: "bound" });
   await settle(conversation, "work", report());
-  await settle(conversation, "capture_output", report({ structuredOutput: output }));
-  await settle(workspace, "freeze", { kind: "frozen", evidence: `git:${JSON.stringify(output)}` });
+  await settle(
+    conversation,
+    "capture_output",
+    report({ structuredOutput: output }),
+  );
+  await settle(workspace, "freeze", {
+    kind: "frozen",
+    evidence: `git:${JSON.stringify(output)}`,
+  });
   await settle(workspace, "accept", { kind: "accepted", receipt: "snapshot" });
 }
 
@@ -337,13 +369,21 @@ describe("routes and loops", () => {
       sessionName: "session",
       owner: { conversationId: "owner-1", sessionName: "session" },
       contexts: [
-        { key: "implement", dependsOn: [], request: startRequest("run-1.implement", false, "Implement") },
+        {
+          key: "implement",
+          dependsOn: [],
+          request: startRequest("run-1.implement", false, "Implement"),
+        },
         {
           key: "review",
           dependsOn: ["implement"],
           request: startRequest("run-1.review", false, "Review", verdictSchema),
         },
-        { key: "ship", dependsOn: ["review"], request: startRequest("run-1.ship", false, "Ship") },
+        {
+          key: "ship",
+          dependsOn: ["review"],
+          request: startRequest("run-1.ship", false, "Ship"),
+        },
       ],
       loops: [
         {
@@ -351,7 +391,12 @@ describe("routes and loops", () => {
           body: ["implement", "review"],
           entry: "implement",
           exit: "review",
-          until: { schema: { type: "object", properties: { approved: { const: true } } } },
+          until: {
+            schema: {
+              type: "object",
+              properties: { approved: { const: true } },
+            },
+          },
           maxPasses: 2,
         },
       ],
@@ -361,19 +406,31 @@ describe("routes and loops", () => {
     await succeedActiveContext("First try.");
     await succeedWithOutput({ approved: false });
     expect(contexts.observe("run-1.ship")).toBeNull();
-    expect(contexts.observe("run-1.implement.pass2")?.record.facts.contract.current.inputs).toEqual([
+    expect(
+      contexts.observe("run-1.implement.pass2")?.record.facts.contract.current
+        .inputs,
+    ).toEqual([
       { key: "review", title: "Review (pass 1)", output: { approved: false } },
     ]);
 
     await succeedActiveContext("Second try.");
-    expect(contexts.observe("run-1.review.pass2")?.record.facts.contract.current.inputs).toEqual([
-      { key: "implement", title: "Implement", output: { summary: "Second try." } },
+    expect(
+      contexts.observe("run-1.review.pass2")?.record.facts.contract.current
+        .inputs,
+    ).toEqual([
+      {
+        key: "implement",
+        title: "Implement",
+        output: { summary: "Second try." },
+      },
     ]);
     await succeedWithOutput({ approved: true });
-    expect(contexts.observe("run-1.ship")?.record.facts.contract.current.inputs).toEqual([
-      { key: "review", title: "Review", output: { approved: true } },
-    ]);
-    expect(runs.observe("run-1")?.record.facts.invocations.map((i) => i.startCause)).toEqual([
+    expect(
+      contexts.observe("run-1.ship")?.record.facts.contract.current.inputs,
+    ).toEqual([{ key: "review", title: "Review", output: { approved: true } }]);
+    expect(
+      runs.observe("run-1")?.record.facts.invocations.map((i) => i.startCause),
+    ).toEqual([
       "run-1:start:implement:0",
       "run-1:start:review:0",
       "run-1:start:implement:1",
@@ -382,7 +439,9 @@ describe("routes and loops", () => {
     ]);
 
     await succeedActiveContext("Shipped.");
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
       [
         "succeeded",
@@ -399,7 +458,9 @@ describe("routes and loops", () => {
   });
 
   it("tells the owner at once when a choice takes too many routes, and once more when only the halt remains", async () => {
-    const takesBoth = { schema: { type: "object", properties: { approved: { const: false } } } };
+    const takesBoth = {
+      schema: { type: "object", properties: { approved: { const: false } } },
+    };
     await runs.launch({
       runId: "run-1",
       cause: "launch-1",
@@ -415,34 +476,90 @@ describe("routes and loops", () => {
           routing: { cardinality: "exactlyOne" },
           request: startRequest("run-1.triage", false, "Triage", verdictSchema),
         },
-        { key: "fix", dependsOn: ["triage"], when: { triage: takesBoth }, request: startRequest("run-1.fix", false, "Fix") },
-        { key: "ship", dependsOn: ["triage"], when: { triage: takesBoth }, request: startRequest("run-1.ship", false, "Ship") },
-        { key: "docs", dependsOn: [], request: startRequest("run-1.docs", false, "Docs") },
+        {
+          key: "fix",
+          dependsOn: ["triage"],
+          when: { triage: takesBoth },
+          request: startRequest("run-1.fix", false, "Fix"),
+        },
+        {
+          key: "ship",
+          dependsOn: ["triage"],
+          when: { triage: takesBoth },
+          request: startRequest("run-1.ship", false, "Ship"),
+        },
+        {
+          key: "docs",
+          dependsOn: [],
+          request: startRequest("run-1.docs", false, "Docs"),
+        },
       ],
     });
     await scheduler.idle();
     await settleFor("run-1.triage", workspace, "bind", { kind: "bound" });
     await settleFor("run-1.triage", conversation, "work", report());
-    await settleFor("run-1.triage", conversation, "capture_output", report({ structuredOutput: { approved: false } }));
-    await settleFor("run-1.triage", workspace, "freeze", { kind: "frozen", evidence: "git:triage" });
-    await settleFor("run-1.triage", workspace, "accept", { kind: "accepted", receipt: "snapshot:triage" });
+    await settleFor(
+      "run-1.triage",
+      conversation,
+      "capture_output",
+      report({ structuredOutput: { approved: false } }),
+    );
+    await settleFor("run-1.triage", workspace, "freeze", {
+      kind: "frozen",
+      evidence: "git:triage",
+    });
+    await settleFor("run-1.triage", workspace, "accept", {
+      kind: "accepted",
+      receipt: "snapshot:triage",
+    });
 
     expect(contexts.observe("run-1.fix")).toBeNull();
     expect(contexts.observe("run-1.ship")).toBeNull();
     expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "running" });
-    const promised = ["halted", "route:triage:cardinality", { kind: "run_halt", halt: "route_cardinality", clearedBy: "amend", otherWorkRemains: true }];
-    expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([promised]);
+    const promised = [
+      "halted",
+      "route:triage:cardinality",
+      {
+        kind: "run_halt",
+        halt: "route_cardinality",
+        clearedBy: "amend",
+        otherWorkRemains: true,
+      },
+    ];
+    expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
+      promised,
+    ]);
 
     // Work that waits on the owner is not finished: the follow-up waits for it.
     await settleFor("run-1.docs", workspace, "bind", { kind: "bound" });
-    await settleFor("run-1.docs", conversation, "work", report({ openQuestionId: "q-1" }));
+    await settleFor(
+      "run-1.docs",
+      conversation,
+      "work",
+      report({ openQuestionId: "q-1" }),
+    );
     expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
     expect(recorded().map((b) => b.kind)).toEqual(["halted", "question"]);
 
-    await settleFor("run-1.docs", requests, "answer", { kind: "answered", question: "Which?", answer: "This." });
-    await settleFor("run-1.docs", conversation, "work", report({ finalText: "Docs." }));
-    await settleFor("run-1.docs", workspace, "freeze", { kind: "frozen", evidence: "git:docs" });
-    await settleFor("run-1.docs", workspace, "accept", { kind: "accepted", receipt: "snapshot:docs" });
+    await settleFor("run-1.docs", requests, "answer", {
+      kind: "answered",
+      question: "Which?",
+      answer: "This.",
+    });
+    await settleFor(
+      "run-1.docs",
+      conversation,
+      "work",
+      report({ finalText: "Docs." }),
+    );
+    await settleFor("run-1.docs", workspace, "freeze", {
+      kind: "frozen",
+      evidence: "git:docs",
+    });
+    await settleFor("run-1.docs", workspace, "accept", {
+      kind: "accepted",
+      receipt: "snapshot:docs",
+    });
 
     expect(runs.observe("run-1")?.record.progress.kind).toBe("needs_owner");
     expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
@@ -460,7 +577,9 @@ describe("routes and loops", () => {
 });
 
 describe("amendments", () => {
-  const takesBoth = { schema: { type: "object", properties: { approved: { const: false } } } };
+  const takesBoth = {
+    schema: { type: "object", properties: { approved: { const: false } } },
+  };
   const routed = (shipGuard: RouteGuard) => [
     {
       key: "triage",
@@ -468,8 +587,18 @@ describe("amendments", () => {
       routing: { cardinality: "exactlyOne" as const },
       request: startRequest("run-1.triage", false, "Triage", verdictSchema),
     },
-    { key: "fix", dependsOn: ["triage"], when: { triage: takesBoth }, request: startRequest("run-1.fix", false, "Fix") },
-    { key: "ship", dependsOn: ["triage"], when: { triage: shipGuard }, request: startRequest("run-1.ship", false, "Ship") },
+    {
+      key: "fix",
+      dependsOn: ["triage"],
+      when: { triage: takesBoth },
+      request: startRequest("run-1.fix", false, "Fix"),
+    },
+    {
+      key: "ship",
+      dependsOn: ["triage"],
+      when: { triage: shipGuard },
+      request: startRequest("run-1.ship", false, "Ship"),
+    },
   ];
   /** The definition as its owner would have written it: what an amendment compares started work by. */
   const authored = (title: string, contexts: RunLaunchInput["contexts"]) => ({
@@ -503,7 +632,11 @@ describe("amendments", () => {
 
     const rerouted = routed({ else: true });
     await runs.amend("run-1", {
-      definition: { title: "Routed again", contexts: rerouted, authored: authored("Routed again", rerouted) },
+      definition: {
+        title: "Routed again",
+        contexts: rerouted,
+        authored: authored("Routed again", rerouted),
+      },
       basedOn: 1,
     });
     await scheduler.idle();
@@ -521,21 +654,40 @@ describe("amendments", () => {
       body: ["implement", "review"],
       entry: "implement",
       exit: "review",
-      until: { schema: { type: "object", properties: { approved: { const: true } } } },
+      until: {
+        schema: { type: "object", properties: { approved: { const: true } } },
+      },
       maxPasses,
     });
     const contextsOfLoop = [
-      { key: "implement", dependsOn: [], request: startRequest("run-1.implement", false, "Implement") },
-      { key: "review", dependsOn: ["implement"], request: startRequest("run-1.review", false, "Review", verdictSchema) },
+      {
+        key: "implement",
+        dependsOn: [],
+        request: startRequest("run-1.implement", false, "Implement"),
+      },
+      {
+        key: "review",
+        dependsOn: ["implement"],
+        request: startRequest("run-1.review", false, "Review", verdictSchema),
+      },
     ];
-    await runs.launch(launchInput({ contexts: contextsOfLoop, loops: [polish(1)] }));
+    await runs.launch(
+      launchInput({ contexts: contextsOfLoop, loops: [polish(1)] }),
+    );
     await scheduler.idle();
     await succeedActiveContext("First try.");
     await succeedWithOutput({ approved: false });
-    expect(runs.inspect("run-1")?.plan.halts.map((halt) => halt.kind)).toEqual(["loop_exhausted"]);
+    expect(runs.inspect("run-1")?.plan.halts.map((halt) => halt.kind)).toEqual([
+      "loop_exhausted",
+    ]);
 
     await runs.amend("run-1", {
-      definition: { title: "Polish", contexts: contextsOfLoop, loops: [polish(2)], authored: authored("Polish", contextsOfLoop) },
+      definition: {
+        title: "Polish",
+        contexts: contextsOfLoop,
+        loops: [polish(2)],
+        authored: authored("Polish", contextsOfLoop),
+      },
       basedOn: null,
     });
     await scheduler.idle();
@@ -546,18 +698,34 @@ describe("amendments", () => {
     await launchChain();
     const before = runs.observe("run-1")?.record;
     const changed = [
-      { key: "api", dependsOn: [], request: startRequest("run-1.api", false, "Build another API") },
-      { key: "docs", dependsOn: ["api"], request: startRequest("run-1.docs", false, "Document the API") },
+      {
+        key: "api",
+        dependsOn: [],
+        request: startRequest("run-1.api", false, "Build another API"),
+      },
+      {
+        key: "docs",
+        dependsOn: ["api"],
+        request: startRequest("run-1.docs", false, "Document the API"),
+      },
     ];
     await expect(
       runs.amend("run-1", {
-        definition: { title: "API then docs", contexts: changed, authored: authored("API then docs", changed) },
+        definition: {
+          title: "API then docs",
+          contexts: changed,
+          authored: authored("API then docs", changed),
+        },
         basedOn: null,
       }),
     ).rejects.toThrow(/"api" has started/);
     await expect(
       runs.amend("run-1", {
-        definition: { title: "API then docs", contexts: changed.slice(1), authored: authored("API then docs", changed.slice(1)) },
+        definition: {
+          title: "API then docs",
+          contexts: changed.slice(1),
+          authored: authored("API then docs", changed.slice(1)),
+        },
         basedOn: 3,
       }),
     ).rejects.toThrow(/revision 1/);
@@ -598,7 +766,11 @@ function laneLaunch(): RunLaunchInput {
           },
         },
       },
-      { key: "integrate", dependsOn: ["api"], request: startRequest("run-1.integrate", false, "Integrate") },
+      {
+        key: "integrate",
+        dependsOn: ["api"],
+        request: startRequest("run-1.integrate", false, "Integrate"),
+      },
     ],
     lanes: [
       {
@@ -606,7 +778,10 @@ function laneLaunch(): RunLaunchInput {
         laneId: "1-api",
         worktreePath: "/repo/.worktrees/session.1-api",
         branch: "csm/session-1-api",
-        target: { worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+        target: {
+          worktreePath: "/repo/.worktrees/session",
+          branch: "csm/session",
+        },
         checks: ["typecheck"],
       },
     ],
@@ -617,61 +792,109 @@ describe("lanes", () => {
   it("provisions the lane, lands its work there, publishes it, and only then starts work that needs its code", async () => {
     await launchLane();
     expect(contexts.observe("run-1.api")).toBeNull();
-    const provision = workspace.submitted().find((i) => (i.request as { kind?: string }).kind === "provision");
+    const provision = workspace
+      .submitted()
+      .find((i) => (i.request as { kind?: string }).kind === "provision");
     expect(provision?.request).toMatchObject({
       kind: "provision",
-      lane: { laneId: "1-api", worktreePath: "/repo/.worktrees/session.1-api", sessionBranch: "csm/session" },
+      lane: {
+        laneId: "1-api",
+        worktreePath: "/repo/.worktrees/session.1-api",
+        sessionBranch: "csm/session",
+      },
     });
-    await settle(workspace, "provision", { kind: "provisioned", baseline: "b0" });
-    expect(contexts.observe("run-1.api")?.record.facts.binding.request).toMatchObject({ kind: "lane" });
+    await settle(workspace, "provision", {
+      kind: "provisioned",
+      baseline: "b0",
+    });
+    expect(
+      contexts.observe("run-1.api")?.record.facts.binding.request,
+    ).toMatchObject({ kind: "lane" });
 
     await succeedActiveContext("API built.");
     expect(contexts.observe("run-1.integrate")).toBeNull();
-    const publish = workspace.submitted().find((i) => (i.request as { kind?: string }).kind === "publish");
+    const publish = workspace
+      .submitted()
+      .find((i) => (i.request as { kind?: string }).kind === "publish");
     expect(publish?.cause).toBe("run-1:publish:api:1");
     expect(publish?.request).toMatchObject({ checks: ["typecheck"] });
 
-    await settle(workspace, "publish", { kind: "published", commit: "p1", incorporated: "h0" });
-    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication).toEqual({
-      attempt: 1,
-      outcome: { kind: "published", commit: "p1", incorporated: "h0" },
+    await settle(workspace, "publish", {
+      kind: "published",
+      commit: "p1",
+      incorporated: "h0",
     });
-    expect(contexts.observe("run-1.integrate")?.record.facts.contract.current.inputs).toEqual([
+    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication).toEqual(
+      {
+        attempt: 1,
+        outcome: { kind: "published", commit: "p1", incorporated: "h0" },
+      },
+    );
+    expect(
+      contexts.observe("run-1.integrate")?.record.facts.contract.current.inputs,
+    ).toEqual([
       { key: "api", title: "Build the API", output: { summary: "API built." } },
     ]);
     await succeedActiveContext("Integrated.");
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
   });
 
   it("halts on a blocked publication, tells the owner how to retry, and publishes on the new attempt", async () => {
     await launchLane();
-    await settle(workspace, "provision", { kind: "provisioned", baseline: "b0" });
+    await settle(workspace, "provision", {
+      kind: "provisioned",
+      baseline: "b0",
+    });
     await succeedActiveContext("API built.");
     await settle(workspace, "publish", {
       kind: "publish_blocked",
-      detail: "The session worktree has changes publication would overwrite or leave behind: notes.md.",
+      detail:
+        "The session worktree has changes publication would overwrite or leave behind: notes.md.",
     });
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "needs_owner",
       reasons: [expect.stringContaining("notes.md")],
     });
     expect(recorded().map((b) => [b.kind, b.occurrence, b.detail])).toEqual([
-      ["halted", "lane:api:publication:1", { kind: "run_halt", halt: "lane_publication", clearedBy: "retry_lane", lane: "api", otherWorkRemains: false }],
+      [
+        "halted",
+        "lane:api:publication:1",
+        {
+          kind: "run_halt",
+          halt: "lane_publication",
+          clearedBy: "retry_lane",
+          lane: "api",
+          otherWorkRemains: false,
+        },
+      ],
     ]);
 
     await runs.retryLane("run-1", "api");
     await scheduler.idle();
-    expect(workspace.submitted().map((i) => i.cause)).toContain("run-1:publish:api:2");
-    await settle(workspace, "publish", { kind: "published", commit: "p2", incorporated: "h1" });
+    expect(workspace.submitted().map((i) => i.cause)).toContain(
+      "run-1:publish:api:2",
+    );
+    await settle(workspace, "publish", {
+      kind: "published",
+      commit: "p2",
+      incorporated: "h1",
+    });
     expect(contexts.observe("run-1.integrate")).not.toBeNull();
-    await expect(runs.retryLane("run-1", "api")).rejects.toThrow(/nothing to retry/);
+    await expect(runs.retryLane("run-1", "api")).rejects.toThrow(
+      /nothing to retry/,
+    );
   });
 });
 
 describe("lanes under pause and cancel", () => {
   async function readyToPublish(): Promise<string> {
     await launchLane();
-    await settle(workspace, "provision", { kind: "provisioned", baseline: "b0" });
+    await settle(workspace, "provision", {
+      kind: "provisioned",
+      baseline: "b0",
+    });
     await succeedActiveContext("API built.");
     await scheduler.idle();
     return "run-1:publish:api:1";
@@ -683,8 +906,12 @@ describe("lanes under pause and cancel", () => {
     await runs.cancel("run-1");
     await scheduler.idle();
     expect(workspace.withdrawn).toContain(cause);
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
-    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication?.outcome).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
+    expect(
+      runs.observe("run-1")?.record.facts.lanes?.api?.publication?.outcome,
+    ).toEqual({ kind: "cancelled" });
   });
 
   it("interrupts a running publication when cancelled and keeps stopping until it settles", async () => {
@@ -693,12 +920,19 @@ describe("lanes under pause and cancel", () => {
     await runs.cancel("run-1");
     await scheduler.idle();
     expect(workspace.interrupted).toContain(cause);
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "stopping" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "stopping",
+    });
 
-    workspace.settle(cause, { kind: "publication_failed", detail: "Stopped before publishing" });
+    workspace.settle(cause, {
+      kind: "publication_failed",
+      detail: "Stopped before publishing",
+    });
     scheduler.touch({ kind: "run", id: "run-1" });
     await scheduler.idle();
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
   });
 
   it("withdraws a lane step a restart returned to the queue while the run was stopping, and finishes cancelling", async () => {
@@ -706,7 +940,9 @@ describe("lanes under pause and cancel", () => {
     workspace.admit(cause);
     await runs.cancel("run-1");
     await scheduler.idle();
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "stopping" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "stopping",
+    });
 
     // The restart found no publication marker, so the attempt went back to the queue.
     workspace.requeue(cause);
@@ -714,19 +950,29 @@ describe("lanes under pause and cancel", () => {
     scheduler.touch({ kind: "run", id: "run-1" });
     await scheduler.idle();
     expect(workspace.withdrawn).toContain(cause);
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
-    expect(runs.observe("run-1")?.record.facts.lanes?.api?.publication?.outcome).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
+    expect(
+      runs.observe("run-1")?.record.facts.lanes?.api?.publication?.outcome,
+    ).toEqual({ kind: "cancelled" });
   });
 
   it("reports a pause as draining while a lane's publication runs, and drained while it only waits", async () => {
     const cause = await readyToPublish();
     await runs.pause("run-1");
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: false });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "paused",
+      draining: false,
+    });
     await runs.resume("run-1");
     await scheduler.idle();
     workspace.admit(cause);
     await runs.pause("run-1");
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: true });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "paused",
+      draining: true,
+    });
   });
 });
 
@@ -744,7 +990,9 @@ describe("workflow runs", () => {
     expect(recorded()).toEqual([]);
 
     await succeedActiveContext("Docs written.");
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
     expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
       [
         "succeeded",
@@ -761,8 +1009,20 @@ describe("workflow runs", () => {
 
   it("gives each context the documents meant for it as they stand when it starts; an amendment changes them only for work not yet started", async () => {
     const declared = (plan: string): RunDocument[] => [
-      { path: "plan.md", artifactId: plan, bytes: 7, description: "The plan", readWhen: "Before you start" },
-      { path: "api-notes.md", artifactId: "sha256:api", bytes: 3, description: "API notes", appliesTo: ["api"] },
+      {
+        path: "plan.md",
+        artifactId: plan,
+        bytes: 7,
+        description: "The plan",
+        readWhen: "Before you start",
+      },
+      {
+        path: "api-notes.md",
+        artifactId: "sha256:api",
+        bytes: 3,
+        description: "API notes",
+        appliesTo: ["api"],
+      },
     ];
     await launchChain(declared("sha256:v1"));
     // Each context's copies live in a directory of its own, so the two revisions never share a file.
@@ -772,25 +1032,40 @@ describe("workflow runs", () => {
       description: "The plan",
       readWhen: "Before you start",
     });
-    expect(contexts.observe("run-1.api")?.record.facts.contract.current.documents).toEqual([
+    expect(
+      contexts.observe("run-1.api")?.record.facts.contract.current.documents,
+    ).toEqual([
       planAt("run-1.api", "sha256:v1"),
-      { artifactId: "sha256:api", path: ".cc/run-docs/run-1.api/api-notes.md", description: "API notes" },
+      {
+        artifactId: "sha256:api",
+        path: ".cc/run-docs/run-1.api/api-notes.md",
+        description: "API notes",
+      },
     ]);
 
     await runs.amend("run-1", {
-      definition: { title: "API then docs", contexts: chainContexts(), authored: chainAuthored, documents: declared("sha256:v2") },
+      definition: {
+        title: "API then docs",
+        contexts: chainContexts(),
+        authored: chainAuthored,
+        documents: declared("sha256:v2"),
+      },
       basedOn: 1,
     });
     await scheduler.idle();
-    expect(contexts.observe("run-1.api")?.record.facts.contract.current.documents[0]).toEqual(
-      planAt("run-1.api", "sha256:v1"),
-    );
+    expect(
+      contexts.observe("run-1.api")?.record.facts.contract.current.documents[0],
+    ).toEqual(planAt("run-1.api", "sha256:v1"));
 
     await succeedActiveContext("API built.");
-    expect(contexts.observe("run-1.docs")?.record.facts.contract.current.documents).toEqual([
-      planAt("run-1.docs", "sha256:v2"),
-    ]);
-    expect(runs.observe("run-1")?.record.facts.documents.map((r) => [r.path, r.revision, r.source])).toEqual([
+    expect(
+      contexts.observe("run-1.docs")?.record.facts.contract.current.documents,
+    ).toEqual([planAt("run-1.docs", "sha256:v2")]);
+    expect(
+      runs
+        .observe("run-1")
+        ?.record.facts.documents.map((r) => [r.path, r.revision, r.source]),
+    ).toEqual([
       ["plan.md", 1, "launch"],
       ["api-notes.md", 1, "launch"],
       ["plan.md", 2, "amend"],
@@ -798,14 +1073,31 @@ describe("workflow runs", () => {
   });
 
   it("refuses an amendment written against a revision a seat has published past, or replacing a publication it did not name, and reports what it removed", async () => {
-    const plan: RunDocument = { path: "plan.md", artifactId: "sha256:v1", bytes: 2, description: "The plan" };
+    const plan: RunDocument = {
+      path: "plan.md",
+      artifactId: "sha256:v1",
+      bytes: 2,
+      description: "The plan",
+    };
     await launchChain([plan]);
-    expect(runs.publishDocument("run-1", { path: "plan.md", artifactId: "sha256:v2", bytes: 2, by: "run-1.api" })).toEqual({
+    expect(
+      runs.publishDocument("run-1", {
+        path: "plan.md",
+        artifactId: "sha256:v2",
+        bytes: 2,
+        by: "run-1.api",
+      }),
+    ).toEqual({
       revision: 2,
       unchanged: false,
     });
     expect(() =>
-      runs.publishDocument("run-1", { path: "plan.md", artifactId: "sha256:v3", bytes: 2, by: "run-9.elsewhere" }),
+      runs.publishDocument("run-1", {
+        path: "plan.md",
+        artifactId: "sha256:v3",
+        bytes: 2,
+        by: "run-9.elsewhere",
+      }),
     ).toThrow(/not part of run run-1/);
 
     await expect(
@@ -830,14 +1122,23 @@ describe("workflow runs", () => {
         basedOn: 1,
       }),
     ).rejects.toThrow(/plan.md revision 2 was published by run-1.api/);
-    expect(runs.observe("run-1")?.record.facts.documents.map((r) => [r.revision, r.source])).toEqual([
+    expect(
+      runs
+        .observe("run-1")
+        ?.record.facts.documents.map((r) => [r.revision, r.source]),
+    ).toEqual([
       [1, "launch"],
       [2, "publish"],
     ]);
 
     expect(
       await runs.amend("run-1", {
-        definition: { title: "API then docs", contexts: chainContexts(), authored: chainAuthored, documents: [] },
+        definition: {
+          title: "API then docs",
+          contexts: chainContexts(),
+          authored: chainAuthored,
+          documents: [],
+        },
         basedOn: 1,
       }),
     ).toEqual({ removedDocuments: ["plan.md"] });
@@ -845,10 +1146,28 @@ describe("workflow runs", () => {
 
   it("gives each context the run's charter as it stands when it starts, as a summary and as a document beside its others", async () => {
     const frozen = (mission: string): FrozenCharter => ({
-      charter: { mission, invariants: [{ id: "api-stable", statement: "Keep the API", appliesTo: ["api"] }] },
-      bundles: { default: `sha256:${mission}`, byKey: { api: `sha256:${mission}-api` } },
+      charter: {
+        mission,
+        invariants: [
+          { id: "api-stable", statement: "Keep the API", appliesTo: ["api"] },
+        ],
+      },
+      bundles: {
+        default: `sha256:${mission}`,
+        byKey: { api: `sha256:${mission}-api` },
+      },
     });
-    await launchChain([{ path: "plan.md", artifactId: "sha256:plan", bytes: 7, description: "The plan" }], frozen("v1"));
+    await launchChain(
+      [
+        {
+          path: "plan.md",
+          artifactId: "sha256:plan",
+          bytes: 7,
+          description: "The plan",
+        },
+      ],
+      frozen("v1"),
+    );
 
     const api = contexts.observe("run-1.api")?.record.facts.contract.current;
     expect(api?.charter).toMatchObject({
@@ -863,17 +1182,33 @@ describe("workflow runs", () => {
     ]);
 
     await runs.amend("run-1", {
-      definition: { title: "API then docs", contexts: chainContexts(), authored: chainAuthored, charter: frozen("v2") },
+      definition: {
+        title: "API then docs",
+        contexts: chainContexts(),
+        authored: chainAuthored,
+        charter: frozen("v2"),
+      },
       basedOn: 1,
       reason: "The API is settled",
     });
     await scheduler.idle();
-    expect(contexts.observe("run-1.api")?.record.facts.contract.current.charter?.mission).toBe("v1");
+    expect(
+      contexts.observe("run-1.api")?.record.facts.contract.current.charter
+        ?.mission,
+    ).toBe("v1");
     await succeedActiveContext("API built.");
     const docs = contexts.observe("run-1.docs")?.record.facts.contract.current;
-    expect(docs?.charter).toMatchObject({ revision: 2, mission: "v2", invariants: [] });
+    expect(docs?.charter).toMatchObject({
+      revision: 2,
+      mission: "v2",
+      invariants: [],
+    });
     expect(docs?.documents.map((d) => d.artifactId)).toEqual(["sha256:v2"]);
-    expect(runs.observe("run-1")?.record.facts.charter.map((r) => [r.revision, r.source, r.reason])).toEqual([
+    expect(
+      runs
+        .observe("run-1")
+        ?.record.facts.charter.map((r) => [r.revision, r.source, r.reason]),
+    ).toEqual([
       [1, "launch", null],
       [2, "amend", "The API is settled"],
     ]);
@@ -907,17 +1242,24 @@ describe("workflow runs", () => {
     if (accept === undefined) throw new Error("no accept");
     expect(workspace.admit(accept.cause)).toBe(true);
     await runs.pause("run-1");
-    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:api" });
+    workspace.settle(accept.cause, {
+      kind: "accepted",
+      receipt: "snapshot:api",
+    });
     scheduler.touch(accept.requester);
     await scheduler.idle();
 
-    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("succeeded");
+    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe(
+      "succeeded",
+    );
     expect(contexts.observe("run-1.docs")).toBeNull();
     expect(runs.observe("run-1")?.record.progress.kind).toBe("paused");
 
     await runs.resume("run-1");
     await scheduler.idle();
-    expect(contexts.observe("run-1.docs")?.record.facts.contract.current.inputs).toEqual([
+    expect(
+      contexts.observe("run-1.docs")?.record.facts.contract.current.inputs,
+    ).toEqual([
       { key: "api", title: "Build the API", output: { summary: "API built." } },
     ]);
   });
@@ -934,16 +1276,23 @@ describe("workflow runs", () => {
     expect(workspace.admit(accept.cause)).toBe(true);
 
     await runs.restoreAfterRestart();
-    workspace.settle(accept.cause, { kind: "accepted", receipt: "snapshot:api" });
+    workspace.settle(accept.cause, {
+      kind: "accepted",
+      receipt: "snapshot:api",
+    });
     scheduler.touch(accept.requester);
     await scheduler.idle();
-    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("succeeded");
+    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe(
+      "succeeded",
+    );
     expect(contexts.observe("run-1.docs")).toBeNull();
     expect(recorded().map((b) => b.kind)).toEqual(["restored_paused"]);
 
     await runs.resume("run-1");
     await scheduler.idle();
-    expect(contexts.observe("run-1.docs")?.record.facts.contract.current.inputs).toEqual([
+    expect(
+      contexts.observe("run-1.docs")?.record.facts.contract.current.inputs,
+    ).toEqual([
       { key: "api", title: "Build the API", output: { summary: "API built." } },
     ]);
   });
@@ -964,13 +1313,25 @@ describe("workflow runs", () => {
       sessionName: "session",
       owner: { conversationId: "owner-1", sessionName: "session" },
       contexts: [
-        { key: "a", dependsOn: [], request: startRequest("run-1.a", false, "A") },
-        { key: "b", dependsOn: [], request: startRequest("run-1.b", false, "B") },
+        {
+          key: "a",
+          dependsOn: [],
+          request: startRequest("run-1.a", false, "A"),
+        },
+        {
+          key: "b",
+          dependsOn: [],
+          request: startRequest("run-1.b", false, "B"),
+        },
       ],
     });
     await scheduler.idle();
 
-    expect([contexts.observe("run-1.a"), contexts.observe("run-1.b")].filter((c) => c !== null)).toHaveLength(1);
+    expect(
+      [contexts.observe("run-1.a"), contexts.observe("run-1.b")].filter(
+        (c) => c !== null,
+      ),
+    ).toHaveLength(1);
 
     await runs.resume("run-1");
     await scheduler.idle();
@@ -986,7 +1347,9 @@ describe("workflow runs", () => {
     await runs.cancel("run-1");
     await scheduler.idle();
 
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
     expect(intents.pending({ kind: "run", id: "run-1" })).toEqual([]);
     expect(recorded().map((b) => b.kind)).toEqual(["cancelled"]);
   });
@@ -997,9 +1360,13 @@ describe("workflow runs", () => {
     await runs.cancel("run-1");
     await scheduler.idle();
 
-    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe("cancelled");
+    expect(contexts.observe("run-1.api")?.record.progress.kind).toBe(
+      "cancelled",
+    );
     expect(contexts.observe("run-1.docs")).toBeNull();
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
   });
 });
 
@@ -1036,7 +1403,10 @@ describe("run host", () => {
       reasons: ["agent: question"],
     });
     expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
-      ["question", { kind: "question", contextId: "run-1.agent", questionId: "q-1" }],
+      [
+        "question",
+        { kind: "question", contextId: "run-1.agent", questionId: "q-1" },
+      ],
     ]);
 
     await settle(requests, "answer", {
@@ -1053,7 +1423,11 @@ describe("run host", () => {
 
   it("tells the owner a reviewer's question at once, while another reviewer still runs", async () => {
     const request = startRequest("run-1.agent");
-    const reviewer = (id: string) => ({ id, authority: "blocking" as const, ...seat });
+    const reviewer = (id: string) => ({
+      id,
+      authority: "blocking" as const,
+      ...seat,
+    });
     await runs.launch({
       runId: "run-1",
       cause: "launch-1",
@@ -1068,7 +1442,10 @@ describe("run host", () => {
           dependsOn: [],
           request: {
             ...request,
-            contract: { ...request.contract, reviewers: [reviewer("reviewer-a"), reviewer("reviewer-b")] },
+            contract: {
+              ...request.contract,
+              reviewers: [reviewer("reviewer-a"), reviewer("reviewer-b")],
+            },
           },
         },
       ],
@@ -1080,7 +1457,10 @@ describe("run host", () => {
     await settle(conversation, "review", report({ openQuestionId: "q-ra" }));
 
     expect(recorded().map((b) => [b.kind, b.detail])).toEqual([
-      ["question", { kind: "question", contextId: "run-1.agent", questionId: "q-ra" }],
+      [
+        "question",
+        { kind: "question", contextId: "run-1.agent", questionId: "q-ra" },
+      ],
     ]);
   });
 
@@ -1089,14 +1469,18 @@ describe("run host", () => {
     await settle(workspace, "bind", { kind: "bound" });
     await settle(conversation, "work", report({ openQuestionId: "q-1" }));
     await scheduler.idle();
-    const wait = requests.submitted().find((i) => (i.request as { kind?: string }).kind === "answer");
+    const wait = requests
+      .submitted()
+      .find((i) => (i.request as { kind?: string }).kind === "answer");
     if (wait === undefined) throw new Error("no answer wait");
     requests.admit(wait.cause);
 
     // As a restart leaves it when the process stopped before the wait was withdrawn.
     await runs.cancel("run-1");
     await scheduler.idle();
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "stopping" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "stopping",
+    });
     const interruptsBefore = requests.interrupted.length;
 
     await runs.restoreAfterRestart();
@@ -1104,7 +1488,9 @@ describe("run host", () => {
     requests.settle(wait.cause, { kind: "withdrawn" });
     scheduler.touch({ kind: "context", id: "run-1.agent" });
     await scheduler.idle();
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
   });
 
   it("reports a paused run as draining while a child's admitted turn runs, and drained once it settles", async () => {
@@ -1114,12 +1500,18 @@ describe("run host", () => {
     if (work === undefined) throw new Error("no work order");
     expect(conversation.admit(work.cause)).toBe(true);
     await runs.pause("run-1");
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: true });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "paused",
+      draining: true,
+    });
 
     conversation.settle(work.cause, report());
     scheduler.touch(work.requester);
     await scheduler.idle();
-    expect(runs.observe("run-1")?.record.progress).toEqual({ kind: "paused", draining: false });
+    expect(runs.observe("run-1")?.record.progress).toEqual({
+      kind: "paused",
+      draining: false,
+    });
   });
 
   it("reads a run for its owner without reading its Contexts, even with a start still pending", async () => {
@@ -1133,11 +1525,19 @@ describe("run host", () => {
   it("records a run's fault even when its contexts cannot be read", async () => {
     await launch();
     contextsUnreadable = true;
-    runs.recordReconcileFailure("run-1", new Error("Context run-1.agent could not be read"));
+    runs.recordReconcileFailure(
+      "run-1",
+      new Error("Context run-1.agent could not be read"),
+    );
 
     const record = runs.observe("run-1")?.record;
-    expect(record?.facts.control.fault?.detail).toBe("Context run-1.agent could not be read");
-    expect(record?.progress).toEqual({ kind: "needs_owner", reasons: ["run: Context run-1.agent could not be read"] });
+    expect(record?.facts.control.fault?.detail).toBe(
+      "Context run-1.agent could not be read",
+    );
+    expect(record?.progress).toEqual({
+      kind: "needs_owner",
+      reasons: ["run: Context run-1.agent could not be read"],
+    });
     const bind = workspace.submitted()[0];
     if (bind === undefined) throw new Error("no bind");
     expect(workspace.admit(bind.cause)).toBe(false);
@@ -1146,7 +1546,10 @@ describe("run host", () => {
 
   it("stops a run whose own reconcile failed, and tells its owner, until the owner resumes it", async () => {
     await launch();
-    runs.recordReconcileFailure("run-1", new Error("The definition could not be read"));
+    runs.recordReconcileFailure(
+      "run-1",
+      new Error("The definition could not be read"),
+    );
     await scheduler.idle();
 
     expect(runs.observe("run-1")?.record.progress).toEqual({
@@ -1322,9 +1725,7 @@ describe("run host", () => {
       receipt: "snapshot:git:a:a",
     });
 
-    await expect(runs.cancel("run-1")).rejects.toThrow(
-      /already finished/,
-    );
+    await expect(runs.cancel("run-1")).rejects.toThrow(/already finished/);
     await expect(runs.pause("run-1")).rejects.toThrow(/already finished/);
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",

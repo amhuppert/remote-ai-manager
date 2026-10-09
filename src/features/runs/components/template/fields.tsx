@@ -1,17 +1,32 @@
 "use client";
 
 import { useId, useState } from "react";
+import { MultilineInput } from "@/components/MultilineInput";
 import { CloseIcon, PlusIcon, UndoIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
-import { SegmentedControl, SegmentedControlItem } from "@/components/ui/SegmentedControl";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { cn } from "@/lib/ui/cn";
 import { BackendDiamond } from "../parts";
-import type { CatalogOption, ReviewerConfig, SeatConfig, Tier } from "../../template-model";
+import type {
+  CatalogOption,
+  ReviewerConfig,
+  SeatConfig,
+  Tier,
+} from "../../template-model";
 
 /**
  * The editor's field kit: a setting row that states where its value comes
@@ -31,7 +46,11 @@ type NumberFieldProps = {
   min: number;
 } & (
   | { value: number; nullable?: false; onChange(value: number): void }
-  | { value: number | null; nullable: true; onChange(value: number | null): void }
+  | {
+      value: number | null;
+      nullable: true;
+      onChange(value: number | null): void;
+    }
 );
 
 /** Keep intermediate keystrokes local; the setting is committed as an integer on blur. */
@@ -56,7 +75,9 @@ export function NumberField(props: NumberFieldProps) {
           return;
         }
         const number = Number(text);
-        const value = Number.isFinite(number) ? Math.max(props.min, Math.floor(number)) : props.min;
+        const value = Number.isFinite(number)
+          ? Math.max(props.min, Math.floor(number))
+          : props.min;
         if (value !== props.value) props.onChange(value);
       }}
     />
@@ -79,12 +100,17 @@ export function TierBadge({
     return (
       <span
         className="inline-flex shrink-0 items-center rounded-sm border border-solid border-border-default px-[6px] py-px font-mono text-[0.7rem] text-text-tertiary"
-        title={from === "global" ? "Inherited from the global defaults" : "Inherited from this template's defaults"}
+        title={
+          from === "global"
+            ? "Inherited from the global defaults"
+            : "Inherited from this template's defaults"
+        }
       >
         {from === "global" ? "global" : "template"}
       </span>
     );
-  const back = scope === "context" ? "Use the template default" : "Use the global default";
+  const back =
+    scope === "context" ? "Use the template default" : "Use the global default";
   return (
     <span className="inline-flex shrink-0 items-center gap-[4px]">
       <span className="inline-flex items-center gap-[5px] rounded-sm border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow px-[6px] py-px font-mono text-[0.7rem] text-cyan">
@@ -121,9 +147,13 @@ export function FieldSection({
     <section className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface">
       <header className="flex items-start gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-lg py-md">
         <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-          <h3 className="m-0 font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">{title}</h3>
+          <h3 className="m-0 font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">
+            {title}
+          </h3>
           {description !== undefined ? (
-            <p className="m-0 font-mono text-[0.72rem] leading-[1.5] text-text-tertiary">{description}</p>
+            <p className="m-0 font-mono text-[0.72rem] leading-[1.5] text-text-tertiary">
+              {description}
+            </p>
           ) : null}
         </div>
         {badge}
@@ -147,26 +177,47 @@ export function SettingRow({
 }) {
   const id = useId();
   return (
-    <div className="flex items-center gap-lg max-768:flex-col max-768:items-stretch max-768:gap-sm" role="group" aria-labelledby={id}>
+    <div
+      className="flex items-center gap-lg max-768:flex-col max-768:items-stretch max-768:gap-sm"
+      role="group"
+      aria-labelledby={id}
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
-        <span id={id} className="font-mono text-[0.78rem] font-medium text-text-primary">
+        <span
+          id={id}
+          className="font-mono text-[0.78rem] font-medium text-text-primary"
+        >
           {label}
         </span>
-        {hint !== undefined ? <span className="font-mono text-[0.72rem] leading-[1.45] text-text-tertiary">{hint}</span> : null}
+        {hint !== undefined ? (
+          <span className="font-mono text-[0.72rem] leading-[1.45] text-text-tertiary">
+            {hint}
+          </span>
+        ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-md">
         {children}
-        <span className="flex w-[118px] justify-end max-768:w-auto">{badge}</span>
+        <span className="flex w-[118px] justify-end max-768:w-auto">
+          {badge}
+        </span>
       </div>
     </div>
   );
 }
 
 /** A labelled control in a grid of seat fields. */
-export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+export function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="flex min-w-0 flex-col gap-[6px]">
-      <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">{label}</span>
+      <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -189,7 +240,11 @@ function OptionSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {!options.includes(value) && value !== "" ? <SelectItem value={value} disabled>{value} · unavailable</SelectItem> : null}
+        {!options.includes(value) && value !== "" ? (
+          <SelectItem value={value} disabled>
+            {value} · unavailable
+          </SelectItem>
+        ) : null}
         {options.map((option) => (
           <SelectItem key={option} value={option}>
             {option}
@@ -223,7 +278,11 @@ function BackendChoice({
         <SegmentedControlItem
           key={entry.backend}
           value={entry.backend}
-          tone={findBackendCatalogEntry(entry.backend)?.toneToken === "violet" ? "violet" : "cyan"}
+          tone={
+            findBackendCatalogEntry(entry.backend)?.toneToken === "violet"
+              ? "violet"
+              : "cyan"
+          }
         >
           <BackendDiamond backend={entry.backend} />
           {findBackendCatalogEntry(entry.backend)?.label ?? entry.backend}
@@ -246,15 +305,27 @@ export function SeatFields({
   catalog: readonly CatalogOption[];
   efforts: readonly string[];
   profiles: readonly string[];
-  onChange(next: Pick<SeatConfig, "backend" | "model" | "effort"> & { profile?: string }): void;
+  onChange(
+    next: Pick<SeatConfig, "backend" | "model" | "effort"> & {
+      profile?: string;
+    },
+  ): void;
   showProfile?: boolean;
 }) {
   const entry = catalog.find((option) => option.backend === seat.backend);
   const models = entry?.models ?? [];
   const supportedEfforts = entry?.effortsByModel?.[seat.model] ?? efforts;
   const selectModel = (backend: AgentBackendId, model: string) => {
-    const levels = catalog.find((option) => option.backend === backend)?.effortsByModel?.[model] ?? efforts;
-    onChange({ ...seat, backend, model, effort: levels.includes(seat.effort) ? seat.effort : levels[0] ?? "" });
+    const levels =
+      catalog.find((option) => option.backend === backend)?.effortsByModel?.[
+        model
+      ] ?? efforts;
+    onChange({
+      ...seat,
+      backend,
+      model,
+      effort: levels.includes(seat.effort) ? seat.effort : (levels[0] ?? ""),
+    });
   };
   return (
     <div className="flex flex-col gap-md">
@@ -262,15 +333,33 @@ export function SeatFields({
         value={seat.backend}
         catalog={catalog}
         onChange={(backend) =>
-          selectModel(backend, catalog.find((entry) => entry.backend === backend)?.models[0] ?? "")
+          selectModel(
+            backend,
+            catalog.find((entry) => entry.backend === backend)?.models[0] ?? "",
+          )
         }
       />
-      <div className={cn("grid gap-md max-768:grid-cols-1", showProfile ? "grid-cols-3" : "grid-cols-2")}>
+      <div
+        className={cn(
+          "grid gap-md max-768:grid-cols-1",
+          showProfile ? "grid-cols-3" : "grid-cols-2",
+        )}
+      >
         <Field label="Model">
-          <OptionSelect value={seat.model} options={models} label="Model" onChange={(model) => selectModel(seat.backend, model)} />
+          <OptionSelect
+            value={seat.model}
+            options={models}
+            label="Model"
+            onChange={(model) => selectModel(seat.backend, model)}
+          />
         </Field>
         <Field label="Effort">
-          <OptionSelect value={seat.effort} options={supportedEfforts} label="Effort" onChange={(effort) => onChange({ ...seat, effort })} />
+          <OptionSelect
+            value={seat.effort}
+            options={supportedEfforts}
+            label="Effort"
+            onChange={(effort) => onChange({ ...seat, effort })}
+          />
         </Field>
         {showProfile && seat.profile !== undefined ? (
           <Field label="Profile">
@@ -302,7 +391,11 @@ export function ReviewersEditor({
   onChange(next: ReviewerConfig[]): void;
 }) {
   const update = (id: string, change: Partial<ReviewerConfig>) =>
-    onChange(reviewers.map((reviewer) => (reviewer.id === id ? { ...reviewer, ...change } : reviewer)));
+    onChange(
+      reviewers.map((reviewer) =>
+        reviewer.id === id ? { ...reviewer, ...change } : reviewer,
+      ),
+    );
   return (
     <div className="flex flex-col gap-md">
       {reviewers.length === 0 ? (
@@ -311,30 +404,49 @@ export function ReviewersEditor({
         </p>
       ) : null}
       {reviewers.map((reviewer, index) => (
-        <div key={reviewer.id} className="flex flex-col gap-md rounded-md border border-solid border-border-dim bg-bg-base p-md">
+        <div
+          key={reviewer.id}
+          className="flex flex-col gap-md rounded-md border border-solid border-border-dim bg-bg-base p-md"
+        >
           <div className="flex flex-wrap items-center gap-md">
-            <span className="font-mono text-[0.72rem] font-semibold text-text-secondary">Reviewer {index + 1}</span>
+            <span className="font-mono text-[0.72rem] font-semibold text-text-secondary">
+              Reviewer {index + 1}
+            </span>
             <SegmentedControl
               value={reviewer.authority}
               aria-label="Authority"
-              onValueChange={(value) => update(reviewer.id, { authority: value === "advisory" ? "advisory" : "blocking" })}
+              onValueChange={(value) =>
+                update(reviewer.id, {
+                  authority: value === "advisory" ? "advisory" : "blocking",
+                })
+              }
             >
-              <SegmentedControlItem value="blocking">Blocking</SegmentedControlItem>
-              <SegmentedControlItem value="advisory">Advisory</SegmentedControlItem>
+              <SegmentedControlItem value="blocking">
+                Blocking
+              </SegmentedControlItem>
+              <SegmentedControlItem value="advisory">
+                Advisory
+              </SegmentedControlItem>
             </SegmentedControl>
             <input
               aria-label="Focus"
               className={cn(FIELD, "min-w-[160px] flex-1")}
               value={reviewer.focus}
               placeholder="Focus, e.g. Correctness"
-              onChange={(event) => update(reviewer.id, { focus: event.target.value })}
+              onChange={(event) =>
+                update(reviewer.id, { focus: event.target.value })
+              }
             />
             <WithTooltip label="Remove reviewer">
               <IconButton
                 variant="ghost"
                 tone="danger"
                 aria-label={`Remove reviewer ${index + 1}`}
-                onClick={() => onChange(reviewers.filter((other) => other.id !== reviewer.id))}
+                onClick={() =>
+                  onChange(
+                    reviewers.filter((other) => other.id !== reviewer.id),
+                  )
+                }
               >
                 <CloseIcon />
               </IconButton>
@@ -345,7 +457,12 @@ export function ReviewersEditor({
             catalog={catalog}
             efforts={efforts}
             profiles={profiles}
-            onChange={(seat) => update(reviewer.id, { ...seat, profile: seat.profile ?? reviewer.profile })}
+            onChange={(seat) =>
+              update(reviewer.id, {
+                ...seat,
+                profile: seat.profile ?? reviewer.profile,
+              })
+            }
           />
         </div>
       ))}
@@ -359,7 +476,12 @@ export function ReviewersEditor({
             {
               id: `r-${reviewers.length + 1}-${Date.now()}`,
               authority: "blocking",
-              profile: profiles.find((profile) => profile === "builtin:general-reviewer") ?? profiles[0] ?? "builtin:general-reviewer",
+              profile:
+                profiles.find(
+                  (profile) => profile === "builtin:general-reviewer",
+                ) ??
+                profiles[0] ??
+                "builtin:general-reviewer",
               focus: "",
               backend: catalog[0]?.backend ?? "claude",
               model: catalog[0]?.models[0] ?? "",
@@ -397,7 +519,9 @@ export function ChecksEditor({
           <button
             type="button"
             aria-label={`Remove ${command}`}
-            onClick={() => onChange(checks.filter((other) => other !== command))}
+            onClick={() =>
+              onChange(checks.filter((other) => other !== command))
+            }
             className="inline-flex size-[20px] cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-text-tertiary hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-1"
           >
             <CloseIcon size={10} />
@@ -405,7 +529,10 @@ export function ChecksEditor({
         </span>
       ))}
       {remaining.length > 0 ? (
-        <Select value="" onValueChange={(command) => onChange([...checks, command])}>
+        <Select
+          value=""
+          onValueChange={(command) => onChange([...checks, command])}
+        >
           <SelectTrigger aria-label="Add a check" layoutClassName="w-[150px]">
             <SelectValue placeholder="Add a check" />
           </SelectTrigger>
@@ -418,7 +545,11 @@ export function ChecksEditor({
           </SelectContent>
         </Select>
       ) : null}
-      {checks.length === 0 ? <span className="font-mono text-[0.72rem] text-text-tertiary">No checks.</span> : null}
+      {checks.length === 0 ? (
+        <span className="font-mono text-[0.72rem] text-text-tertiary">
+          No checks.
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -436,7 +567,9 @@ export function ListEditor({
   idPrefix: string;
   addLabel: string;
   placeholder: string;
-  onChange(next: Array<{ id: string; text: string; instructions?: string }>): void;
+  onChange(
+    next: Array<{ id: string; text: string; instructions?: string }>,
+  ): void;
   instructions?: boolean;
 }) {
   return (
@@ -444,38 +577,56 @@ export function ListEditor({
       {items.map((item, index) => (
         <li key={item.id} className="flex flex-col gap-sm">
           <div className="flex items-center gap-sm">
-          <span className="w-[34px] shrink-0 font-mono text-[0.7rem] text-text-tertiary">{item.id}</span>
-          <input
-            aria-label={`${addLabel.replace(/^Add /, "")} ${index + 1}`}
-            className={INPUT}
-            value={item.text}
-            placeholder={placeholder}
-            onChange={(event) =>
-              onChange(items.map((other) => (other.id === item.id ? { ...other, text: event.target.value } : other)))
-            }
-          />
-          <WithTooltip label="Remove">
-            <IconButton
-              variant="ghost"
-              aria-label={`Remove ${item.id}`}
-              onClick={() => onChange(items.filter((other) => other.id !== item.id))}
-            >
-              <CloseIcon />
-            </IconButton>
-          </WithTooltip>
+            <span className="w-[34px] shrink-0 font-mono text-[0.7rem] text-text-tertiary">
+              {item.id}
+            </span>
+            <input
+              aria-label={`${addLabel.replace(/^Add /, "")} ${index + 1}`}
+              className={INPUT}
+              value={item.text}
+              placeholder={placeholder}
+              onChange={(event) =>
+                onChange(
+                  items.map((other) =>
+                    other.id === item.id
+                      ? { ...other, text: event.target.value }
+                      : other,
+                  ),
+                )
+              }
+            />
+            <WithTooltip label="Remove">
+              <IconButton
+                variant="ghost"
+                aria-label={`Remove ${item.id}`}
+                onClick={() =>
+                  onChange(items.filter((other) => other.id !== item.id))
+                }
+              >
+                <CloseIcon />
+              </IconButton>
+            </WithTooltip>
           </div>
           {instructions ? (
             <details className="ml-[42px] rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm">
               <summary className="cursor-pointer font-mono text-[0.7rem] text-text-secondary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2">
                 Instructions for {item.id}
-                {item.instructions ? <span className="ml-sm text-text-tertiary">· added</span> : null}
+                {item.instructions ? (
+                  <span className="ml-sm text-text-tertiary">· added</span>
+                ) : null}
               </summary>
-              <textarea
+              <MultilineInput
                 aria-label={`Task ${item.id} instructions`}
                 className={cn(TEXTAREA, "mt-sm min-h-[80px]")}
                 value={item.instructions ?? ""}
                 placeholder="Optional details for this task"
-                onChange={(event) => onChange(items.map((other) => other.id === item.id ? { ...other, instructions: event.target.value } : other))}
+                onValueChange={(instructions) =>
+                  onChange(
+                    items.map((other) =>
+                      other.id === item.id ? { ...other, instructions } : other,
+                    ),
+                  )
+                }
               />
             </details>
           ) : null}
@@ -488,7 +639,8 @@ export function ListEditor({
           layoutClassName="-ml-[12px]"
           onClick={() => {
             let next = items.length + 1;
-            while (items.some((item) => item.id === `${idPrefix}${next}`)) next += 1;
+            while (items.some((item) => item.id === `${idPrefix}${next}`))
+              next += 1;
             onChange([...items, { id: `${idPrefix}${next}`, text: "" }]);
           }}
         >

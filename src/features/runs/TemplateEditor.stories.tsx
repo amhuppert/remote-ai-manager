@@ -2,12 +2,28 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { fn } from "storybook/test";
 import { LaunchDialog } from "./components/template/LaunchDialog";
-import { TemplateEditor, type TemplateEditorActions } from "./components/template/TemplateEditor";
-import { catalog, checkoutTemplate, efforts, ownerChoices, profiles, templateList, validationCommands } from "./template-fixtures";
+import {
+  TemplateEditor,
+  type TemplateEditorActions,
+} from "./components/template/TemplateEditor";
+import {
+  catalog,
+  checkoutTemplate,
+  efforts,
+  ownerChoices,
+  profiles,
+  templateList,
+  validationCommands,
+} from "./template-fixtures";
 import type { Template } from "./template-model";
 
 const options = { catalog, efforts, profiles, checks: validationCommands };
-const actions: TemplateEditorActions = { onReload: fn(() => checkoutTemplate), onSelectTemplate: fn(), onSave: fn(), onLaunch: fn() };
+const actions: TemplateEditorActions = {
+  onReload: fn(() => checkoutTemplate),
+  onSelectTemplate: fn(),
+  onSave: fn(),
+  onLaunch: fn(),
+};
 
 /** The same template after a few edits: a brief, an approval setting and a new task. */
 const edited: Template = {
@@ -17,8 +33,18 @@ const edited: Template = {
       ? {
           ...context,
           brief: `${context.brief} Use the design system's form primitives.`,
-          tasks: [...context.tasks, { id: "t4", title: "Keyboard pass over every step", instructions: "" }],
-          config: { ...context.config, validationRetries: { value: 4, from: "context" } },
+          tasks: [
+            ...context.tasks,
+            {
+              id: "t4",
+              title: "Keyboard pass over every step",
+              instructions: "",
+            },
+          ],
+          config: {
+            ...context.config,
+            validationRetries: { value: 4, from: "context" },
+          },
         }
       : context,
   ),
@@ -35,7 +61,12 @@ const meta = {
       </div>
     ),
   ],
-  args: { templates: templateList, template: checkoutTemplate, options, actions },
+  args: {
+    templates: templateList,
+    template: checkoutTemplate,
+    options,
+    actions,
+  },
 } satisfies Meta<typeof TemplateEditor>;
 
 export default meta;
@@ -45,27 +76,46 @@ type Story = StoryObj<typeof meta>;
 export const DetailsAndDefaults: Story = {};
 
 /** A context that sets its own implementer and reviewers; the rest is inherited. */
-export const ContextWithOverrides: Story = { args: { initialSelection: "migrate" } };
+export const ContextWithOverrides: Story = {
+  args: { initialSelection: "migrate" },
+};
 
 /** A context with an output schema, in a loop. */
 export const ContextInALoop: Story = { args: { initialSelection: "polish" } };
 
 /** Unsaved edits: the context and the save bar say so. */
-export const UnsavedChanges: Story = { args: { initialSelection: "ui", initialDraft: edited } };
+export const UnsavedChanges: Story = {
+  args: { initialSelection: "ui", initialDraft: edited },
+};
 
 /** Someone saved a newer revision while these edits were made. */
 function ConflictExample() {
   const [template, setTemplate] = useState(checkoutTemplate);
   const [conflict, setConflict] = useState(true);
-  return <TemplateEditor templates={templateList} template={template} options={options} initialSelection="ui" initialDraft={edited} saveState={conflict ? "conflict" : "idle"} actions={{
-    ...actions,
-    onReload: () => {
-      const latest = { ...checkoutTemplate, revision: 5, description: "Latest saved revision: the rollout includes a read-only integration check." };
-      setTemplate(latest);
-      setConflict(false);
-      return latest;
-    },
-  }} />;
+  return (
+    <TemplateEditor
+      templates={templateList}
+      template={template}
+      options={options}
+      initialSelection="ui"
+      initialDraft={edited}
+      saveState={conflict ? "conflict" : "idle"}
+      actions={{
+        ...actions,
+        onReload: () => {
+          const latest = {
+            ...checkoutTemplate,
+            revision: 5,
+            description:
+              "Latest saved revision: the rollout includes a read-only integration check.",
+          };
+          setTemplate(latest);
+          setConflict(false);
+          return latest;
+        },
+      }}
+    />
+  );
 }
 export const SaveConflict: Story = { render: () => <ConflictExample /> };
 
@@ -110,7 +160,10 @@ export const LaunchRefused: Story = {
   render: () => (
     <EditorWithLaunch
       values={{ flag: "checkout-v3" }}
-      refusal={{ message: "No flag named checkout-v3 exists in config/flags.ts.", parameter: "flag" }}
+      refusal={{
+        message: "No flag named checkout-v3 exists in config/flags.ts.",
+        parameter: "flag",
+      }}
     />
   ),
 };

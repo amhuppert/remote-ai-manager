@@ -469,7 +469,11 @@ export function createConversationSubscriptionWaitsRepo(
     const stillClaimed = db.prepare(
       "SELECT 1 FROM conversation_subscription_deliveries WHERE id=? AND attempt_id=? AND state='queued'",
     );
-    if (batch.followDeliveryIds.some((id) => stillClaimed.get(id, batch.id) === undefined))
+    if (
+      batch.followDeliveryIds.some(
+        (id) => stillClaimed.get(id, batch.id) === undefined,
+      )
+    )
       return false;
     return batch.waitIds.every((id, index) => {
       const wait = readWait(id);
@@ -596,7 +600,8 @@ export function createConversationSubscriptionWaitsRepo(
     )
       throw new Error("Wake batch identities disagree");
     const size = batch.waitIds.length + batch.followDeliveryIds.length;
-    if (size < 1 || size > 6) throw new Error("A wake carries one to six facts");
+    if (size < 1 || size > 6)
+      throw new Error("A wake carries one to six facts");
     const waits = batch.waitIds.map(readWait);
     if (
       waits.some(

@@ -82,7 +82,10 @@ export type WorkspaceScope = z.infer<typeof workspaceScopeSchema>;
 export const turnWritesSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("all") }).strict(),
   z
-    .object({ mode: z.literal("paths"), paths: z.array(ownedPathSchema).min(1) })
+    .object({
+      mode: z.literal("paths"),
+      paths: z.array(ownedPathSchema).min(1),
+    })
     .strict(),
   z.object({ mode: z.literal("none") }).strict(),
 ]);
@@ -156,10 +159,12 @@ export const laneTargetSchema = z
 export type LaneTarget = z.infer<typeof laneTargetSchema>;
 
 /** A lane operation's job id, for the refs and jobs Git work parks under: a ref name cannot hold a cause's colons. */
-export const laneJobId = (cause: string): string => cause.replace(/[^A-Za-z0-9._-]/g, "-");
+export const laneJobId = (cause: string): string =>
+  cause.replace(/[^A-Za-z0-9._-]/g, "-");
 
 /** A lane's operations name its worktree as their binding, so the lane runs one of them at a time. */
-export const laneBindingId = (lane: Pick<LaneTarget, "worktreePath">): string => `lane:${lane.worktreePath}`;
+export const laneBindingId = (lane: Pick<LaneTarget, "worktreePath">): string =>
+  `lane:${lane.worktreePath}`;
 
 /**
  * Operations Workspace executes. Requesters may carry their own labels on a
@@ -271,11 +276,15 @@ export type WorkspaceOperationRecord = z.infer<
   typeof workspaceOperationRecordSchema
 >;
 
-const refusedReportSchema = z.object({ kind: z.literal("refused"), detail: z.string().min(1) }).strict();
+const refusedReportSchema = z
+  .object({ kind: z.literal("refused"), detail: z.string().min(1) })
+  .strict();
 
 /** What provisioning a lane reports: its worktree, from a pinned base commit, or why not. */
 export const laneProvisionReportSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("provisioned"), baseline: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("provisioned"), baseline: z.string().min(1) })
+    .strict(),
   refusedReportSchema,
 ]);
 export type LaneProvisionReport = z.infer<typeof laneProvisionReportSchema>;
@@ -289,16 +298,23 @@ const publishedReportSchema = z
   })
   .strict();
 /** The session worktree had changes publication must not overwrite or commit. */
-const publishBlockedReportSchema = z.object({ kind: z.literal("publish_blocked"), detail: z.string().min(1) }).strict();
+const publishBlockedReportSchema = z
+  .object({ kind: z.literal("publish_blocked"), detail: z.string().min(1) })
+  .strict();
 /** The session branch moved after the lane was checked against it. */
-const publicationStaleReportSchema = z.object({ kind: z.literal("publication_stale"), head: z.string().min(1) }).strict();
+const publicationStaleReportSchema = z
+  .object({ kind: z.literal("publication_stale"), head: z.string().min(1) })
+  .strict();
 /** The merge conflicted or a publication check failed. */
 const publicationFailedReportSchema = z
   .object({ kind: z.literal("publication_failed"), detail: z.string().min(1) })
   .strict();
 /** Whether the session holds the publication could not be established; the owner checks. */
 const publicationUncertainReportSchema = z
-  .object({ kind: z.literal("publication_uncertain"), detail: z.string().min(1) })
+  .object({
+    kind: z.literal("publication_uncertain"),
+    detail: z.string().min(1),
+  })
   .strict();
 
 /** What publishing a lane reports. Only `published` makes the lane's code visible outside it. */

@@ -68,7 +68,13 @@ export const contractCharterSchema = z
     vocabulary: z.array(z.string()).default([]),
     testStrategy: z.string().nullable().default(null),
     knownAmbiguities: z.array(z.string()).default([]),
-    invariants: z.array(z.object({ id: z.string().min(1), statement: z.string().min(1) }).strict()).default([]),
+    invariants: z
+      .array(
+        z
+          .object({ id: z.string().min(1), statement: z.string().min(1) })
+          .strict(),
+      )
+      .default([]),
     sourcesOfTruth: z
       .array(
         z

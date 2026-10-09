@@ -6,13 +6,19 @@ export interface BoundaryNoticeExtras {
 }
 
 /** How the owner clears a halt that only a definition change or cancelling ends. */
-function definitionRemedy(id: string, clearedBy: Exclude<RunHaltClearedBy, "retry_lane">): string {
+function definitionRemedy(
+  id: string,
+  clearedBy: Exclude<RunHaltClearedBy, "retry_lane">,
+): string {
   return clearedBy === "cancel"
     ? `Resuming does not clear it, and a started loop's exit condition cannot be amended, so the remedy is to cancel the run and relaunch a corrected workflow: cctl run cancel ${id}`
     : `Resuming does not clear it. Amend the definition: save it with cctl run definition ${id} > <workflow.json>, change the routes of the result that halted or raise the loop's maxPasses, then cctl run amend ${id} --file <workflow.json> --based-on <revision>. Or stop: cctl run cancel ${id}`;
 }
 
-function actionLine(run: Pick<RunRecord, "runId">, boundary: RunBoundary): string {
+function actionLine(
+  run: Pick<RunRecord, "runId">,
+  boundary: RunBoundary,
+): string {
   const id = run.runId;
   const { detail } = boundary;
   switch (detail.kind) {
@@ -61,7 +67,8 @@ export function composeBoundaryNotice(
   ];
   if (extras.questionText !== undefined)
     lines.push(`Question: ${extras.questionText}`);
-  if (boundary.detail.kind === "succeeded") lines.push(`Result: ${JSON.stringify(boundary.detail.outputs)}`);
+  if (boundary.detail.kind === "succeeded")
+    lines.push(`Result: ${JSON.stringify(boundary.detail.outputs)}`);
   lines.push(actionLine(run, boundary), "</run-boundary>");
   return lines.join("\n");
 }

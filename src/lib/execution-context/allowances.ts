@@ -10,10 +10,15 @@ export function remainingAllowance(
 }
 
 /** Whether the allowance can still pay for a turn: unspent, or reserved by one in flight. */
-export function allowanceAvailable(facts: ContextFacts, kind: AllowanceKind): boolean {
+export function allowanceAvailable(
+  facts: ContextFacts,
+  kind: AllowanceKind,
+): boolean {
   return (
     remainingAllowance(facts, kind) > 0 ||
-    facts.allowances.charges.some((c) => c.kind === kind && c.state === "reserved")
+    facts.allowances.charges.some(
+      (c) => c.kind === kind && c.state === "reserved",
+    )
   );
 }
 

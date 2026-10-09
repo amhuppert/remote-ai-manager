@@ -36,15 +36,25 @@ it("keeps every subscription and receipt and then accepts a waking run follow", 
   const db = fixture.db;
   db.exec(PRIOR_SHAPE);
 
-  const migrate = () => runSubscriptionSource.up({ name: runSubscriptionSource.name, context: { db, configDir: null } });
+  const migrate = () =>
+    runSubscriptionSource.up({
+      name: runSubscriptionSource.name,
+      context: { db, configDir: null },
+    });
   await migrate();
   await migrate();
 
   const repo = createConversationSubscriptionsRepo(db, createWriteQueue());
-  expect((await repo.list(recipient)).map((s) => [s.id, s.source.kind, s.wakes])).toEqual([
-    ["existing", "workflow", false],
-  ]);
-  expect(db.prepare("SELECT state FROM conversation_subscription_deliveries WHERE id='evidence'").get()).toEqual({
+  expect(
+    (await repo.list(recipient)).map((s) => [s.id, s.source.kind, s.wakes]),
+  ).toEqual([["existing", "workflow", false]]);
+  expect(
+    db
+      .prepare(
+        "SELECT state FROM conversation_subscription_deliveries WHERE id='evidence'",
+      )
+      .get(),
+  ).toEqual({
     state: "accepted",
   });
   await repo.createIfAbsent(
@@ -67,6 +77,10 @@ it("keeps every subscription and receipt and then accepts a waking run follow", 
       lastError: null,
     }),
   );
-  expect((await repo.findBySource(recipient, { kind: "run", id: "run-1" }))?.wakes).toBe(true);
-  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 29 });
+  expect(
+    (await repo.findBySource(recipient, { kind: "run", id: "run-1" }))?.wakes,
+  ).toBe(true);
+  expect(
+    db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
+  ).toEqual({ version: 29 });
 });

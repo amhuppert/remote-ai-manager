@@ -202,13 +202,24 @@ interface RunViewData {
 type ContextProgressView = NonNullable<RunView["contexts"][number]["progress"]>;
 
 /** The step a context's progress stands at: its obligation, or its state when it has none. */
-function stepOf(progress: Exclude<ContextProgressView, { kind: "paused" }>): string {
-  return progress.kind === "running" || progress.kind === "waiting" ? progress.obligation.kind : progress.kind;
+function stepOf(
+  progress: Exclude<ContextProgressView, { kind: "paused" }>,
+): string {
+  return progress.kind === "running" || progress.kind === "waiting"
+    ? progress.obligation.kind
+    : progress.kind;
 }
 
 /** A pause reads as draining while admitted work still finishes, and as drained once it has. */
-function pausedLabel(draining: boolean | null, next: string | null = null, run = false): string {
-  if (draining === true) return run ? "paused (draining: admitted work is still finishing)" : "paused (draining)";
+function pausedLabel(
+  draining: boolean | null,
+  next: string | null = null,
+  run = false,
+): string {
+  if (draining === true)
+    return run
+      ? "paused (draining: admitted work is still finishing)"
+      : "paused (draining)";
   if (next !== null) return `paused (next: ${next})`;
   return run ? "paused (drained)" : "paused";
 }
@@ -218,7 +229,9 @@ function pausedLabel(draining: boolean | null, next: string | null = null, run =
  * pause, so it reads as finishing while admitted work drains and as held after.
  */
 function heldByRunPause(draining: boolean, step: string): string {
-  return draining ? "running (admitted work finishing under the run's pause)" : `held by the run's pause (next: ${step})`;
+  return draining
+    ? "running (admitted work finishing under the run's pause)"
+    : `held by the run's pause (next: ${step})`;
 }
 
 function toViewData(view: RunView): RunViewData {
@@ -245,10 +258,17 @@ function toViewData(view: RunView): RunViewData {
       waitingOnPublications: context.waitingOnPublications,
       pass: context.pass,
       progress: context.progress?.kind ?? null,
-      draining: context.progress?.kind === "paused" ? context.progress.draining : null,
-      next: context.progress?.kind === "paused" && context.progress.next !== null ? stepOf(context.progress.next) : null,
+      draining:
+        context.progress?.kind === "paused" ? context.progress.draining : null,
+      next:
+        context.progress?.kind === "paused" && context.progress.next !== null
+          ? stepOf(context.progress.next)
+          : null,
       step:
-        context.progress?.kind === "running" || context.progress?.kind === "waiting" ? stepOf(context.progress) : null,
+        context.progress?.kind === "running" ||
+        context.progress?.kind === "waiting"
+          ? stepOf(context.progress)
+          : null,
       halt:
         context.progress?.kind === "halted"
           ? `${context.progress.halt}: ${context.progress.detail}`
@@ -305,14 +325,25 @@ function notStartedState(
 
 /** The charter and document revisions a started context froze, or null when it froze none. */
 function frozeText(
-  froze: { charter: number | null; documents: ReadonlyArray<{ path: string; revision: number }> } | null,
+  froze: {
+    charter: number | null;
+    documents: ReadonlyArray<{ path: string; revision: number }>;
+  } | null,
 ): string | null {
-  if (froze === null || (froze.charter === null && froze.documents.length === 0)) return null;
+  if (
+    froze === null ||
+    (froze.charter === null && froze.documents.length === 0)
+  )
+    return null;
   return [
     ...(froze.charter === null ? [] : [`charter revision ${froze.charter}`]),
     ...(froze.documents.length === 0
       ? []
-      : [froze.documents.map((document) => `${document.path} revision ${document.revision}`).join(", ")]),
+      : [
+          froze.documents
+            .map((document) => `${document.path} revision ${document.revision}`)
+            .join(", "),
+        ]),
   ].join("; ");
 }
 
@@ -333,7 +364,9 @@ function viewText(view: JsonData<RunViewData>): string {
           ? heldByRunPause(view.draining === true, context.step)
           : (context.progress ?? notStartedState(view.progress, context));
     const pass =
-      context.loop === null ? "" : ` (loop ${context.loop}, pass ${context.pass})`;
+      context.loop === null
+        ? ""
+        : ` (loop ${context.loop}, pass ${context.pass})`;
     lines.push(
       `- ${context.key} [${context.contextId}]${pass}: ${state}${halt}`,
     );
@@ -367,11 +400,23 @@ function viewText(view: JsonData<RunViewData>): string {
       `charter (revision ${view.charter.revision}${view.charter.reason === null ? "" : `, amended: ${view.charter.reason}`}): ${view.charter.mission}`,
     );
   for (const document of view.documents) {
-    const scope = document.appliesTo === undefined ? "" : `, for ${document.appliesTo.join(", ")}`;
+    const scope =
+      document.appliesTo === undefined
+        ? ""
+        : `, for ${document.appliesTo.join(", ")}`;
     const origin =
-      document.by !== undefined ? `, published by ${document.by}` : document.reason !== undefined ? `, amended: ${document.reason}` : "";
-    const when = document.readWhen === undefined ? "" : ` — read when: ${document.readWhen}`;
-    lines.push(`document ${document.path} (revision ${document.revision}${origin}${scope}): ${document.description}${when}`);
+      document.by !== undefined
+        ? `, published by ${document.by}`
+        : document.reason !== undefined
+          ? `, amended: ${document.reason}`
+          : "";
+    const when =
+      document.readWhen === undefined
+        ? ""
+        : ` — read when: ${document.readWhen}`;
+    lines.push(
+      `document ${document.path} (revision ${document.revision}${origin}${scope}): ${document.description}${when}`,
+    );
   }
   for (const halt of view.halts)
     if (!view.needsOwner.includes(halt)) lines.push(`cannot proceed: ${halt}`);
@@ -502,7 +547,9 @@ const amendImplementation: Amend = {
         return {
           effect: "unknown" as const,
           recovery,
-          result: invalid("The amendment acknowledgement is invalid; read run show before retrying."),
+          result: invalid(
+            "The amendment acknowledgement is invalid; read run show before retrying.",
+          ),
         };
       return {
         effect: "applied" as const,
@@ -526,7 +573,8 @@ const amendImplementation: Amend = {
           `Run ${data.runId}: definition revision ${data.revision} in force${data.progress === null ? "" : ` (${data.progress})`}.`,
           ...data.halts.map((halt) => `still cannot proceed: ${halt}`),
           ...data.removedDocuments.map(
-            (documentPath) => `removed document ${documentPath}: work that starts from now no longer reads it`,
+            (documentPath) =>
+              `removed document ${documentPath}: work that starts from now no longer reads it`,
           ),
         ].join("\n") + "\n",
       ),
@@ -563,7 +611,8 @@ export const showHandler: Read<typeof runShowSpec> = {
 function escapedJson(value: unknown): string {
   return JSON.stringify(value, null, 2).replace(
     /[\u007f-\u009f\u2028\u2029]/g,
-    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 }
 
@@ -701,20 +750,18 @@ export const cancelHandler: Write<typeof runCancelSpec> = {
 };
 
 export const retryHandler: Write<typeof runRetrySpec> = {
-  run: writeRunner<Input<typeof runRetrySpec>, { runId: string }, CcErrorCode>(
-    {
-      run: ({ app, ctx }) =>
-        runWrite({
-          app,
-          runId: ctx.args["run-id"],
-          suffix: "control",
-          body: { action: "retry", lane: ctx.flags.lane },
-          schema: runControlResponseSchema,
-        }),
-      text: ({ runId }) =>
-        quoteLiteralText(`Run ${runId}: the lane will try again.\n`),
-    },
-  ),
+  run: writeRunner<Input<typeof runRetrySpec>, { runId: string }, CcErrorCode>({
+    run: ({ app, ctx }) =>
+      runWrite({
+        app,
+        runId: ctx.args["run-id"],
+        suffix: "control",
+        body: { action: "retry", lane: ctx.flags.lane },
+        schema: runControlResponseSchema,
+      }),
+    text: ({ runId }) =>
+      quoteLiteralText(`Run ${runId}: the lane will try again.\n`),
+  }),
 };
 
 export const resumeHandler: Write<typeof runResumeSpec> = {
@@ -862,8 +909,11 @@ export const docPublishHandler: Write<typeof contextDocPublishSpec> = {
   >({
     async run({ app, ctx }) {
       const resolved = await resolveCcSession(app);
-      if (!resolved.ok) return { effect: "not_applied" as const, result: resolved };
-      const recovery = recoveryFacts([sessionReference(resolved.value.session)]);
+      if (!resolved.ok)
+        return { effect: "not_applied" as const, result: resolved };
+      const recovery = recoveryFacts([
+        sessionReference(resolved.value.session),
+      ]);
       const response = await cliRequest(app.host, {
         ...resolved.value,
         method: "POST",
@@ -871,24 +921,38 @@ export const docPublishHandler: Write<typeof contextDocPublishSpec> = {
         body: {
           file: ctx.args.file,
           ...(ctx.flags.as !== undefined ? { as: ctx.flags.as } : {}),
-          ...(ctx.flags.description !== undefined ? { description: ctx.flags.description } : {}),
-          ...(ctx.flags["read-when"] !== undefined ? { readWhen: ctx.flags["read-when"] } : {}),
+          ...(ctx.flags.description !== undefined
+            ? { description: ctx.flags.description }
+            : {}),
+          ...(ctx.flags["read-when"] !== undefined
+            ? { readWhen: ctx.flags["read-when"] }
+            : {}),
         },
         principalIdentity: resolveCcPrincipal(app),
       });
       if (response.kind !== "ok") return ccWriteFailure(response, recovery);
-      const parsed = runDocumentPublishedResponseSchema.safeParse(response.body);
+      const parsed = runDocumentPublishedResponseSchema.safeParse(
+        response.body,
+      );
       if (!parsed.success)
         return {
           effect: "unknown" as const,
           recovery,
           result: invalid("The publication acknowledgement is invalid."),
         };
-      const { runId: published, path: documentPath, revision, unchanged } = parsed.data;
+      const {
+        runId: published,
+        path: documentPath,
+        revision,
+        unchanged,
+      } = parsed.data;
       return {
         effect: "applied" as const,
         recovery,
-        result: { ok: true as const, data: { runId: published, path: documentPath, revision, unchanged } },
+        result: {
+          ok: true as const,
+          data: { runId: published, path: documentPath, revision, unchanged },
+        },
       };
     },
     text: ({ runId: published, path: documentPath, revision, unchanged }) =>

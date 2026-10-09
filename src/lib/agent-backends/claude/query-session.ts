@@ -426,7 +426,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // attributed to a turn, so a discarded between-turns segment's cost rides
   // into the next attributed turn instead of vanishing.
   let attributedCostBaseline = options.costBaseline?.cumulativeCostUsd ?? 0;
-  let attributedCostSessionId: string | null = options.costBaseline?.sessionId ?? null;
+  let attributedCostSessionId: string | null =
+    options.costBaseline?.sessionId ?? null;
 
   // The persistent input channel: the SDK consumes this generator for the
   // session's whole life. It never returns, so the SDK never closes the CLI's
@@ -1572,7 +1573,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
  * notification the model acts on is folded into the caller's turn and answered
  * by one result, so only a model-less one can be told apart from the answer.
  */
-function answersProviderNotification(result: SDKResultSuccess | SDKResultError): boolean {
+function answersProviderNotification(
+  result: SDKResultSuccess | SDKResultError,
+): boolean {
   const origin = result.origin?.kind;
   // A failure is never set aside: it may be the only answer the prompt gets.
   return (

@@ -114,7 +114,12 @@ const laneTargets: RunRouteDeps["laneTargets"] = async ({
   const branchPrefix = resolveBranchPrefix(config, repoConfig);
   const sessionDir = path.basename(sessionWorktreePath);
   return (laneId) => {
-    const targets = deriveLaneTargets({ projectPath, sessionDir, laneId, branchPrefix });
+    const targets = deriveLaneTargets({
+      projectPath,
+      sessionDir,
+      laneId,
+      branchPrefix,
+    });
     return { worktreePath: targets.worktreePath, branch: targets.branchName };
   };
 };
@@ -127,14 +132,24 @@ const handlers = createRunRouteHandlers({
   supervision: getSupervision,
   async ownerWakeable(projectPath, conversationId) {
     const runtime = getSubscriptionRuntime();
-    return isEligibleSubscriptionRecipient(runtime.readConversation(conversationId), projectPath);
+    return isEligibleSubscriptionRecipient(
+      runtime.readConversation(conversationId),
+      projectPath,
+    );
   },
   resolveSeats,
   newRunId,
   snapshotDocuments: (requests, worktreePath, current) =>
-    snapshotRunDocuments({ requests, worktreePath, ...(current !== undefined ? { current } : {}), store: getArtifactStore() }),
-  snapshotFile: (worktreePath, file) => snapshotDocumentFile({ worktreePath, file, store: getArtifactStore() }),
-  freezeCharter: (charter) => freezeCharter({ charter, store: getArtifactStore() }),
+    snapshotRunDocuments({
+      requests,
+      worktreePath,
+      ...(current !== undefined ? { current } : {}),
+      store: getArtifactStore(),
+    }),
+  snapshotFile: (worktreePath, file) =>
+    snapshotDocumentFile({ worktreePath, file, store: getArtifactStore() }),
+  freezeCharter: (charter) =>
+    freezeCharter({ charter, store: getArtifactStore() }),
   log,
 });
 

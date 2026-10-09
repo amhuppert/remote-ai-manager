@@ -8302,7 +8302,12 @@ describe("runTaskRunTurnForMachine", () => {
     const runner = makeMockTaskRunner(async () => ({
       backendRef: { backend: "claude" as const, ref: "sess-1" },
       text: "done",
-      usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.193, cumulativeCostUsd: 0.193 },
+      usage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        costUsd: 0.193,
+        cumulativeCostUsd: 0.193,
+      },
       error: null,
       timedOut: false,
       failure: null,
@@ -8311,8 +8316,9 @@ describe("runTaskRunTurnForMachine", () => {
     mockDeps = createMockDeps({
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
-      readLineageCumulativeCost: vi.fn(async (_conversationId: string, lineageId: string) =>
-        lineageId === "sess-1" ? 0.178 : null,
+      readLineageCumulativeCost: vi.fn(
+        async (_conversationId: string, lineageId: string) =>
+          lineageId === "sess-1" ? 0.178 : null,
       ),
     });
     conversationActors = createTestActorImplementations(mockDeps);
@@ -8325,7 +8331,9 @@ describe("runTaskRunTurnForMachine", () => {
       .mocked(mockDeps.safeAppendTranscriptEntryOnce)
       .mock.calls.map(([, entry]) => projectTranscriptUsage(entry))
       .filter((usage) => usage !== null);
-    expect(frames).toEqual([{ lineageId: "sess-1", cumulativeCostUsd: 0.193, numTurns: null }]);
+    expect(frames).toEqual([
+      { lineageId: "sess-1", cumulativeCostUsd: 0.193, numTurns: null },
+    ]);
     expect(result.costUsd).toBeCloseTo(0.015, 9);
   });
 

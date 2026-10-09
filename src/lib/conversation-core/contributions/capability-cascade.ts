@@ -86,7 +86,10 @@ function emitProjectCapabilityDiagnostics(
 }
 
 async function composeProjectConversationCapabilitySeed(
-  deps: Pick<CapabilitySeedComposers, "composeCapabilityConfigForProjectConversation">,
+  deps: Pick<
+    CapabilitySeedComposers,
+    "composeCapabilityConfigForProjectConversation"
+  >,
   ctx: CapabilityTurnContext,
 ): Promise<ProjectCapabilitySeed | undefined> {
   try {

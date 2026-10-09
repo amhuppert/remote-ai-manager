@@ -1,5 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
@@ -10,7 +18,9 @@ import { z } from "zod";
  * what was frozen or learns that it cannot.
  */
 
-export const artifactIdSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/, "not an artifact identity");
+export const artifactIdSchema = z
+  .string()
+  .regex(/^sha256:[0-9a-f]{64}$/, "not an artifact identity");
 
 export interface ArtifactRef {
   artifactId: string;
@@ -27,7 +37,10 @@ export interface ArtifactStore {
    * replacing whatever is there, so each delivery leaves the frozen bytes.
    * Refuses a path that leaves `root` or passes through a link.
    */
-  materialize(root: string, entries: ReadonlyArray<{ artifactId: string; path: string }>): Promise<void>;
+  materialize(
+    root: string,
+    entries: ReadonlyArray<{ artifactId: string; path: string }>,
+  ): Promise<void>;
 }
 
 export class ArtifactUnavailableError extends Error {
@@ -37,7 +50,8 @@ export class ArtifactUnavailableError extends Error {
   }
 }
 
-const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+const sha256 = (bytes: Uint8Array): string =>
+  createHash("sha256").update(bytes).digest("hex");
 
 /**
  * Writes through a temporary sibling and a rename, so a reader never sees a
@@ -45,7 +59,10 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
  */
 async function replaceFile(target: string, bytes: Uint8Array): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true });
-  const temporary = path.join(path.dirname(target), `.${randomBytes(6).toString("hex")}.tmp`);
+  const temporary = path.join(
+    path.dirname(target),
+    `.${randomBytes(6).toString("hex")}.tmp`,
+  );
   try {
     await writeFile(temporary, bytes, { mode: 0o444 });
     await rename(temporary, target);
@@ -58,9 +75,15 @@ async function replaceFile(target: string, bytes: Uint8Array): Promise<void> {
 export function createArtifactStore(options: { root: string }): ArtifactStore {
   function objectPath(artifactId: string): { file: string; hex: string } {
     const parsed = artifactIdSchema.safeParse(artifactId);
-    if (!parsed.success) throw new ArtifactUnavailableError(`"${artifactId}" is not an artifact identity`);
+    if (!parsed.success)
+      throw new ArtifactUnavailableError(
+        `"${artifactId}" is not an artifact identity`,
+      );
     const hex = artifactId.slice("sha256:".length);
-    return { file: path.join(options.root, "objects", hex.slice(0, 2), hex), hex };
+    return {
+      file: path.join(options.root, "objects", hex.slice(0, 2), hex),
+      hex,
+    };
   }
 
   async function read(artifactId: string): Promise<Buffer> {
@@ -70,11 +93,15 @@ export function createArtifactStore(options: { root: string }): ArtifactStore {
       bytes = await readFile(file);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT")
-        throw new ArtifactUnavailableError(`Artifact ${artifactId} is missing from the store`);
+        throw new ArtifactUnavailableError(
+          `Artifact ${artifactId} is missing from the store`,
+        );
       throw error;
     }
     if (sha256(bytes) !== hex)
-      throw new ArtifactUnavailableError(`The stored bytes of artifact ${artifactId} do not match its identity`);
+      throw new ArtifactUnavailableError(
+        `The stored bytes of artifact ${artifactId} do not match its identity`,
+      );
     return bytes;
   }
 
@@ -98,14 +125,26 @@ export function createArtifactStore(options: { root: string }): ArtifactStore {
       for (const entry of entries) {
         const target = path.resolve(base, entry.path);
         const relative = path.relative(base, target);
-        if (path.isAbsolute(entry.path) || relative.startsWith("..") || path.isAbsolute(relative) || relative === "")
-          throw new ArtifactUnavailableError(`A copy of artifact ${entry.artifactId} must stay inside ${root}: "${entry.path}"`);
+        if (
+          path.isAbsolute(entry.path) ||
+          relative.startsWith("..") ||
+          path.isAbsolute(relative) ||
+          relative === ""
+        )
+          throw new ArtifactUnavailableError(
+            `A copy of artifact ${entry.artifactId} must stay inside ${root}: "${entry.path}"`,
+          );
         // Each directory on the way is created here or must be a real one: a link would send the copy elsewhere.
         let directory = base;
         for (const part of relative.split(path.sep).slice(0, -1)) {
           directory = path.join(directory, part);
           const found = await lstat(directory).catch((error: unknown) => {
-            if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+            if (
+              error instanceof Error &&
+              "code" in error &&
+              error.code === "ENOENT"
+            )
+              return null;
             throw error;
           });
           if (found === null) await mkdir(directory);

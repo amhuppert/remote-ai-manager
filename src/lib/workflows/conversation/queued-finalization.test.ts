@@ -19,7 +19,10 @@ import {
   _resetForTesting,
 } from "./runtime-state";
 import type { ConversationInput } from "./types";
-import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 
 afterEach(() => {
   _resetForTesting();

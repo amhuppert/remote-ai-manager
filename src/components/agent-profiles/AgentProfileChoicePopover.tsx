@@ -30,7 +30,10 @@ export interface AgentProfileChoicePopoverProps {
   confirmLabel: string;
   onConfirm: (profile: AgentProfileRef) => void;
   /** A second way to use the same choice, offered under the primary one. */
-  secondaryAction?: { label: string; onConfirm: (profile: AgentProfileRef) => void };
+  secondaryAction?: {
+    label: string;
+    onConfirm: (profile: AgentProfileRef) => void;
+  };
   disabled?: boolean;
 }
 

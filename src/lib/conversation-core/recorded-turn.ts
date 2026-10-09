@@ -56,13 +56,23 @@ export async function runRecordedTurn(
   try {
     outcome = await run();
   } catch (error) {
-    deps.log.error("conversation_core.turn_threw", { conversationId, error: getErrorMessage(error) });
-    outcome = { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
+    deps.log.error("conversation_core.turn_threw", {
+      conversationId,
+      error: getErrorMessage(error),
+    });
+    outcome = {
+      kind: "not_started",
+      reason: "configuration",
+      message: getErrorMessage(error),
+    };
   } finally {
     // Closed first: the row shows running until nothing of the turn runs.
     await deps.host.release(conversationId).catch((error: unknown) => {
       uncollected = getErrorMessage(error);
-      deps.log.error("conversation_core.runtime_release_failed", { conversationId, error: uncollected });
+      deps.log.error("conversation_core.runtime_release_failed", {
+        conversationId,
+        error: uncollected,
+      });
     });
     await deps.records.settleTurn(identity, settlementOf(outcome), source).then(
       (settled) => {
@@ -70,7 +80,10 @@ export async function runRecordedTurn(
       },
       (error: unknown) => {
         unsettled = getErrorMessage(error);
-        deps.log.error("conversation_core.row_settle_failed", { conversationId, error: unsettled });
+        deps.log.error("conversation_core.row_settle_failed", {
+          conversationId,
+          error: unsettled,
+        });
       },
     );
   }
@@ -89,7 +102,9 @@ export function recordedOutcome(
   const { outcome, unsettled, uncollected } = recorded;
   if (unsettled === null && uncollected === null) return outcome;
   const result =
-    outcome.kind === "call_result" || outcome.kind === "settlement_failed" ? outcome.result : null;
+    outcome.kind === "call_result" || outcome.kind === "settlement_failed"
+      ? outcome.result
+      : null;
   return unsettled !== null
     ? {
         kind: "settlement_failed",
@@ -119,10 +134,14 @@ export function recordedResult(
       ? result
       : {
           ...result,
-          ...failedTurn(`The conversation record could not be settled: ${recorded.unsettled}`),
+          ...failedTurn(
+            `The conversation record could not be settled: ${recorded.unsettled}`,
+          ),
           finalText: result.finalText,
         };
-  return recorded.uncollected === null ? settled : { ...settled, runtimeUncollected: recorded.uncollected };
+  return recorded.uncollected === null
+    ? settled
+    : { ...settled, runtimeUncollected: recorded.uncollected };
 }
 
 export const failedTurn = (failure: string): CoreTurnResult => ({
@@ -133,24 +152,53 @@ export const failedTurn = (failure: string): CoreTurnResult => ({
   failure,
 });
 
-function resultOfRun(result: TaskRunResult, timedOutAfterMs: number | null): CoreTurnResult {
+function resultOfRun(
+  result: TaskRunResult,
+  timedOutAfterMs: number | null,
+): CoreTurnResult {
   const text = result.text ?? "";
   const finalText = text.length > 0 ? text : null;
   if (result.kind === "structured") {
-    return { status: "succeeded", finalText, structuredOutput: result.structuredOutput, outputIssue: null, failure: null };
+    return {
+      status: "succeeded",
+      finalText,
+      structuredOutput: result.structuredOutput,
+      outputIssue: null,
+      failure: null,
+    };
   }
   if (result.kind === "text") {
-    return { status: "succeeded", finalText, structuredOutput: null, outputIssue: null, failure: null };
+    return {
+      status: "succeeded",
+      finalText,
+      structuredOutput: null,
+      outputIssue: null,
+      failure: null,
+    };
   }
   // The structured-output gate refused the payload of a turn that ran: the work
   // happened, and the requester decides what a missing value means.
   if (result.failure?.kind === "schema_validation") {
     const issues = result.structuredOutputIssues ?? [];
-    const outputIssue = issues.length > 0 ? `${result.error}: ${issues.join("; ")}` : result.error;
-    return { status: "succeeded", finalText, structuredOutput: null, outputIssue, failure: null };
+    const outputIssue =
+      issues.length > 0
+        ? `${result.error}: ${issues.join("; ")}`
+        : result.error;
+    return {
+      status: "succeeded",
+      finalText,
+      structuredOutput: null,
+      outputIssue,
+      failure: null,
+    };
   }
-  if (timedOutAfterMs !== null) return { ...failedTurn(`The turn timed out after ${timedOutAfterMs}ms`), finalText };
-  if (result.interruption?.reason === "shutdown") return { ...failedTurn(result.error), status: "interrupted", finalText };
+  if (timedOutAfterMs !== null)
+    return {
+      ...failedTurn(`The turn timed out after ${timedOutAfterMs}ms`),
+      finalText,
+    };
+  if (result.interruption?.reason === "shutdown")
+    return { ...failedTurn(result.error), status: "interrupted", finalText };
   if (result.aborted || result.interruption?.reason === "user") {
     return { ...failedTurn(result.error), status: "cancelled", finalText };
   }
@@ -164,8 +212,12 @@ export function turnResultOf(
   timedOutAfterMs: number | null,
 ): CoreTurnResult {
   if (outcome.kind === "not_started") {
-    if (timedOutAfterMs !== null) return failedTurn(`The turn timed out after ${timedOutAfterMs}ms before it started`);
-    if (outcome.interruption?.reason === "shutdown") return { ...failedTurn(outcome.message), status: "interrupted" };
+    if (timedOutAfterMs !== null)
+      return failedTurn(
+        `The turn timed out after ${timedOutAfterMs}ms before it started`,
+      );
+    if (outcome.interruption?.reason === "shutdown")
+      return { ...failedTurn(outcome.message), status: "interrupted" };
     return outcome.reason === "cancelled"
       ? { ...failedTurn(outcome.message), status: "cancelled" }
       : failedTurn(outcome.message);

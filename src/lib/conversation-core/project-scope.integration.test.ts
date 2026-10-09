@@ -3,7 +3,10 @@ import { passthroughTurnInput } from "./testing/passthrough-input";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConversationBackendCreateInput, ConversationBackendFactory } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendCreateInput,
+  ConversationBackendFactory,
+} from "@/lib/agent-backends/conversation";
 import { getConversationTranscriptProjection } from "@/lib/agent-backends/conversation-policy";
 import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
 import { CONVERSATION_IDENTITY_ENV_VAR } from "@/lib/agent-gateway/conversation-identity";
@@ -57,7 +60,10 @@ afterEach(() => closeProvider());
 
 /** A project conversation's message, through the real turn engine, runtime host and Claude adapter. */
 async function runProjectMessage() {
-  const provider = createScriptedConversationBackend({ backend: "claude", responseText: JSON.stringify({ done: true }) });
+  const provider = createScriptedConversationBackend({
+    backend: "claude",
+    responseText: JSON.stringify({ done: true }),
+  });
   closeProvider = () => provider.close();
   const created: ConversationBackendCreateInput[] = [];
   const factory: ConversationBackendFactory = {
@@ -69,7 +75,10 @@ async function runProjectMessage() {
   };
   const host = createRuntimeHost({
     factory: () => factory,
-    instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
+    instructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+    }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
     beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),
@@ -79,7 +88,10 @@ async function runProjectMessage() {
   const engine = createTurnEngine({
     host,
     executeAgentCall,
-    transcript: { async safeAppendTranscriptEntry() {}, async safeAppendTranscriptEntryOnce() {} },
+    transcript: {
+      async safeAppendTranscriptEntry() {},
+      async safeAppendTranscriptEntryOnce() {},
+    },
     projection: getConversationTranscriptProjection,
     timeouts: async () => ({ timeoutMs: 0, stallTimeoutMs: 0 }),
     log,
@@ -89,14 +101,24 @@ async function runProjectMessage() {
     records,
     host,
     worktreeOf: async (projectPath, target) => {
-      if (target.scope !== "project") throw new Error("a project conversation has no session worktree");
+      if (target.scope !== "project")
+        throw new Error("a project conversation has no session worktree");
       return projectPath;
     },
-    resolveModelSelection: async () => ({ modelId: "sonnet", parameters: { effort: "medium" } }),
-    continuation: async () => ({ continuation: { kind: "ordinary" }, seed: null }),
+    resolveModelSelection: async () => ({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    }),
+    continuation: async () => ({
+      continuation: { kind: "ordinary" },
+      seed: null,
+    }),
     prepareInput: async (request) => passthroughTurnInput(request),
     nameConversation: () => {},
-    requestUserQuestion: async () => ({ status: "answered" as const, answers: {} }),
+    requestUserQuestion: async () => ({
+      status: "answered" as const,
+      answers: {},
+    }),
     persistImages: async ({ promptText }) => ({ promptText, imageRefs: [] }),
     queuedDelivery: () => {
       throw new Error("a direct message has no queued delivery");
@@ -131,12 +153,20 @@ describe("a project conversation the core runs", () => {
     expect(result).toMatchObject({ status: "succeeded" });
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
-      conversationTarget: { scope: "project", projectName: "repo", conversationId: "conv-p" },
+      conversationTarget: {
+        scope: "project",
+        projectName: "repo",
+        conversationId: "conv-p",
+      },
       worktreePath: PROJECT,
     });
     expect(created[0]).not.toHaveProperty("workflowCallerConversationId");
     expect(options?.cwd).toBe(PROJECT);
-    expect(options?.env).toMatchObject({ CC_CONVERSATION_SCOPE: "project", CC_SESSION: "", CC_CONVERSATION_ID: "conv-p" });
+    expect(options?.env).toMatchObject({
+      CC_CONVERSATION_SCOPE: "project",
+      CC_SESSION: "",
+      CC_CONVERSATION_ID: "conv-p",
+    });
     expect(options?.env).not.toHaveProperty(CONVERSATION_IDENTITY_ENV_VAR);
   });
 });

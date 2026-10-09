@@ -145,8 +145,10 @@ export interface ConversationPolicyDependencies {
 }
 
 /** The turn dependencies plus what only the actor uses: its execution extras, MCP/capability policy and checkpoint delivery. */
-export interface ConversationActorDependencies
-  extends Omit<ConversationTurnDependencies, "execution" | "policy"> {
+export interface ConversationActorDependencies extends Omit<
+  ConversationTurnDependencies,
+  "execution" | "policy"
+> {
   execution: TurnExecutionDependencies & ActorExecutionDependencies;
   policy: ConversationPolicyDependencies;
   /**

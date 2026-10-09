@@ -19,7 +19,10 @@ import {
 } from "@/lib/conversation-core/turn/runtime-binding";
 
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
-import type { ComposedTooling, RuntimeApplicationState } from "./runtime-application-state";
+import type {
+  ComposedTooling,
+  RuntimeApplicationState,
+} from "./runtime-application-state";
 
 export interface HostedConversation {
   conversationId: string;
@@ -43,7 +46,10 @@ export interface HostedConversation {
 export interface RuntimeRequirements {
   modelSelection: BackendModelSelection;
   fsWritePolicy?: FsWritePolicy;
-  instructionSelection: { askUserQuestionsEnabled?: boolean; autonomous: boolean };
+  instructionSelection: {
+    askUserQuestionsEnabled?: boolean;
+    autonomous: boolean;
+  };
 }
 
 export interface RuntimeHostDeps {
@@ -51,13 +57,19 @@ export interface RuntimeHostDeps {
   instructions(
     conversation: HostedConversation,
     selection: RuntimeRequirements["instructionSelection"],
-  ): Promise<{ sessionInstructions: string[]; alignmentVersion: number | null }>;
+  ): Promise<{
+    sessionInstructions: string[];
+    alignmentVersion: number | null;
+  }>;
   tooling(conversation: HostedConversation): Promise<ComposedTooling>;
   /** Every runtime created is seeded before it is handed out; a failure fails the creation. */
   beginSeed: RuntimeApplicationState["beginSeed"];
   callbacks(
     conversation: HostedConversation,
-  ): Pick<ConversationBackendCreateInput, "onCostSettled" | "onBackgroundActivity" | "onBackgroundTasksLost">;
+  ): Pick<
+    ConversationBackendCreateInput,
+    "onCostSettled" | "onBackgroundActivity" | "onBackgroundTasksLost"
+  >;
   index: BackendRuntimeIndex;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
@@ -67,7 +79,10 @@ export interface RuntimeHost {
     conversation: HostedConversation,
     requirements: RuntimeRequirements,
   ): Promise<{ runtime: ConversationBackendRuntime; created: boolean }>;
-  replace(conversationId: string, persistedRef: AgentSessionRef | null): Promise<ConversationBackendRuntime>;
+  replace(
+    conversationId: string,
+    persistedRef: AgentSessionRef | null,
+  ): Promise<ConversationBackendRuntime>;
   release(conversationId: string): Promise<void>;
   /**
    * Closes again a runtime whose close failed (a checkpoint's reconcile or
@@ -81,7 +96,10 @@ export interface RuntimeHost {
   /** The live runtime the conversation's running turn holds, or null. */
   runtime(conversationId: string): ConversationBackendRuntime | null;
   /** Records unverified process cleanup; true the first time. Closing then fails and no new runtime starts. */
-  recordCleanupFailure(conversationId: string, failure: { kind: "cleanup_unverified"; message: string }): boolean;
+  recordCleanupFailure(
+    conversationId: string,
+    failure: { kind: "cleanup_unverified"; message: string },
+  ): boolean;
   releaseAll(): Promise<void>;
 }
 
@@ -106,7 +124,10 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
   async function desiredFor(
     conversation: HostedConversation,
     requirements: RuntimeRequirements,
-  ): Promise<{ desired: DesiredRuntimeConfiguration; sessionInstructions: string[] }> {
+  ): Promise<{
+    desired: DesiredRuntimeConfiguration;
+    sessionInstructions: string[];
+  }> {
     const { sessionInstructions, alignmentVersion } = await deps.instructions(
       conversation,
       requirements.instructionSelection,
@@ -117,7 +138,9 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         backend: conversation.backend,
         modelSelection: requirements.modelSelection,
         alignmentVersion,
-        ...(requirements.fsWritePolicy !== undefined ? { fsWritePolicy: requirements.fsWritePolicy } : {}),
+        ...(requirements.fsWritePolicy !== undefined
+          ? { fsWritePolicy: requirements.fsWritePolicy }
+          : {}),
         repeatableInstructions: sessionInstructions,
         instructionSelection: requirements.instructionSelection,
       },
@@ -126,7 +149,10 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
 
   async function create(entry: Hosted): Promise<ConversationBackendRuntime> {
     const { conversation, requirements, managed } = entry;
-    const { desired, sessionInstructions } = await desiredFor(conversation, requirements);
+    const { desired, sessionInstructions } = await desiredFor(
+      conversation,
+      requirements,
+    );
     // Opened before composing, so a save landing during creation stays pending.
     const seeding = await deps.beginSeed(conversation);
     const composed = await deps.tooling(conversation);
@@ -134,7 +160,8 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       try {
         await managed.close();
       } catch (error) {
-        entry.closeFailure = error instanceof Error ? error : new Error(String(error));
+        entry.closeFailure =
+          error instanceof Error ? error : new Error(String(error));
         deps.log.error("conversation_core.runtime_close_failed", {
           conversationId: conversation.conversationId,
           error: entry.closeFailure.message,
@@ -157,7 +184,9 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       modelSelection: requirements.modelSelection,
       sessionInstructions,
       tooling: composed.overrides,
-      ...(requirements.fsWritePolicy !== undefined ? { fsWritePolicy: requirements.fsWritePolicy } : {}),
+      ...(requirements.fsWritePolicy !== undefined
+        ? { fsWritePolicy: requirements.fsWritePolicy }
+        : {}),
       ...deps.callbacks(conversation),
     });
     managed.install(incarnation, runtime, desired, deps.index);
@@ -193,16 +222,25 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       // host that keeps runtimes between turns (design amendment 13).
       if (live !== undefined && live.status === "alive") {
         const { desired } = await desiredFor(conversation, requirements);
-        const changes = runtimeConfigurationChanges({ current: entry.managed.configurationSnapshot, desired });
+        const changes = runtimeConfigurationChanges({
+          current: entry.managed.configurationSnapshot,
+          desired,
+        });
         if (changes.length === 0) return { runtime: live, created: false };
-        deps.log.info("conversation_core.runtime_recreate", { conversationId: conversation.conversationId, changes });
+        deps.log.info("conversation_core.runtime_recreate", {
+          conversationId: conversation.conversationId,
+          changes,
+        });
       }
       return { runtime: await create(entry), created: true };
     },
 
     async replace(conversationId, persistedRef) {
       const entry = hosted.get(conversationId);
-      if (entry === undefined) throw new Error(`Conversation ${conversationId} has no hosted runtime to replace`);
+      if (entry === undefined)
+        throw new Error(
+          `Conversation ${conversationId} has no hosted runtime to replace`,
+        );
       entry.conversation = { ...entry.conversation, persistedRef };
       return create(entry);
     },
@@ -222,7 +260,11 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
     },
     closeFailure(conversationId) {
       const entry = hosted.get(conversationId);
-      return entry?.closeFailure?.message ?? entry?.managed.cleanupFailure?.message ?? null;
+      return (
+        entry?.closeFailure?.message ??
+        entry?.managed.cleanupFailure?.message ??
+        null
+      );
     },
     async retryRelease(conversationId) {
       const entry = hosted.get(conversationId);
@@ -237,7 +279,8 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       try {
         await entry.managed.close();
       } catch (error) {
-        entry.closeFailure = error instanceof Error ? error : new Error(String(error));
+        entry.closeFailure =
+          error instanceof Error ? error : new Error(String(error));
         deps.log.error("conversation_core.runtime_close_failed", {
           conversationId,
           error: entry.closeFailure.message,
@@ -249,7 +292,9 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
 
     async releaseAll() {
       const ids = [...hosted.keys()];
-      await Promise.allSettled(ids.map((conversationId) => host.release(conversationId)));
+      await Promise.allSettled(
+        ids.map((conversationId) => host.release(conversationId)),
+      );
     },
   };
   return host;

@@ -7,10 +7,7 @@ import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/
 import type { PreparedTurnContribution } from "@/lib/conversation-core/turn/turn-context";
 
 type MemoryContextDependencies = {
-  context: Pick<
-    ConversationTurnDependencies["context"],
-    "getMemoryIndexBlock"
-  >;
+  context: Pick<ConversationTurnDependencies["context"], "getMemoryIndexBlock">;
   effects: Pick<
     ConversationTurnDependencies["effects"],
     "recordMemoryIndexDeliveries"

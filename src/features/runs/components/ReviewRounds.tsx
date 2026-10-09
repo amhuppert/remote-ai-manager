@@ -1,7 +1,11 @@
 "use client";
 
 import { CheckIcon, ChevronDownIcon, CloseIcon } from "@/components/icons";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/Collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/Collapsible";
 import { Spinner } from "@/components/ui/Spinner";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
@@ -10,14 +14,20 @@ import type { Advisory, CheckResult, ReviewRound, SeatVerdict } from "../model";
 import { formatDuration, formatUsd } from "../present";
 import { SeatMark } from "./parts";
 
-const roundOutcome: Record<ReviewRound["outcome"], { label: string; tone: StatusChipTone }> = {
+const roundOutcome: Record<
+  ReviewRound["outcome"],
+  { label: string; tone: StatusChipTone }
+> = {
   running: { label: "Reviewing", tone: "cyan" },
   passed: { label: "Passed", tone: "green" },
   failed: { label: "Changes asked", tone: "red" },
   retired: { label: "Retired", tone: "neutral" },
 };
 
-const verdict: Record<SeatVerdict["status"], { label: string; tone: StatusChipTone }> = {
+const verdict: Record<
+  SeatVerdict["status"],
+  { label: string; tone: StatusChipTone }
+> = {
   pending: { label: "Reviewing", tone: "cyan" },
   pass: { label: "Pass", tone: "green" },
   fail: { label: "Fail", tone: "red" },
@@ -25,7 +35,10 @@ const verdict: Record<SeatVerdict["status"], { label: string; tone: StatusChipTo
   unavailable: { label: "Unavailable", tone: "neutral" },
 };
 
-const disposition: Record<NonNullable<Advisory["disposition"]>, { label: string; tone: StatusChipTone }> = {
+const disposition: Record<
+  NonNullable<Advisory["disposition"]>,
+  { label: string; tone: StatusChipTone }
+> = {
   addressed: { label: "Addressed", tone: "green" },
   declined: { label: "Declined", tone: "neutral" },
   deferred: { label: "Deferred", tone: "neutral" },
@@ -44,16 +57,28 @@ function Check({ check }: { check: CheckResult }) {
       >
         {check.status === "passed" ? <CheckIcon size={12} /> : null}
         {check.status === "failed" ? <CloseIcon size={12} /> : null}
-        {check.status === "running" ? <Spinner size="sm" tone="inherit" /> : null}
+        {check.status === "running" ? (
+          <Spinner size="sm" tone="inherit" />
+        ) : null}
       </span>
       <span className="text-text-primary">{check.command}</span>
-      <span className="text-text-tertiary">{formatDuration(check.durationMs)}</span>
-      {check.detail !== undefined ? <span className="truncate text-red-text">{check.detail}</span> : null}
+      <span className="text-text-tertiary">
+        {formatDuration(check.durationMs)}
+      </span>
+      {check.detail !== undefined ? (
+        <span className="truncate text-red-text">{check.detail}</span>
+      ) : null}
     </li>
   );
 }
 
-function Note({ kind, title, description, criterionId, trailing }: {
+function Note({
+  kind,
+  title,
+  description,
+  criterionId,
+  trailing,
+}: {
   kind: "finding" | "advice";
   title: string;
   description: string;
@@ -69,12 +94,20 @@ function Note({ kind, title, description, criterionId, trailing }: {
     >
       <div className="flex min-w-0 items-baseline gap-sm">
         {criterionId !== undefined ? (
-          <span className="shrink-0 font-mono text-[0.7rem] font-semibold text-red-text">{criterionId}</span>
+          <span className="shrink-0 font-mono text-[0.7rem] font-semibold text-red-text">
+            {criterionId}
+          </span>
         ) : null}
-        <span className="min-w-0 font-mono text-[0.78rem] font-medium text-text-primary">{title}</span>
-        {trailing !== undefined ? <span className="ml-auto shrink-0">{trailing}</span> : null}
+        <span className="min-w-0 font-mono text-[0.78rem] font-medium text-text-primary">
+          {title}
+        </span>
+        {trailing !== undefined ? (
+          <span className="ml-auto shrink-0">{trailing}</span>
+        ) : null}
       </div>
-      <p className="m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary">{description}</p>
+      <p className="m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary">
+        {description}
+      </p>
     </li>
   );
 }
@@ -86,14 +119,24 @@ function Seat({ seat }: { seat: SeatVerdict }) {
       <div className="flex min-w-0 items-center gap-sm">
         <SeatMark seat={seat.seat} showEffort={false} />
         {seat.seat.focus !== undefined ? (
-          <span className="truncate font-mono text-[0.72rem] text-text-secondary">{seat.seat.focus}</span>
+          <span className="truncate font-mono text-[0.72rem] text-text-secondary">
+            {seat.seat.focus}
+          </span>
         ) : null}
-        <span className="font-mono text-[0.7rem] text-text-tertiary">{seat.seat.authority}</span>
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
+          {seat.seat.authority}
+        </span>
         <span className="ml-auto flex shrink-0 items-center gap-sm">
-          <span className="font-mono text-[0.7rem] text-text-tertiary">{formatUsd(seat.costUsd)}</span>
+          <span className="font-mono text-[0.7rem] text-text-tertiary">
+            {formatUsd(seat.costUsd)}
+          </span>
           <StatusChip
             tone={presented.tone}
-            icon={seat.status === "pending" ? <Spinner size="sm" tone="inherit" /> : undefined}
+            icon={
+              seat.status === "pending" ? (
+                <Spinner size="sm" tone="inherit" />
+              ) : undefined
+            }
           >
             {presented.label}
           </StatusChip>
@@ -116,9 +159,13 @@ function Seat({ seat }: { seat: SeatVerdict }) {
               }
               trailing={
                 advisory.disposition !== null ? (
-                  <StatusChip tone={disposition[advisory.disposition].tone}>{disposition[advisory.disposition].label}</StatusChip>
+                  <StatusChip tone={disposition[advisory.disposition].tone}>
+                    {disposition[advisory.disposition].label}
+                  </StatusChip>
                 ) : (
-                  <span className="font-mono text-[0.7rem] text-text-tertiary">advice</span>
+                  <span className="font-mono text-[0.7rem] text-text-tertiary">
+                    advice
+                  </span>
                 )
               }
             />
@@ -129,25 +176,39 @@ function Seat({ seat }: { seat: SeatVerdict }) {
   );
 }
 
-function Round({ round, defaultOpen }: { round: ReviewRound; defaultOpen: boolean }) {
+function Round({
+  round,
+  defaultOpen,
+}: {
+  round: ReviewRound;
+  defaultOpen: boolean;
+}) {
   const outcome = roundOutcome[round.outcome];
   return (
-    <Collapsible defaultOpen={defaultOpen} layoutClassName="group">
-      <div className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface">
+    <Collapsible defaultOpen={defaultOpen} asChild>
+      <div className="group overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface">
         <CollapsibleTrigger asChild>
           <button
             type="button"
             className="flex w-full cursor-pointer items-center gap-sm border-0 bg-transparent px-lg py-md text-left transition-colors duration-150 hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:-outline-offset-2"
           >
-            <span className="font-mono text-[0.78rem] font-semibold text-text-primary">Round {round.number}</span>
+            <span className="font-mono text-[0.78rem] font-semibold text-text-primary">
+              Round {round.number}
+            </span>
             <span className="font-mono text-[0.72rem] text-text-secondary">
               {round.kind === "full" ? "Full review" : "Blocking re-review"}
             </span>
             <span className="ml-auto flex items-center gap-sm">
-              <span className="font-mono text-[0.7rem] text-text-tertiary">{formatLocalTime(round.at)}</span>
+              <span className="font-mono text-[0.7rem] text-text-tertiary">
+                {formatLocalTime(round.at)}
+              </span>
               <StatusChip
                 tone={outcome.tone}
-                icon={round.outcome === "running" ? <Spinner size="sm" tone="inherit" /> : undefined}
+                icon={
+                  round.outcome === "running" ? (
+                    <Spinner size="sm" tone="inherit" />
+                  ) : undefined
+                }
               >
                 {outcome.label}
               </StatusChip>

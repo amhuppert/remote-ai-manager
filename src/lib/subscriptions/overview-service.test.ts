@@ -337,12 +337,25 @@ describe("subscription overview projections", () => {
       followDeliveryIds: ["run-notice"],
       state: "accepted",
     });
-    h.deliveries.push(delivery("run-notice", "first", { state: "accepted", attemptId: "follow-wake", acceptedAt: at }));
-    h.deps.getBatch = async (id) => (id === followWake.id ? followWake : id === h.batch.id ? h.batch : null);
+    h.deliveries.push(
+      delivery("run-notice", "first", {
+        state: "accepted",
+        attemptId: "follow-wake",
+        acceptedAt: at,
+      }),
+    );
+    h.deps.getBatch = async (id) =>
+      id === followWake.id ? followWake : id === h.batch.id ? h.batch : null;
 
-    const page = await h.service.inbox({ conversation: "conversation", state: "all", batchId: "follow-wake" });
+    const page = await h.service.inbox({
+      conversation: "conversation",
+      state: "all",
+      batchId: "follow-wake",
+    });
 
-    expect(page.items.map((item) => [item.delivery.id, item.wakeBatchId])).toEqual([["run-notice", "follow-wake"]]);
+    expect(
+      page.items.map((item) => [item.delivery.id, item.wakeBatchId]),
+    ).toEqual([["run-notice", "follow-wake"]]);
   });
   it("excludes unfollowed evidence from pending views and counts while retaining it in history", async () => {
     const h = harness();

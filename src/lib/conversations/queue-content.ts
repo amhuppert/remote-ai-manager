@@ -64,13 +64,18 @@ export function queueContentOfTurnInput(input: {
   documentFeedback?: DocumentFeedbackPayload;
   notepadFeedback?: readonly NotepadFeedbackPayload[];
 }): MessageContentBlock[] {
-  const feedback = input.documentFeedback !== undefined || input.notepadFeedback !== undefined;
+  const feedback =
+    input.documentFeedback !== undefined || input.notepadFeedback !== undefined;
   return [
     ...buildQueueContent({
       ...(feedback ? {} : { text: input.text }),
       ...(input.images !== undefined ? { images: input.images } : {}),
-      ...(input.documentFeedback !== undefined ? { documentFeedback: input.documentFeedback } : {}),
+      ...(input.documentFeedback !== undefined
+        ? { documentFeedback: input.documentFeedback }
+        : {}),
     }),
-    ...(input.notepadFeedback ?? []).flatMap((notepadFeedback) => buildQueueContent({ notepadFeedback })),
+    ...(input.notepadFeedback ?? []).flatMap((notepadFeedback) =>
+      buildQueueContent({ notepadFeedback }),
+    ),
   ];
 }

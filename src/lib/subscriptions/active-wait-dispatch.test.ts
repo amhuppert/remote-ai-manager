@@ -14,13 +14,27 @@ describe("active wait queue handoff", () => {
   });
 
   it("releases an uncertain wake of follow facts only that never reached the queue, and keeps a wait's for review", () => {
-    const missing = { recipientEligible: true, accepted: false, queueStatus: null };
-    expect(decideWakeDispatch("uncertain", missing, { followOnly: true })).toBe("release");
-    expect(decideWakeDispatch("uncertain", missing, { followOnly: false })).toBe("uncertain");
-    expect(decideWakeDispatch("uncertain", { ...missing, queueStatus: "uncertain" }, { followOnly: true })).toBe(
+    const missing = {
+      recipientEligible: true,
+      accepted: false,
+      queueStatus: null,
+    };
+    expect(decideWakeDispatch("uncertain", missing, { followOnly: true })).toBe(
+      "release",
+    );
+    expect(
+      decideWakeDispatch("uncertain", missing, { followOnly: false }),
+    ).toBe("uncertain");
+    expect(
+      decideWakeDispatch(
+        "uncertain",
+        { ...missing, queueStatus: "uncertain" },
+        { followOnly: true },
+      ),
+    ).toBe("uncertain");
+    expect(decideWakeDispatch("queued", missing, { followOnly: true })).toBe(
       "uncertain",
     );
-    expect(decideWakeDispatch("queued", missing, { followOnly: true })).toBe("uncertain");
   });
 
   it("repairs acceptance after a crash without replaying input or equating source completion with action", () => {

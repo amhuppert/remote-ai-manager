@@ -32,17 +32,25 @@ export async function readClaudePersistedCostBaseline(
 ): Promise<ClaudePersistedCostBaseline | null> {
   try {
     const transcriptPath = await getTranscriptPath(conversationId, configDir);
-    const lines = createInterface({ input: createReadStream(transcriptPath), crlfDelay: Infinity });
+    const lines = createInterface({
+      input: createReadStream(transcriptPath),
+      crlfDelay: Infinity,
+    });
     let latest: ClaudePersistedCostBaseline | null = null;
     for await (const line of lines) {
-      if (!line.includes('"result"') && !line.includes(COST_SETTLEMENT_FRAME_TYPE)) continue;
+      if (
+        !line.includes('"result"') &&
+        !line.includes(COST_SETTLEMENT_FRAME_TYPE)
+      )
+        continue;
       let entry: unknown;
       try {
         entry = JSON.parse(line);
       } catch {
         continue;
       }
-      if (typeof entry !== "object" || entry === null || !("type" in entry)) continue;
+      if (typeof entry !== "object" || entry === null || !("type" in entry))
+        continue;
       const raw = "raw" in entry ? entry.raw : null;
       // A task that resumed the session in its own process records the session's new total
       // as a settlement on the session's lineage.
@@ -53,7 +61,8 @@ export async function readClaudePersistedCostBaseline(
             ? sessionSettlementTotal(raw, sessionId)
             : null;
       // A zeroed crash or startup frame says nothing about what was spent.
-      if (cumulativeCostUsd !== null && cumulativeCostUsd > 0) latest = { sessionId, cumulativeCostUsd };
+      if (cumulativeCostUsd !== null && cumulativeCostUsd > 0)
+        latest = { sessionId, cumulativeCostUsd };
     }
     return latest;
   } catch {
@@ -68,7 +77,10 @@ function sessionResultTotal(raw: unknown, sessionId: string): number | null {
 }
 
 /** The session total a cost settlement frame records on `sessionId`'s lineage, or null. */
-function sessionSettlementTotal(raw: unknown, sessionId: string): number | null {
+function sessionSettlementTotal(
+  raw: unknown,
+  sessionId: string,
+): number | null {
   if (typeof raw !== "object" || raw === null) return null;
   const lineageId = "lineageId" in raw ? raw.lineageId : null;
   const total = "cumulativeCostUsd" in raw ? raw.cumulativeCostUsd : null;

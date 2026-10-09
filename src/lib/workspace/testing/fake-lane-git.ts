@@ -18,7 +18,11 @@ export function createFakeLaneGit(initial: Record<string, string> = {}) {
     dirt,
     /** Files the next merges conflict in; empty merges cleanly. */
     conflicts: [] as string[],
-    landed: [] as Array<{ worktreePath: string; paths: string[] | null; message: string }>,
+    landed: [] as Array<{
+      worktreePath: string;
+      paths: string[] | null;
+      message: string;
+    }>,
     merges: [] as string[],
     removed: [] as string[],
     provisioned: [] as Array<{ worktreePath: string; base: string }>,
@@ -58,7 +62,10 @@ export function createFakeLaneGit(initial: Record<string, string> = {}) {
     },
     async provision(input) {
       if (state.provisionFails !== null) throw new Error(state.provisionFails);
-      state.provisioned.push({ worktreePath: input.worktreePath, base: input.base });
+      state.provisioned.push({
+        worktreePath: input.worktreePath,
+        base: input.base,
+      });
       heads.set(input.branch, input.base);
       branchOf.set(input.worktreePath, input.branch);
       return { baseline: input.base };
@@ -87,7 +94,8 @@ export function createFakeLaneGit(initial: Record<string, string> = {}) {
     async mergeInto({ worktreePath, commit: incoming }) {
       if (state.mergeGate !== null) await state.mergeGate;
       state.merges.push(incoming);
-      if (state.conflicts.length > 0) return { kind: "conflicts", files: state.conflicts };
+      if (state.conflicts.length > 0)
+        return { kind: "conflicts", files: state.conflicts };
       commit(branchOf.get(worktreePath) ?? "", `Merge ${incoming}`);
       return { kind: "merged" };
     },
@@ -112,12 +120,19 @@ export function createFakeLaneGit(initial: Record<string, string> = {}) {
       state.beforePublish();
       if (state.publishOutcome !== null) return state.publishOutcome;
       const other = state.checkedOut.get(targetWorktreePath);
-      if (other !== undefined) return { kind: "blocked", detail: `The session worktree has branch ${other} checked out` };
+      if (other !== undefined)
+        return {
+          kind: "blocked",
+          detail: `The session worktree has branch ${other} checked out`,
+        };
       const head = heads.get(targetBranch) ?? "";
       if (head !== expectedHead) return { kind: "stale", head };
       const dirty = dirt.get(targetWorktreePath) ?? [];
       if (dirty.length > 0)
-        return { kind: "blocked", detail: `The session worktree has changes publication would overwrite or leave behind: ${dirty.join(", ")}` };
+        return {
+          kind: "blocked",
+          detail: `The session worktree has changes publication would overwrite or leave behind: ${dirty.join(", ")}`,
+        };
       return { kind: "published", commit: commit(targetBranch, message) };
     },
     async completePublication({ targetWorktreePath }) {
@@ -125,7 +140,8 @@ export function createFakeLaneGit(initial: Record<string, string> = {}) {
       return state.refresh;
     },
     async remove({ worktreePath }) {
-      if ((dirt.get(worktreePath) ?? []).length > 0) return { kind: "kept", detail: `${worktreePath} holds changes` };
+      if ((dirt.get(worktreePath) ?? []).length > 0)
+        return { kind: "kept", detail: `${worktreePath} holds changes` };
       state.removed.push(worktreePath);
       return { kind: "removed" };
     },

@@ -162,7 +162,10 @@ export function deriveLaneWorktreePath(input: {
 /** Lanes whose coordinates their caller already resolved, as a Run freezes them at launch. */
 export interface FrozenLaneProvisioner {
   /** Provision a lane at the given coordinates, consulting no branch-prefix configuration. */
-  provisionLaneAt(input: ProvisionLaneInput, targets: LaneTargets): Promise<ProvisionResult>;
+  provisionLaneAt(
+    input: ProvisionLaneInput,
+    targets: LaneTargets,
+  ): Promise<ProvisionResult>;
 }
 
 export function createParallelWorktrees(

@@ -13,7 +13,12 @@ import {
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
-import type { ConversationCheckpointCancel, ConversationCheckpointCheck, ConversationCheckpointReconcile, ConversationCheckpointStart } from "@/lib/conversation-checkpoints/operation-contract";
+import type {
+  ConversationCheckpointCancel,
+  ConversationCheckpointCheck,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointStart,
+} from "@/lib/conversation-checkpoints/operation-contract";
 
 import type { CheckpointRefusal } from "./admission";
 import type { CheckpointConversationGateway } from "./continuation";

@@ -2,7 +2,11 @@ import type { InteractiveEnrollmentRecord } from "@/lib/conversation-core/schema
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCoreQueueBridge } from "@/lib/conversation-core/queue-bridge";
-import { createCoreDebugMode, type CoreDebugMode, type CoreDebugModeDeps } from "@/lib/conversation-core/debug-mode";
+import {
+  createCoreDebugMode,
+  type CoreDebugMode,
+  type CoreDebugModeDeps,
+} from "@/lib/conversation-core/debug-mode";
 import {
   createCoreCheckpoints,
   type CoreCheckpointPorts,
@@ -80,12 +84,19 @@ export interface SupervisionPorts {
   taskTurns: TaskTurnPort;
   records: Pick<
     ConversationRecordPort,
-    "recordInterrupted" | "recordWithdrawn" | "hasPendingQuestion" | "withdrawQuestion" | "claimTurn" | "endClaim"
+    | "recordInterrupted"
+    | "recordWithdrawn"
+    | "hasPendingQuestion"
+    | "withdrawQuestion"
+    | "claimTurn"
+    | "endClaim"
   >;
   /** The conversation message queue (the rows clients show) that feeds enrolled interactive conversations. */
   queue: Omit<ConversationQueueDeps, "submitTurn">;
   getProjectDisplayName(projectPath: string): string;
-  readConversation(enrollment: InteractiveEnrollmentRecord): Promise<ConversationState | null>;
+  readConversation(
+    enrollment: InteractiveEnrollmentRecord,
+  ): Promise<ConversationState | null>;
   /** Debug mode on enrolled conversations' rows, and the debug workflow's cleanup verification. */
   debug: Pick<CoreDebugModeDeps, "records" | "verify">;
   /** Checkpoints of enrolled conversations: durable state, the archive, generation and the core's runtimes. */
@@ -134,9 +145,7 @@ export interface Supervision {
   boot(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
 }
 
-export function composeSupervision(
-  ports: SupervisionPorts,
-): Supervision {
+export function composeSupervision(ports: SupervisionPorts): Supervision {
   const { db } = ports;
   // Every transaction here reads before it writes. Taking the write lock up
   // front lets one wait out another connection's write; a deferred one fails
@@ -190,7 +199,8 @@ export function composeSupervision(
   // A runtime whose close failed may still act in the worktree: nothing new runs beside it.
   const uncollectedRuntime: HoldSource = {
     async refusal(conversationId) {
-      const failure = await ports.checkpoints.runtime.closeFailure(conversationId);
+      const failure =
+        await ports.checkpoints.runtime.closeFailure(conversationId);
       return failure === null
         ? null
         : {
@@ -210,7 +220,10 @@ export function composeSupervision(
       if ((await holds.refusal(conversationId, "delivery")) !== null) return;
       await queueBridge.drain(conversationId);
     } catch (error) {
-      queueLog.error("conversation_core.queue_drain_failed", { conversationId, error: getErrorMessage(error) });
+      queueLog.error("conversation_core.queue_drain_failed", {
+        conversationId,
+        error: getErrorMessage(error),
+      });
     }
   };
   const core = createConversationCore({
@@ -311,11 +324,16 @@ export function composeSupervision(
         // A conversation deleted while the core still listed it has nothing to recover.
         if ((await ports.readConversation(enrollment)) === null) {
           coreRepo.unenrollInteractive(conversationId);
-          queueLog.info("conversation_core.enrollment_dropped", { conversationId });
+          queueLog.info("conversation_core.enrollment_dropped", {
+            conversationId,
+          });
           continue;
         }
         await queueBridge.recover(conversationId).catch((error: unknown) =>
-          queueLog.error("conversation_core.queue_recover_failed", { conversationId, error: getErrorMessage(error) }),
+          queueLog.error("conversation_core.queue_recover_failed", {
+            conversationId,
+            error: getErrorMessage(error),
+          }),
         );
         // A checkpoint the last process left in flight is settled before the queue may drain.
         await checkpoints.recover(enrollment);

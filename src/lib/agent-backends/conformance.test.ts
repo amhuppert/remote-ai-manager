@@ -26,7 +26,10 @@ import {
   type ContinuityConformanceHarness,
   type ConversationTurnConformanceHarness,
 } from "./conformance";
-import type { ConversationBackendCreateInput, ConversationQueuedUserInput } from "./conversation";
+import type {
+  ConversationBackendCreateInput,
+  ConversationQueuedUserInput,
+} from "./conversation";
 import { InputDeliveryUncertainError } from "./errors";
 import type { AgentTaskRequest } from "./task";
 import type { BackendRuntimeConfigAdapter } from "./runtime-config";
@@ -547,14 +550,20 @@ describe("conformance behavior checks reject lying descriptors", () => {
     await expect(
       checkQueueCoherence(claudeConversation, {
         buildCreateInput: () =>
-          buildCreateInput("conformance-claude-lying-live", CLAUDE_MODEL_SELECTION),
+          buildCreateInput(
+            "conformance-claude-lying-live",
+            CLAUDE_MODEL_SELECTION,
+          ),
         hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
         queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
         // Claude's input channel may take input up after the turn's result.
         createRuntime: async (input) =>
-          Object.assign(await claudeConversationBackendFactory.createRuntime(input), {
-            liveInput: "running_turn" as const,
-          }),
+          Object.assign(
+            await claudeConversationBackendFactory.createRuntime(input),
+            {
+              liveInput: "running_turn" as const,
+            },
+          ),
       }),
     ).rejects.toThrow(/after its turn/);
   }, 10_000);
@@ -563,11 +572,15 @@ describe("conformance behavior checks reject lying descriptors", () => {
     await expect(
       checkQueueCoherence(claudeConversation, {
         buildCreateInput: () =>
-          buildCreateInput("conformance-claude-uncertain-live", CLAUDE_MODEL_SELECTION),
+          buildCreateInput(
+            "conformance-claude-uncertain-live",
+            CLAUDE_MODEL_SELECTION,
+          ),
         hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
         queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
         createRuntime: async (input) => {
-          const runtime = await claudeConversationBackendFactory.createRuntime(input);
+          const runtime =
+            await claudeConversationBackendFactory.createRuntime(input);
           const deliver = runtime.queueUserInput?.bind(runtime);
           let sends = 0;
           return Object.assign(runtime, {
@@ -575,7 +588,8 @@ describe("conformance behavior checks reject lying descriptors", () => {
             async queueUserInput(queued: ConversationQueuedUserInput) {
               sends += 1;
               // The late send reaches the provider, but its acknowledgement is lost.
-              if (sends > 1) throw new InputDeliveryUncertainError("acknowledgement lost");
+              if (sends > 1)
+                throw new InputDeliveryUncertainError("acknowledgement lost");
               await deliver?.(queued);
             },
           });

@@ -716,7 +716,8 @@ export function projectRouteExclusion(topology: {
         (edge) => guardKind(edge) !== "none" && needs.has(edge.sourceContextId),
       );
       const starved =
-        edges.length > 0 && edges.every((edge) => needs.has(edge.sourceContextId));
+        edges.length > 0 &&
+        edges.every((edge) => needs.has(edge.sourceContextId));
       if (vetoed || starved) needs.add(contextId);
     }
     return needs;
@@ -732,7 +733,8 @@ export function projectRouteExclusion(topology: {
       for (const second of routes.slice(index + 1)) {
         const oneElse =
           guardKind(first) === "else" || guardKind(second) === "else";
-        if (exactlyOne || oneElse) pairs.push([needing(first), needing(second)]);
+        if (exactlyOne || oneElse)
+          pairs.push([needing(first), needing(second)]);
       }
     });
   }

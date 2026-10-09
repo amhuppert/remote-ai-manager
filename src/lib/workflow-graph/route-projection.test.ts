@@ -690,7 +690,12 @@ describe("a source whose choice is not committed", () => {
   it("decides none of its routes, guarded or not, while its other routes' sources still decide theirs", () => {
     const projection = project({
       contexts: [
-        { id: "classify", status: "completed", outputSchema: VERDICT_SCHEMA, cardinality: "exactlyOne" },
+        {
+          id: "classify",
+          status: "completed",
+          outputSchema: VERDICT_SCHEMA,
+          cardinality: "exactlyOne",
+        },
         { id: "plan", status: "completed" },
         { id: "fix" },
         { id: "other" },
@@ -707,21 +712,26 @@ describe("a source whose choice is not committed", () => {
       uncommitted: ["classify"],
     });
 
-    expect(["fix", "other", "log"].map((id) => routeVerdict(projection, id).kind)).toEqual([
-      "waiting",
-      "waiting",
-      "waiting",
-    ]);
+    expect(
+      ["fix", "other", "log"].map((id) => routeVerdict(projection, id).kind),
+    ).toEqual(["waiting", "waiting", "waiting"]);
     expect(routeVerdict(projection, "notes").kind).toBe("eligible");
   });
 });
 
 describe("static route relations", () => {
-  const branches = (cardinality?: RouteCardinalityPolicy, second: EdgeGuardDeclaration = ELSE) =>
+  const branches = (
+    cardinality?: RouteCardinalityPolicy,
+    second: EdgeGuardDeclaration = ELSE,
+  ) =>
     topologyOf({
       contexts: [
         { id: "plan" },
-        { id: "classify", outputSchema: VERDICT_SCHEMA, ...(cardinality ? { cardinality } : {}) },
+        {
+          id: "classify",
+          outputSchema: VERDICT_SCHEMA,
+          ...(cardinality ? { cardinality } : {}),
+        },
         { id: "fix" },
         { id: "design" },
         { id: "after-fix" },
@@ -750,13 +760,29 @@ describe("static route relations", () => {
     expect(withElse("mixed", "design")).toBe(false);
     expect(withElse("plan", "design")).toBe(false);
 
-    expect(projectRouteExclusion(branches("exactlyOne", verdictIs("feature")))("fix", "design")).toBe(true);
-    expect(projectRouteExclusion(branches("independent", verdictIs("feature")))("fix", "design")).toBe(false);
+    expect(
+      projectRouteExclusion(branches("exactlyOne", verdictIs("feature")))(
+        "fix",
+        "design",
+      ),
+    ).toBe(true);
+    expect(
+      projectRouteExclusion(branches("independent", verdictIs("feature")))(
+        "fix",
+        "design",
+      ),
+    ).toBe(false);
   });
 
   it("names the contexts that run whenever a given context runs", () => {
     const topology = topologyOf({
-      contexts: [{ id: "plan" }, { id: "classify", outputSchema: VERDICT_SCHEMA }, { id: "fix" }, { id: "report" }, { id: "notes" }],
+      contexts: [
+        { id: "plan" },
+        { id: "classify", outputSchema: VERDICT_SCHEMA },
+        { id: "fix" },
+        { id: "report" },
+        { id: "notes" },
+      ],
       edges: [
         { from: "plan", to: "classify" },
         { from: "classify", to: "fix", when: verdictIs("bug") },

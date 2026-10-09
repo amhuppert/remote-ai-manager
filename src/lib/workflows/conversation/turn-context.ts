@@ -7,7 +7,10 @@ import { getDebugManifestPath } from "@/lib/debug-log/service";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/dependencies";
 import type { ConversationExecutionContext } from "@/lib/conversation-core/turn/turn-spec";
-import { assembleTurnPrompt, type TurnContextExecution } from "@/lib/conversation-core/turn/turn-context";
+import {
+  assembleTurnPrompt,
+  type TurnContextExecution,
+} from "@/lib/conversation-core/turn/turn-context";
 import { prepareNotepadContext } from "@/lib/conversation-core/contributions/notepad-context";
 import { prepareMemoryContext } from "@/lib/conversation-core/contributions/memory-context";
 import {

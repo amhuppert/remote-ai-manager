@@ -24,7 +24,11 @@ export type CheckpointReconcilePlan =
   | { kind: "declare_ready" }
   /** A capture whose execution was never confirmed: observe that nothing of it still runs. */
   | { kind: "observe_capture_cleanup" }
-  | { kind: "blocked"; code: "queue_review_required" | "recovery_required"; reason: string };
+  | {
+      kind: "blocked";
+      code: "queue_review_required" | "recovery_required";
+      reason: string;
+    };
 
 export interface CheckpointReconcileFacts {
   /** Queued deliveries are uncertain or failed and wait for the person's review. */
@@ -41,7 +45,8 @@ function isCaptureCleanupHold(operation: CheckpointOperation): boolean {
     operation.payloadId === null &&
     handoff !== null &&
     handoff.stage === "omitted" &&
-    (handoff.omissionReason === "interrupted" || handoff.omissionReason === "cleanup_unverified")
+    (handoff.omissionReason === "interrupted" ||
+      handoff.omissionReason === "cleanup_unverified")
   );
 }
 
@@ -61,7 +66,8 @@ export function planCheckpointReconcile(
     return {
       kind: "refused",
       code: "invalid_handoff",
-      reason: "execution acknowledgement applies only to capture execution uncertainty",
+      reason:
+        "execution acknowledgement applies only to capture execution uncertainty",
     };
   }
   switch (operation.phase) {
@@ -70,7 +76,11 @@ export function planCheckpointReconcile(
     case "retiring":
       return { kind: "finish_retirement" };
     case "delivering":
-      return { kind: "refused", code: "conversation_busy", reason: "a delivery attempt is in flight for this operation" };
+      return {
+        kind: "refused",
+        code: "conversation_busy",
+        reason: "a delivery attempt is in flight for this operation",
+      };
     case "ready":
     case "applied":
     case "failed":
@@ -119,7 +129,8 @@ export function planCheckpointReconcile(
       return {
         kind: "blocked",
         code: "recovery_required",
-        reason: "this operation needs explicit recovery; run compact-context --recover with this operation id",
+        reason:
+          "this operation needs explicit recovery; run compact-context --recover with this operation id",
       };
   }
 }

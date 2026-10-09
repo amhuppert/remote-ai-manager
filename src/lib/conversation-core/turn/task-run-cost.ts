@@ -37,12 +37,23 @@ export function attributeTaskRunCost(input: {
     const costUsd = cumulative >= previous ? cumulative - previous : cumulative;
     return {
       costUsd,
-      settlement: { lineageId: input.sessionRef.ref, cumulativeCostUsd: cumulative, costUsdDelta: costUsd },
+      settlement: {
+        lineageId: input.sessionRef.ref,
+        cumulativeCostUsd: cumulative,
+        costUsdDelta: costUsd,
+      },
     };
   }
   const costUsd = input.usage.costUsd;
   if (costUsd === undefined || !(costUsd > 0)) return null;
-  return { costUsd, settlement: { lineageId: input.runLineageId, cumulativeCostUsd: costUsd, costUsdDelta: costUsd } };
+  return {
+    costUsd,
+    settlement: {
+      lineageId: input.runLineageId,
+      cumulativeCostUsd: costUsd,
+      costUsdDelta: costUsd,
+    },
+  };
 }
 
 /**
@@ -57,7 +68,10 @@ export async function readLineageCumulativeCost(
 ): Promise<number | null> {
   try {
     const transcriptPath = await getTranscriptPath(conversationId, configDir);
-    const lines = createInterface({ input: createReadStream(transcriptPath), crlfDelay: Infinity });
+    const lines = createInterface({
+      input: createReadStream(transcriptPath),
+      crlfDelay: Infinity,
+    });
     let latest: number | null = null;
     for await (const line of lines) {
       if (!line.includes(lineageId)) continue;
@@ -70,7 +84,11 @@ export async function readLineageCumulativeCost(
       if (typeof entry !== "object" || entry === null) continue;
       // The frame goes whole to the backends' projections, which alone read its payload.
       const usage = projectTranscriptUsage(entry);
-      if (usage?.lineageId === lineageId && usage.cumulativeCostUsd !== null && usage.cumulativeCostUsd > 0) {
+      if (
+        usage?.lineageId === lineageId &&
+        usage.cumulativeCostUsd !== null &&
+        usage.cumulativeCostUsd > 0
+      ) {
         latest = usage.cumulativeCostUsd;
       }
     }

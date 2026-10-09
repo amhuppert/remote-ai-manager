@@ -21,7 +21,9 @@ const notepad: NotepadInjectionSource = {
 };
 
 /** Records each write in order; a named write can be made to fail. */
-function harness(options: { failing?: Set<string>; briefing?: string | null } = {}) {
+function harness(
+  options: { failing?: Set<string>; briefing?: string | null } = {},
+) {
   const calls: string[] = [];
   const failing = options.failing ?? new Set<string>();
   const write = async (name: string) => {
@@ -46,7 +48,8 @@ function harness(options: { failing?: Set<string>; briefing?: string | null } = 
         rendered: null,
       }),
       readLiveReference: async () => null,
-      readNotepadForInjection: async (id) => (id === notepad.id ? notepad : null),
+      readNotepadForInjection: async (id) =>
+        id === notepad.id ? notepad : null,
     },
     effects: {
       recordNotepadDeliveries: () => write("notepad_deliveries"),
@@ -59,11 +62,18 @@ function harness(options: { failing?: Set<string>; briefing?: string | null } = 
     debug: { getDebugLogUrl: () => "http://debug" },
     log: createCapturingLogger(),
   };
-  const request = (overrides: Partial<TurnInputRequest> = {}): TurnInputRequest => ({
+  const request = (
+    overrides: Partial<TurnInputRequest> = {},
+  ): TurnInputRequest => ({
     mode: "turn",
     execution: {
       projectPath: "/repo",
-      target: { scope: "session", projectName: "repo", sessionName: "session", conversationId: "conv-1" },
+      target: {
+        scope: "session",
+        projectName: "repo",
+        sessionName: "session",
+        conversationId: "conv-1",
+      },
       worktreePath: "/repo/.worktrees/session",
       role: null,
       persistence: "durable",
@@ -86,12 +96,17 @@ describe("turn input", () => {
   it("places a turn's contributions before the message, and a live delivery's briefing alone", async () => {
     const h = harness();
     const turn = await prepareTurnInput(h.deps, h.request());
-    const order = ["<briefing/>", "<ticket/>", "<memory/>", "Read this"].map((part) => turn.promptText.indexOf(part));
+    const order = ["<briefing/>", "<ticket/>", "<memory/>", "Read this"].map(
+      (part) => turn.promptText.indexOf(part),
+    );
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(turn.promptText).toContain("The plan.");
 
-    const live = await prepareTurnInput(h.deps, h.request({ mode: "live", briefingAttemptId: "delivery-1" }));
+    const live = await prepareTurnInput(
+      h.deps,
+      h.request({ mode: "live", briefingAttemptId: "delivery-1" }),
+    );
     expect(live.promptText).toContain("<briefing/>");
     expect(live.promptText).not.toContain("<ticket/>");
     expect(live.promptText).not.toContain("<memory/>");
@@ -102,7 +117,14 @@ describe("turn input", () => {
     const input = await prepareTurnInput(h.deps, h.request());
     input.sending();
     await input.accepted({ backend: "claude", ref: "s-1" });
-    expect(h.calls).toEqual(["archive", "notepad_deliveries", "passive", "notepad_follows", "memory", "release"]);
+    expect(h.calls).toEqual([
+      "archive",
+      "notepad_deliveries",
+      "passive",
+      "notepad_follows",
+      "memory",
+      "release",
+    ]);
     expect(await input.settle()).toBe(true);
     expect(classifyDelivery(input.delivery)).toBe("accepted");
   });
@@ -112,11 +134,15 @@ describe("turn input", () => {
     const h = harness({ failing });
     const input = await prepareTurnInput(h.deps, h.request());
     input.sending();
-    await expect(input.accepted({ backend: "claude", ref: "s-1" })).resolves.toBeUndefined();
+    await expect(
+      input.accepted({ backend: "claude", ref: "s-1" }),
+    ).resolves.toBeUndefined();
     expect(h.calls).toContain("release");
 
     expect(await input.settle()).toBe(false);
-    expect(h.calls.filter((call) => call === "notepad_follows")).toHaveLength(2);
+    expect(h.calls.filter((call) => call === "notepad_follows")).toHaveLength(
+      2,
+    );
     failing.clear();
     expect(await input.settle()).toBe(true);
     expect(h.calls.filter((call) => call === "release")).toHaveLength(1);
@@ -132,7 +158,9 @@ describe("turn input", () => {
     const refused = harness();
     const undelivered = await prepareTurnInput(refused.deps, refused.request());
     undelivered.sending();
-    undelivered.failed(markPromptNotDelivered(new Error("The provider refused it")));
+    undelivered.failed(
+      markPromptNotDelivered(new Error("The provider refused it")),
+    );
     await undelivered.settle();
     expect(refused.calls).toEqual(["passive_finish:not_sent"]);
 
@@ -199,7 +227,18 @@ describe("turn input", () => {
     await input.accepted({ backend: "claude", ref: "s-1" });
     expect(h.calls).toEqual(["archive"]);
     expect(await input.settle()).toBe(true);
-    expect(seedCalls).toEqual(["seed_dispatched", "seed_accepted", "seed_finish"]);
-    expect(h.calls).toEqual(["archive", "notepad_deliveries", "passive", "notepad_follows", "memory", "release"]);
+    expect(seedCalls).toEqual([
+      "seed_dispatched",
+      "seed_accepted",
+      "seed_finish",
+    ]);
+    expect(h.calls).toEqual([
+      "archive",
+      "notepad_deliveries",
+      "passive",
+      "notepad_follows",
+      "memory",
+      "release",
+    ]);
   });
 });

@@ -159,7 +159,9 @@ export interface ContextHost extends Executor<ContextProgressReport> {
   implementerWorkplace(
     contextId: string,
     caller: SeatBinding,
-  ): { kind: "current"; runId: string; worktreePath: string } | { kind: "refused"; reason: string };
+  ):
+    | { kind: "current"; runId: string; worktreePath: string }
+    | { kind: "refused"; reason: string };
   /** `caller` is the calling conversation's controller binding, resolved from its record. */
   applyTaskCommand(
     contextId: string,
@@ -191,12 +193,16 @@ export interface ContextHost extends Executor<ContextProgressReport> {
 }
 
 /** Why `caller` may not act as this context's implementer now; null when it may. */
-function implementerRefusal(record: ContextRecord, caller: SeatBinding | null): string | null {
+function implementerRefusal(
+  record: ContextRecord,
+  caller: SeatBinding | null,
+): string | null {
   if (
     caller === null ||
     caller.contextId !== record.contextId ||
     caller.assignmentId !== "implementer" ||
-    caller.replacement !== (record.facts.seats.replacements[caller.assignmentId] ?? 0)
+    caller.replacement !==
+      (record.facts.seats.replacements[caller.assignmentId] ?? 0)
   )
     return "Only this context's current implementer may do this";
   if (isTerminal(record.progress) || record.facts.control.cancelled)
@@ -317,8 +323,15 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
    * occurrence, or a consumed outcome, which can end the Context's admitted
    * activity (a paused Run's drain) while its progress stays as it was.
    */
-  function afterCommit(before: ContextRecord, after: ContextRecord, consumedOutcome = false): void {
-    if (consumedOutcome || after.progressOccurrence !== before.progressOccurrence) {
+  function afterCommit(
+    before: ContextRecord,
+    after: ContextRecord,
+    consumedOutcome = false,
+  ): void {
+    if (
+      consumedOutcome ||
+      after.progressOccurrence !== before.progressOccurrence
+    ) {
       deps.touchRun(after.runId);
     }
   }
@@ -349,7 +362,10 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
     submit(intent) {
       const request = contextStartRequestSchema.parse(intent.request);
       const parent = intent.permit;
-      if (parent === null) throw new Error(`Context ${request.contextId} must start under its Run's permit`);
+      if (parent === null)
+        throw new Error(
+          `Context ${request.contextId} must start under its Run's permit`,
+        );
       deps.transaction(() => {
         if (deps.contexts.getByStartCause(intent.cause) !== null) return;
         const now = deps.now();
@@ -434,7 +450,8 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         }
         const permit = permitOf(contextId);
         if (deps.permits.admits(permit)) {
-          const othersPending = deps.intents.pending(owner(contextId)).length > 0;
+          const othersPending =
+            deps.intents.pending(owner(contextId)).length > 0;
           const planned = planEffects({ facts, othersPending });
           facts = planned.facts;
           for (const effect of planned.effects) {
@@ -492,13 +509,23 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         occurrence: record.progressOccurrence,
         accepted: acceptedOf(record),
         // A question waiting on its owner is not work that drains.
-        active: effectViews(pending).some((effect) => effect.admitted && !effect.waitsOnPerson),
+        active: effectViews(pending).some(
+          (effect) => effect.admitted && !effect.waitsOnPerson,
+        ),
         paused: facts.control.paused,
-        dispositions: progress.kind === "halted" ? DISPOSITIONS_BY_HALT[progress.halt] : [],
+        dispositions:
+          progress.kind === "halted" ? DISPOSITIONS_BY_HALT[progress.halt] : [],
         ownerQuestions: facts.contract.current.ownerQuestions,
-        tasks: facts.ledger.tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
+        tasks: facts.ledger.tasks.map((task) => ({
+          id: task.id,
+          title: task.title,
+          status: task.status,
+        })),
         seats: facts.seats.conversations,
-        openQuestions: facts.requests.open.map((open) => ({ questionId: open.questionId, seat: open.seat })),
+        openQuestions: facts.requests.open.map((open) => ({
+          questionId: open.questionId,
+          seat: open.seat,
+        })),
         lastSummary: facts.ledger.lastSummary,
         stalled,
       };
@@ -509,7 +536,11 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       const refusal = implementerRefusal(record, caller);
       return refusal !== null
         ? { kind: "refused", reason: refusal }
-        : { kind: "current", runId: record.runId, worktreePath: record.workspace.worktreePath };
+        : {
+            kind: "current",
+            runId: record.runId,
+            worktreePath: record.workspace.worktreePath,
+          };
     },
 
     applyTaskCommand(contextId, caller, command) {
@@ -521,7 +552,11 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
           const record = requireRecord(contextId);
           const facts = record.facts;
           const refusal = implementerRefusal(record, caller);
-          if (refusal !== null) return { result: { kind: "refused", reason: refusal }, change: null };
+          if (refusal !== null)
+            return {
+              result: { kind: "refused", reason: refusal },
+              change: null,
+            };
           const applied = applyTaskCommand(facts, command);
           if (applied.kind === "refused")
             return { result: applied, change: null };

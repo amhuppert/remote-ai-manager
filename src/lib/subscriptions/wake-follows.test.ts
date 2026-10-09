@@ -16,7 +16,11 @@ afterEach(() => fixture?.close());
 const owner = { projectPath: "/project", conversationId: "owner" };
 const run = (id: string) => ({ kind: "run", id }) as const;
 
-function fact(occurrenceId: string, sourceText: string, kind = "question"): SourceFact {
+function fact(
+  occurrenceId: string,
+  sourceText: string,
+  kind = "question",
+): SourceFact {
   return {
     occurrenceId,
     eventKind: `run-boundary:${kind}`,
@@ -49,8 +53,14 @@ function harness(options: { idsDescend?: boolean } = {}) {
     nextId++;
     return `id-${String(options.idsDescend === true ? 9000 - nextId : nextId).padStart(4, "0")}`;
   };
-  const subscriptions = createConversationSubscriptionsRepo(db, createWriteQueue());
-  const waitsRepo = createConversationSubscriptionWaitsRepo(db, createWriteQueue());
+  const subscriptions = createConversationSubscriptionsRepo(
+    db,
+    createWriteQueue(),
+  );
+  const waitsRepo = createConversationSubscriptionWaitsRepo(
+    db,
+    createWriteQueue(),
+  );
   const service = createSubscriptionService({
     repo: subscriptions,
     isRecipientEligible: async () => true,
@@ -73,7 +83,10 @@ function harness(options: { idsDescend?: boolean } = {}) {
       source.kind === "validation"
         ? {
             kind: "terminal",
-            fact: { ...fact(`${source.id}:passed`, "Tests passed", "succeeded"), eventKind: "validation-completed" },
+            fact: {
+              ...fact(`${source.id}:passed`, "Tests passed", "succeeded"),
+              eventKind: "validation-completed",
+            },
           }
         : { kind: "missing" },
     now,
@@ -105,23 +118,47 @@ function harness(options: { idsDescend?: boolean } = {}) {
     return follow;
   }
   async function deliveryOf(occurrenceId: string) {
-    const items = (await subscriptions.readInbox(owner, { includeSettled: true, limit: 200 })).items;
+    const items = (
+      await subscriptions.readInbox(owner, { includeSettled: true, limit: 200 })
+    ).items;
     const found = items.find((item) => item.fact.occurrenceId === occurrenceId);
     if (found === undefined) throw new Error(`no delivery for ${occurrenceId}`);
     return found;
   }
-  return { service, waits, waitsRepo, subscriptions, controls, factsOf, clock, followRun, deliveryOf };
+  return {
+    service,
+    waits,
+    waitsRepo,
+    subscriptions,
+    controls,
+    factsOf,
+    clock,
+    followRun,
+    deliveryOf,
+  };
 }
 
 describe("follows that wake", () => {
   it("wakes the recipient with each new fact, carrying its text, instead of briefing it on the next turn", async () => {
     const h = harness();
     await h.followRun("run-1");
-    h.factsOf("run-1").push(fact("q-1", "Question: Which helper? Answer: cctl run answer run-1 --question q-1"));
+    h.factsOf("run-1").push(
+      fact(
+        "q-1",
+        "Question: Which helper? Answer: cctl run answer run-1 --question q-1",
+      ),
+    );
     await h.service.reconcile(owner);
 
     expect(await h.waits.listRecipients()).toEqual([owner]);
-    expect((await h.service.prepareBriefing({ recipient: owner, attemptId: "turn-1" })).block).toBeNull();
+    expect(
+      (
+        await h.service.prepareBriefing({
+          recipient: owner,
+          attemptId: "turn-1",
+        })
+      ).block,
+    ).toBeNull();
 
     const batch = await h.waits.prepareBatch(owner);
     expect(batch).toMatchObject({ waitIds: [], deliveryIds: [] });
@@ -138,14 +175,24 @@ describe("follows that wake", () => {
 
   it("leaves a follow without wake to the next turn's briefing", async () => {
     const h = harness();
-    await h.service.autoFollow({ recipient: owner, source: run("run-1"), reason: "Following", initialCursor: "0" });
+    await h.service.autoFollow({
+      recipient: owner,
+      source: run("run-1"),
+      reason: "Following",
+      initialCursor: "0",
+    });
     h.factsOf("run-1").push(fact("q-1", "Question: Which helper?"));
     await h.service.reconcile(owner);
 
     expect(await h.waits.prepareBatch(owner)).toBeNull();
-    expect((await h.service.prepareBriefing({ recipient: owner, attemptId: "turn-1" })).block).toContain(
-      "Fix the notice: question.",
-    );
+    expect(
+      (
+        await h.service.prepareBriefing({
+          recipient: owner,
+          attemptId: "turn-1",
+        })
+      ).block,
+    ).toContain("Fix the notice: question.");
   });
 
   it("delivers a notice already handed to a wake after its follow is unfollowed, so later wakes are not blocked", async () => {
@@ -183,7 +230,9 @@ describe("follows that wake", () => {
     await h.controls.pause(owner, wait.subscriptionId);
 
     expect((await h.deliveryOf("q-1")).state).toBe("pending");
-    expect((await h.waits.prepareBatch(owner))?.followDeliveryIds).toEqual([(await h.deliveryOf("q-1")).id]);
+    expect((await h.waits.prepareBatch(owner))?.followDeliveryIds).toEqual([
+      (await h.deliveryOf("q-1")).id,
+    ]);
   });
 
   it("releases a wake of notices only that ended uncertain with no queue row, so its notices wake again", async () => {
@@ -192,7 +241,11 @@ describe("follows that wake", () => {
     h.factsOf("run-1").push(fact("q-1", "Question: Which helper?"));
     await h.service.reconcile(owner);
     const lost = await h.waits.prepareBatch(owner);
-    await h.waits.settleBatch(lost?.id ?? "", "uncertain", "The attempted wake has no queue row");
+    await h.waits.settleBatch(
+      lost?.id ?? "",
+      "uncertain",
+      "The attempted wake has no queue row",
+    );
 
     await h.waits.releaseUnsentBatch(lost?.id ?? "");
 
@@ -204,9 +257,17 @@ describe("follows that wake", () => {
 
   it("does not release an uncertain wake that carries a one-time wait, which keeps its explicit review", async () => {
     const h = harness();
-    await h.waits.register({ recipient: owner, source: { kind: "validation", id: "v-1" }, reason: "Continue after the tests" });
+    await h.waits.register({
+      recipient: owner,
+      source: { kind: "validation", id: "v-1" },
+      reason: "Continue after the tests",
+    });
     const shared = await h.waits.prepareBatch(owner);
-    await h.waits.settleBatch(shared?.id ?? "", "uncertain", "The attempted wake has no queue row");
+    await h.waits.settleBatch(
+      shared?.id ?? "",
+      "uncertain",
+      "The attempted wake has no queue row",
+    );
 
     await h.waits.releaseUnsentBatch(shared?.id ?? "");
 
@@ -219,11 +280,29 @@ describe("follows that wake", () => {
     h.factsOf("run-1").push(fact("q-1", "Question: Which helper?"));
     await h.service.reconcile(owner);
     const held = await h.waits.prepareBatch(owner);
-    await h.waits.settleBatch(held?.id ?? "", "uncertain", "Acceptance was not confirmed");
+    await h.waits.settleBatch(
+      held?.id ?? "",
+      "uncertain",
+      "Acceptance was not confirmed",
+    );
     const delivery = await h.deliveryOf("q-1");
 
-    expect(await h.subscriptions.reviewDelivery(owner, delivery.id, "retry", h.clock.at)).toBe(false);
-    expect(await h.subscriptions.reviewDelivery(owner, delivery.id, "dismiss", h.clock.at)).toBe(false);
+    expect(
+      await h.subscriptions.reviewDelivery(
+        owner,
+        delivery.id,
+        "retry",
+        h.clock.at,
+      ),
+    ).toBe(false);
+    expect(
+      await h.subscriptions.reviewDelivery(
+        owner,
+        delivery.id,
+        "dismiss",
+        h.clock.at,
+      ),
+    ).toBe(false);
     expect((await h.deliveryOf("q-1")).state).toBe("uncertain");
   });
 
@@ -242,13 +321,21 @@ describe("follows that wake", () => {
   it("keeps a run's notices in the order the run recorded them", async () => {
     const h = harness({ idsDescend: true });
     await h.followRun("run-1");
-    h.factsOf("run-1").push(fact("q-1", "First question"), fact("q-2", "Second question"));
+    h.factsOf("run-1").push(
+      fact("q-1", "First question"),
+      fact("q-2", "Second question"),
+    );
     await h.service.reconcile(owner);
 
     const batch = await h.waits.prepareBatch(owner);
 
-    expect(batch?.followDeliveryIds).toEqual([(await h.deliveryOf("q-1")).id, (await h.deliveryOf("q-2")).id]);
-    expect(batch?.message.indexOf("First question")).toBeLessThan(batch?.message.indexOf("Second question") ?? 0);
+    expect(batch?.followDeliveryIds).toEqual([
+      (await h.deliveryOf("q-1")).id,
+      (await h.deliveryOf("q-2")).id,
+    ]);
+    expect(batch?.message.indexOf("First question")).toBeLessThan(
+      batch?.message.indexOf("Second question") ?? 0,
+    );
   });
 
   it("retires a run's follow once its final notice is delivered", async () => {
@@ -260,7 +347,9 @@ describe("follows that wake", () => {
 
     await h.waits.settleBatch(last?.id ?? "", "accepted");
 
-    expect((await h.subscriptions.findBySource(owner, run("run-1")))?.expiresAt).not.toBeNull();
+    expect(
+      (await h.subscriptions.findBySource(owner, run("run-1")))?.expiresAt,
+    ).not.toBeNull();
     h.factsOf("run-1").push(fact("late", "Nothing follows a result"));
     await h.service.reconcile(owner);
     expect(await h.waits.prepareBatch(owner)).toBeNull();

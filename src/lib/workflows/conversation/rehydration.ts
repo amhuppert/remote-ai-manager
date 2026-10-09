@@ -1,5 +1,9 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import { conversationTotals, toConversationDurableSeed, type ConversationDurableSeed } from "./actor-input-loader";
+import {
+  conversationTotals,
+  toConversationDurableSeed,
+  type ConversationDurableSeed,
+} from "./actor-input-loader";
 import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import type { CheckpointAuthorityHydration } from "@/lib/conversation-checkpoints/checkpoint-restart";
 import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
@@ -403,7 +407,8 @@ export async function loadRehydrationInfrastructure(): Promise<
     await import("@/lib/workflow-graph/result-delivery-service");
   const { getConversationCheckpointsRepo } =
     await import("@/lib/conversation-checkpoints/service-factory");
-  const { hydrateCheckpointAuthority } = await import("@/lib/conversation-checkpoints/checkpoint-restart");
+  const { hydrateCheckpointAuthority } =
+    await import("@/lib/conversation-checkpoints/checkpoint-restart");
   const { coreOwnsConversation } = await import("@/lib/supervision/handles");
   return {
     isCoreOwnedConversation: coreOwnsConversation,

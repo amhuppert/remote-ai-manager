@@ -1,8 +1,17 @@
 import { dispatchPushForConversationStatus } from "@/lib/push-notification/dispatcher";
-import { projectConversationTarget, targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import { messageQueueService, type MessageQueueService } from "@/lib/conversations/message-queue-service";
+import {
+  projectConversationTarget,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import {
+  messageQueueService,
+  type MessageQueueService,
+} from "@/lib/conversations/message-queue-service";
 import { queueContentOfTurnInput } from "@/lib/conversations/queue-content";
-import { conversationEventScopeFields, isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import {
+  conversationEventScopeFields,
+  isProjectSentinel,
+} from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
@@ -12,7 +21,10 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
 import { notifyProjectConversationStatusFromContext } from "@/lib/project-conversations/status-notifications";
 import { getConversation, mutateConversation } from "@/lib/state-store";
-import { createConversationsRepo, type ConversationsRepo } from "@/lib/state-store/conversations-repo";
+import {
+  createConversationsRepo,
+  type ConversationsRepo,
+} from "@/lib/state-store/conversations-repo";
 import {
   createProjectConversationsRepo,
   type ProjectConversationsRepo,
@@ -41,7 +53,10 @@ import type { CoreDebugModeDeps } from "./debug-mode";
 const logger = createLogger("conversation-core");
 
 /** The conversation rows a core turn records on, as the state store keeps them for both scopes. */
-export interface ConversationRowStore extends Pick<StateStore, "getConversation" | "mutateConversation"> {
+export interface ConversationRowStore extends Pick<
+  StateStore,
+  "getConversation" | "mutateConversation"
+> {
   /** The store's database, read synchronously where the answer cannot wait. */
   db(): Db;
   /** The conversation's message queue, which keeps a message a restart withdrew for review. */
@@ -55,11 +70,20 @@ const productionRowStore: ConversationRowStore = {
   queue: messageQueueService,
 };
 
-let cachedRows: { db: Db; sessions: ConversationsRepo; projects: ProjectConversationsRepo } | undefined;
+let cachedRows:
+  | { db: Db; sessions: ConversationsRepo; projects: ProjectConversationsRepo }
+  | undefined;
 /** The committed row, read through one prepared repository per database handle, so a reopened database is never read through a closed one. */
-function committedRow(db: Db, identity: ConversationIdentity): ConversationState | null {
+function committedRow(
+  db: Db,
+  identity: ConversationIdentity,
+): ConversationState | null {
   if (cachedRows?.db !== db) {
-    cachedRows = { db, sessions: createConversationsRepo(db), projects: createProjectConversationsRepo(db) };
+    cachedRows = {
+      db,
+      sessions: createConversationsRepo(db),
+      projects: createProjectConversationsRepo(db),
+    };
   }
   // Each scope keeps its conversations in a table of its own.
   return isProjectSentinel(identity.storeSessionName)
@@ -68,10 +92,17 @@ function committedRow(db: Db, identity: ConversationIdentity): ConversationState
 }
 
 /** What a project conversation's status notification is keyed on, as the row was committed. */
-type NotificationFacts = Pick<ConversationState, "promptCount" | "totalTurns" | "pendingQuestionId">;
+type NotificationFacts = Pick<
+  ConversationState,
+  "promptCount" | "totalTurns" | "pendingQuestionId"
+>;
 
 function factsOf(row: NotificationFacts): NotificationFacts {
-  return { promptCount: row.promptCount, totalTurns: row.totalTurns, pendingQuestionId: row.pendingQuestionId };
+  return {
+    promptCount: row.promptCount,
+    totalTurns: row.totalTurns,
+    pendingQuestionId: row.pendingQuestionId,
+  };
 }
 
 /**
@@ -89,11 +120,17 @@ function notifyProjectStatus(
   void (async () => {
     await notifyProjectConversationStatusFromContext({
       projectPath: identity.projectPath,
-      target: projectConversationTarget(getProjectDisplayName(identity.projectPath), identity.conversationId),
+      target: projectConversationTarget(
+        getProjectDisplayName(identity.projectPath),
+        identity.conversationId,
+      ),
       status,
       promptCount: facts.promptCount,
       totals: { totalTurns: facts.totalTurns },
-      pendingQuestion: facts.pendingQuestionId === null ? null : { questionId: facts.pendingQuestionId },
+      pendingQuestion:
+        facts.pendingQuestionId === null
+          ? null
+          : { questionId: facts.pendingQuestionId },
       lastError: error ?? null,
       lastResult: null,
     });
@@ -118,7 +155,12 @@ function publishStatus(
       identity.storeSessionName,
       identity.conversationId,
     );
-    publishEvent({ type: "conversation-status", ...target, status, ...(error !== undefined ? { error } : {}) });
+    publishEvent({
+      type: "conversation-status",
+      ...target,
+      status,
+      ...(error !== undefined ? { error } : {}),
+    });
   } catch (error) {
     logger.warn("conversation_core.status_publish_failed", {
       conversationId: identity.conversationId,
@@ -128,7 +170,10 @@ function publishStatus(
   }
 }
 
-function pushStatus(identity: ConversationIdentity, status: "awaiting" | "waiting_for_input"): void {
+function pushStatus(
+  identity: ConversationIdentity,
+  status: "awaiting" | "waiting_for_input",
+): void {
   try {
     dispatchPushForConversationStatus({
       projectName: getProjectDisplayName(identity.projectPath),
@@ -138,7 +183,10 @@ function pushStatus(identity: ConversationIdentity, status: "awaiting" | "waitin
       role: null,
     });
   } catch (error) {
-    logger.warn("conversation_core.push_failed", { conversationId: identity.conversationId, error: getErrorMessage(error) });
+    logger.warn("conversation_core.push_failed", {
+      conversationId: identity.conversationId,
+      error: getErrorMessage(error),
+    });
   }
 }
 
@@ -270,10 +318,14 @@ export function createProductionConversationRecords(
         id: `unsent:${cause}`,
         inputOrigin: request.inputOrigin,
         content: queueContentOfTurnInput(request),
-        ...(request.modelSelection !== undefined ? { modelSelection: request.modelSelection } : {}),
+        ...(request.modelSelection !== undefined
+          ? { modelSelection: request.modelSelection }
+          : {}),
         failure: reason,
       });
-      logger.info("conversation_core.unsent_message_kept_for_review", { conversationId: identity.conversationId });
+      logger.info("conversation_core.unsent_message_kept_for_review", {
+        conversationId: identity.conversationId,
+      });
     },
     async recordInterrupted(identity) {
       const { status, facts } = await rows.mutateConversation(
@@ -281,11 +333,15 @@ export function createProductionConversationRecords(
         identity.storeSessionName,
         identity.conversationId,
         "conversation-core.turn.interrupted",
-        (row) => ({ status: applyTurnInterrupted(row, new Date().toISOString()), facts: factsOf(row) }),
+        (row) => ({
+          status: applyTurnInterrupted(row, new Date().toISOString()),
+          facts: factsOf(row),
+        }),
       );
       // Its turn settled the row first: the restart interrupted nothing the person sees.
       if (status === null) return;
-      const interruption = "The server restarted while this turn was running, so it was interrupted.";
+      const interruption =
+        "The server restarted while this turn was running, so it was interrupted.";
       await appendNotice({
         conversationId: identity.conversationId,
         text: interruption,
@@ -294,7 +350,8 @@ export function createProductionConversationRecords(
       });
       publishStatus(identity, status);
       // A question still open was announced when it was asked; otherwise the turn failed, not finished.
-      if (status === "awaiting") notifyProjectStatus(identity, status, facts, interruption);
+      if (status === "awaiting")
+        notifyProjectStatus(identity, status, facts, interruption);
     },
     hasPendingQuestion(identity) {
       return committedRow(rows.db(), identity)?.pendingQuestionId != null;
@@ -305,10 +362,13 @@ export function createProductionConversationRecords(
         identity.storeSessionName,
         identity.conversationId,
         "conversation-core.question.withdraw",
-        (row) => (applyQuestionWithdrawn(row) ? statusWithoutQuestion(row) : null),
+        (row) =>
+          applyQuestionWithdrawn(row) ? statusWithoutQuestion(row) : null,
       );
       if (withdrawn === null) return false;
-      logger.info("conversation_core.question_withdrawn", { conversationId: identity.conversationId });
+      logger.info("conversation_core.question_withdrawn", {
+        conversationId: identity.conversationId,
+      });
       publishStatus(identity, withdrawn);
       return true;
     },
@@ -319,7 +379,12 @@ export function createProductionConversationRecords(
         identity.conversationId,
         "conversation-core.turn.settle",
         (row) => ({
-          ...applyTurnSettlement(row, settlement, new Date().toISOString(), source),
+          ...applyTurnSettlement(
+            row,
+            settlement,
+            new Date().toISOString(),
+            source,
+          ),
           unread: row.unread,
           facts: factsOf(row),
         }),
@@ -333,15 +398,23 @@ export function createProductionConversationRecords(
           storeSessionName: identity.storeSessionName,
         });
       }
-      const failure = debug?.kind === "turn_failed" ? debug.lastError : settlement.failure?.message;
+      const failure =
+        debug?.kind === "turn_failed"
+          ? debug.lastError
+          : settlement.failure?.message;
       publishStatus(identity, status, failure);
       // A question still open was announced when it was asked.
-      if (status === "awaiting") notifyProjectStatus(identity, status, facts, failure);
+      if (status === "awaiting")
+        notifyProjectStatus(identity, status, facts, failure);
       if (source === "user") {
         publishUnread(identity, unread);
         // The person is asked back when the turn hands them control: not for a question (its ask
         // already did), and in debug mode only when the session's phase advanced.
-        if (status === "awaiting" && (debug === null || debug.kind === "advance")) pushStatus(identity, "awaiting");
+        if (
+          status === "awaiting" &&
+          (debug === null || debug.kind === "advance")
+        )
+          pushStatus(identity, "awaiting");
       }
       return { debug };
     },
@@ -352,9 +425,14 @@ export function createProductionConversationRecords(
  * Questions an agent asks the person during a core turn, recorded on the row
  * and announced the way every client already reads them.
  */
-export function createProductionConversationQuestions(rows: ConversationRowStore = productionRowStore) {
+export function createProductionConversationQuestions(
+  rows: ConversationRowStore = productionRowStore,
+) {
   return {
-    async ask(identity: ConversationIdentity, batch: QuestionBatch): Promise<boolean> {
+    async ask(
+      identity: ConversationIdentity,
+      batch: QuestionBatch,
+    ): Promise<boolean> {
       const asked = await rows.mutateConversation(
         identity.projectPath,
         identity.storeSessionName,
@@ -371,7 +449,12 @@ export function createProductionConversationQuestions(rows: ConversationRowStore
           identity.storeSessionName,
           identity.conversationId,
         );
-        publishEvent({ type: "ask-question", ...target, questionId: batch.questionId, questions: batch.questions });
+        publishEvent({
+          type: "ask-question",
+          ...target,
+          questionId: batch.questionId,
+          questions: batch.questions,
+        });
         pushStatus(identity, "waiting_for_input");
       } catch (error) {
         logger.warn("conversation_core.question_announce_failed", {
@@ -381,7 +464,10 @@ export function createProductionConversationQuestions(rows: ConversationRowStore
       }
       return true;
     },
-    async clear(identity: ConversationIdentity, questionId: string): Promise<boolean> {
+    async clear(
+      identity: ConversationIdentity,
+      questionId: string,
+    ): Promise<boolean> {
       const status = await rows.mutateConversation(
         identity.projectPath,
         identity.storeSessionName,
@@ -404,7 +490,11 @@ export function createProductionConversationQuestions(rows: ConversationRowStore
 export function createProductionDebugRecords(): CoreDebugModeDeps["records"] {
   return {
     async readDebugMode(identity) {
-      const row = await getConversation(identity.projectPath, identity.storeSessionName, identity.conversationId);
+      const row = await getConversation(
+        identity.projectPath,
+        identity.storeSessionName,
+        identity.conversationId,
+      );
       return row?.debugMode ?? null;
     },
     async applyCommand(identity, command) {
@@ -414,8 +504,14 @@ export function createProductionDebugRecords(): CoreDebugModeDeps["records"] {
         identity.conversationId,
         "conversation-core.debug.command",
         (row) => {
-          const effect = applyDebugCommandToRow(row, command, new Date().toISOString());
-          return effect === null ? null : { effect, status: row.status, debugMode: row.debugMode };
+          const effect = applyDebugCommandToRow(
+            row,
+            command,
+            new Date().toISOString(),
+          );
+          return effect === null
+            ? null
+            : { effect, status: row.status, debugMode: row.debugMode };
         },
       );
       if (applied === null) return null;
@@ -437,7 +533,12 @@ export function createProductionDebugRecords(): CoreDebugModeDeps["records"] {
           });
         }
       }
-      if (effect.broadcastConversationStatus && (status === "running" || status === "awaiting" || status === "waiting_for_input")) {
+      if (
+        effect.broadcastConversationStatus &&
+        (status === "running" ||
+          status === "awaiting" ||
+          status === "waiting_for_input")
+      ) {
         publishStatus(identity, status, effect.lastError);
       }
       return effect;

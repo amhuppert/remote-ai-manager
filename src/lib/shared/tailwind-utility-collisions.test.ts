@@ -349,6 +349,9 @@ const UTILITY_FIRST_PATHS = [
   // (here + eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}features${path.sep}dev-servers${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}ProjectDevServersButton.tsx`,
+  // Runs and template surfaces are authored utility-first, without legacy CSS.
+  // Keep the formatter and lint scopes in sync with this surface registration.
+  `${path.sep}features${path.sep}runs${path.sep}`,
 ];
 
 function srcFiles(ext: string): string[] {

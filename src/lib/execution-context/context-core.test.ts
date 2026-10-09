@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { advanceContext, type ContextInput } from "./advance";
-import { contextEffectRequestSchema, planEffects, waitsOnPerson, type PlannedEffect } from "./effects";
+import {
+  contextEffectRequestSchema,
+  planEffects,
+  waitsOnPerson,
+  type PlannedEffect,
+} from "./effects";
 import { initialContextFacts } from "./facts";
 import { applyTaskCommand, type TaskCommand } from "./ledger";
 import { deriveProgress } from "./progress";
@@ -200,7 +205,10 @@ describe("execution context acceptance chain", () => {
 
     const [work] = h.step();
     expect(work?.request).toMatchObject({
-      workspace: { grant: { kind: "full_write" }, worktreePath: binding.worktreePath },
+      workspace: {
+        grant: { kind: "full_write" },
+        worktreePath: binding.worktreePath,
+      },
     });
     h.task({ kind: "complete", taskId: "t1" });
     h.settle("work", workReport());
@@ -214,17 +222,32 @@ describe("execution context acceptance chain", () => {
 
   it("hands each seat the contract's documents with every work order, implementer and reviewer alike", () => {
     const documents = [
-      { artifactId: "sha256:a", path: ".cc/run-docs/run-1.agent/plan.md", description: "The plan", readWhen: "First" },
+      {
+        artifactId: "sha256:a",
+        path: ".cc/run-docs/run-1.agent/plan.md",
+        description: "The plan",
+        readWhen: "First",
+      },
     ];
-    const h = harness(contract({ documents, reviewers: [reviewer("reviewer-a", "blocking")] }));
-    const refs = [{ artifactId: "sha256:a", path: ".cc/run-docs/run-1.agent/plan.md" }];
+    const h = harness(
+      contract({ documents, reviewers: [reviewer("reviewer-a", "blocking")] }),
+    );
+    const refs = [
+      { artifactId: "sha256:a", path: ".cc/run-docs/run-1.agent/plan.md" },
+    ];
 
-    expect(h.step()[0]?.request).toMatchObject({ kind: "work", documents: refs });
+    expect(h.step()[0]?.request).toMatchObject({
+      kind: "work",
+      documents: refs,
+    });
     h.task({ kind: "complete", taskId: "t1" });
     h.settle("work", workReport());
     h.step();
     h.settle("freeze", frozen("ev-1"));
-    expect(h.step()[0]?.request).toMatchObject({ kind: "review", documents: refs });
+    expect(h.step()[0]?.request).toMatchObject({
+      kind: "review",
+      documents: refs,
+    });
   });
 
   it("reads a seat order recorded before work orders carried documents as carrying none", () => {
@@ -232,7 +255,10 @@ describe("execution context acceptance chain", () => {
     if (work?.request.kind !== "work") throw new Error("no work order");
     const { documents: _documents, ...recordedBefore } = work.request;
 
-    expect(contextEffectRequestSchema.parse(recordedBefore)).toMatchObject({ kind: "work", documents: [] });
+    expect(contextEffectRequestSchema.parse(recordedBefore)).toMatchObject({
+      kind: "work",
+      documents: [],
+    });
   });
 
   it("lets seats ask the owner only when the contract allows owner questions", () => {
@@ -465,17 +491,35 @@ describe("execution context acceptance chain", () => {
 
   it("gives work done after an advisory response a full review again, advisory reviewers included", () => {
     const h = harness(
-      contract({ reviewers: [reviewer("blocker", "blocking"), reviewer("advisor", "advisory")] }),
+      contract({
+        reviewers: [
+          reviewer("blocker", "blocking"),
+          reviewer("advisor", "advisory"),
+        ],
+      }),
     );
     workAndFreeze(h);
     h.step();
     h.settle("review", verdictReport("pass"));
-    h.settle("review", verdictReport("pass", { advisories: [{ title: "Rename helper", description: "Clearer" }] }));
+    h.settle(
+      "review",
+      verdictReport("pass", {
+        advisories: [{ title: "Rename helper", description: "Clearer" }],
+      }),
+    );
     h.step();
     h.settle(
       "advise",
       workReport({
-        structuredOutput: { dispositions: [{ advisoryId: "ctx:round:1:advisor:1", disposition: "addressed", reason: "" }] },
+        structuredOutput: {
+          dispositions: [
+            {
+              advisoryId: "ctx:round:1:advisor:1",
+              disposition: "addressed",
+              reason: "",
+            },
+          ],
+        },
       }),
     );
     h.step();
@@ -488,10 +532,15 @@ describe("execution context acceptance chain", () => {
     h.settle("work", workReport());
     h.step();
     h.settle("freeze", frozen("ev-3"));
-    expect(h.step().map((e) => (e.request.kind === "review" ? e.request.seat.assignmentId : e.request.kind))).toEqual([
-      "blocker",
-      "advisor",
-    ]);
+    expect(
+      h
+        .step()
+        .map((e) =>
+          e.request.kind === "review"
+            ? e.request.seat.assignmentId
+            : e.request.kind,
+        ),
+    ).toEqual(["blocker", "advisor"]);
   });
 
   it("delivers fresh advice once and recertifies changed work with blocking reviewers only", () => {
@@ -680,7 +729,9 @@ describe("execution context acceptance chain", () => {
 
   it("lets only turns that can wait for an answer ask the owner: work and review, not capture or advice", () => {
     const seatOf = (effect: PlannedEffect | undefined) =>
-      effect !== undefined && "seat" in effect.request ? effect.request.seat : null;
+      effect !== undefined && "seat" in effect.request
+        ? effect.request.seat
+        : null;
     const capturing = harness(contract({ outputSchema: { type: "object" } }));
     const [work] = capturing.step();
     expect(seatOf(work)?.canAsk).toBe(true);
@@ -690,11 +741,18 @@ describe("execution context acceptance chain", () => {
     expect(capture?.request.kind).toBe("capture_output");
     expect(seatOf(capture)?.canAsk).toBe(false);
 
-    const advised = harness(contract({ reviewers: [reviewer("advisor", "advisory")] }));
+    const advised = harness(
+      contract({ reviewers: [reviewer("advisor", "advisory")] }),
+    );
     workAndFreeze(advised);
     const [review] = advised.step();
     expect(seatOf(review)?.canAsk).toBe(true);
-    advised.settle("review", verdictReport("pass", { advisories: [{ title: "Rename helper", description: "Clearer" }] }));
+    advised.settle(
+      "review",
+      verdictReport("pass", {
+        advisories: [{ title: "Rename helper", description: "Clearer" }],
+      }),
+    );
     const [advise] = advised.step();
     expect(advise?.request.kind).toBe("advise");
     expect(seatOf(advise)?.canAsk).toBe(false);
@@ -764,7 +822,12 @@ describe("execution context acceptance chain", () => {
       kind: "halted",
       halt: "candidate_unstable",
     });
-    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ", at: "t" });
+    h.input({
+      kind: "disposition",
+      disposition: { kind: "continue" },
+      occurrence: "occ",
+      at: "t",
+    });
     expect(h.step()[0]?.request.kind).toBe("freeze");
   });
 
@@ -800,15 +863,30 @@ describe("execution context acceptance chain", () => {
   });
 
   it("reports the last allowed retry as running while it is in flight, and exhausted only once it settles", () => {
-    const h = harness(contract(), { ...DEFAULT_CONTEXT_POLICY, unfinishedTaskRetries: 1 });
+    const h = harness(contract(), {
+      ...DEFAULT_CONTEXT_POLICY,
+      unfinishedTaskRetries: 1,
+    });
     h.step();
     h.settle("work", workReport());
-    expect(h.step()[0]?.request).toMatchObject({ kind: "work", reason: "retry" });
+    expect(h.step()[0]?.request).toMatchObject({
+      kind: "work",
+      reason: "retry",
+    });
 
-    expect(h.progress(false)).toMatchObject({ kind: "running", obligation: { kind: "work", reason: "retry" } });
-    expect(h.progress(true)).toMatchObject({ kind: "running", obligation: { kind: "work", reason: "retry" } });
+    expect(h.progress(false)).toMatchObject({
+      kind: "running",
+      obligation: { kind: "work", reason: "retry" },
+    });
+    expect(h.progress(true)).toMatchObject({
+      kind: "running",
+      obligation: { kind: "work", reason: "retry" },
+    });
     h.settle("work", workReport());
-    expect(h.progress()).toMatchObject({ kind: "halted", halt: "retries_exhausted" });
+    expect(h.progress()).toMatchObject({
+      kind: "halted",
+      halt: "retries_exhausted",
+    });
   });
 
   it("reports the last allowed remediation as running while it is in flight", () => {
@@ -818,24 +896,47 @@ describe("execution context acceptance chain", () => {
     });
     workAndFreeze(h);
     h.step();
-    h.settle("check", { kind: "checked", status: "failed", wroteReviewedScope: [] });
-    expect(h.step()[0]?.request).toMatchObject({ kind: "work", reason: "remediate" });
+    h.settle("check", {
+      kind: "checked",
+      status: "failed",
+      wroteReviewedScope: [],
+    });
+    expect(h.step()[0]?.request).toMatchObject({
+      kind: "work",
+      reason: "remediate",
+    });
 
-    expect(h.progress()).toMatchObject({ kind: "running", obligation: { kind: "work", reason: "remediate" } });
+    expect(h.progress()).toMatchObject({
+      kind: "running",
+      obligation: { kind: "work", reason: "remediate" },
+    });
   });
 
   it("recovers a refused bind: the owner's continue starts a new bind operation, and the decision is kept", () => {
     const h = unboundHarness(contract());
     const [first] = h.step();
     h.settle("bind", { kind: "refused", detail: "The worktree is missing" });
-    expect(h.progress()).toMatchObject({ kind: "halted", halt: "workspace_refused" });
+    expect(h.progress()).toMatchObject({
+      kind: "halted",
+      halt: "workspace_refused",
+    });
 
-    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ-1", at: "t1" });
+    h.input({
+      kind: "disposition",
+      disposition: { kind: "continue" },
+      occurrence: "occ-1",
+      at: "t1",
+    });
     const [second] = h.step();
     expect(second?.request.kind).toBe("bind");
     expect(second?.cause).not.toBe(first?.cause);
     expect(h.facts.control.dispositions).toEqual([
-      { occurrence: "occ-1", halt: "workspace_refused", disposition: { kind: "continue" }, at: "t1" },
+      {
+        occurrence: "occ-1",
+        halt: "workspace_refused",
+        disposition: { kind: "continue" },
+        at: "t1",
+      },
     ]);
   });
 
@@ -844,10 +945,21 @@ describe("execution context acceptance chain", () => {
     workAndFreeze(h);
     const [check] = h.step();
     expect(check?.request.kind).toBe("check");
-    h.settle("check", { kind: "refused", detail: "The validation service could not start the run" });
-    expect(h.progress()).toMatchObject({ kind: "halted", halt: "workspace_refused" });
+    h.settle("check", {
+      kind: "refused",
+      detail: "The validation service could not start the run",
+    });
+    expect(h.progress()).toMatchObject({
+      kind: "halted",
+      halt: "workspace_refused",
+    });
 
-    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ-3", at: "t3" });
+    h.input({
+      kind: "disposition",
+      disposition: { kind: "continue" },
+      occurrence: "occ-3",
+      at: "t3",
+    });
     const [again] = h.step();
     expect(again?.request.kind).toBe("check");
     expect(again?.cause).not.toBe(check?.cause);
@@ -860,12 +972,22 @@ describe("execution context acceptance chain", () => {
     expect(accept?.request.kind).toBe("accept");
     h.settleUncertain("accept");
 
-    const confirmation = { kind: "confirm_effect" as const, evidence: "The lane holds the landing commit" };
-    h.input({ kind: "disposition", disposition: confirmation, occurrence: "occ-2", at: "t2" });
+    const confirmation = {
+      kind: "confirm_effect" as const,
+      evidence: "The lane holds the landing commit",
+    };
+    h.input({
+      kind: "disposition",
+      disposition: confirmation,
+      occurrence: "occ-2",
+      at: "t2",
+    });
     const [again] = h.step();
     expect(again?.request.kind).toBe("accept");
     expect(again?.cause).not.toBe(accept?.cause);
-    expect(h.facts.control.dispositions.map((d) => d.disposition)).toEqual([confirmation]);
+    expect(h.facts.control.dispositions.map((d) => d.disposition)).toEqual([
+      confirmation,
+    ]);
   });
 
   it("plans nothing while a failed turn's halt stands, and works again after its disposition", () => {
@@ -878,7 +1000,12 @@ describe("execution context acceptance chain", () => {
 
     expect(h.progress()).toMatchObject({ kind: "halted", halt: "turn_failed" });
     expect(h.step()).toEqual([]);
-    h.input({ kind: "disposition", disposition: { kind: "continue" }, occurrence: "occ", at: "t" });
+    h.input({
+      kind: "disposition",
+      disposition: { kind: "continue" },
+      occurrence: "occ",
+      at: "t",
+    });
     expect(h.step()[0]?.request.kind).toBe("work");
   });
 

@@ -53,7 +53,13 @@ function runSourceDeps(db: Db) {
   return {
     run(runId: string) {
       const run = runs.get(runId);
-      return run === null ? null : { runId: run.runId, projectPath: run.projectPath, title: run.facts.title };
+      return run === null
+        ? null
+        : {
+            runId: run.runId,
+            projectPath: run.projectPath,
+            title: run.facts.title,
+          };
     },
     boundaries: (runId: string) => runs.boundaries(runId),
     question: (questionId: string) => core.getQuestion(questionId),

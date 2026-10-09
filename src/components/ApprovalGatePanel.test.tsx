@@ -314,9 +314,14 @@ describe("ApprovalGatePanel candidate states (E2 · R15.2)", () => {
 
   it("lets keyboard readers reach the scrollable candidate before the decision controls", async () => {
     const user = userEvent.setup();
-    renderPanel({ status: "ready", candidate: { scope: "whole_tree", diff: SCOPED_DIFF } });
+    renderPanel({
+      status: "ready",
+      candidate: { scope: "whole_tree", diff: SCOPED_DIFF },
+    });
     await user.tab();
-    expect(screen.getByRole("region", { name: "Candidate diff" })).toHaveFocus();
+    expect(
+      screen.getByRole("region", { name: "Candidate diff" }),
+    ).toHaveFocus();
     await user.tab();
     expect(feedbackBox()).toHaveFocus();
   });

@@ -56,7 +56,12 @@ export interface ConversationSubscriptionsRepo {
   listWakeDeliveries(
     recipient: SubscriptionRecipient,
     at: string,
-  ): Promise<Array<{ delivery: SubscriptionDelivery; subscription: ConversationSubscription }>>;
+  ): Promise<
+    Array<{
+      delivery: SubscriptionDelivery;
+      subscription: ConversationSubscription;
+    }>
+  >;
   findDeliveryByOccurrence(
     recipient: SubscriptionRecipient,
     source: SubscriptionSourceRef,
@@ -540,7 +545,10 @@ export function createConversationSubscriptionsRepo(
         .all({ ...scope(recipient), at }) as unknown[];
       return rows.map((raw) => {
         const delivery = deliveryFromRow(raw);
-        const subscription = find.get({ ...scope(recipient), id: delivery.subscriptionId });
+        const subscription = find.get({
+          ...scope(recipient),
+          id: delivery.subscriptionId,
+        });
         return { delivery, subscription: subscriptionFromRow(subscription) };
       });
     },

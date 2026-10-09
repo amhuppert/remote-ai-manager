@@ -130,7 +130,10 @@ import {
   describeResumeRefusal,
   type ResumeRefusal,
 } from "./resume-eligibility";
-import { drainCoreConversation, holdCoreConversationWhileIdle } from "@/lib/supervision/handles";
+import {
+  drainCoreConversation,
+  holdCoreConversationWhileIdle,
+} from "@/lib/supervision/handles";
 import {
   reclaimConversationOwnership,
   releaseConversationOwnership,
@@ -950,7 +953,11 @@ export interface CollaborationManagerDeps {
     work: () => Promise<T>,
   ): Promise<{ kind: "ran"; value: T } | { kind: "busy"; reason: string }>;
   /** The conversation was handed back: what waited for it (its queue) may run. */
-  conversationReleased(input: { projectPath: string; sessionName: string; conversationId: string }): void;
+  conversationReleased(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): void;
   /** Hands the originating conversation back, fenced on the exact attempt.
    *  Stop needs its own path to this: a paused run has no live slice to do it,
    *  and an owner nothing ever clears locks the user out of the conversation. */
@@ -1231,8 +1238,14 @@ const defaultDeps: CollaborationManagerDeps = {
     );
   },
   async claimConversation(input, work) {
-    const held = await holdCoreConversationWhileIdle(input.conversationId, { kind: "collaboration_claim" }, work);
-    return held.kind === "not_core" ? { kind: "ran", value: await work() } : held;
+    const held = await holdCoreConversationWhileIdle(
+      input.conversationId,
+      { kind: "collaboration_claim" },
+      work,
+    );
+    return held.kind === "not_core"
+      ? { kind: "ran", value: await work() }
+      : held;
   },
   conversationReleased(input) {
     // A core conversation's queue waited for the collaboration; an actor's drains on its own.
@@ -1669,7 +1682,11 @@ export function createCollaborationManager(
         // On a conversation the shared core runs, the claim waits for nothing: it is
         // taken while no turn runs or waits, and refused (a start conflict) otherwise.
         const claimed = await deps.claimConversation(
-          { projectPath: input.projectPath, sessionName: input.sessionName, conversationId: parsed.conversationId },
+          {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId: parsed.conversationId,
+          },
           () =>
             deps.persistStart({
               projectPath: input.projectPath,
@@ -1682,7 +1699,11 @@ export function createCollaborationManager(
               modelSelection: agents.agent_one.modelSelection,
             }),
         );
-        if (claimed.kind === "busy") throw new CollaborationStartConflictError(parsed.conversationId, claimed.reason);
+        if (claimed.kind === "busy")
+          throw new CollaborationStartConflictError(
+            parsed.conversationId,
+            claimed.reason,
+          );
         startClaim = claimed.value;
       } catch (error) {
         deps.stopRegistry.release(workflowId);
@@ -1976,12 +1997,20 @@ export function createCollaborationManager(
           },
         };
         const reclaimed = await deps.claimConversation(
-          { projectPath: input.projectPath, sessionName: input.sessionName, conversationId },
+          {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId,
+          },
           () => deps.reclaimConversationOwner(reclaimRequest),
         );
         const reclaim: OwnershipReclaimDecision =
           reclaimed.kind === "busy"
-            ? { kind: "refuse", reason: "turn_intervened", detail: reclaimed.reason }
+            ? {
+                kind: "refuse",
+                reason: "turn_intervened",
+                detail: reclaimed.reason,
+              }
             : reclaimed.value;
         if (reclaim.kind === "refuse") {
           throw new CollaborationConversationOwnershipError(
@@ -2208,7 +2237,11 @@ export function createCollaborationManager(
       }
       // A failed run can be stopped too: it gives up the resume and hands the
       // conversation back, which a restart that failed the run never does.
-      if (envelope.status !== "running" && envelope.status !== "paused" && envelope.status !== "failed") {
+      if (
+        envelope.status !== "running" &&
+        envelope.status !== "paused" &&
+        envelope.status !== "failed"
+      ) {
         throw new CollaborationNotStoppableError(
           input.workflowId,
           envelope.status,

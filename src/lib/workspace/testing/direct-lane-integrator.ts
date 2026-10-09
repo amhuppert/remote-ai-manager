@@ -1,7 +1,11 @@
 import type { LaneGit } from "../lane-git";
 import type { WorkspaceExecutorDeps } from "../executor";
 import type { LaneIntegrator } from "../lane-integrator";
-import { laneBindingId, type LaneTarget, type WorkspaceBindingRequest } from "../schemas";
+import {
+  laneBindingId,
+  type LaneTarget,
+  type WorkspaceBindingRequest,
+} from "../schemas";
 
 /** The lane as a check binding: its own branch and worktree, every path. */
 export function laneCheckBinding(lane: LaneTarget): WorkspaceBindingRequest {

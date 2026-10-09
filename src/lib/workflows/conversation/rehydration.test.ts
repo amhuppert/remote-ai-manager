@@ -48,8 +48,15 @@ import {
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 import { conversationMachine } from "./machine";
 import { validateRestoredSnapshot } from "./persistence";
-import type { ConversationInput, PrepareTurnInput, PrepareTurnOutput } from "./types";
-import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
+import type {
+  ConversationInput,
+  PrepareTurnInput,
+  PrepareTurnOutput,
+} from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   createCapturingLogger,
@@ -455,13 +462,20 @@ describe("rehydrateConversationActors (project conversations)", () => {
     const count = await runRehydration({
       ...makeDeps(
         [
-          { projectPath: "/repo", conversation: conv({ id: "core-chat", scope: "project" }) },
-          { projectPath: "/repo", conversation: conv({ id: "actor-chat", scope: "project" }) },
+          {
+            projectPath: "/repo",
+            conversation: conv({ id: "core-chat", scope: "project" }),
+          },
+          {
+            projectPath: "/repo",
+            conversation: conv({ id: "actor-chat", scope: "project" }),
+          },
         ],
         validate,
         { "core-chat": { marker: "core" }, "actor-chat": { marker: "actor" } },
       ),
-      isCoreOwnedConversation: (conversationId) => conversationId === "core-chat",
+      isCoreOwnedConversation: (conversationId) =>
+        conversationId === "core-chat",
       async hydrateCheckpointAuthority(key) {
         hydrated.push(key.conversationId);
         return NO_AUTHORITY;

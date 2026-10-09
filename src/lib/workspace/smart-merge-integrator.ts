@@ -12,7 +12,10 @@ import type {
   ResolveConflictsOutput,
 } from "@/lib/workflows/merge/actors";
 import type { MergeMachineType } from "@/lib/workflows/merge/machine";
-import type { AnalyzeConflictsParams, ResolveConflictsParams } from "@/lib/sessions/conflict-resolution";
+import type {
+  AnalyzeConflictsParams,
+  ResolveConflictsParams,
+} from "@/lib/sessions/conflict-resolution";
 import type { MergeInput, MergeOutput } from "@/lib/workflows/merge/types";
 import type { LaneGit } from "./lane-git";
 import type { LaneIntegrator } from "./lane-integrator";
@@ -43,7 +46,10 @@ export function createSmartMergeIntegrator(
   const machine = deps.machine.provide({
     actors: {
       prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(
-        async ({ input }) => ({ status: "up-to-date", expectedTargetSha: input.targetBranch }),
+        async ({ input }) => ({
+          status: "up-to-date",
+          expectedTargetSha: input.targetBranch,
+        }),
       ),
       publish: fromPromise<PublishActorOutput, PublishActorInput>(async () => ({
         status: "up-to-date",
@@ -53,7 +59,8 @@ export function createSmartMergeIntegrator(
 
   return {
     async integrate({ lane, head, checks, cause, signal }) {
-      if (signal.aborted) return { kind: "failed", detail: "Stopped before integrating" };
+      if (signal.aborted)
+        return { kind: "failed", detail: "Stopped before integrating" };
       const input: MergeInput = {
         jobId: `${laneJobId(cause)}-integrate`,
         projectPath: lane.projectPath,
@@ -117,16 +124,24 @@ export function createSmartMergeIntegrator(
 
 /** The conflict resolver the lane actors call; production's is sessions/conflict-resolution. */
 export interface LaneConflictResolver {
-  resolveConflicts(params: ResolveConflictsParams): Promise<ResolveConflictsOutput>;
-  analyzeConflicts(params: AnalyzeConflictsParams): Promise<AnalyzeConflictsOutput>;
+  resolveConflicts(
+    params: ResolveConflictsParams,
+  ): Promise<ResolveConflictsOutput>;
+  analyzeConflicts(
+    params: AnalyzeConflictsParams,
+  ): Promise<AnalyzeConflictsOutput>;
 }
 
 const productionResolver: LaneConflictResolver = {
   async resolveConflicts(params) {
-    return (await import("@/lib/sessions/conflict-resolution")).resolveConflicts(params);
+    return (
+      await import("@/lib/sessions/conflict-resolution")
+    ).resolveConflicts(params);
   },
   async analyzeConflicts(params) {
-    return (await import("@/lib/sessions/conflict-resolution")).analyzeConflicts(params);
+    return (
+      await import("@/lib/sessions/conflict-resolution")
+    ).analyzeConflicts(params);
   },
 };
 
@@ -135,35 +150,41 @@ const productionResolver: LaneConflictResolver = {
  * the lane worktree, since a lane has no conversation of its own to resolve
  * in. The machine's default actors always use a conversation.
  */
-export function createLaneConflictActors(resolver: LaneConflictResolver = productionResolver) {
+export function createLaneConflictActors(
+  resolver: LaneConflictResolver = productionResolver,
+) {
   return {
-    resolveConflicts: fromPromise<ResolveConflictsOutput, ResolveConflictsInput>(
-      ({ input, signal }) =>
-        resolver.resolveConflicts({
-          worktreePath: input.worktreePath,
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          agentTurnDispatch: "fresh-run",
-          conflictFiles: input.conflictFiles,
-          decisions: input.decisions,
-          resolutionContext: input.resolutionContext,
-          targetBranch: input.targetBranch,
-          resolutionTimeoutMs: input.resolutionTimeoutMs,
-          signal,
-        }),
+    resolveConflicts: fromPromise<
+      ResolveConflictsOutput,
+      ResolveConflictsInput
+    >(({ input, signal }) =>
+      resolver.resolveConflicts({
+        worktreePath: input.worktreePath,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        agentTurnDispatch: "fresh-run",
+        conflictFiles: input.conflictFiles,
+        decisions: input.decisions,
+        resolutionContext: input.resolutionContext,
+        targetBranch: input.targetBranch,
+        resolutionTimeoutMs: input.resolutionTimeoutMs,
+        signal,
+      }),
     ),
-    analyzeConflicts: fromPromise<AnalyzeConflictsOutput, AnalyzeConflictsInput>(
-      ({ input, signal }) =>
-        resolver.analyzeConflicts({
-          worktreePath: input.worktreePath,
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          agentTurnDispatch: "fresh-run",
-          resolutionContext: input.resolutionContext,
-          targetBranch: input.targetBranch,
-          resolutionTimeoutMs: input.resolutionTimeoutMs,
-          signal,
-        }),
+    analyzeConflicts: fromPromise<
+      AnalyzeConflictsOutput,
+      AnalyzeConflictsInput
+    >(({ input, signal }) =>
+      resolver.analyzeConflicts({
+        worktreePath: input.worktreePath,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        agentTurnDispatch: "fresh-run",
+        resolutionContext: input.resolutionContext,
+        targetBranch: input.targetBranch,
+        resolutionTimeoutMs: input.resolutionTimeoutMs,
+        signal,
+      }),
     ),
   };
 }

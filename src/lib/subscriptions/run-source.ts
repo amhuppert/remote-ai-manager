@@ -8,9 +8,13 @@ import type {
 } from "./schemas";
 
 export interface RunSourceDeps {
-  run(runId: string): { runId: string; projectPath: string; title: string } | null;
+  run(
+    runId: string,
+  ): { runId: string; projectPath: string; title: string } | null;
   boundaries(runId: string): RunBoundary[];
-  question(questionId: string): { questionText: string; state: "open" | "answered" | "withdrawn" } | null;
+  question(
+    questionId: string,
+  ): { questionText: string; state: "open" | "answered" | "withdrawn" } | null;
 }
 
 /** One owner-facing boundary as a source fact; its text is the notice the owner acts on. */
@@ -22,10 +26,17 @@ function boundaryFact(
   return {
     occurrenceId: boundary.occurrence,
     eventKind: `run-boundary:${boundary.kind}`,
-    category: boundary.kind === "succeeded" || boundary.kind === "cancelled" ? "outcome" : "decision",
+    category:
+      boundary.kind === "succeeded" || boundary.kind === "cancelled"
+        ? "outcome"
+        : "decision",
     sourceTitle: run.title,
     summary: boundary.summary,
-    sourceText: composeBoundaryNotice(run, boundary, questionText === undefined ? {} : { questionText }),
+    sourceText: composeBoundaryNotice(
+      run,
+      boundary,
+      questionText === undefined ? {} : { questionText },
+    ),
     occurredAt: boundary.recordedAt,
     revision: null,
     outcome: boundary.kind,
@@ -52,18 +63,22 @@ export function createRunSourceReader(deps: RunSourceDeps) {
     const latest = String(boundaries.at(-1)?.seq ?? 0);
     if (cursor === null) return { cursor: latest, facts: [], missing: false };
     const after = Number(cursor);
-    if (!Number.isSafeInteger(after) || after < 0) throw new Error("Invalid run boundary cursor");
+    if (!Number.isSafeInteger(after) || after < 0)
+      throw new Error("Invalid run boundary cursor");
 
     const withdrawnOccurrenceIds: string[] = [];
     const facts: SourceFact[] = [];
     for (const boundary of boundaries) {
       const question =
-        boundary.detail.kind === "question" ? deps.question(boundary.detail.questionId) : null;
+        boundary.detail.kind === "question"
+          ? deps.question(boundary.detail.questionId)
+          : null;
       if (question !== null && question.state !== "open") {
         withdrawnOccurrenceIds.push(boundary.occurrence);
         continue;
       }
-      if (boundary.seq > after) facts.push(boundaryFact(run, boundary, question?.questionText));
+      if (boundary.seq > after)
+        facts.push(boundaryFact(run, boundary, question?.questionText));
     }
     return {
       cursor: latest,

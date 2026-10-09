@@ -13,7 +13,10 @@ import {
   type PassiveSubscriptionContextDependencies,
 } from "@/lib/conversation-core/contributions/passive-subscription-context";
 import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
-import { assembleTurnPrompt, type TurnContextExecution } from "@/lib/conversation-core/turn/turn-context";
+import {
+  assembleTurnPrompt,
+  type TurnContextExecution,
+} from "@/lib/conversation-core/turn/turn-context";
 
 /** How input reaches the agent: as a turn's own input, or into a turn already running. */
 export type InputMode = "turn" | "live";
@@ -29,15 +32,23 @@ export type DeliveryClass = "accepted" | "not_sent" | "uncertain";
 
 export function classifyDelivery(delivery: InputDelivery): DeliveryClass {
   if (delivery.accepted !== null) return "accepted";
-  return !delivery.dispatched || delivery.provenUndelivered ? "not_sent" : "uncertain";
+  return !delivery.dispatched || delivery.provenUndelivered
+    ? "not_sent"
+    : "uncertain";
 }
 
 export interface TurnInputDependencies {
   context: Pick<
     ConversationTurnDependencies["context"],
-    "getLiveTicketBlock" | "getMemoryIndexBlock" | "readLiveReference" | "readNotepadForInjection"
+    | "getLiveTicketBlock"
+    | "getMemoryIndexBlock"
+    | "readLiveReference"
+    | "readNotepadForInjection"
   >;
-  effects: Pick<ConversationTurnDependencies["effects"], "recordNotepadDeliveries" | "recordMemoryIndexDeliveries">;
+  effects: Pick<
+    ConversationTurnDependencies["effects"],
+    "recordNotepadDeliveries" | "recordMemoryIndexDeliveries"
+  >;
   subscriptions?: PassiveSubscriptionContextDependencies;
   debug: Pick<ConversationTurnDependencies["debug"], "getDebugLogUrl">;
   log: ConversationTurnDependencies["log"];
@@ -109,9 +120,15 @@ export async function prepareTurnInput(
   let ticket: string | null = null;
   if (ordinary && target.scope === "session") {
     try {
-      ticket = await deps.context.getLiveTicketBlock(execution.projectPath, target.sessionName);
+      ticket = await deps.context.getLiveTicketBlock(
+        execution.projectPath,
+        target.sessionName,
+      );
     } catch (error) {
-      deps.log.warn("prompt.live_ticket_block_failed", { ...target, error: getErrorMessage(error) });
+      deps.log.warn("prompt.live_ticket_block_failed", {
+        ...target,
+        error: getErrorMessage(error),
+      });
     }
   }
   const memory = ordinary
@@ -119,11 +136,14 @@ export async function prepareTurnInput(
         projectPath: execution.projectPath,
         conversationId,
         conversation:
-          target.scope === "project" ? { kind: "project" } : { kind: "session", sessionName: target.sessionName },
+          target.scope === "project"
+            ? { kind: "project" }
+            : { kind: "session", sessionName: target.sessionName },
         role: execution.role,
         workflowExecutionId: null,
         workflowContextId: null,
-        runtimeCreatedWithoutResume: request.runtimeCreatedWithoutResume ?? false,
+        runtimeCreatedWithoutResume:
+          request.runtimeCreatedWithoutResume ?? false,
         backendReportedCompactionLastTurn: false,
       })
     : null;
@@ -131,15 +151,24 @@ export async function prepareTurnInput(
     ? buildDebugPromptContext({
         debugMode: execution.debugMode,
         debugLogUrl: deps.debug.getDebugLogUrl(conversationId),
-        debugManifestPath: getDebugManifestPath(execution.worktreePath, conversationId),
+        debugManifestPath: getDebugManifestPath(
+          execution.worktreePath,
+          conversationId,
+        ),
       })
     : null;
 
   // The message, rendered the same way whichever way it is delivered.
   const expanded = expandNativeSpecCommandForAgent(request.promptText);
   if (expanded !== request.promptText)
-    deps.log.info("prompt.native_spec_command_expanded", { ...target, requestLength: request.promptText.length });
-  const notepad = await prepareNotepadContext(deps, { conversationId, promptText: expanded });
+    deps.log.info("prompt.native_spec_command_expanded", {
+      ...target,
+      requestLength: request.promptText.length,
+    });
+  const notepad = await prepareNotepadContext(deps, {
+    conversationId,
+    promptText: expanded,
+  });
   const references = notepad.references;
   const passive = await preparePassiveSubscriptionContext(
     deps.subscriptions,
@@ -147,7 +176,10 @@ export async function prepareTurnInput(
       recipient,
       attemptId: request.briefingAttemptId,
       providedNotepadContext: references,
-      eligible: execution.persistence === "durable" && execution.role === null && execution.turn.inputOrigin === "user",
+      eligible:
+        execution.persistence === "durable" &&
+        execution.role === null &&
+        execution.turn.inputOrigin === "user",
     },
     // Settled by this input's own settlement, below.
     () => {},
@@ -166,7 +198,10 @@ export async function prepareTurnInput(
   // A native command reaches the adapter without host text in its name or arguments.
   const isNativeCommand = /^\/[\w:-]+(?:\s|$)/.test(notepad.text);
   const promptContext = isNativeCommand
-    ? assembleTurnPrompt({ ...blocks, userText: summarized.slice(notepad.text.length).trimStart() })
+    ? assembleTurnPrompt({
+        ...blocks,
+        userText: summarized.slice(notepad.text.length).trimStart(),
+      })
     : undefined;
 
   const receipts: Receipt[] = [
@@ -175,24 +210,42 @@ export async function prepareTurnInput(
           {
             name: "notepad_deliveries",
             required: true,
-            write: () => deps.effects.recordNotepadDeliveries({ conversationId, notepads: references }),
+            write: () =>
+              deps.effects.recordNotepadDeliveries({
+                conversationId,
+                notepads: references,
+              }),
           },
         ]
       : []),
-    { name: "passive_briefing", required: true, write: () => passive.onInputAccepted() },
-    ...(references.length > 0 && deps.subscriptions?.recordAcceptedNotepadReferences !== undefined
+    {
+      name: "passive_briefing",
+      required: true,
+      write: () => passive.onInputAccepted(),
+    },
+    ...(references.length > 0 &&
+    deps.subscriptions?.recordAcceptedNotepadReferences !== undefined
       ? [
           {
             name: "notepad_follows",
             required: true,
             write: async () => {
-              await deps.subscriptions?.recordAcceptedNotepadReferences?.(recipient, references);
+              await deps.subscriptions?.recordAcceptedNotepadReferences?.(
+                recipient,
+                references,
+              );
             },
           },
         ]
       : []),
     ...(memory?.onInputAccepted !== undefined
-      ? [{ name: "memory_index", required: false, write: memory.onInputAccepted }]
+      ? [
+          {
+            name: "memory_index",
+            required: false,
+            write: memory.onInputAccepted,
+          },
+        ]
       : []),
   ];
   const written = new Set<Receipt>();
@@ -200,7 +253,11 @@ export async function prepareTurnInput(
   let released = false;
   /** A delivered checkpoint's acceptance is durable and has let the receipts run. */
   let gateOpened = false;
-  const delivery: InputDelivery = { dispatched: false, accepted: null, provenUndelivered: false };
+  const delivery: InputDelivery = {
+    dispatched: false,
+    accepted: null,
+    provenUndelivered: false,
+  };
 
   async function archiveOnce(): Promise<void> {
     if (archived) return;
@@ -208,7 +265,10 @@ export async function prepareTurnInput(
       await request.archive();
       archived = true;
     } catch (error) {
-      deps.log.warn("conversation_core.input_archive_failed", { conversationId, error: getErrorMessage(error) });
+      deps.log.warn("conversation_core.input_archive_failed", {
+        conversationId,
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -232,7 +292,10 @@ export async function prepareTurnInput(
       await request.release();
       released = true;
     } catch (error) {
-      deps.log.warn("conversation_core.input_release_failed", { conversationId, error: getErrorMessage(error) });
+      deps.log.warn("conversation_core.input_release_failed", {
+        conversationId,
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -324,7 +387,11 @@ export async function prepareTurnInput(
         }
       }
       if (delivery.accepted === null) return settled;
-      return settled && released && receipts.every((receipt) => !receipt.required || written.has(receipt));
+      return (
+        settled &&
+        released &&
+        receipts.every((receipt) => !receipt.required || written.has(receipt))
+      );
     },
   };
 }

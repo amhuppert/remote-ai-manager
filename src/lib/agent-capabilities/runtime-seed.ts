@@ -149,13 +149,23 @@ export function seededCapabilityRuntimeState(input: {
   current: AgentCapabilityRuntimeApplicationState | undefined;
   before: AgentCapabilityRuntimeApplicationState | undefined;
 }): AgentCapabilityRuntimeApplicationState {
-  const baseline = reconcileDeliveredCapabilityState(input.seeded, input.delivered);
+  const baseline = reconcileDeliveredCapabilityState(
+    input.seeded,
+    input.delivered,
+  );
   const cascades = { ...baseline.cascades };
   for (const kind of agentCapabilityCascadeKindSchema.options) {
     const now = input.current?.cascades[kind];
-    if (now === undefined || now.pendingHash === input.before?.cascades[kind]?.pendingHash) continue;
+    if (
+      now === undefined ||
+      now.pendingHash === input.before?.cascades[kind]?.pendingHash
+    )
+      continue;
     const appliedHash = baseline.cascades[kind]?.appliedHash;
-    cascades[kind] = { ...now, ...(appliedHash !== undefined ? { appliedHash } : {}) };
+    cascades[kind] = {
+      ...now,
+      ...(appliedHash !== undefined ? { appliedHash } : {}),
+    };
   }
   return { cascades };
 }

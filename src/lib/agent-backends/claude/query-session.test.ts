@@ -291,7 +291,9 @@ describe("QuerySession.sendPrompt", () => {
   it("does not answer the prompt with the result of a background-task notification replayed on resume", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
-    const session = createQuerySession(makeDefaultOptions({ resume: "sess-abc" }));
+    const session = createQuerySession(
+      makeDefaultOptions({ resume: "sess-abc" }),
+    );
     const turnPromise = session.sendPrompt("hi", vi.fn());
     let settled = false;
     void turnPromise.then(() => (settled = true));
@@ -349,7 +351,10 @@ describe("QuerySession.sendPrompt", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
     const session = createQuerySession(
-      makeDefaultOptions({ resume: "sess-abc", costBaseline: { sessionId: "sess-abc", cumulativeCostUsd: 0.26 } }),
+      makeDefaultOptions({
+        resume: "sess-abc",
+        costBaseline: { sessionId: "sess-abc", cumulativeCostUsd: 0.26 },
+      }),
     );
     const turnPromise = session.sendPrompt("hi", vi.fn());
     mock.pushMessage({
@@ -395,10 +400,18 @@ describe("QuerySession.sendPrompt", () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
     const session = createQuerySession(
-      makeDefaultOptions({ resume: "sess-abc", costBaseline: { sessionId: "sess-abc", cumulativeCostUsd: 0.26 } }),
+      makeDefaultOptions({
+        resume: "sess-abc",
+        costBaseline: { sessionId: "sess-abc", cumulativeCostUsd: 0.26 },
+      }),
     );
     const turnPromise = session.sendPrompt("hi", vi.fn());
-    const result = (uuid: string, total: number, numTurns: number, origin?: { kind: string }) =>
+    const result = (
+      uuid: string,
+      total: number,
+      numTurns: number,
+      origin?: { kind: string },
+    ) =>
       ({
         type: "result",
         subtype: "success",

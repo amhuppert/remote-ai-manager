@@ -161,14 +161,16 @@ export function createRunsRepo(db: Db): RunsRepo {
       return expectedRevision + 1;
     },
     recordBoundary(boundary) {
-      return st.recordBoundary.run({
-        runId: boundary.runId,
-        occurrence: boundary.occurrence,
-        kind: boundary.kind,
-        summary: boundary.summary,
-        detailJson: JSON.stringify(boundary.detail ?? null),
-        recordedAt: boundary.recordedAt,
-      }).changes > 0;
+      return (
+        st.recordBoundary.run({
+          runId: boundary.runId,
+          occurrence: boundary.occurrence,
+          kind: boundary.kind,
+          summary: boundary.summary,
+          detailJson: JSON.stringify(boundary.detail ?? null),
+          recordedAt: boundary.recordedAt,
+        }).changes > 0
+      );
     },
     boundaries(runId, afterSeq = 0) {
       return st.boundaries.all(runId, afterSeq).map(boundaryFromRow);

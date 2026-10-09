@@ -7,7 +7,13 @@ const meta = {
   title: "Runs/Template library",
   component: TemplateLibrary,
   parameters: { layout: "fullscreen" },
-  decorators: [(Story) => <div className="min-h-[100dvh] bg-bg-void"><Story /></div>],
+  decorators: [
+    (Story) => (
+      <div className="min-h-[100dvh] bg-bg-void">
+        <Story />
+      </div>
+    ),
+  ],
   args: { templates: templateList, onConfigure: fn(), onLaunch: fn() },
 } satisfies Meta<typeof TemplateLibrary>;
 
@@ -18,8 +24,13 @@ export const SavedTemplates: Story = {};
 export const Empty: Story = { args: { templates: [] } };
 export const LongNames: Story = {
   args: {
-    templates: templateList.map((template, index) => index === 0
-      ? { ...template, name: "Release readiness review across frontend, API and data migration lanes" }
-      : template),
+    templates: templateList.map((template, index) =>
+      index === 0
+        ? {
+            ...template,
+            name: "Release readiness review across frontend, API and data migration lanes",
+          }
+        : template,
+    ),
   },
 };

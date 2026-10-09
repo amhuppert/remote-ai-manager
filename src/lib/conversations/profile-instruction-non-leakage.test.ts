@@ -155,7 +155,7 @@ describe("session conversation routes", () => {
       getSession: async () => makeSession([conversation]),
       createConversation: async () => conversation,
       deleteConversation: async () => {},
-    enrollInCore: () => {},
+      enrollInCore: () => {},
       changeConversationProfile: async () => {
         throw new Error("not exercised here");
       },

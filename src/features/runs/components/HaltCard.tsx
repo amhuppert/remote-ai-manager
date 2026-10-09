@@ -1,12 +1,17 @@
 "use client";
 
 import { useId, useState } from "react";
+import { MultilineInput } from "@/components/MultilineInput";
 import { AlertTriangleIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import type { ContextHalt, Remedy } from "../model";
-import { haltExplanation, haltTitle, remedy as presentRemedy } from "../present";
+import {
+  haltExplanation,
+  haltTitle,
+  remedy as presentRemedy,
+} from "../present";
 
 export interface RemedyChoice {
   occurrence: string;
@@ -39,7 +44,8 @@ function RemedyForm({
   const presented = presentRemedy(choice, halt.kind, halt.seat);
   const [note, setNote] = useState("");
   const [count, setCount] = useState("1");
-  const clampCount = () => Math.min(9, Math.max(1, Math.trunc(Number(count)) || 1));
+  const clampCount = () =>
+    Math.min(9, Math.max(1, Math.trunc(Number(count)) || 1));
   const [missing, setMissing] = useState(false);
   const noteId = useId();
   const countId = useId();
@@ -58,13 +64,21 @@ function RemedyForm({
           setMissing(true);
           return;
         }
-        onSubmit({ occurrence: halt.occurrence, remedy: choice, note: note.trim(), ...(choice.kind === "grant" ? { count: clampCount() } : {}) });
+        onSubmit({
+          occurrence: halt.occurrence,
+          remedy: choice,
+          note: note.trim(),
+          ...(choice.kind === "grant" ? { count: clampCount() } : {}),
+        });
       }}
     >
-      <label htmlFor={noteId} className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
+      <label
+        htmlFor={noteId}
+        className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase"
+      >
         {presented.needsNote === "evidence" ? "Evidence" : "Reason"}
       </label>
-      <textarea
+      <MultilineInput
         id={noteId}
         className={TEXTAREA}
         value={note}
@@ -72,20 +86,28 @@ function RemedyForm({
         placeholder={placeholder}
         aria-invalid={missing}
         aria-describedby={missing ? `${noteId}-error` : undefined}
-        onChange={(event) => {
-          setNote(event.target.value);
+        onValueChange={(value) => {
+          setNote(value);
           setMissing(false);
         }}
         autoFocus
       />
       {missing ? (
-        <span id={`${noteId}-error`} className="font-mono text-[0.72rem] text-red-text">
-          {presented.needsNote === "evidence" ? "Add the evidence first." : "Add a reason first."}
+        <span
+          id={`${noteId}-error`}
+          className="font-mono text-[0.72rem] text-red-text"
+        >
+          {presented.needsNote === "evidence"
+            ? "Add the evidence first."
+            : "Add a reason first."}
         </span>
       ) : null}
       <div className="flex flex-wrap items-center gap-sm">
         {choice.kind === "grant" ? (
-          <label htmlFor={countId} className="flex items-center gap-sm font-mono text-[0.72rem] text-text-secondary">
+          <label
+            htmlFor={countId}
+            className="flex items-center gap-sm font-mono text-[0.72rem] text-text-secondary"
+          >
             More retries
             <input
               id={countId}
@@ -101,11 +123,27 @@ function RemedyForm({
           </label>
         ) : null}
         <div className="ml-auto flex items-center gap-sm">
-          <Button touch size="sm" variant="ghost" type="button" disabled={submitting} onClick={onCancel}>
+          <Button
+            touch
+            size="sm"
+            variant="ghost"
+            type="button"
+            disabled={submitting}
+            onClick={onCancel}
+          >
             Cancel
           </Button>
-          <Button touch size="sm" variant="primary" type="submit" loading={submitting}>
-            <span className="min-w-0 whitespace-normal text-left">{presented.label}{runSuspended ? " and resume run" : ""}</span>
+          <Button
+            touch
+            size="sm"
+            variant="primary"
+            type="submit"
+            loading={submitting}
+          >
+            <span className="min-w-0 text-left whitespace-normal">
+              {presented.label}
+              {runSuspended ? " and resume run" : ""}
+            </span>
           </Button>
         </div>
       </div>
@@ -141,12 +179,24 @@ export function HaltCard({
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-[4px]">
           <div className="flex items-baseline gap-sm">
-            <h3 className="m-0 font-mono text-[0.82rem] font-semibold text-red">{haltTitle(halt.kind)}</h3>
-            <span className="ml-auto shrink-0 font-mono text-[0.7rem] text-text-tertiary">{formatLocalTime(halt.at)}</span>
+            <h3 className="m-0 font-mono text-[0.82rem] font-semibold text-red">
+              {haltTitle(halt.kind)}
+            </h3>
+            <span className="ml-auto shrink-0 font-mono text-[0.7rem] text-text-tertiary">
+              {formatLocalTime(halt.at)}
+            </span>
           </div>
-          <p className="m-0 font-mono text-[0.78rem] leading-[1.5] text-text-primary">{halt.detail}</p>
-          <p className="m-0 font-mono text-[0.72rem] leading-[1.5] text-text-secondary">{haltExplanation(halt.kind)}</p>
-          {runSuspended ? <p className="m-0 font-mono text-[0.72rem] leading-relaxed text-amber">Applying a remedy resumes the whole run, including other contexts.</p> : null}
+          <p className="m-0 font-mono text-[0.78rem] leading-[1.5] text-text-primary">
+            {halt.detail}
+          </p>
+          <p className="m-0 font-mono text-[0.72rem] leading-[1.5] text-text-secondary">
+            {haltExplanation(halt.kind)}
+          </p>
+          {runSuspended ? (
+            <p className="m-0 font-mono text-[0.72rem] leading-relaxed text-amber">
+              Applying a remedy resumes the whole run, including other contexts.
+            </p>
+          ) : null}
         </div>
       </header>
       <ul className="m-0 flex list-none flex-col gap-0 p-0">
@@ -165,24 +215,42 @@ export function HaltCard({
                 <Button
                   touch
                   size="sm"
-                  variant={presented.emphasis === "primary" ? "primary" : "default"}
+                  variant={
+                    presented.emphasis === "primary" ? "primary" : "default"
+                  }
                   layoutClassName="w-[184px] shrink-0 max-640:w-full"
-                  aria-expanded={presented.needsNote !== null ? isOpen : undefined}
+                  aria-expanded={
+                    presented.needsNote !== null ? isOpen : undefined
+                  }
                   loading={submitting && presented.needsNote === null}
                   disabled={submitting}
                   onClick={() => {
-                    if (presented.needsNote === null) onApply({ occurrence: halt.occurrence, remedy: choice });
+                    if (presented.needsNote === null)
+                      onApply({ occurrence: halt.occurrence, remedy: choice });
                     else setOpen(isOpen ? null : choice.kind);
                   }}
                 >
-                  <span className="min-w-0 whitespace-normal text-left">{presented.label}{runSuspended ? " and resume run" : ""}{presented.needsNote !== null ? <span aria-hidden="true">…</span> : null}</span>
+                  <span className="min-w-0 text-left whitespace-normal">
+                    {presented.label}
+                    {runSuspended ? " and resume run" : ""}
+                    {presented.needsNote !== null ? (
+                      <span aria-hidden="true">…</span>
+                    ) : null}
+                  </span>
                 </Button>
                 <p className="m-0 pt-[5px] font-mono text-[0.72rem] leading-[1.5] text-text-secondary max-640:pt-0">
                   {presented.consequence}
                 </p>
               </div>
               {isOpen ? (
-                <RemedyForm choice={choice} halt={halt} runSuspended={runSuspended} submitting={submitting} onCancel={() => setOpen(null)} onSubmit={onApply} />
+                <RemedyForm
+                  choice={choice}
+                  halt={halt}
+                  runSuspended={runSuspended}
+                  submitting={submitting}
+                  onCancel={() => setOpen(null)}
+                  onSubmit={onApply}
+                />
               ) : null}
             </li>
           );

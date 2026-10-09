@@ -123,7 +123,12 @@ describe("run commands", () => {
           202,
         ),
     });
-    const result = await fixture.run(["run", "workflow", "--file", "/workflow.json"]);
+    const result = await fixture.run([
+      "run",
+      "workflow",
+      "--file",
+      "/workflow.json",
+    ]);
 
     expect(result.exitCode, result.stderr).toBe(0);
     const request = fixture.requests[0];
@@ -144,17 +149,34 @@ describe("run commands", () => {
         "/workflow.json": JSON.stringify({
           title: "Cycle",
           contexts: [
-            { key: "a", brief: "A", dependsOn: ["b"], scope: { mode: "readOnly" } },
-            { key: "b", brief: "B", dependsOn: ["a"], scope: { mode: "readOnly" } },
+            {
+              key: "a",
+              brief: "A",
+              dependsOn: ["b"],
+              scope: { mode: "readOnly" },
+            },
+            {
+              key: "b",
+              brief: "B",
+              dependsOn: ["a"],
+              scope: { mode: "readOnly" },
+            },
           ],
         }),
       },
       respond: () => jsonReply({}),
     });
-    const result = await fixture.run(["run", "workflow-check", "--file", "/workflow.json"]);
+    const result = await fixture.run([
+      "run",
+      "workflow-check",
+      "--file",
+      "/workflow.json",
+    ]);
 
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain("Dependency cycle: a → b → a");
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Dependency cycle: a → b → a",
+    );
     expect(fixture.requests).toEqual([]);
   });
 
@@ -194,7 +216,9 @@ describe("run commands", () => {
     const result = await fixture.run(["run", "show", "run-1"], "text");
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("- docs [run-1.docs]: not started, waits on agent");
+    expect(result.stdout).toContain(
+      "- docs [run-1.docs]: not started, waits on agent",
+    );
   });
 
   it("shows a skipped branch, a loop's pass, and what cannot proceed", async () => {
@@ -237,21 +261,30 @@ describe("run commands", () => {
               progress: { kind: "succeeded", candidateId: "c-2" },
             }),
           ],
-          halts: ['loop "polish": "review" did not meet the exit condition in 2 passes'],
+          halts: [
+            'loop "polish": "review" did not meet the exit condition in 2 passes',
+          ],
           loops: [{ key: "polish", pass: 2, maxPasses: 2, state: "exhausted" }],
         }),
     });
     const result = await fixture.run(["run", "show", "run-1"], "text");
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("- fix [run-1.fix]: skipped (its route was not taken)");
-    expect(result.stdout).toContain("- review [run-1.review.pass2] (loop polish, pass 2): succeeded");
+    expect(result.stdout).toContain(
+      "- fix [run-1.fix]: skipped (its route was not taken)",
+    );
+    expect(result.stdout).toContain(
+      "- review [run-1.review.pass2] (loop polish, pass 2): succeeded",
+    );
     expect(result.stdout).toContain("loop polish: pass 2 of 2, exhausted");
-    expect(result.stdout).toContain('cannot proceed: loop "polish": "review" did not meet the exit condition in 2 passes');
+    expect(result.stdout).toContain(
+      'cannot proceed: loop "polish": "review" did not meet the exit condition in 2 passes',
+    );
   });
 
   it("names a halt once when it is also why the run needs its owner", async () => {
-    const reason = 'loop "polish": "review" did not meet the exit condition in 2 passes';
+    const reason =
+      'loop "polish": "review" did not meet the exit condition in 2 passes';
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
       respond: () =>
@@ -297,7 +330,13 @@ describe("run commands", () => {
         // started: a start the run recorded that no context took up before the pause or cancel.
         const fixture = createCcRuntimeFixture({
           env: identityEnv,
-          respond: () => jsonReply({ ...view, kind: "workflow", progress, contexts: [{ ...docs, started }] }),
+          respond: () =>
+            jsonReply({
+              ...view,
+              kind: "workflow",
+              progress,
+              contexts: [{ ...docs, started }],
+            }),
         });
         const result = await fixture.run(["run", "show", "run-1"], "text");
         expect(result.stdout).toContain(`- docs [run-1.docs]: ${expected}`);
@@ -314,36 +353,61 @@ describe("run commands", () => {
           ...view.contexts[0],
           progress: draining
             ? { kind: "paused", next: null, draining: true }
-            : { kind: "paused", next: { kind: "running", obligation: { kind: "freeze" } }, draining: false },
+            : {
+                kind: "paused",
+                next: { kind: "running", obligation: { kind: "freeze" } },
+                draining: false,
+              },
         },
       ],
     });
     const show = async (draining: boolean) => {
-      const fixture = createCcRuntimeFixture({ env: identityEnv, respond: () => jsonReply(paused(draining)) });
+      const fixture = createCcRuntimeFixture({
+        env: identityEnv,
+        respond: () => jsonReply(paused(draining)),
+      });
       return fixture.run(["run", "show", "run-1"], "text");
     };
 
     const draining = await show(true);
-    expect(draining.stdout).toContain("— paused (draining: admitted work is still finishing)");
-    expect(draining.stdout).toContain("- agent [run-1.agent]: paused (draining)");
+    expect(draining.stdout).toContain(
+      "— paused (draining: admitted work is still finishing)",
+    );
+    expect(draining.stdout).toContain(
+      "- agent [run-1.agent]: paused (draining)",
+    );
     const drained = await show(false);
     expect(drained.stdout).toContain("— paused (drained)");
-    expect(drained.stdout).toContain("- agent [run-1.agent]: paused (next: freeze)");
+    expect(drained.stdout).toContain(
+      "- agent [run-1.agent]: paused (next: freeze)",
+    );
   });
 
   it("shows a context the run's pause holds as held, with its next step, once admitted work has finished", async () => {
     const underRunPause = (draining: boolean) => ({
       ...view,
       progress: { kind: "paused", draining },
-      contexts: [{ ...view.contexts[0], progress: { kind: "running", obligation: { kind: "freeze" } } }],
+      contexts: [
+        {
+          ...view.contexts[0],
+          progress: { kind: "running", obligation: { kind: "freeze" } },
+        },
+      ],
     });
     const show = async (draining: boolean) => {
-      const fixture = createCcRuntimeFixture({ env: identityEnv, respond: () => jsonReply(underRunPause(draining)) });
+      const fixture = createCcRuntimeFixture({
+        env: identityEnv,
+        respond: () => jsonReply(underRunPause(draining)),
+      });
       return fixture.run(["run", "show", "run-1"], "text");
     };
 
-    expect((await show(true)).stdout).toContain("- agent [run-1.agent]: running (admitted work finishing under the run's pause)");
-    expect((await show(false)).stdout).toContain("- agent [run-1.agent]: held by the run's pause (next: freeze)");
+    expect((await show(true)).stdout).toContain(
+      "- agent [run-1.agent]: running (admitted work finishing under the run's pause)",
+    );
+    expect((await show(false)).stdout).toContain(
+      "- agent [run-1.agent]: held by the run's pause (next: freeze)",
+    );
   });
 
   it("refuses an unknown launch option before sending anything", async () => {
@@ -447,7 +511,10 @@ describe("run commands", () => {
           : jsonReply({
               ...view,
               kind: "workflow",
-              progress: { kind: "needs_owner", reasons: ['lane "api": publication blocked: notes.md'] },
+              progress: {
+                kind: "needs_owner",
+                reasons: ['lane "api": publication blocked: notes.md'],
+              },
               contexts: [
                 {
                   ...view.contexts[0],
@@ -475,16 +542,22 @@ describe("run commands", () => {
     });
     const shown = await fixture.run(["run", "show", "run-1"], "text");
     expect(shown.exitCode, shown.stderr).toBe(0);
-    expect(shown.stdout).toContain("- integrate [run-1.integrate]: not started, waits for lane api to publish");
+    expect(shown.stdout).toContain(
+      "- integrate [run-1.integrate]: not started, waits for lane api to publish",
+    );
     expect(shown.stdout).toContain(
       "lane api [csm/session-1-api at /repo/.worktrees/session.1-api]: blocked (attempt 1): The session worktree has changes: notes.md",
     );
 
-    expect((await fixture.run(["run", "retry", "run-1", "--lane", "api"])).exitCode).toBe(0);
-    expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)]).at(-1)).toEqual([
-      "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/control",
-      { action: "retry", lane: "api" },
-    ]);
+    expect(
+      (await fixture.run(["run", "retry", "run-1", "--lane", "api"])).exitCode,
+    ).toBe(0);
+    expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)]).at(-1)).toEqual(
+      [
+        "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/control",
+        { action: "retry", lane: "api" },
+      ],
+    );
   });
 
   it("amends a run's definition from the revision it was read at, and reports what still cannot proceed", async () => {
@@ -508,7 +581,17 @@ describe("run commands", () => {
         }),
     });
     const result = await fixture.run(
-      ["run", "amend", "run-1", "--file", "/workflow.json", "--based-on", "2", "--reason", "Docs need the API first"],
+      [
+        "run",
+        "amend",
+        "run-1",
+        "--file",
+        "/workflow.json",
+        "--based-on",
+        "2",
+        "--reason",
+        "Docs need the API first",
+      ],
       "text",
     );
 
@@ -520,12 +603,19 @@ describe("run commands", () => {
       ],
     ]);
     expect(result.stdout).toContain("revision 3");
-    expect(result.stdout).toContain('still cannot proceed: route: "triage" must take exactly one');
-    expect(result.stdout).toContain("removed document glossary.md: work that starts from now no longer reads it");
+    expect(result.stdout).toContain(
+      'still cannot proceed: route: "triage" must take exactly one',
+    );
+    expect(result.stdout).toContain(
+      "removed document glossary.md: work that starts from now no longer reads it",
+    );
   });
 
   it("prints a workflow run's definition as written, with its revision, to edit and amend", async () => {
-    const definition = { title: "API then docs", contexts: [{ key: "api", brief: "Build the API" }] };
+    const definition = {
+      title: "API then docs",
+      contexts: [{ key: "api", brief: "Build the API" }],
+    };
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
       respond: () => jsonReply({ runId: "run-1", revision: 2, definition }),
@@ -543,21 +633,37 @@ describe("run commands", () => {
   it("prints each change a refused amendment names", async () => {
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
-      files: { "/workflow.json": JSON.stringify({ title: "T", contexts: [{ key: "api", brief: "B" }] }) },
+      files: {
+        "/workflow.json": JSON.stringify({
+          title: "T",
+          contexts: [{ key: "api", brief: "B" }],
+        }),
+      },
       respond: () =>
         jsonReply(
           {
-            error: "The amendment changes work that already happened (2 changes)",
+            error:
+              "The amendment changes work that already happened (2 changes)",
             code: "amendment_refused",
             issues: [
-              { path: "definition", message: '"api" has started, so its request cannot change' },
-              { path: "definition", message: '"t" was skipped by a route that already ran, so it stays skipped' },
+              {
+                path: "definition",
+                message: '"api" has started, so its request cannot change',
+              },
+              {
+                path: "definition",
+                message:
+                  '"t" was skipped by a route that already ran, so it stays skipped',
+              },
             ],
           },
           409,
         ),
     });
-    const result = await fixture.run(["run", "amend", "run-1", "--file", "/workflow.json"], "text");
+    const result = await fixture.run(
+      ["run", "amend", "run-1", "--file", "/workflow.json"],
+      "text",
+    );
 
     expect(result.exitCode).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;
@@ -566,7 +672,10 @@ describe("run commands", () => {
   });
 
   it("prints a definition that stays valid JSON with line or paragraph separators in its text", async () => {
-    const definition = { title: "Odd", contexts: [{ key: "api", brief: "First\u2028second\u2029third\u0085" }] };
+    const definition = {
+      title: "Odd",
+      contexts: [{ key: "api", brief: "First\u2028second\u2029third\u0085" }],
+    };
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
       respond: () => jsonReply({ runId: "run-1", revision: 1, definition }),
@@ -580,7 +689,8 @@ describe("run commands", () => {
   it("shows the definition revision an amendment is based on", async () => {
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
-      respond: () => jsonReply({ ...view, kind: "workflow", definitionRevision: 2 }),
+      respond: () =>
+        jsonReply({ ...view, kind: "workflow", definitionRevision: 2 }),
     });
     const result = await fixture.run(["run", "show", "run-1"], "text");
 
@@ -613,7 +723,14 @@ describe("run commands", () => {
               description: "API notes",
               appliesTo: ["api", "docs"],
             },
-            { path: "glossary.md", revision: 3, source: "amend", reason: "Terms changed", bytes: 3, description: "Terms" },
+            {
+              path: "glossary.md",
+              revision: 3,
+              source: "amend",
+              reason: "Terms changed",
+              bytes: 3,
+              description: "Terms",
+            },
           ],
         }),
     });
@@ -623,20 +740,33 @@ describe("run commands", () => {
     expect(result.stdout).toContain(
       "document plan.md (revision 2, published by run-1.api): The plan — read when: Before you start",
     );
-    expect(result.stdout).toContain("document api-notes.md (revision 1, for api, docs): API notes");
-    expect(result.stdout).toContain("document glossary.md (revision 3, amended: Terms changed): Terms");
+    expect(result.stdout).toContain(
+      "document api-notes.md (revision 1, for api, docs): API notes",
+    );
+    expect(result.stdout).toContain(
+      "document glossary.md (revision 3, amended: Terms changed): Terms",
+    );
   });
 
   it("names the charter and document revisions each started context froze", async () => {
-    const fixture = createCcRuntimeFixture({ env: identityEnv, respond: () => jsonReply(view) });
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () => jsonReply(view),
+    });
     const result = await fixture.run(["run", "show", "run-1"], "text");
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("  froze charter revision 1; plan.md revision 2");
+    expect(result.stdout).toContain(
+      "  froze charter revision 1; plan.md revision 2",
+    );
   });
 
   it("names the charter in force, its revision and why it was last amended", async () => {
-    const charter = { revision: 2, mission: "Make the notice appear once.", reason: "Retries are out of scope" };
+    const charter = {
+      revision: 2,
+      mission: "Make the notice appear once.",
+      reason: "Retries are out of scope",
+    };
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
       respond: () => jsonReply({ ...view, kind: "workflow", charter }),
@@ -719,7 +849,14 @@ describe("run commands", () => {
   it("publishes a file from the seat's working directory as the next revision of a run document", async () => {
     const fixture = createCcRuntimeFixture({
       env: { CC_CONVERSATION: "conv-9" },
-      respond: () => jsonReply({ ok: true, runId: "run-1", path: "api.md", revision: 2, unchanged: false }),
+      respond: () =>
+        jsonReply({
+          ok: true,
+          runId: "run-1",
+          path: "api.md",
+          revision: 2,
+          unchanged: false,
+        }),
     });
     const result = await fixture.run(
       [
@@ -741,9 +878,16 @@ describe("run commands", () => {
     expect(fixture.requests.map((r) => [r.url, bodyOf(r.init)])).toEqual([
       [
         "http://cc.test/api/projects/project-one/sessions/session-one/contexts/documents",
-        { file: "notes/api.md", as: "api.md", description: "The API's endpoints", readWhen: "Before you document it" },
+        {
+          file: "notes/api.md",
+          as: "api.md",
+          description: "The API's endpoints",
+          readWhen: "Before you document it",
+        },
       ],
     ]);
-    expect(result.stdout).toContain("Published api.md as revision 2 of run run-1: work that starts from now reads it.");
+    expect(result.stdout).toContain(
+      "Published api.md as revision 2 of run run-1: work that starts from now reads it.",
+    );
   });
 });

@@ -95,29 +95,47 @@ describe("supervised binding overlap", () => {
 
   it("separates writers by scope: full overlaps everything, owned scopes only when one contains the other", () => {
     expect(bindingScopesOverlap(full, owned("docs"))).toBe(true);
-    expect(bindingScopesOverlap(owned("src/lib"), owned("src/lib/runs"))).toBe(true);
+    expect(bindingScopesOverlap(owned("src/lib"), owned("src/lib/runs"))).toBe(
+      true,
+    );
     expect(bindingScopesOverlap(owned("src/api"), owned("src/ui"))).toBe(false);
-    expect(bindingScopesOverlap(owned("src/api"), owned("src/apiary"))).toBe(false);
+    expect(bindingScopesOverlap(owned("src/api"), owned("src/apiary"))).toBe(
+      false,
+    );
     // A case-insensitive disk would give both spellings the same files.
-    expect(bindingScopesOverlap(owned("src/API"), owned("src/api/routes"))).toBe(true);
+    expect(
+      bindingScopesOverlap(owned("src/API"), owned("src/api/routes")),
+    ).toBe(true);
   });
 });
 
 describe("a supervised turn's workspace access", () => {
-  const placement = (scope: WorkspaceBindingRequest["scope"]): WorkspaceBindingRequest => ({
+  const placement = (
+    scope: WorkspaceBindingRequest["scope"],
+  ): WorkspaceBindingRequest => ({
     kind: "session",
     projectPath: "/repo",
     sessionName: "session",
     worktreePath: wt,
     scope,
   });
-  const access = (scope: WorkspaceBindingRequest["scope"], need: "write" | "stable_read" | "observe", role: "implementer" | "reviewer") => {
-    const { grant, writes } = turnWorkspaceAccess({ binding: placement(scope), need, role });
+  const access = (
+    scope: WorkspaceBindingRequest["scope"],
+    need: "write" | "stable_read" | "observe",
+    role: "implementer" | "reviewer",
+  ) => {
+    const { grant, writes } = turnWorkspaceAccess({
+      binding: placement(scope),
+      need,
+      role,
+    });
     return { grant, writes };
   };
 
   it("lets an implementer's writing turn hold a write grant over its scope and write only there", () => {
-    expect(access({ mode: "owned", paths: ["src/api"] }, "write", "implementer")).toEqual({
+    expect(
+      access({ mode: "owned", paths: ["src/api"] }, "write", "implementer"),
+    ).toEqual({
       grant: { kind: "scoped_write", paths: ["src/api"] },
       writes: { mode: "paths", paths: ["src/api"] },
     });
@@ -128,15 +146,22 @@ describe("a supervised turn's workspace access", () => {
   });
 
   it("keeps an owned or read-only implementer's limits on turns that take no grant", () => {
-    expect(access({ mode: "owned", paths: ["src/api"] }, "observe", "implementer")).toEqual({
+    expect(
+      access({ mode: "owned", paths: ["src/api"] }, "observe", "implementer"),
+    ).toEqual({
       grant: null,
       writes: { mode: "paths", paths: ["src/api"] },
     });
-    expect(access({ mode: "readOnly" }, "write", "implementer")).toEqual({ grant: null, writes: { mode: "none" } });
+    expect(access({ mode: "readOnly" }, "write", "implementer")).toEqual({
+      grant: null,
+      writes: { mode: "none" },
+    });
   });
 
   it("gives a review a whole-tree stable read, with reviewers unconfined by decision", () => {
-    expect(access({ mode: "owned", paths: ["src/api"] }, "stable_read", "reviewer")).toEqual({
+    expect(
+      access({ mode: "owned", paths: ["src/api"] }, "stable_read", "reviewer"),
+    ).toEqual({
       grant: { kind: "stable_read" },
       writes: { mode: "all" },
     });
@@ -187,7 +212,9 @@ describe("workspace admission", () => {
     expect(admission.tryAcquire(grant("interactive_write"))).not.toBeNull();
     const controller = new AbortController();
     controller.abort();
-    await expect(admission.acquire(grant("git"), controller.signal)).rejects.toThrow(/cancelled/);
+    await expect(
+      admission.acquire(grant("git"), controller.signal),
+    ).rejects.toThrow(/cancelled/);
     expect(admission.blockers(grant("scoped_write", ["src/api"]))).toEqual([]);
   });
 });
@@ -211,9 +238,23 @@ describe("workspace admission change signal", () => {
   it("starts an interactive turn beside a Git operation that is only waiting, so a person never waits behind supervised work", async () => {
     const admission = createWorkspaceAdmission();
     const worktree = "/repo/.worktrees/session";
-    const seat = admission.tryAcquire({ worktree, kind: "full_write", holder: "seat" });
-    const publication = admission.acquire({ worktree, kind: "git", holder: "publish" });
-    expect(admission.tryAcquire({ worktree, kind: "interactive_write", holder: "owner-turn" })).not.toBeNull();
+    const seat = admission.tryAcquire({
+      worktree,
+      kind: "full_write",
+      holder: "seat",
+    });
+    const publication = admission.acquire({
+      worktree,
+      kind: "git",
+      holder: "publish",
+    });
+    expect(
+      admission.tryAcquire({
+        worktree,
+        kind: "interactive_write",
+        holder: "owner-turn",
+      }),
+    ).not.toBeNull();
     if (seat !== null) admission.release(seat);
     // The publication still waits for the owner's turn it now conflicts with.
     let admitted = false;

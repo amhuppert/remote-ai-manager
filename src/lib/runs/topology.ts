@@ -27,7 +27,11 @@ export function laneCodePrerequisites(
     laneMembers(contexts, lane).flatMap((c) =>
       c.dependsOn.flatMap((source) => {
         const from = laneOf.get(source);
-        return from !== undefined && from !== lane && !(c.outputOnly ?? []).includes(source) ? [from] : [];
+        return from !== undefined &&
+          from !== lane &&
+          !(c.outputOnly ?? []).includes(source)
+          ? [from]
+          : [];
       }),
     ),
   );
@@ -43,6 +47,9 @@ export function laneSkipped(
 }
 
 /** The loop whose body a context belongs to. */
-export function loopOf(loops: readonly RunLoop[] | undefined, key: string): RunLoop | undefined {
+export function loopOf(
+  loops: readonly RunLoop[] | undefined,
+  key: string,
+): RunLoop | undefined {
   return (loops ?? []).find((loop) => loop.body.includes(key));
 }

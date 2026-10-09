@@ -74,18 +74,29 @@ function charterSection(
     lines.push(
       "",
       "Invariants (every change must keep each one):",
-      ...charter.invariants.map((invariant) => `- \`${invariant.id}\`: ${invariant.statement}`),
+      ...charter.invariants.map(
+        (invariant) => `- \`${invariant.id}\`: ${invariant.statement}`,
+      ),
     );
   if (charter.sourcesOfTruth.length > 0)
     lines.push(
       "",
       "Sources of truth, highest authority first (the higher one governs a conflict):",
       ...charter.sourcesOfTruth.map(
-        (source) => `${source.rank}. ${source.label} (\`${source.locator}\`): ${clip(source.description, 200)}`,
+        (source) =>
+          `${source.rank}. ${source.label} (\`${source.locator}\`): ${clip(source.description, 200)}`,
       ),
     );
-  if (charter.nonGoals.length > 0) lines.push("", "Non-goals:", ...charter.nonGoals.map((goal) => `- ${goal}`));
-  lines.push("", `The full charter, with its conventions, vocabulary and test strategy: \`${charter.documentPath}\`.`);
+  if (charter.nonGoals.length > 0)
+    lines.push(
+      "",
+      "Non-goals:",
+      ...charter.nonGoals.map((goal) => `- ${goal}`),
+    );
+  lines.push(
+    "",
+    `The full charter, with its conventions, vocabulary and test strategy: \`${charter.documentPath}\`.`,
+  );
   lines.push("");
   if (role === "implementer") {
     lines.push(
@@ -125,7 +136,10 @@ function referencesSection(facts: ContextFacts): string | null {
   if (documents === null) return null;
   return section(
     "Charter and documents",
-    [charter !== null ? "The charter still governs this work." : null, documents]
+    [
+      charter !== null ? "The charter still governs this work." : null,
+      documents,
+    ]
       .filter((line): line is string => line !== null)
       .join("\n"),
   );
@@ -164,7 +178,9 @@ function sharedWorkspaceSection(facts: ContextFacts): string | null {
       ? `${deferred.map((c) => `\`${c}\``).join(", ")} ${deferred.length === 1 ? "is" : "are"} not run for this work: whole-workspace checks run later on the assembled tree. Do not fail this work for what they would report outside its changes.`
       : null,
   ].filter((line): line is string => line !== null);
-  return lines.length === 0 ? null : section("Shared workspace", lines.join("\n"));
+  return lines.length === 0
+    ? null
+    : section("Shared workspace", lines.join("\n"));
 }
 
 function tasksBlock(facts: ContextFacts, onlyOpen: boolean): string {
@@ -245,7 +261,9 @@ export function composeRemediation(
   return [
     `# ${facts.contract.current.title}: review found blocking problems`,
     "Fix every blocking finding below. The work is reviewed again afterwards.",
-    facts.contract.current.charter !== null ? declineRule(facts, "finding") : null,
+    facts.contract.current.charter !== null
+      ? declineRule(facts, "finding")
+      : null,
     section("Blocking findings", findingsBlock(findings)),
     carriedAdvice.length > 0
       ? section(
@@ -314,7 +332,8 @@ export function composeCapture(): string {
  */
 function closingReportSection(facts: ContextFacts): string | null {
   const report = facts.ledger.lastSummary;
-  if (facts.contract.current.outputSchema === null || report === null) return null;
+  if (facts.contract.current.outputSchema === null || report === null)
+    return null;
   return section("The implementer's closing report", clip(report, 4000));
 }
 
@@ -353,7 +372,10 @@ export function composeReview(
     .join("\n\n");
 }
 
-export function composeAdvice(facts: ContextFacts, items: readonly AdviceItem[]): string {
+export function composeAdvice(
+  facts: ContextFacts,
+  items: readonly AdviceItem[],
+): string {
   return [
     "# Respond to review advice",
     "Your work passed review. Reviewers left optional advice. For each item, either act on it or decline it, then report one disposition per advisory id.",

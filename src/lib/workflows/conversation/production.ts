@@ -35,7 +35,15 @@ type ProductionActorDependencies = Omit<
 > & { policy: ConversationPolicyInfrastructure };
 
 export async function loadProductionActorDependencies(): Promise<ProductionActorDependencies> {
-  const [turn, lockMod, semaphoreMod, registryMod, runtimeRegistryMod, childEnvMod, commandsMod] = await Promise.all([
+  const [
+    turn,
+    lockMod,
+    semaphoreMod,
+    registryMod,
+    runtimeRegistryMod,
+    childEnvMod,
+    commandsMod,
+  ] = await Promise.all([
     loadConversationTurnDependencies(),
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -49,14 +57,17 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     execution: {
       ...turn.execution,
       async requestUserQuestion(scope, questions, signal) {
-        const { inTurnQuestionService } = await import("@/lib/conversations/in-turn-question-service");
+        const { inTurnQuestionService } =
+          await import("@/lib/conversations/in-turn-question-service");
         return inTurnQuestionService.request(scope, questions, signal);
       },
       acquireConversationLock: lockMod.acquireConversationLock,
       acquireQuerySlot: semaphoreMod.acquireQuerySlot,
       backendSupportsCheckpointFork: (backend) =>
-        registryMod.getBackendDescriptor(backend).conversation?.capabilities.checkpointFork ?? false,
-      getConversationCapabilities: (backend) => registryMod.getBackendDescriptor(backend).conversation?.capabilities,
+        registryMod.getBackendDescriptor(backend).conversation?.capabilities
+          .checkpointFork ?? false,
+      getConversationCapabilities: (backend) =>
+        registryMod.getBackendDescriptor(backend).conversation?.capabilities,
       registerBackendRuntime: runtimeRegistryMod.registerRuntime,
       unregisterBackendRuntime: runtimeRegistryMod.unregisterRuntime,
       buildChildEnv: childEnvMod.buildChildEnv,
@@ -66,7 +77,8 @@ export async function loadProductionActorDependencies(): Promise<ProductionActor
     },
     checkpoint: {
       async repo() {
-        const { getConversationCheckpointsRepo } = await import("@/lib/conversation-checkpoints/service-factory");
+        const { getConversationCheckpointsRepo } =
+          await import("@/lib/conversation-checkpoints/service-factory");
         return getConversationCheckpointsRepo();
       },
       now: () => new Date().toISOString(),

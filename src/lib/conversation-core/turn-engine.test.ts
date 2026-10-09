@@ -20,7 +20,11 @@ import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import type { ComposedTooling } from "./runtime-application-state";
 import { createRuntimeHost, type HostedConversation } from "./runtime-host";
-import { createTurnEngine, type TurnEngineDeps, type TurnRequest } from "./turn-engine";
+import {
+  createTurnEngine,
+  type TurnEngineDeps,
+  type TurnRequest,
+} from "./turn-engine";
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
@@ -36,7 +40,10 @@ function engineWith(
   const entries: TranscriptEntry[] = [];
   const host = createRuntimeHost({
     factory: () => factory,
-    instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
+    instructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+    }),
     tooling: async () => tooling,
     beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),
@@ -51,7 +58,8 @@ function engineWith(
         entries.push(entry);
       },
       async safeAppendTranscriptEntryOnce(_conversationId, entry) {
-        if (!entries.some((existing) => existing.id === entry.id)) entries.push(entry);
+        if (!entries.some((existing) => existing.id === entry.id))
+          entries.push(entry);
       },
     },
     projection: getConversationTranscriptProjection,
@@ -75,15 +83,24 @@ function conversation(backend: "claude" | "codex"): HostedConversation {
   };
 }
 
-function request(backend: "claude" | "codex", overrides: Partial<TurnRequest> = {}): TurnRequest {
+function request(
+  backend: "claude" | "codex",
+  overrides: Partial<TurnRequest> = {},
+): TurnRequest {
   return {
     conversation: conversation(backend),
     requirements: {
       modelSelection:
         backend === "claude"
           ? { modelId: "sonnet", parameters: { effort: "medium" } }
-          : { modelId: "gpt-5.4", parameters: { reasoning: "medium", fast: "false" } },
-      instructionSelection: { autonomous: true, askUserQuestionsEnabled: false },
+          : {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
+      instructionSelection: {
+        autonomous: true,
+        askUserQuestionsEnabled: false,
+      },
     },
     broadcast: { projectName: "repo", storeSessionName: "session" },
     promptText: "Review the candidate.",
@@ -103,24 +120,46 @@ function request(backend: "claude" | "codex", overrides: Partial<TurnRequest> = 
 
 const VERDICT = { verdict: "pass", findings: [], advisories: [] };
 
-const DOCS_MCP: PortableMcpConfig = { servers: [{ id: "docs", transport: "stdio", command: "/bin/true" }] };
+const DOCS_MCP: PortableMcpConfig = {
+  servers: [{ id: "docs", transport: "stdio", command: "/bin/true" }],
+};
 const DELIVERED: Record<"claude" | "codex", ResolvedCapabilityCascade> = {
   claude: {
     backend: "claude",
-    kinds: [{ kind: "skills", items: [{ itemId: "review", enabled: false, originLayer: "conversation" }] }],
+    kinds: [
+      {
+        kind: "skills",
+        items: [
+          { itemId: "review", enabled: false, originLayer: "conversation" },
+        ],
+      },
+    ],
   },
   codex: {
     backend: "codex",
-    kinds: [{ kind: "plugins", items: [{ itemId: "tools", enabled: false, originLayer: "conversation" }] }],
+    kinds: [
+      {
+        kind: "plugins",
+        items: [
+          { itemId: "tools", enabled: false, originLayer: "conversation" },
+        ],
+      },
+    ],
   },
 };
-type InputAccepted = Extract<ConversationBackendEvent, { type: "input_accepted" }>;
+type InputAccepted = Extract<
+  ConversationBackendEvent,
+  { type: "input_accepted" }
+>;
 
 describe("core turn engine", () => {
   it.each(["claude", "codex"] as const)(
     "runs a %s turn through the real adapter, recording the user turn first and returning structured output",
     async (backend) => {
-      const provider = createScriptedConversationBackend({ backend, responseText: JSON.stringify(VERDICT) });
+      const provider = createScriptedConversationBackend({
+        backend,
+        responseText: JSON.stringify(VERDICT),
+      });
       const { engine, entries } = engineWith(provider.factory);
       const outcome = await engine.runTurn(
         request(backend, {
@@ -143,8 +182,14 @@ describe("core turn engine", () => {
 
       expect(outcome.kind).toBe("call_result");
       if (outcome.kind !== "call_result") throw new Error("unreachable");
-      expect(outcome.result.outcome).toMatchObject({ kind: "completed", structuredOutput: VERDICT });
-      expect(entries[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "Review the candidate." }] });
+      expect(outcome.result.outcome).toMatchObject({
+        kind: "completed",
+        structuredOutput: VERDICT,
+      });
+      expect(entries[0]).toMatchObject({
+        role: "user",
+        content: [{ type: "text", text: "Review the candidate." }],
+      });
       expect(provider.turns[0]?.prompt).toContain("Review the candidate.");
     },
   );
@@ -152,8 +197,12 @@ describe("core turn engine", () => {
   it.each(["claude", "codex"] as const)(
     "records the configuration a %s runtime accepted the input under: its MCP config and delivered capabilities",
     async (backend) => {
-      const provider = createScriptedConversationBackend({ backend, responseText: JSON.stringify(VERDICT) });
-      const receipts: Array<{ conversationId: string; event: InputAccepted }> = [];
+      const provider = createScriptedConversationBackend({
+        backend,
+        responseText: JSON.stringify(VERDICT),
+      });
+      const receipts: Array<{ conversationId: string; event: InputAccepted }> =
+        [];
       const { engine } = engineWith(
         provider.factory,
         undefined,
@@ -162,11 +211,19 @@ describe("core turn engine", () => {
             receipts.push({ conversationId: hosted.conversationId, event });
           },
         },
-        { overrides: { portableMcp: DOCS_MCP, capabilities: DELIVERED[backend] } },
+        {
+          overrides: {
+            portableMcp: DOCS_MCP,
+            capabilities: DELIVERED[backend],
+          },
+        },
       );
       const outcome = await engine.runTurn(request(backend));
 
-      expect(outcome).toMatchObject({ kind: "call_result", result: { outcome: { kind: "completed" } } });
+      expect(outcome).toMatchObject({
+        kind: "call_result",
+        result: { outcome: { kind: "completed" } },
+      });
       expect(receipts).toEqual([
         {
           conversationId: "conv-1",
@@ -181,7 +238,10 @@ describe("core turn engine", () => {
   );
 
   it("completes a turn whose configuration receipt cannot be recorded, and reports the failure", async () => {
-    const provider = createScriptedConversationBackend({ backend: "claude", responseText: JSON.stringify(VERDICT) });
+    const provider = createScriptedConversationBackend({
+      backend: "claude",
+      responseText: JSON.stringify(VERDICT),
+    });
     const log = createCapturingLogger();
     const { engine } = engineWith(provider.factory, undefined, {
       async recordAccepted() {
@@ -191,19 +251,28 @@ describe("core turn engine", () => {
     });
     const outcome = await engine.runTurn(request("claude"));
 
-    expect(outcome).toMatchObject({ kind: "call_result", result: { outcome: { kind: "completed" } } });
+    expect(outcome).toMatchObject({
+      kind: "call_result",
+      result: { outcome: { kind: "completed" } },
+    });
     expect(log.entries).toContainEqual(
       expect.objectContaining({
         level: "warn",
         message: "conversation_core.application_receipt_failed",
-        fields: expect.objectContaining({ conversationId: "conv-1", error: "database is locked" }),
+        fields: expect.objectContaining({
+          conversationId: "conv-1",
+          error: "database is locked",
+        }),
       }),
     );
   });
 
   it("times out a turn that never answers and reports the interruption", async () => {
     const hanging = hangingFactory();
-    const { engine, entries } = engineWith(hanging.factory, { timeoutMs: 20, stallTimeoutMs: 0 });
+    const { engine, entries } = engineWith(hanging.factory, {
+      timeoutMs: 20,
+      stallTimeoutMs: 0,
+    });
     const outcome = await engine.runTurn(request("claude"));
 
     expect(outcome.interruption).toEqual({ reason: "timeout", timeoutMs: 20 });
@@ -213,9 +282,14 @@ describe("core turn engine", () => {
 
   it("keeps a turn whose runtime reports background progress from being taken for stalled", async () => {
     const quiet = hangingFactory();
-    const { engine } = engineWith(quiet.factory, { timeoutMs: 0, stallTimeoutMs: 40 });
+    const { engine } = engineWith(quiet.factory, {
+      timeoutMs: 0,
+      stallTimeoutMs: 40,
+    });
     const controller = new AbortController();
-    const pending = engine.runTurn(request("claude", { signal: controller.signal }));
+    const pending = engine.runTurn(
+      request("claude", { signal: controller.signal }),
+    );
     // A background task's progress, which reaches the runtime outside the turn's event stream.
     const progress = setInterval(() => engine.notifyActivity("conv-1"), 10);
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -229,7 +303,9 @@ describe("core turn engine", () => {
     const hanging = hangingFactory();
     const { engine } = engineWith(hanging.factory);
     const controller = new AbortController();
-    const pending = engine.runTurn(request("claude", { signal: controller.signal }));
+    const pending = engine.runTurn(
+      request("claude", { signal: controller.signal }),
+    );
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort();
     const outcome = await pending;
@@ -248,7 +324,10 @@ describe("core turn engine", () => {
           status: "alive",
           modelSelection: input.modelSelection,
           async sendTurn(turn: ConversationBackendTurnInput) {
-            await turn.onEvent?.({ type: "backend_init", backendRef: { backend: "claude", ref: "sdk-early" } });
+            await turn.onEvent?.({
+              type: "backend_init",
+              backendRef: { backend: "claude", ref: "sdk-early" },
+            });
             expect(announced).toEqual(["sdk-early"]);
             return {
               backendRef: { backend: "claude", ref: "sdk-early" },
@@ -281,13 +360,20 @@ describe("core turn engine", () => {
   });
 
   it("keeps a finished turn when resetting memory delivery after compaction fails", async () => {
-    const { engine } = engineWith(completingFactory({ compacted: true }), undefined, {
-      async onCompacted() {
-        throw new Error("telemetry store unavailable");
+    const { engine } = engineWith(
+      completingFactory({ compacted: true }),
+      undefined,
+      {
+        async onCompacted() {
+          throw new Error("telemetry store unavailable");
+        },
       },
-    });
+    );
     const outcome = await engine.runTurn(request("claude"));
-    expect(outcome).toMatchObject({ kind: "call_result", result: { outcome: { kind: "completed" } } });
+    expect(outcome).toMatchObject({
+      kind: "call_result",
+      result: { outcome: { kind: "completed" } },
+    });
   });
 
   it("reports a turn whose timeouts cannot be read as not started, sending nothing", async () => {
@@ -297,13 +383,18 @@ describe("core turn engine", () => {
         throw new Error("config unreadable");
       },
     });
-    expect(await engine.runTurn(request("claude"))).toMatchObject({ kind: "not_started", reason: "configuration" });
+    expect(await engine.runTurn(request("claude"))).toMatchObject({
+      kind: "not_started",
+      reason: "configuration",
+    });
     expect(deaf.sent()).toBe(0);
   });
 
   it("blocks a conversation whose turn could not verify its child processes stopped, and reports it", async () => {
     const unverified: string[] = [];
-    const factory = completingFactory({ cleanupFailure: "tool child processes may still be running" });
+    const factory = completingFactory({
+      cleanupFailure: "tool child processes may still be running",
+    });
     const { engine, host } = engineWith(factory, undefined, {
       onCleanupUnverified(conversation, message) {
         unverified.push(`${conversation.conversationId}: ${message}`);
@@ -311,14 +402,23 @@ describe("core turn engine", () => {
     });
     await engine.runTurn(request("claude"));
 
-    expect(unverified).toEqual(["conv-1: tool child processes may still be running"]);
-    await expect(host.release("conv-1")).rejects.toThrow(/may still be running/);
-    await expect(host.obtain(conversation("claude"), request("claude").requirements)).rejects.toThrow();
+    expect(unverified).toEqual([
+      "conv-1: tool child processes may still be running",
+    ]);
+    await expect(host.release("conv-1")).rejects.toThrow(
+      /may still be running/,
+    );
+    await expect(
+      host.obtain(conversation("claude"), request("claude").requirements),
+    ).rejects.toThrow();
   });
 
   it("closes a runtime that ignores the abort signal, so a timed-out turn really stops", async () => {
     const deaf = deafFactory();
-    const { engine } = engineWith(deaf.factory, { timeoutMs: 20, stallTimeoutMs: 0 });
+    const { engine } = engineWith(deaf.factory, {
+      timeoutMs: 20,
+      stallTimeoutMs: 0,
+    });
     const outcome = await engine.runTurn(request("claude"));
 
     expect(deaf.closed()).toBe(true);
@@ -330,7 +430,9 @@ describe("core turn engine", () => {
     const { engine } = engineWith(deaf.factory);
     const controller = new AbortController();
     controller.abort();
-    const outcome = await engine.runTurn(request("claude", { signal: controller.signal }));
+    const outcome = await engine.runTurn(
+      request("claude", { signal: controller.signal }),
+    );
 
     expect(outcome).toMatchObject({ kind: "not_started", reason: "cancelled" });
     expect(deaf.sent()).toBe(0);
@@ -341,7 +443,9 @@ describe("core turn engine", () => {
     const { engine } = engineWith(deaf.factory);
     const controller = new AbortController();
     controller.abort("shutdown");
-    expect(await engine.runTurn(request("claude", { signal: controller.signal }))).toMatchObject({
+    expect(
+      await engine.runTurn(request("claude", { signal: controller.signal })),
+    ).toMatchObject({
       kind: "not_started",
       interruption: { reason: "shutdown" },
     });
@@ -351,7 +455,9 @@ describe("core turn engine", () => {
     const hanging = hangingFactory();
     const { engine } = engineWith(hanging.factory);
     const controller = new AbortController();
-    const pending = engine.runTurn(request("claude", { signal: controller.signal }));
+    const pending = engine.runTurn(
+      request("claude", { signal: controller.signal }),
+    );
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort("shutdown");
 
@@ -395,11 +501,17 @@ describe("core turn engine", () => {
         promptText: "<memory-index>…</memory-index>\n\nFix the notice",
         userPromptText: "Fix the notice",
         promptContext: "<memory-index>…</memory-index>",
-        observe: { sending: () => sent.push("sending"), failed: () => sent.push("failed") },
+        observe: {
+          sending: () => sent.push("sending"),
+          failed: () => sent.push("failed"),
+        },
       }),
     );
 
-    expect(inputs[0]).toMatchObject({ userPromptText: "Fix the notice", promptContext: "<memory-index>…</memory-index>" });
+    expect(inputs[0]).toMatchObject({
+      userPromptText: "Fix the notice",
+      promptContext: "<memory-index>…</memory-index>",
+    });
     expect(sent).toEqual(["sending"]);
   });
 
@@ -433,9 +545,20 @@ describe("core turn engine", () => {
         return runtime;
       },
     };
-    const image = { index: 1, mediaType: "image/png", path: "/t/images/1.png", base64Data: "aGk=" };
+    const image = {
+      index: 1,
+      mediaType: "image/png",
+      path: "/t/images/1.png",
+      base64Data: "aGk=",
+    };
     const { engine, entries } = engineWith(factory);
-    await engine.runTurn(request("claude", { promptText: "[Image #1] What is this?", imageRefs: [image], userEntry: null }));
+    await engine.runTurn(
+      request("claude", {
+        promptText: "[Image #1] What is this?",
+        imageRefs: [image],
+        userEntry: null,
+      }),
+    );
 
     expect(inputs[0]?.imageRefs).toEqual([image]);
     expect(entries.filter((entry) => entry.role === "user")).toEqual([]);
@@ -460,7 +583,10 @@ describe("core turn engine", () => {
               status = "dead";
               throw makeUndeliveredPromptFailure();
             }
-            await turn.onEvent?.({ type: "content", block: { type: "text", text: "Delivered." } });
+            await turn.onEvent?.({
+              type: "content",
+              block: { type: "text", text: "Delivered." },
+            });
             return {
               backendRef: { backend: "claude", ref: "sdk-2" },
               costUsd: null,
@@ -488,7 +614,10 @@ describe("core turn engine", () => {
     expect(creations).toBe(2);
     expect(outcome.kind).toBe("call_result");
     if (outcome.kind !== "call_result") throw new Error("unreachable");
-    expect(outcome.result.backendRef).toEqual({ backend: "claude", ref: "sdk-2" });
+    expect(outcome.result.backendRef).toEqual({
+      backend: "claude",
+      ref: "sdk-2",
+    });
   });
 });
 
@@ -548,7 +677,9 @@ function deafFactory() {
   return { factory, closed: () => closed, sent: () => sent };
 }
 
-function completingFactory(extra: { compacted?: boolean; cleanupFailure?: string } = {}): ConversationBackendFactory {
+function completingFactory(
+  extra: { compacted?: boolean; cleanupFailure?: string } = {},
+): ConversationBackendFactory {
   return {
     backend: "claude",
     async createRuntime(input) {
@@ -570,7 +701,12 @@ function completingFactory(extra: { compacted?: boolean; cleanupFailure?: string
             failure: null,
             continuationDisposition: "retain",
             ...(extra.cleanupFailure !== undefined
-              ? { cleanupFailure: { kind: "cleanup_unverified" as const, message: extra.cleanupFailure } }
+              ? {
+                  cleanupFailure: {
+                    kind: "cleanup_unverified" as const,
+                    message: extra.cleanupFailure,
+                  },
+                }
               : {}),
           };
         },

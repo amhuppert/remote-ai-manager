@@ -1,6 +1,18 @@
-import { createConversationManager, type ConversationManager, type ActiveConversationTurnDescription, type ConversationCommandOutcome, type IdleRuntimeRelease } from "./manager";
+import {
+  createConversationManager,
+  type ConversationManager,
+  type ActiveConversationTurnDescription,
+  type ConversationCommandOutcome,
+  type IdleRuntimeRelease,
+} from "./manager";
 import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
-import type { ConversationCheckpointCheck, ConversationCheckpointRequest, ConversationCheckpointStart, ConversationCheckpointReconcile, ConversationCheckpointCancel } from "@/lib/conversation-checkpoints/operation-contract";
+import type {
+  ConversationCheckpointCheck,
+  ConversationCheckpointRequest,
+  ConversationCheckpointStart,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointCancel,
+} from "@/lib/conversation-checkpoints/operation-contract";
 import { createProductionConversationManagerDependencies } from "./production";
 import type {
   ConversationAddress,
@@ -176,7 +188,9 @@ export function stopAllConversationActors(): Promise<void> {
 export function getConversationRuntimeConfiguration(
   conversationId: string,
 ):
-  | Readonly<import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot>
+  | Readonly<
+      import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot
+    >
   | undefined {
   return defaultManager().getConversationRuntimeConfiguration(conversationId);
 }

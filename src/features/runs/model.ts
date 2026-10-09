@@ -71,7 +71,12 @@ export type Remedy =
   | { kind: "retry_advice" }
   | { kind: "rereview" }
   | { kind: "confirm_effect" }
-  | { kind: "grant"; allowance: "unfinishedTaskRetries" | "validationRetries"; used: number; limit: number };
+  | {
+      kind: "grant";
+      allowance: "unfinishedTaskRetries" | "validationRetries";
+      used: number;
+      limit: number;
+    };
 
 export interface ContextHalt {
   kind: ContextHaltKind;
@@ -85,15 +90,35 @@ export interface ContextHalt {
 /** The lifecycle step a context is on, from its obligation. */
 export type ContextStep =
   | { kind: "workspace" }
-  | { kind: "work"; reason: "initial" | "retry" | "steer" | "remediate" | "rework" | "continue" }
+  | {
+      kind: "work";
+      reason:
+        | "initial"
+        | "retry"
+        | "steer"
+        | "remediate"
+        | "rework"
+        | "continue";
+    }
   | { kind: "output" }
-  | { kind: "review"; round: number; roundKind: "full" | "blocking"; reviewersDone: number; reviewersTotal: number }
+  | {
+      kind: "review";
+      round: number;
+      roundKind: "full" | "blocking";
+      reviewersDone: number;
+      reviewersTotal: number;
+    }
   | { kind: "advice" }
   | { kind: "verify" }
   | { kind: "accept" };
 
 export type ContextState =
-  | { kind: "waiting"; dependencies: string[]; provisionLanes: string[]; publicationLanes: string[] }
+  | {
+      kind: "waiting";
+      dependencies: string[];
+      provisionLanes: string[];
+      publicationLanes: string[];
+    }
   | { kind: "skipped"; reason: string }
   | { kind: "running"; step: ContextStep }
   | { kind: "awaiting_answer" }
@@ -104,7 +129,9 @@ export type ContextState =
   | { kind: "succeeded"; at: string }
   | { kind: "cancelled" };
 
-export type ContextPlacement = { kind: "session" } | { kind: "lane"; lane: string };
+export type ContextPlacement =
+  | { kind: "session" }
+  | { kind: "lane"; lane: string };
 
 export interface SeatSummary {
   role: "implementer" | "reviewer";
@@ -131,7 +158,12 @@ export interface RunContext {
   reviewers: SeatSummary[];
   humanApproval: boolean;
   startedAt: string | null;
-  questions: Array<{ questionId: string; seat: string; question: string; askedAt: string }>;
+  questions: Array<{
+    questionId: string;
+    seat: string;
+    question: string;
+    askedAt: string;
+  }>;
 }
 
 /** One stage of the context lifecycle, for the stage track. */
@@ -269,7 +301,14 @@ export interface RunLoop {
   body: string[];
   pass: number;
   maxPasses: number;
-  state: "unstarted" | "skipped" | "running" | "next" | "succeeded" | "exhausted" | "unevaluable";
+  state:
+    | "unstarted"
+    | "skipped"
+    | "running"
+    | "next"
+    | "succeeded"
+    | "exhausted"
+    | "unevaluable";
   until: string;
 }
 
@@ -303,7 +342,13 @@ export interface RunCharter {
   testStrategy: string | null;
   knownAmbiguities: string[];
   invariants: Array<{ id: string; statement: string; appliesTo?: string[] }>;
-  sources: Array<{ rank: number; label: string; locator: string; description: string; appliesTo?: string[] }>;
+  sources: Array<{
+    rank: number;
+    label: string;
+    locator: string;
+    description: string;
+    appliesTo?: string[];
+  }>;
   nonGoals: string[];
 }
 
@@ -333,10 +378,39 @@ export interface ActivityEvent {
 
 /** What needs the person, or the owner, now. */
 export type AttentionItem =
-  | { kind: "approval"; contextKey: string; contextTitle: string; requestedAt: string; reviewersPassed: number }
-  | { kind: "halt"; contextKey: string; contextTitle: string; halt: ContextHaltKind; detail: string; at: string }
-  | { kind: "run_halt"; occurrence: string; halt: RunHaltKind; detail: string; clearedBy: "amend" | "retry_lane" | "cancel" | "resume"; lane?: string; at: string }
-  | { kind: "question"; questionId: string; contextKey: string; contextTitle: string; seat: string; question: string; askedAt: string };
+  | {
+      kind: "approval";
+      contextKey: string;
+      contextTitle: string;
+      requestedAt: string;
+      reviewersPassed: number;
+    }
+  | {
+      kind: "halt";
+      contextKey: string;
+      contextTitle: string;
+      halt: ContextHaltKind;
+      detail: string;
+      at: string;
+    }
+  | {
+      kind: "run_halt";
+      occurrence: string;
+      halt: RunHaltKind;
+      detail: string;
+      clearedBy: "amend" | "retry_lane" | "cancel" | "resume";
+      lane?: string;
+      at: string;
+    }
+  | {
+      kind: "question";
+      questionId: string;
+      contextKey: string;
+      contextTitle: string;
+      seat: string;
+      question: string;
+      askedAt: string;
+    };
 
 export interface RunDetail {
   runId: string;

@@ -51,7 +51,9 @@ export interface ConversationTurnExecutor {
   ): Promise<ConversationTurnExecution>;
 }
 
-export function createWorkflowTaskRunExecutor(lifecycle: ConversationTurnExecutor) {
+export function createWorkflowTaskRunExecutor(
+  lifecycle: ConversationTurnExecutor,
+) {
   return async function executeWorkflowTaskRun(
     input: ExecuteWorkflowTaskRunInput,
     deps: ExecuteWorkflowTaskRunDeps = {},

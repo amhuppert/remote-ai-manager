@@ -5,7 +5,12 @@ import {
   releaseAllowance,
 } from "./allowances";
 import { recordDecision } from "./approval";
-import { currentCandidate, freezeCandidate, retireCurrent, startWorkEpoch } from "./candidates";
+import {
+  currentCandidate,
+  freezeCandidate,
+  retireCurrent,
+  startWorkEpoch,
+} from "./candidates";
 import {
   activeRound,
   parseReviewVerdict,
@@ -53,7 +58,12 @@ export type ContextInput =
       notes?: string;
       decidedAt: string;
     }
-  | { kind: "disposition"; disposition: HaltDisposition; occurrence: string; at: string }
+  | {
+      kind: "disposition";
+      disposition: HaltDisposition;
+      occurrence: string;
+      at: string;
+    }
   | { kind: "amend"; contract: ContextContract; reason: string; at: string }
   | { kind: "reconcile_failed"; detail: string };
 
@@ -563,7 +573,12 @@ function applyDisposition(
       halt: null,
       dispositions: [
         ...facts.control.dispositions,
-        { occurrence: input.occurrence, halt: haltKind, disposition, at: input.at },
+        {
+          occurrence: input.occurrence,
+          halt: haltKind,
+          disposition,
+          at: input.at,
+        },
       ],
     },
   };

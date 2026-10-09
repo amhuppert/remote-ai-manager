@@ -41,7 +41,9 @@ function scopesOverlap(
   const fold = (paths: string[]) => paths.map((p) => p.toLowerCase());
   const right = fold(b);
   return fold(a).some((l) =>
-    right.some((r) => l === r || l.startsWith(`${r}/`) || r.startsWith(`${l}/`)),
+    right.some(
+      (r) => l === r || l.startsWith(`${r}/`) || r.startsWith(`${l}/`),
+    ),
   );
 }
 

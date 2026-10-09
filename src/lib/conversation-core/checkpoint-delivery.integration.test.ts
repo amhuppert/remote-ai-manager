@@ -8,20 +8,32 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ConversationBackendFactory, ConversationBackendCreateInput } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendFactory,
+  ConversationBackendCreateInput,
+} from "@/lib/agent-backends/conversation";
 import { getConversationTranscriptProjection } from "@/lib/agent-backends/conversation-policy";
 import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
-import { FAKE_CLAUDE_HANGING_PROMPT, FAKE_CLAUDE_SESSION_ID } from "@/lib/agent-backends/testing/fake-claude-sdk-port";
+import {
+  FAKE_CLAUDE_HANGING_PROMPT,
+  FAKE_CLAUDE_SESSION_ID,
+} from "@/lib/agent-backends/testing/fake-claude-sdk-port";
 import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
 import {
   createConversationCheckpointsRepo,
   type ConversationCheckpointsRepo,
 } from "@/lib/conversation-checkpoints/repo";
-import type { CheckpointPhase, CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
+import type {
+  CheckpointPhase,
+  CheckpointScopeKey,
+} from "@/lib/conversation-checkpoints/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { checkpointPayload } from "@/lib/supervision/testing/supervision-fixture";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
-import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import {
   createActorDependenciesFixture,
@@ -42,16 +54,28 @@ vi.mock("@/lib/shared/sdk-env", () => ({}));
 const PROJECT = "/repo";
 const SESSION = "session";
 const CHAT = "chat-1";
-const KEY: CheckpointScopeKey = { scope: "session", projectPath: PROJECT, sessionName: SESSION, conversationId: CHAT };
+const KEY: CheckpointScopeKey = {
+  scope: "session",
+  projectPath: PROJECT,
+  sessionName: SESSION,
+  conversationId: CHAT,
+};
 const BASIS = { capturedThroughSeq: 4, sourceHash: "sha256:source" };
 const PAYLOAD = checkpointPayload("op-1", BASIS, "2026-10-03T10:00:00.000Z");
-const enrollment = { conversationId: CHAT, projectPath: PROJECT, sessionName: SESSION, enrolledAt: "2026-10-03T10:00:00.000Z" };
+const enrollment = {
+  conversationId: CHAT,
+  projectPath: PROJECT,
+  sessionName: SESSION,
+  enrolledAt: "2026-10-03T10:00:00.000Z",
+};
 
 let fixture: PersistenceFixture;
 let realRepo: ConversationCheckpointsRepo;
 let closeProvider = () => {};
 
-function unwrap<T>(result: { ok: true; value: T } | { ok: false; refusal: { code: string } }): T {
+function unwrap<T>(
+  result: { ok: true; value: T } | { ok: false; refusal: { code: string } },
+): T {
   if (!result.ok) throw new Error(`refused: ${result.refusal.code}`);
   return result.value;
 }
@@ -70,10 +94,29 @@ beforeEach(async () => {
       backendRef: { backend: "claude", ref: "sdk-retired" },
     }),
   );
-  realRepo = createConversationCheckpointsRepo(fixture.db, createWriteQueue(), fixture.store.checkpointContinuation);
+  realRepo = createConversationCheckpointsRepo(
+    fixture.db,
+    createWriteQueue(),
+    fixture.store.checkpointContinuation,
+  );
   const at = new Date().toISOString();
-  unwrap(await realRepo.admitOperation({ key: KEY, requestId: "op-1", sourceBasis: BASIS, priorBackendRef: "sdk-retired", requestedAt: at }));
-  unwrap(await realRepo.freezePayload({ key: KEY, operationId: "op-1", payload: PAYLOAD, at }));
+  unwrap(
+    await realRepo.admitOperation({
+      key: KEY,
+      requestId: "op-1",
+      sourceBasis: BASIS,
+      priorBackendRef: "sdk-retired",
+      requestedAt: at,
+    }),
+  );
+  unwrap(
+    await realRepo.freezePayload({
+      key: KEY,
+      operationId: "op-1",
+      payload: PAYLOAD,
+      at,
+    }),
+  );
   unwrap(await realRepo.commitReady({ key: KEY, operationId: "op-1", at }));
 });
 afterEach(() => {
@@ -85,7 +128,12 @@ afterEach(() => {
 function reloaded() {
   const store = fixture.recreateStore();
   return {
-    operation: () => createConversationCheckpointsRepo(fixture.db, createWriteQueue(), store.checkpointContinuation).getOperation(KEY, "op-1"),
+    operation: () =>
+      createConversationCheckpointsRepo(
+        fixture.db,
+        createWriteQueue(),
+        store.checkpointContinuation,
+      ).getOperation(KEY, "op-1"),
     row: () => store.getConversation(PROJECT, SESSION, CHAT),
   };
 }
@@ -108,9 +156,15 @@ function rowRecords(): ConversationRecordPort {
           };
     },
     async recordContinuity(_identity, ref) {
-      await fixture.store.mutateConversation(PROJECT, SESSION, CHAT, "test.record_continuity", (row) => {
-        row.backendRef = ref;
-      });
+      await fixture.store.mutateConversation(
+        PROJECT,
+        SESSION,
+        CHAT,
+        "test.record_continuity",
+        (row) => {
+          row.backendRef = ref;
+        },
+      );
     },
     async claimTurn() {},
     async endClaim() {},
@@ -131,10 +185,18 @@ function rowRecords(): ConversationRecordPort {
   };
 }
 
-function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: PassiveSubscriptionContextDependencies } = {}) {
+function harness(
+  options: {
+    repo?: ConversationCheckpointsRepo;
+    subscriptions?: PassiveSubscriptionContextDependencies;
+  } = {},
+) {
   const repo = options.repo ?? realRepo;
   const log = createCapturingLogger();
-  const provider = createScriptedConversationBackend({ backend: "claude", responseText: JSON.stringify({ done: true }) });
+  const provider = createScriptedConversationBackend({
+    backend: "claude",
+    responseText: JSON.stringify({ done: true }),
+  });
   closeProvider = () => provider.close();
   const created: ConversationBackendCreateInput[] = [];
   /** The operation's phase as each send reached the provider. */
@@ -150,7 +212,11 @@ function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: 
       runtime.sendTurn = async (turn) => {
         phaseAtSend.push((await repo.getOperation(KEY, "op-1"))?.phase ?? null);
         if (transport.down) {
-          throw markPromptNotDelivered(new Error("the provider socket closed before the prompt was written"));
+          throw markPromptNotDelivered(
+            new Error(
+              "the provider socket closed before the prompt was written",
+            ),
+          );
         }
         return send(turn);
       };
@@ -159,7 +225,10 @@ function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: 
   };
   const host = createRuntimeHost({
     factory: () => factory,
-    instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
+    instructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+    }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
     beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),
@@ -169,14 +238,19 @@ function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: 
   const engine = createTurnEngine({
     host,
     executeAgentCall,
-    transcript: { async safeAppendTranscriptEntry() {}, async safeAppendTranscriptEntryOnce() {} },
+    transcript: {
+      async safeAppendTranscriptEntry() {},
+      async safeAppendTranscriptEntryOnce() {},
+    },
     projection: getConversationTranscriptProjection,
     timeouts: async () => ({ timeoutMs: 0, stallTimeoutMs: 0 }),
     log,
   });
   const contextDeps = {
     ...groupActorFixtureDependencies(createActorDependenciesFixture()),
-    ...(options.subscriptions !== undefined ? { subscriptions: options.subscriptions } : {}),
+    ...(options.subscriptions !== undefined
+      ? { subscriptions: options.subscriptions }
+      : {}),
   };
   const turns = createInteractiveTurns({
     engine,
@@ -194,10 +268,16 @@ function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: 
       log,
     }),
     worktreeOf: async () => `${PROJECT}/.worktrees/${SESSION}`,
-    resolveModelSelection: async () => ({ modelId: "sonnet", parameters: { effort: "medium" } }),
+    resolveModelSelection: async () => ({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    }),
     prepareInput: (request) => prepareTurnInput(contextDeps, request),
     nameConversation: () => {},
-    requestUserQuestion: async () => ({ status: "answered" as const, answers: {} }),
+    requestUserQuestion: async () => ({
+      status: "answered" as const,
+      answers: {},
+    }),
     persistImages: async ({ promptText }) => ({ promptText, imageRefs: [] }),
     queuedDelivery: () => {
       throw new Error("these messages are sent directly");
@@ -215,7 +295,11 @@ function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: 
     created,
     phaseAtSend,
     provider,
-    send(text: string, attemptId: string, signal = new AbortController().signal) {
+    send(
+      text: string,
+      attemptId: string,
+      signal = new AbortController().signal,
+    ) {
       return turns.run({
         conversationId: CHAT,
         enrollment,
@@ -231,7 +315,9 @@ function harness(options: { repo?: ConversationCheckpointsRepo; subscriptions?: 
 describe("a ready checkpoint carried by a core conversation's next message", () => {
   it("is bound before the send, seeds a fresh runtime, and is applied with the fresh reference", async () => {
     const h = harness();
-    expect(await h.send("What next?", "attempt-1")).toMatchObject({ status: "succeeded" });
+    expect(await h.send("What next?", "attempt-1")).toMatchObject({
+      status: "succeeded",
+    });
 
     expect(h.created).toHaveLength(1);
     expect(h.created[0]?.persistedRef).toBeNull();
@@ -246,22 +332,37 @@ describe("a ready checkpoint carried by a core conversation's next message", () 
       acceptance: { attemptId: "attempt-1", seedHash: PAYLOAD.seedSha256 },
       protectedReferences: { acceptedBackendRef: FAKE_CLAUDE_SESSION_ID },
     });
-    expect((await after.row())?.backendRef).toEqual({ backend: "claude", ref: FAKE_CLAUDE_SESSION_ID });
+    expect((await after.row())?.backendRef).toEqual({
+      backend: "claude",
+      ref: FAKE_CLAUDE_SESSION_ID,
+    });
 
-    expect(await h.send("And then?", "attempt-2")).toMatchObject({ status: "succeeded" });
-    expect(h.created[1]?.persistedRef).toEqual({ backend: "claude", ref: FAKE_CLAUDE_SESSION_ID });
+    expect(await h.send("And then?", "attempt-2")).toMatchObject({
+      status: "succeeded",
+    });
+    expect(h.created[1]?.persistedRef).toEqual({
+      backend: "claude",
+      ref: FAKE_CLAUDE_SESSION_ID,
+    });
     expect(h.provider.userPrompt).not.toContain(PAYLOAD.seedText);
   });
 
   it("returns to ready when the send never reached the provider, and the next message delivers it", async () => {
     const h = harness();
     h.transport.down = true;
-    expect(await h.send("What next?", "attempt-1")).toMatchObject({ status: "failed" });
+    expect(await h.send("What next?", "attempt-1")).toMatchObject({
+      status: "failed",
+    });
     expect(await reloaded().operation()).toMatchObject({ phase: "ready" });
 
     h.transport.down = false;
-    expect(await h.send("What next?", "attempt-2")).toMatchObject({ status: "succeeded" });
-    expect(await reloaded().operation()).toMatchObject({ phase: "applied", acceptance: { attemptId: "attempt-2" } });
+    expect(await h.send("What next?", "attempt-2")).toMatchObject({
+      status: "succeeded",
+    });
+    expect(await reloaded().operation()).toMatchObject({
+      phase: "applied",
+      acceptance: { attemptId: "attempt-2" },
+    });
   });
 
   it("holds the operation for reconciliation when the turn is stopped after its send", async () => {
@@ -292,11 +393,16 @@ describe("a ready checkpoint carried by a core conversation's next message", () 
       },
     };
     const h = harness({ repo });
-    expect(await h.send("What next?", "attempt-1")).toMatchObject({ status: "succeeded" });
+    expect(await h.send("What next?", "attempt-1")).toMatchObject({
+      status: "succeeded",
+    });
     expect(await reloaded().operation()).toMatchObject({ phase: "delivering" });
 
     await h.turns.settleRetained(CHAT);
-    expect(await reloaded().operation()).toMatchObject({ phase: "applied", acceptance: { attemptId: "attempt-1" } });
+    expect(await reloaded().operation()).toMatchObject({
+      phase: "applied",
+      acceptance: { attemptId: "attempt-1" },
+    });
   });
 
   it("writes a receipt that failed after the checkpoint's acceptance was recorded, at the turn's settlement", async () => {
@@ -317,7 +423,9 @@ describe("a ready checkpoint carried by a core conversation's next message", () 
         }),
       },
     });
-    expect(await h.send("What next?", "attempt-1")).toMatchObject({ status: "succeeded" });
+    expect(await h.send("What next?", "attempt-1")).toMatchObject({
+      status: "succeeded",
+    });
 
     expect(await reloaded().operation()).toMatchObject({ phase: "applied" });
     expect(written).toEqual(["briefing"]);

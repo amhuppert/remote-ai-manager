@@ -59,7 +59,9 @@ function harness() {
 }
 describe("subscription source presentation", () => {
   it("names a run by its title, without a page to link", async () => {
-    expect(await harness().read(recipient, { kind: "run", id: "run-1" })).toEqual({
+    expect(
+      await harness().read(recipient, { kind: "run", id: "run-1" }),
+    ).toEqual({
       title: "Fix the notice",
       href: null,
     });

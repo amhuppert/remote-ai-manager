@@ -2276,7 +2276,11 @@ describe("runAsymmetricCollaborationSlice — handing the conversation back", ()
     });
 
     const result = await runAsymmetricCollaborationSlice(
-      baseInput({ primaryAgentBackend: "claude", conversationId: "conv-1", attemptEpoch: 3 }),
+      baseInput({
+        primaryAgentBackend: "claude",
+        conversationId: "conv-1",
+        attemptEpoch: 3,
+      }),
       built.deps,
     );
 

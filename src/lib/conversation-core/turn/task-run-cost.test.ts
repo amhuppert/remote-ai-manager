@@ -4,11 +4,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { costSettlementFrame } from "@/lib/conversations/cost-settlement";
 import { appendTranscriptEntry } from "@/lib/prompt/transcript";
-import { attributeTaskRunCost, readLineageCumulativeCost } from "./task-run-cost";
+import {
+  attributeTaskRunCost,
+  readLineageCumulativeCost,
+} from "./task-run-cost";
 
 const dirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
 });
 
 describe("a task run's cost on its conversation", () => {
@@ -24,7 +29,11 @@ describe("a task run's cost on its conversation", () => {
       }),
     ).toEqual({
       costUsd: expect.closeTo(0.015, 9),
-      settlement: { lineageId: "sess-a", cumulativeCostUsd: 0.193, costUsdDelta: expect.closeTo(0.015, 9) },
+      settlement: {
+        lineageId: "sess-a",
+        cumulativeCostUsd: 0.193,
+        costUsdDelta: expect.closeTo(0.015, 9),
+      },
     });
   });
 
@@ -55,9 +64,21 @@ describe("a task run's cost on its conversation", () => {
         runLineageId: "task_run:att-4",
         previousCumulativeUsd: 0.2,
       }),
-    ).toEqual({ costUsd: 0.3, settlement: { lineageId: "task_run:att-4", cumulativeCostUsd: 0.3, costUsdDelta: 0.3 } });
+    ).toEqual({
+      costUsd: 0.3,
+      settlement: {
+        lineageId: "task_run:att-4",
+        cumulativeCostUsd: 0.3,
+        costUsdDelta: 0.3,
+      },
+    });
     expect(
-      attributeTaskRunCost({ usage: {}, sessionRef: null, runLineageId: "task_run:att-5", previousCumulativeUsd: null }),
+      attributeTaskRunCost({
+        usage: {},
+        sessionRef: null,
+        runLineageId: "task_run:att-5",
+        previousCumulativeUsd: null,
+      }),
     ).toBeNull();
   });
 
@@ -65,9 +86,33 @@ describe("a task run's cost on its conversation", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "cc-task-cost-"));
     dirs.push(dir);
     const at = new Date().toISOString();
-    await appendTranscriptEntry("conv", { timestamp: at, type: "result", raw: { session_id: "sess-a", total_cost_usd: 0.1, num_turns: 1 } }, dir);
-    await appendTranscriptEntry("conv", costSettlementFrame("conv", { lineageId: "sess-a", cumulativeCostUsd: 0.13, costUsdDelta: 0.03 }), dir);
-    await appendTranscriptEntry("conv", { timestamp: at, type: "result", raw: { session_id: "sess-b", total_cost_usd: 9, num_turns: 1 } }, dir);
+    await appendTranscriptEntry(
+      "conv",
+      {
+        timestamp: at,
+        type: "result",
+        raw: { session_id: "sess-a", total_cost_usd: 0.1, num_turns: 1 },
+      },
+      dir,
+    );
+    await appendTranscriptEntry(
+      "conv",
+      costSettlementFrame("conv", {
+        lineageId: "sess-a",
+        cumulativeCostUsd: 0.13,
+        costUsdDelta: 0.03,
+      }),
+      dir,
+    );
+    await appendTranscriptEntry(
+      "conv",
+      {
+        timestamp: at,
+        type: "result",
+        raw: { session_id: "sess-b", total_cost_usd: 9, num_turns: 1 },
+      },
+      dir,
+    );
     expect(await readLineageCumulativeCost("conv", "sess-a", dir)).toBe(0.13);
     expect(await readLineageCumulativeCost("conv", "sess-x", dir)).toBeNull();
   });

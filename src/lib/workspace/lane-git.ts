@@ -3,7 +3,10 @@ import type { GitClient } from "@/lib/git/client";
 import { inspectInProgressMerge } from "@/lib/git/conflict-markers";
 import { createOwnedLandingOperations } from "@/lib/git/owned-landing";
 import { createWorktreeOperations } from "@/lib/git/worktree";
-import type { FrozenLaneProvisioner, ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import type {
+  FrozenLaneProvisioner,
+  ParallelWorktrees,
+} from "@/lib/workflow-graph/parallel-worktrees";
 
 /**
  * The Git effects of isolated lanes, behind one port so the Workspace executor
@@ -52,7 +55,9 @@ export interface LaneGit {
    * resolved merge, and one whose state cannot be read, are somebody's work
    * and are kept.
    */
-  abortUnresolvedMerge(worktreePath: string): Promise<"aborted" | "kept" | "none">;
+  abortUnresolvedMerge(
+    worktreePath: string,
+  ): Promise<"aborted" | "kept" | "none">;
   /** Whether a merge is in progress in the worktree. */
   mergeInProgress(worktreePath: string): Promise<boolean>;
   /**
@@ -73,7 +78,10 @@ export interface LaneGit {
    */
   unlandedPaths(worktreePath: string): Promise<string[]>;
   /** Resets index entries of `paths` (every path when null) to HEAD, leaving files alone. */
-  resyncIndex(input: { worktreePath: string; paths: string[] | null }): Promise<void>;
+  resyncIndex(input: {
+    worktreePath: string;
+    paths: string[] | null;
+  }): Promise<void>;
   /** The session's Git lock CC's own commit and merge jobs take, if it is free now. */
   trySessionLock(projectPath: string, sessionName: string): (() => void) | null;
   /**
@@ -170,7 +178,12 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
 
   async function dirtyPaths(worktreePath: string): Promise<string[]> {
     return parseStatusPaths(
-      await git(worktreePath, ["status", "--porcelain", "-z", "--untracked-files=all"]),
+      await git(worktreePath, [
+        "status",
+        "--porcelain",
+        "-z",
+        "--untracked-files=all",
+      ]),
     );
   }
 
@@ -182,11 +195,25 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
    * Files on disk at paths Git starts tracking between `from` and `to`, which
    * moving the worktree would overwrite. Status never shows them when ignored.
    */
-  async function replacedUntracked(worktreePath: string, from: string, to: string): Promise<string[]> {
-    const added = await git(worktreePath, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=A", from, to]);
+  async function replacedUntracked(
+    worktreePath: string,
+    from: string,
+    to: string,
+  ): Promise<string[]> {
+    const added = await git(worktreePath, [
+      "diff",
+      "--name-only",
+      "-z",
+      "--no-renames",
+      "--diff-filter=A",
+      from,
+      to,
+    ]);
     return added
       .split("\0")
-      .filter((file) => file.length > 0 && deps.exists(path.join(worktreePath, file)))
+      .filter(
+        (file) => file.length > 0 && deps.exists(path.join(worktreePath, file)),
+      )
       .sort();
   }
 
@@ -201,14 +228,26 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
 
   return {
     async head(projectPath, branch) {
-      return (await git(projectPath, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`])).trim();
+      return (
+        await git(projectPath, [
+          "rev-parse",
+          "--verify",
+          `refs/heads/${branch}^{commit}`,
+        ])
+      ).trim();
     },
 
     async provision(input) {
       const readyMarker = async () =>
         path.resolve(
           input.worktreePath,
-          (await git(input.worktreePath, ["rev-parse", "--git-path", LANE_READY])).trim(),
+          (
+            await git(input.worktreePath, [
+              "rev-parse",
+              "--git-path",
+              LANE_READY,
+            ])
+          ).trim(),
         );
       if (deps.exists(input.worktreePath) && !deps.exists(await readyMarker()))
         throw new Error(
@@ -226,22 +265,32 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
         { worktreePath: input.worktreePath, branchName: input.branch },
       );
       await deps.writeFile(await readyMarker(), "ready\n");
-      return { baseline: (await git(input.worktreePath, ["rev-parse", "HEAD"])).trim() };
+      return {
+        baseline: (await git(input.worktreePath, ["rev-parse", "HEAD"])).trim(),
+      };
     },
 
     async land({ worktreePath, paths, message }) {
-      const headOf = async () => (await git(worktreePath, ["rev-parse", "HEAD"])).trim();
+      const headOf = async () =>
+        (await git(worktreePath, ["rev-parse", "HEAD"])).trim();
       if (paths !== null) {
         // Other members may have work in progress elsewhere in the lane: a private index stages only the scope.
-        const result = await landing.commitOwnedPaths({ worktreePath, message, ownedPaths: paths });
+        const result = await landing.commitOwnedPaths({
+          worktreePath,
+          message,
+          ownedPaths: paths,
+        });
         return result.status === "committed"
           ? { kind: "committed", commit: result.hash }
           : { kind: "unchanged", head: await headOf() };
       }
       // A full scope owns the whole lane, and nothing else uses it while it lands.
       await git(worktreePath, ["add", "-A"]);
-      const staged = (await git(worktreePath, ["diff", "--cached", "--name-only"])).trim();
-      if (staged.length === 0) return { kind: "unchanged", head: await headOf() };
+      const staged = (
+        await git(worktreePath, ["diff", "--cached", "--name-only"])
+      ).trim();
+      if (staged.length === 0)
+        return { kind: "unchanged", head: await headOf() };
       await git(worktreePath, ["commit", "--no-verify", "-m", message]);
       return { kind: "committed", commit: await headOf() };
     },
@@ -277,7 +326,14 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
 
     async mergeInto({ worktreePath, commit, message }) {
       try {
-        await git(worktreePath, ["merge", "--no-ff", "--no-verify", "-m", message, commit]);
+        await git(worktreePath, [
+          "merge",
+          "--no-ff",
+          "--no-verify",
+          "-m",
+          message,
+          commit,
+        ]);
         return { kind: "merged" };
       } catch (error) {
         const files = (
@@ -287,7 +343,12 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
           .map((line) => line.trim())
           .filter((line) => line.length > 0);
         try {
-          await git(worktreePath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+          await git(worktreePath, [
+            "rev-parse",
+            "-q",
+            "--verify",
+            "MERGE_HEAD",
+          ]);
           await git(worktreePath, ["merge", "--abort"]);
         } catch {
           // No merge in progress: the merge refused before starting.
@@ -302,7 +363,14 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
     unlandedPaths,
 
     async resyncIndex({ worktreePath, paths }) {
-      await git(worktreePath, ["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...(paths ?? ["."])]);
+      await git(worktreePath, [
+        "--literal-pathspecs",
+        "reset",
+        "-q",
+        "HEAD",
+        "--",
+        ...(paths ?? ["."]),
+      ]);
     },
 
     trySessionLock(projectPath, sessionName) {
@@ -317,7 +385,11 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
 
     async publish(input) {
       const checkedOut = (
-        await git(input.targetWorktreePath, ["symbolic-ref", "-q", "HEAD"]).catch(() => "")
+        await git(input.targetWorktreePath, [
+          "symbolic-ref",
+          "-q",
+          "HEAD",
+        ]).catch(() => "")
       ).trim();
       if (checkedOut !== `refs/heads/${input.targetBranch}`)
         return {
@@ -325,7 +397,11 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
           detail: `The session worktree has ${checkedOut === "" ? "a detached HEAD" : checkedOut.replace(/^refs\/heads\//, "branch ")} checked out, not branch ${input.targetBranch}. Check out ${input.targetBranch} again, then ask for a new attempt.`,
         };
       const head = (
-        await git(input.projectPath, ["rev-parse", "--verify", `refs/heads/${input.targetBranch}^{commit}`])
+        await git(input.projectPath, [
+          "rev-parse",
+          "--verify",
+          `refs/heads/${input.targetBranch}^{commit}`,
+        ])
       ).trim();
       if (head !== input.expectedHead) return { kind: "stale", head };
       if (await mergeInProgress(input.targetWorktreePath))
@@ -340,17 +416,30 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
           detail: `The session worktree has changes publication would overwrite or leave behind: ${dirty.join(", ")}. Commit or remove them, then ask for a new attempt.`,
         };
       const laneHead = (
-        await git(input.projectPath, ["rev-parse", "--verify", `refs/heads/${input.laneBranch}^{commit}`])
+        await git(input.projectPath, [
+          "rev-parse",
+          "--verify",
+          `refs/heads/${input.laneBranch}^{commit}`,
+        ])
       ).trim();
       try {
-        await git(input.projectPath, ["merge-base", "--is-ancestor", input.expectedHead, laneHead]);
+        await git(input.projectPath, [
+          "merge-base",
+          "--is-ancestor",
+          input.expectedHead,
+          laneHead,
+        ]);
       } catch {
         return {
           kind: "failed",
           detail: `The lane does not contain the session head ${input.expectedHead} its checks ran against; it would publish a merge nothing checked.`,
         };
       }
-      const replaced = await replacedUntracked(input.targetWorktreePath, input.expectedHead, laneHead);
+      const replaced = await replacedUntracked(
+        input.targetWorktreePath,
+        input.expectedHead,
+        laneHead,
+      );
       if (replaced.length > 0)
         return {
           kind: "blocked",
@@ -381,28 +470,45 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
       });
       if (published.kind === "cas-lost")
         return { kind: "stale", head: published.actualTargetSha };
-      if (published.kind === "publish-failed") return { kind: "failed", detail: published.error };
+      if (published.kind === "publish-failed")
+        return { kind: "failed", detail: published.error };
       if (published.refreshWarning !== undefined)
-        return { kind: "refresh_failed", commit: published.mergeHash, detail: published.refreshWarning };
+        return {
+          kind: "refresh_failed",
+          commit: published.mergeHash,
+          detail: published.refreshWarning,
+        };
       return { kind: "published", commit: published.mergeHash };
     },
 
     async completePublication({ targetWorktreePath, from, to }) {
-      const head = (await git(targetWorktreePath, ["rev-parse", "HEAD"])).trim();
+      const head = (
+        await git(targetWorktreePath, ["rev-parse", "HEAD"])
+      ).trim();
       if (head !== to) return "diverged";
       const holds = async (commit: string): Promise<boolean> => {
         try {
           await git(targetWorktreePath, ["diff", "--quiet", commit]);
-          await git(targetWorktreePath, ["diff", "--quiet", "--cached", commit]);
+          await git(targetWorktreePath, [
+            "diff",
+            "--quiet",
+            "--cached",
+            commit,
+          ]);
         } catch {
           return false;
         }
-        const untracked = await git(targetWorktreePath, ["ls-files", "--others", "--exclude-standard"]);
+        const untracked = await git(targetWorktreePath, [
+          "ls-files",
+          "--others",
+          "--exclude-standard",
+        ]);
         return untracked.trim().length === 0;
       };
       if (await holds(to)) return "complete";
       if (!(await holds(from))) return "diverged";
-      if ((await replacedUntracked(targetWorktreePath, from, to)).length > 0) return "diverged";
+      if ((await replacedUntracked(targetWorktreePath, from, to)).length > 0)
+        return "diverged";
       // Exactly the old tree: the refresh the publication owed and never made.
       await git(targetWorktreePath, ["reset", "-q", "--hard", to]);
       return "refreshed";
@@ -411,14 +517,25 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
     async remove({ projectPath, worktreePath, branch, published }) {
       const unlanded = await unlandedPaths(worktreePath);
       if (unlanded.length > 0)
-        return { kind: "kept", detail: `${worktreePath} holds changes: ${unlanded.join(", ")}` };
+        return {
+          kind: "kept",
+          detail: `${worktreePath} holds changes: ${unlanded.join(", ")}`,
+        };
       // A publication squashes the lane onto a head it contains, so its tree is the lane's.
-      const tree = async (revision: string) => (await git(worktreePath, ["rev-parse", `${revision}^{tree}`])).trim();
+      const tree = async (revision: string) =>
+        (await git(worktreePath, ["rev-parse", `${revision}^{tree}`])).trim();
       const expected = await tree(published);
       for (const revision of ["HEAD", `refs/heads/${branch}`])
         if ((await tree(revision)) !== expected)
-          return { kind: "kept", detail: `${revision} in ${worktreePath} holds work beyond the publication ${published}` };
-      const result = await deps.worktrees.disposeLane({ projectPath, worktreePath, branchName: branch });
+          return {
+            kind: "kept",
+            detail: `${revision} in ${worktreePath} holds work beyond the publication ${published}`,
+          };
+      const result = await deps.worktrees.disposeLane({
+        projectPath,
+        worktreePath,
+        branchName: branch,
+      });
       if (result.status === "failed") throw new Error(result.reason);
       return { kind: "removed" };
     },

@@ -1,6 +1,10 @@
 "use client";
 
-import { AlertTriangleIcon, ArrowUpRightIcon, RefreshIcon } from "@/components/icons";
+import {
+  AlertTriangleIcon,
+  ArrowUpRightIcon,
+  RefreshIcon,
+} from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
@@ -35,7 +39,11 @@ function Item({
       <span
         className={cn(
           "shrink-0",
-          tone === "red" ? "text-red" : tone === "amber" ? "text-amber" : "text-text-tertiary",
+          tone === "red"
+            ? "text-red"
+            : tone === "amber"
+              ? "text-amber"
+              : "text-text-tertiary",
         )}
       >
         {icon}
@@ -44,11 +52,14 @@ function Item({
         <span className="min-w-0 font-mono text-[0.78rem] font-medium text-text-primary max-640:whitespace-normal">
           {title}
         </span>
-        <span className="min-w-0 break-words font-mono text-[0.72rem] leading-relaxed text-text-secondary">
+        <span className="min-w-0 font-mono text-[0.72rem] leading-relaxed break-words text-text-secondary">
           {detail}
         </span>
       </div>
-      <time dateTime={at} className="shrink-0 font-mono text-[0.7rem] text-text-tertiary max-640:hidden">
+      <time
+        dateTime={at}
+        className="shrink-0 font-mono text-[0.7rem] text-text-tertiary max-640:hidden"
+      >
         {formatLocalTime(at)}
       </time>
       <div className="shrink-0">{action}</div>
@@ -71,7 +82,10 @@ export function AttentionPanel({
   actions: AttentionActions;
 }) {
   const yours = items.filter((item) => item.kind !== "question");
-  const owners = items.filter((item): item is Extract<AttentionItem, { kind: "question" }> => item.kind === "question");
+  const owners = items.filter(
+    (item): item is Extract<AttentionItem, { kind: "question" }> =>
+      item.kind === "question",
+  );
   if (items.length === 0) return null;
   return (
     <div className="flex flex-col gap-md">
@@ -81,8 +95,12 @@ export function AttentionPanel({
           className="overflow-hidden rounded-lg border border-solid border-[var(--cc-amber-a25)] bg-bg-surface shadow-[0_0_24px_var(--cc-amber-a04)]"
         >
           <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-[var(--cc-amber-a18)] bg-[var(--cc-amber-a08)] px-lg py-[8px]">
-            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-amber uppercase">Needs you</span>
-            <span className="font-mono text-[0.7rem] text-amber">{yours.length}</span>
+            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-amber uppercase">
+              Needs you
+            </span>
+            <span className="font-mono text-[0.7rem] text-amber">
+              {yours.length}
+            </span>
           </div>
           <ul className="m-0 list-none p-0">
             {yours.map((item) => {
@@ -95,14 +113,23 @@ export function AttentionPanel({
                       tone="red"
                       title={
                         <>
-                          <span className="text-text-tertiary">{item.contextKey} · </span>
+                          <span className="text-text-tertiary">
+                            {item.contextKey} ·{" "}
+                          </span>
                           {haltTitle(item.halt)}
                         </>
                       }
                       detail={item.detail}
                       at={item.at}
                       action={
-                        <Button touch size="sm" variant="default" onClick={() => actions.onSelectContext(item.contextKey)}>
+                        <Button
+                          touch
+                          size="sm"
+                          variant="default"
+                          onClick={() =>
+                            actions.onSelectContext(item.contextKey)
+                          }
+                        >
                           Resolve
                         </Button>
                       }
@@ -116,14 +143,23 @@ export function AttentionPanel({
                       tone="amber"
                       title={
                         <>
-                          <span className="text-text-tertiary">{item.contextKey} · </span>
+                          <span className="text-text-tertiary">
+                            {item.contextKey} ·{" "}
+                          </span>
                           Awaiting your approval
                         </>
                       }
                       detail={`${item.contextTitle} · ${item.reviewersPassed} ${item.reviewersPassed === 1 ? "reviewer" : "reviewers"} passed`}
                       at={item.requestedAt}
                       action={
-                        <Button touch size="sm" variant="primary" onClick={() => actions.onSelectContext(item.contextKey)}>
+                        <Button
+                          touch
+                          size="sm"
+                          variant="primary"
+                          onClick={() =>
+                            actions.onSelectContext(item.contextKey)
+                          }
+                        >
                           Review
                         </Button>
                       }
@@ -146,14 +182,30 @@ export function AttentionPanel({
                       at={item.at}
                       action={
                         item.clearedBy === "resume" ? (
-                          <Button touch size="sm" onClick={actions.onResume}><RefreshIcon size={13} />Resume</Button>
-                        ) : item.clearedBy === "retry_lane" && item.lane !== undefined ? (
-                          <Button touch size="sm" variant="default" onClick={() => actions.onRetryLane(item.lane ?? "")}>
+                          <Button touch size="sm" onClick={actions.onResume}>
+                            <RefreshIcon size={13} />
+                            Resume
+                          </Button>
+                        ) : item.clearedBy === "retry_lane" &&
+                          item.lane !== undefined ? (
+                          <Button
+                            touch
+                            size="sm"
+                            variant="default"
+                            onClick={() => actions.onRetryLane(item.lane ?? "")}
+                          >
                             <RefreshIcon size={13} />
                             Retry lane
                           </Button>
                         ) : item.clearedBy === "amend" ? (
-                          <Button touch size="sm" variant="ghost" onClick={() => actions.onOpenConversation(owner.conversationId)}>
+                          <Button
+                            touch
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              actions.onOpenConversation(owner.conversationId)
+                            }
+                          >
                             Open owner
                             <ArrowUpRightIcon size={12} />
                           </Button>
@@ -167,12 +219,17 @@ export function AttentionPanel({
         </section>
       ) : null}
       {owners.length > 0 ? (
-        <section aria-label="With the owner" className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface">
+        <section
+          aria-label="With the owner"
+          className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
+        >
           <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-base px-lg py-[8px]">
             <span className="font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">
               With {owner.title}
             </span>
-            <span className="font-mono text-[0.7rem] text-text-tertiary">{owners.length}</span>
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
+              {owners.length}
+            </span>
           </div>
           <ul className="m-0 list-none p-0">
             {owners.map((item) => (
@@ -182,14 +239,23 @@ export function AttentionPanel({
                 tone="amber"
                 title={
                   <>
-                    <span className="text-text-tertiary">{item.contextKey} · </span>
+                    <span className="text-text-tertiary">
+                      {item.contextKey} ·{" "}
+                    </span>
                     {item.question}
                   </>
                 }
                 detail={`The ${item.seat} asked; the owner answers or asks you.`}
                 at={item.askedAt}
                 action={
-                  <Button touch size="sm" variant="ghost" onClick={() => actions.onOpenConversation(owner.conversationId)}>
+                  <Button
+                    touch
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      actions.onOpenConversation(owner.conversationId)
+                    }
+                  >
                     Open owner
                     <ArrowUpRightIcon size={12} />
                   </Button>

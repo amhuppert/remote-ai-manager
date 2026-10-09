@@ -75,7 +75,10 @@ import {
   type CoreConversationPromptDeps,
   type CoreConversationPrompts,
 } from "@/lib/conversation-core/prompt-route";
-import { adoptCoreConversationBackend, coreOwnsConversation } from "@/lib/supervision/handles";
+import {
+  adoptCoreConversationBackend,
+  coreOwnsConversation,
+} from "@/lib/supervision/handles";
 
 const logger = createLogger("prompt");
 
@@ -400,13 +403,19 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     body: RunPromptRequest;
     trimmedPrompt: string;
   }): Promise<Response> {
-    const { name, projectPath, sessionName, conversationId, body, trimmedPrompt } = args;
+    const {
+      name,
+      projectPath,
+      sessionName,
+      conversationId,
+      body,
+      trimmedPrompt,
+    } = args;
     const brief = stripCollabPrefix(trimmedPrompt).trim();
     if (brief.length === 0) {
       return NextResponse.json(
         {
-          error:
-            "/collab prompt must include a brief after the slash command",
+          error: "/collab prompt must include a brief after the slash command",
           code: "COLLAB_BRIEF_REQUIRED",
         } satisfies ApiError,
         { status: 400 },
@@ -575,10 +584,17 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       const trimmedCorePrompt = coreBody.prompt.trim();
       if (hasCollabPrefix(trimmedCorePrompt)) {
         const refused =
-          (await commandRequestRefusal(trimmedCorePrompt, coreBody.backend ?? conversation.agentBackend)) ??
+          (await commandRequestRefusal(
+            trimmedCorePrompt,
+            coreBody.backend ?? conversation.agentBackend,
+          )) ??
           (await deps.coreConversations.admitCollaboration({
             projectPath,
-            target: sessionConversationTarget(name, sessionName, conversationId),
+            target: sessionConversationTarget(
+              name,
+              sessionName,
+              conversationId,
+            ),
             conversation,
             body: coreBody,
           }));
@@ -629,7 +645,14 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     );
     if (commandRefusal) return commandRefusal;
     if (hasCollabPrefix(trimmedPrompt)) {
-      return startCollaborationFromPrompt({ name, projectPath, sessionName, conversationId, body, trimmedPrompt });
+      return startCollaborationFromPrompt({
+        name,
+        projectPath,
+        sessionName,
+        conversationId,
+        body,
+        trimmedPrompt,
+      });
     }
 
     // Admission is the moment the turn generation moves — before the transcript

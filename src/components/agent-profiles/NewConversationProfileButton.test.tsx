@@ -52,7 +52,10 @@ const LISTING: AgentProfileLibraryListing = {
   diagnostics: [],
 };
 
-function renderButton(onCreate = vi.fn(), onCreateCore?: (profile: unknown) => void) {
+function renderButton(
+  onCreate = vi.fn(),
+  onCreateCore?: (profile: unknown) => void,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -129,12 +132,23 @@ describe("NewConversationProfileButton", () => {
     const onCreateCore = vi.fn();
     const { onCreate } = renderButton(vi.fn(), onCreateCore);
 
-    await user.click(screen.getByRole("button", { name: /choose an agent profile/i }));
-    await user.click(await screen.findByRole("combobox", { name: /agent profile/i }));
-    await user.click(await screen.findByRole("option", { name: /House Style/ }));
-    await user.click(screen.getByRole("button", { name: /create core conversation/i }));
+    await user.click(
+      screen.getByRole("button", { name: /choose an agent profile/i }),
+    );
+    await user.click(
+      await screen.findByRole("combobox", { name: /agent profile/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /House Style/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /create core conversation/i }),
+    );
 
-    expect(onCreateCore).toHaveBeenCalledWith({ tier: "project", id: "house-style" });
+    expect(onCreateCore).toHaveBeenCalledWith({
+      tier: "project",
+      id: "house-style",
+    });
     expect(onCreate).not.toHaveBeenCalled();
   });
 
@@ -142,8 +156,12 @@ describe("NewConversationProfileButton", () => {
     const user = userEvent.setup();
     renderButton();
 
-    await user.click(screen.getByRole("button", { name: /choose an agent profile/i }));
+    await user.click(
+      screen.getByRole("button", { name: /choose an agent profile/i }),
+    );
     await screen.findByRole("button", { name: /^create conversation$/i });
-    expect(screen.queryByRole("button", { name: /create core conversation/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /create core conversation/i }),
+    ).toBeNull();
   });
 });

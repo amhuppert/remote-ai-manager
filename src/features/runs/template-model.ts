@@ -88,7 +88,12 @@ export interface Template {
   globals: { [K in ConfigKey]: ConfigBlock[K]["value"] };
   contexts: TemplateContext[];
   lanes: Array<{ key: string; checks: string[] }>;
-  loops: Array<{ key: string; body: string[]; maxPasses: number; until: string }>;
+  loops: Array<{
+    key: string;
+    body: string[];
+    maxPasses: number;
+    until: string;
+  }>;
 }
 
 export interface CatalogOption {

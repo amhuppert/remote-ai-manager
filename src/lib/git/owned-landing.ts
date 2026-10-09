@@ -185,7 +185,9 @@ export function createOwnedLandingOperations(
   }
 
   /** The paths whose working files differ from HEAD, judged the same way. */
-  async function worktreeChangesFromHead(worktreePath: string): Promise<string[]> {
+  async function worktreeChangesFromHead(
+    worktreePath: string,
+  ): Promise<string[]> {
     const candidates = await nominees(worktreePath);
     if (candidates.length === 0) return [];
     return withNomineesStaged(worktreePath, candidates, async (indexFile) =>

@@ -6,13 +6,16 @@ const logger = createLogger("runtime-registry");
 
 // One registry per process: the build loads this module once for the boot-time
 // supervision, which registers core turns' runtimes, and again for routes.
-const { runtimes, receiptOwners } = getGlobalSingleton("__cc_runtime_registry", () => ({
-  runtimes: new Map<string, ConversationBackendRuntime>(),
-  receiptOwners: new WeakMap<
-    ConversationBackendRuntime,
-    (finish: () => Promise<void>) => boolean
-  >(),
-}));
+const { runtimes, receiptOwners } = getGlobalSingleton(
+  "__cc_runtime_registry",
+  () => ({
+    runtimes: new Map<string, ConversationBackendRuntime>(),
+    receiptOwners: new WeakMap<
+      ConversationBackendRuntime,
+      (finish: () => Promise<void>) => boolean
+    >(),
+  }),
+);
 
 export function registerRuntime(
   conversationId: string,
@@ -55,7 +58,10 @@ export function unregisterRuntime(
 }
 
 /** The registry as a runtime host indexes the runtimes it holds; no receipt owner. */
-export const runtimeRegistryIndex = { register: registerRuntime, unregister: unregisterRuntime };
+export const runtimeRegistryIndex = {
+  register: registerRuntime,
+  unregister: unregisterRuntime,
+};
 
 /** Reset state for testing */
 export function _resetForTesting(): void {

@@ -194,7 +194,10 @@ describe("workspace executor", () => {
     open();
     captureGate = null;
     await executor.drain();
-    expect(executor.outcome(first.cause)).toEqual({ kind: "settled", outcome: { kind: "bound" } });
+    expect(executor.outcome(first.cause)).toEqual({
+      kind: "settled",
+      outcome: { kind: "bound" },
+    });
     expect(executor.outcome(second.cause)).toEqual({ kind: "queued" });
   });
 
@@ -311,11 +314,19 @@ describe("workspace executor", () => {
           repo.updateOperation(cause, change);
         },
       },
-      log: { info: () => {}, warn: () => {}, error: (event) => errors.push(event) },
+      log: {
+        info: () => {},
+        warn: () => {},
+        error: (event) => errors.push(event),
+      },
     });
     await run(
       executor,
-      intent("ctx-a", { kind: "bind", bindingId: "ctx-a", binding: binding({ mode: "full" }) }),
+      intent("ctx-a", {
+        kind: "bind",
+        bindingId: "ctx-a",
+        binding: binding({ mode: "full" }),
+      }),
     );
     failedSettles = 2;
     const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ctx-a" });
@@ -442,8 +453,19 @@ describe("workspace executor", () => {
   it("leaves an operation unadmitted when its permit closes while it waits for a grant, and runs it after resubmission", async () => {
     const admission = createWorkspaceAdmission();
     const executor = newExecutor(admission);
-    await run(executor, intent("ctx-a", { kind: "bind", bindingId: "ctx-a", binding: binding({ mode: "full" }) }));
-    const blocker = admission.tryAcquire({ worktree, kind: "git", holder: "merge" });
+    await run(
+      executor,
+      intent("ctx-a", {
+        kind: "bind",
+        bindingId: "ctx-a",
+        binding: binding({ mode: "full" }),
+      }),
+    );
+    const blocker = admission.tryAcquire({
+      worktree,
+      kind: "git",
+      holder: "merge",
+    });
     if (blocker === null) throw new Error("no blocker");
     const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ctx-a" });
     await executor.submit(freeze);
@@ -460,16 +482,35 @@ describe("workspace executor", () => {
     const permit = permits.reopen("context:ctx-a", now);
     await executor.submit({ ...freeze, permit });
     await executor.drain();
-    expect(executor.outcome(freeze.cause)).toMatchObject({ kind: "settled", outcome: { kind: "frozen" } });
+    expect(executor.outcome(freeze.cause)).toMatchObject({
+      kind: "settled",
+      outcome: { kind: "frozen" },
+    });
   });
 
   it("withdraws an operation still waiting for its grant without running it", async () => {
     const admission = createWorkspaceAdmission();
     const executor = newExecutor(admission);
-    await run(executor, intent("ctx-a", { kind: "bind", bindingId: "ctx-a", binding: binding({ mode: "full" }) }));
-    const blocker = admission.tryAcquire({ worktree, kind: "git", holder: "merge" });
+    await run(
+      executor,
+      intent("ctx-a", {
+        kind: "bind",
+        bindingId: "ctx-a",
+        binding: binding({ mode: "full" }),
+      }),
+    );
+    const blocker = admission.tryAcquire({
+      worktree,
+      kind: "git",
+      holder: "merge",
+    });
     if (blocker === null) throw new Error("no blocker");
-    const check = intent("ctx-a", { kind: "check", bindingId: "ctx-a", command: "test", evidence: content });
+    const check = intent("ctx-a", {
+      kind: "check",
+      bindingId: "ctx-a",
+      command: "test",
+      evidence: content,
+    });
     await executor.submit(check);
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -485,7 +526,10 @@ describe("workspace executor", () => {
   it("refuses an operation on a binding it does not know, instead of failing on every drain", async () => {
     const executor = newExecutor();
     const freeze = intent("ctx-a", { kind: "freeze", bindingId: "ghost" });
-    expect(await run(executor, freeze)).toMatchObject({ kind: "refused", detail: "Unknown workspace binding ghost" });
+    expect(await run(executor, freeze)).toMatchObject({
+      kind: "refused",
+      detail: "Unknown workspace binding ghost",
+    });
   });
 
   it("returns queued work to the queue after a restart and runs it again", async () => {

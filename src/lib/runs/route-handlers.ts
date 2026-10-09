@@ -43,7 +43,12 @@ import {
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import { frozenKeys, writtenEntry } from "./amendment";
-import type { RunCharter, RunDefinitionContext, RunDocumentRevision, RunRecord } from "./schemas";
+import type {
+  RunCharter,
+  RunDefinitionContext,
+  RunDocumentRevision,
+  RunRecord,
+} from "./schemas";
 import {
   withCurrentDocuments,
   type DocumentIssue,
@@ -104,12 +109,18 @@ export interface RunRouteDeps {
     requests: readonly RunDocumentRequest[],
     worktreePath: string,
     current?: readonly RunDocumentRevision[],
-  ): Promise<{ ok: true; documents: ProposedDocument[] } | { ok: false; issues: DocumentIssue[] }>;
+  ): Promise<
+    | { ok: true; documents: ProposedDocument[] }
+    | { ok: false; issues: DocumentIssue[] }
+  >;
   /** Freezes a file a seat publishes, read inside its working directory, with its path relative to it. */
   snapshotFile(
     worktreePath: string,
     file: string,
-  ): Promise<{ ok: true; path: string; artifactId: string; bytes: number } | { ok: false; message: string }>;
+  ): Promise<
+    | { ok: true; path: string; artifactId: string; bytes: number }
+    | { ok: false; message: string }
+  >;
   /** Renders and freezes the charter's bundles. */
   freezeCharter(charter: RunCharter): Promise<FrozenCharter>;
   log: Pick<Logger, "info" | "warn" | "error">;
@@ -226,8 +237,12 @@ async function freezeDocuments(
   requests: readonly RunDocumentRequest[] | undefined,
   worktreePath: string,
   current?: readonly RunDocumentRevision[],
-): Promise<{ ok: true; documents: ProposedDocument[] } | { ok: false; response: Response }> {
-  if (requests === undefined || requests.length === 0) return { ok: true, documents: [] };
+): Promise<
+  | { ok: true; documents: ProposedDocument[] }
+  | { ok: false; response: Response }
+> {
+  if (requests === undefined || requests.length === 0)
+    return { ok: true, documents: [] };
   const frozen = await deps.snapshotDocuments(requests, worktreePath, current);
   if (frozen.ok) return frozen;
   return {
@@ -235,7 +250,10 @@ async function freezeDocuments(
     response: NextResponse.json(
       {
         error: "Invalid documents",
-        issues: frozen.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+        issues: frozen.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
       },
       { status: 400 },
     ),
@@ -305,7 +323,10 @@ export function createRunRouteHandlers(
     };
   }
 
-  function amendmentRefused(runId: string, issues: readonly string[]): Response {
+  function amendmentRefused(
+    runId: string,
+    issues: readonly string[],
+  ): Response {
     deps.log.warn("runs.amendment_refused", { runId, issues: issues.length });
     return NextResponse.json(
       {
@@ -323,7 +344,11 @@ export function createRunRouteHandlers(
     place: { projectPath: string; sessionName: string },
   ): { ok: true; run: RunRecord } | { ok: false; response: Response } {
     const run = deps.supervision().runs.observe(runId ?? "")?.record ?? null;
-    if (run === null || run.projectPath !== place.projectPath || run.sessionName !== place.sessionName)
+    if (
+      run === null ||
+      run.projectPath !== place.projectPath ||
+      run.sessionName !== place.sessionName
+    )
       return { ok: false, response: notFound(`Run "${runId}" not found`) };
     return { ok: true, run };
   }
@@ -373,10 +398,20 @@ export function createRunRouteHandlers(
     if (presentsAgent)
       return {
         ok: false,
-        response: jsonError(refusal, 403, "human_decision_required", undefined, hint),
+        response: jsonError(
+          refusal,
+          403,
+          "human_decision_required",
+          undefined,
+          hint,
+        ),
       };
     const { name, session, runId } = await context.params;
-    const resolved = await resolveProjectSessionOr404(deps, name ?? "", session ?? "");
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      name ?? "",
+      session ?? "",
+    );
     if (!resolved.ok) return resolved;
     return runInSession(runId, {
       projectPath: resolved.value.projectPath,
@@ -384,7 +419,10 @@ export function createRunRouteHandlers(
     });
   }
 
-  function refuseWorkflow(caller: Caller, definition: WorkflowLaunchRequest): Response | null {
+  function refuseWorkflow(
+    caller: Caller,
+    definition: WorkflowLaunchRequest,
+  ): Response | null {
     return refuseLaunch(
       caller,
       definition.contexts.some((c) => c.humanApproval === true),
@@ -401,16 +439,31 @@ export function createRunRouteHandlers(
     definition: WorkflowLaunchRequest,
     kept: ReadonlyMap<string, RunDefinitionContext> = new Map(),
   ): Promise<
-    | { ok: true; seats: Record<string, { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }> }
+    | {
+        ok: true;
+        seats: Record<
+          string,
+          { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }
+        >;
+      }
     | { ok: false; response: Response }
   > {
-    const seats: Record<string, { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }> = {};
+    const seats: Record<
+      string,
+      { implementer: ResolvedSeat; reviewers: ResolvedSeat[] }
+    > = {};
     for (const contextRequest of definition.contexts) {
       const frozen = kept.get(contextRequest.key);
       if (frozen !== undefined) {
         const { implementer, reviewers } = frozen.request.contract;
-        const seatOf = ({ backend, modelSelection }: ResolvedSeat) => ({ backend, modelSelection });
-        seats[contextRequest.key] = { implementer: seatOf(implementer), reviewers: reviewers.map(seatOf) };
+        const seatOf = ({ backend, modelSelection }: ResolvedSeat) => ({
+          backend,
+          modelSelection,
+        });
+        seats[contextRequest.key] = {
+          implementer: seatOf(implementer),
+          reviewers: reviewers.map(seatOf),
+        };
         continue;
       }
       const resolvedSeats = await deps.resolveSeats({
@@ -418,7 +471,10 @@ export function createRunRouteHandlers(
         request: contextRequest,
       });
       if (!resolvedSeats.ok)
-        return { ok: false, response: seatFailure(resolvedSeats, contextRequest.key) };
+        return {
+          ok: false,
+          response: seatFailure(resolvedSeats, contextRequest.key),
+        };
       seats[contextRequest.key] = resolvedSeats.seats;
     }
     return { ok: true, seats };
@@ -453,8 +509,11 @@ export function createRunRouteHandlers(
   }
 
   /** A run's questions, halts and result reach its owner only as inbox wakes. */
-  async function refuseUnwakeableOwner(caller: Caller): Promise<Response | null> {
-    if (await deps.ownerWakeable(caller.projectPath, caller.conversationId)) return null;
+  async function refuseUnwakeableOwner(
+    caller: Caller,
+  ): Promise<Response | null> {
+    if (await deps.ownerWakeable(caller.projectPath, caller.conversationId))
+      return null;
     return jsonError(
       "This conversation cannot be woken by the subscription inbox, so a run's questions and result would never reach it",
       409,
@@ -505,8 +564,12 @@ export function createRunRouteHandlers(
   }
 
   /** The workflow's charter with its bundles frozen, or none. */
-  const freezeWorkflowCharter = async (workflow: WorkflowLaunchRequest): Promise<FrozenCharter | undefined> =>
-    workflow.charter === undefined ? undefined : deps.freezeCharter(workflow.charter);
+  const freezeWorkflowCharter = async (
+    workflow: WorkflowLaunchRequest,
+  ): Promise<FrozenCharter | undefined> =>
+    workflow.charter === undefined
+      ? undefined
+      : deps.freezeCharter(workflow.charter);
 
   const placementOf = async (
     caller: Caller,
@@ -550,7 +613,11 @@ export function createRunRouteHandlers(
         request: body.value,
       });
       if (!seats.ok) return seatFailure(seats);
-      const documents = await freezeDocuments(deps, body.value.documents, caller.worktreePath);
+      const documents = await freezeDocuments(
+        deps,
+        body.value.documents,
+        caller.worktreePath,
+      );
       if (!documents.ok) return documents.response;
       const runId = deps.newRunId();
       return startLaunch(
@@ -575,11 +642,16 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const { caller } = resolved;
       const refused =
-        refuseWorkflow(caller, body.value) ?? (await refuseUnwakeableOwner(caller));
+        refuseWorkflow(caller, body.value) ??
+        (await refuseUnwakeableOwner(caller));
       if (refused !== null) return refused;
       const seats = await workflowSeats(caller, body.value);
       if (!seats.ok) return seats.response;
-      const documents = await freezeDocuments(deps, body.value.documents, caller.worktreePath);
+      const documents = await freezeDocuments(
+        deps,
+        body.value.documents,
+        caller.worktreePath,
+      );
       if (!documents.ok) return documents.response;
       const charter = await freezeWorkflowCharter(body.value);
       const runId = deps.newRunId();
@@ -607,18 +679,31 @@ export function createRunRouteHandlers(
       // Started work is compiled as its owner first wrote it, with the seats it started with; the
       // amendment then compares the proposal as written and names every change started work forbids.
       const frozen = frozenKeys(run.facts);
-      const kept = new Map(run.facts.definition.contexts.filter((c) => frozen.has(c.key)).map((c) => [c.key, c]));
+      const kept = new Map(
+        run.facts.definition.contexts
+          .filter((c) => frozen.has(c.key))
+          .map((c) => [c.key, c]),
+      );
       const asStarted = {
         ...proposed,
         contexts: proposed.contexts.map((context) => {
-          const written = kept.has(context.key) ? writtenEntry(run.facts.definition.authored, context.key) : null;
-          return written === null ? context : workflowContextRequestSchema.parse(written);
+          const written = kept.has(context.key)
+            ? writtenEntry(run.facts.definition.authored, context.key)
+            : null;
+          return written === null
+            ? context
+            : workflowContextRequestSchema.parse(written);
         }),
       };
       const seats = await workflowSeats(caller, asStarted, kept);
       if (!seats.ok) return seats.response;
       // Every document is declared again: kept by its revision, or read anew.
-      const documents = await freezeDocuments(deps, proposed.documents, caller.worktreePath, run.facts.documents);
+      const documents = await freezeDocuments(
+        deps,
+        proposed.documents,
+        caller.worktreePath,
+        run.facts.documents,
+      );
       if (!documents.ok) return documents.response;
       const charter = await freezeWorkflowCharter(proposed);
       const compiled = compileWorkflow({
@@ -641,13 +726,18 @@ export function createRunRouteHandlers(
             ...(charter !== undefined ? { charter } : {}),
           },
           basedOn: body.value.basedOn ?? null,
-          ...(body.value.reason !== undefined ? { reason: body.value.reason } : {}),
+          ...(body.value.reason !== undefined
+            ? { reason: body.value.reason }
+            : {}),
         }));
       } catch (error) {
         const issues = amendmentIssuesOf(error);
         if (issues !== null) return amendmentRefused(run.runId, issues);
         if (!isRefusal(error)) throw error;
-        deps.log.warn("runs.amendment_refused", { runId: run.runId, error: error.message });
+        deps.log.warn("runs.amendment_refused", {
+          runId: run.runId,
+          error: error.message,
+        });
         return jsonError(error.message, 409, "run_control_refused");
       }
       const amended = runs.observe(run.runId)?.record;
@@ -655,7 +745,8 @@ export function createRunRouteHandlers(
         ok: true,
         revision: amended?.facts.definition.revision ?? 0,
         progress: amended?.progress ?? null,
-        halts: runs.inspect(run.runId)?.plan.halts.map((halt) => halt.reason) ?? [],
+        halts:
+          runs.inspect(run.runId)?.plan.halts.map((halt) => halt.reason) ?? [],
         // A document a seat published while the owner wrote the amendment may be among them; say so.
         removedDocuments,
       });
@@ -685,7 +776,10 @@ export function createRunRouteHandlers(
         definition:
           run.facts.definition.authored === undefined
             ? null
-            : withCurrentDocuments(run.facts.definition.authored, run.facts.documents),
+            : withCurrentDocuments(
+                run.facts.definition.authored,
+                run.facts.documents,
+              ),
       });
     },
 
@@ -817,19 +911,38 @@ export function createRunRouteHandlers(
     async publishDocument(request, context) {
       const resolved = await resolveCaller(request, context);
       if (!resolved.ok) return resolved.response;
-      const body = await readBody(request, publishDocumentSchema, "document publication");
+      const body = await readBody(
+        request,
+        publishDocumentSchema,
+        "document publication",
+      );
       if (!body.ok) return body.response;
       const supervision = deps.supervision();
       const seat = supervision.core.seatBinding(resolved.caller.conversationId);
       if (seat === null)
-        return jsonError("Only a supervised seat conversation publishes its run's documents", 403, "not_a_seat");
-      const workplace = supervision.contexts.implementerWorkplace(seat.contextId, seat);
-      if (workplace.kind === "refused") return jsonError(workplace.reason, 409, "document_publish_refused");
-      const frozen = await deps.snapshotFile(workplace.worktreePath, body.value.file);
+        return jsonError(
+          "Only a supervised seat conversation publishes its run's documents",
+          403,
+          "not_a_seat",
+        );
+      const workplace = supervision.contexts.implementerWorkplace(
+        seat.contextId,
+        seat,
+      );
+      if (workplace.kind === "refused")
+        return jsonError(workplace.reason, 409, "document_publish_refused");
+      const frozen = await deps.snapshotFile(
+        workplace.worktreePath,
+        body.value.file,
+      );
       if (!frozen.ok) return jsonError(frozen.message, 400, "invalid_document");
       // The seat may have been replaced, or its context finished, while the file was read; nothing awaits from here.
-      const still = supervision.contexts.implementerWorkplace(seat.contextId, seat);
-      if (still.kind === "refused") return jsonError(still.reason, 409, "document_publish_refused");
+      const still = supervision.contexts.implementerWorkplace(
+        seat.contextId,
+        seat,
+      );
+      if (still.kind === "refused")
+        return jsonError(still.reason, 409, "document_publish_refused");
       const documentPath = body.value.as ?? frozen.path;
       let published: { revision: number; unchanged: boolean };
       try {
@@ -837,16 +950,29 @@ export function createRunRouteHandlers(
           path: documentPath,
           artifactId: frozen.artifactId,
           bytes: frozen.bytes,
-          ...(body.value.description !== undefined ? { description: body.value.description } : {}),
-          ...(body.value.readWhen !== undefined ? { readWhen: body.value.readWhen } : {}),
+          ...(body.value.description !== undefined
+            ? { description: body.value.description }
+            : {}),
+          ...(body.value.readWhen !== undefined
+            ? { readWhen: body.value.readWhen }
+            : {}),
           by: seat.contextId,
         });
       } catch (error) {
         if (!isRefusal(error)) throw error;
-        deps.log.warn("runs.document_publish_refused", { runId: workplace.runId, contextId: seat.contextId, error: error.message });
+        deps.log.warn("runs.document_publish_refused", {
+          runId: workplace.runId,
+          contextId: seat.contextId,
+          error: error.message,
+        });
         return jsonError(error.message, 409, "document_publish_refused");
       }
-      return NextResponse.json({ ok: true, runId: workplace.runId, path: documentPath, ...published });
+      return NextResponse.json({
+        ok: true,
+        runId: workplace.runId,
+        path: documentPath,
+        ...published,
+      });
     },
   };
 }

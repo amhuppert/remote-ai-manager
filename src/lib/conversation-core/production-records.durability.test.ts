@@ -8,14 +8,29 @@ import {
   _resetProjectConversationStatusNotificationDepsForTesting,
   setProjectConversationStatusNotificationDepsForTesting,
 } from "@/lib/project-conversations/status-notifications";
-import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import type { ConversationIdentity, TurnSettlement } from "./conversation-record";
-import { createProductionConversationQuestions, createProductionConversationRecords } from "./production-records";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+import type {
+  ConversationIdentity,
+  TurnSettlement,
+} from "./conversation-record";
+import {
+  createProductionConversationQuestions,
+  createProductionConversationRecords,
+} from "./production-records";
 
 const PROJECT = "/work/repo";
 const SESSION = "feature";
 const PROJECT_KEY = storeSessionNameFromScopeRef({ scope: "project" });
-const question = { question: "Which database?", options: [], multiSelect: false, required: true, allowNote: true };
+const question = {
+  question: "Which database?",
+  options: [],
+  multiSelect: false,
+  required: true,
+  allowNote: true,
+};
 
 let fixture: PersistenceFixture;
 afterEach(() => {
@@ -62,7 +77,9 @@ function recordNotifications(): void {
     getProjectConversation: fixture.store.getProjectConversation,
     notificationService: createProjectConversationNotificationService({
       createProjectConversationNotification: (input) =>
-        createNotificationsRepo(fixture.db).createProjectConversationNotification(input).notification,
+        createNotificationsRepo(
+          fixture.db,
+        ).createProjectConversationNotification(input).notification,
     }),
   });
 }
@@ -96,10 +113,17 @@ describe("conversation rows of a project conversation the core runs", () => {
     const records = createProductionConversationRecords(rowStore());
 
     expect(records.hasPendingQuestion(projectIdentity("conv-p"))).toBe(true);
-    expect(await records.withdrawQuestion(projectIdentity("conv-p"))).toBe(true);
+    expect(await records.withdrawQuestion(projectIdentity("conv-p"))).toBe(
+      true,
+    );
 
-    const reloaded = await fixture.recreateStore().getConversation(PROJECT, PROJECT_KEY, "conv-p");
-    expect(reloaded).toMatchObject({ pendingQuestionId: null, status: "awaiting" });
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(PROJECT, PROJECT_KEY, "conv-p");
+    expect(reloaded).toMatchObject({
+      pendingQuestionId: null,
+      status: "awaiting",
+    });
     expect(records.hasPendingQuestion(projectIdentity("conv-p"))).toBe(false);
   });
 
@@ -108,15 +132,24 @@ describe("conversation rows of a project conversation the core runs", () => {
     recordNotifications();
     await fixture.seedProjectConversation(
       PROJECT,
-      makeConversationState({ id: "conv-cut", scope: "project", name: "Chat conv-cut", status: "running", activeTurnSource: "user" }),
+      makeConversationState({
+        id: "conv-cut",
+        scope: "project",
+        name: "Chat conv-cut",
+        status: "running",
+        activeTurnSource: "user",
+      }),
     );
-    await createProductionConversationRecords(rowStore()).recordInterrupted(projectIdentity("conv-cut"));
+    await createProductionConversationRecords(rowStore()).recordInterrupted(
+      projectIdentity("conv-cut"),
+    );
     await vi.waitFor(() => expect(persistedNotifications()).toHaveLength(1));
     expect(persistedNotifications()).toEqual([
       expect.objectContaining({
         type: "project-conversation-failed",
         conversationId: "conv-cut",
-        errorMessage: "The server restarted while this turn was running, so it was interrupted.",
+        errorMessage:
+          "The server restarted while this turn was running, so it was interrupted.",
       }),
     ]);
   });
@@ -134,10 +167,17 @@ describe("conversation rows of a project conversation the core runs", () => {
         activeTurnSource: null,
       }),
     );
-    await createProductionConversationRecords(rowStore()).recordInterrupted(projectIdentity("conv-done"));
+    await createProductionConversationRecords(rowStore()).recordInterrupted(
+      projectIdentity("conv-done"),
+    );
 
-    const reloaded = await fixture.recreateStore().getConversation(PROJECT, PROJECT_KEY, "conv-done");
-    expect(reloaded).toMatchObject({ status: "awaiting", activeTurnSource: null });
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(PROJECT, PROJECT_KEY, "conv-done");
+    expect(reloaded).toMatchObject({
+      status: "awaiting",
+      activeTurnSource: null,
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(persistedNotifications()).toEqual([]);
   });
@@ -148,7 +188,13 @@ describe("conversation rows of a project conversation the core runs", () => {
     for (const id of ["conv-ready", "conv-failed"]) {
       await fixture.seedProjectConversation(
         PROJECT,
-        makeConversationState({ id, scope: "project", name: `Chat ${id}`, status: "running", activeTurnSource: "user" }),
+        makeConversationState({
+          id,
+          scope: "project",
+          name: `Chat ${id}`,
+          status: "running",
+          activeTurnSource: "user",
+        }),
       );
     }
     const records = createProductionConversationRecords(rowStore());
@@ -184,33 +230,56 @@ describe("conversation rows of a project conversation the core runs", () => {
     for (const id of ["conv-ask", "conv-later"]) {
       await fixture.seedProjectConversation(
         PROJECT,
-        makeConversationState({ id, scope: "project", status: "running", activeTurnSource: "user" }),
+        makeConversationState({
+          id,
+          scope: "project",
+          status: "running",
+          activeTurnSource: "user",
+        }),
       );
     }
 
-    const asked = await createProductionConversationQuestions(rowStore()).ask(projectIdentity("conv-ask"), {
-      questionId: "q-7",
-      questions: [question],
-    });
+    const asked = await createProductionConversationQuestions(rowStore()).ask(
+      projectIdentity("conv-ask"),
+      {
+        questionId: "q-7",
+        questions: [question],
+      },
+    );
 
     expect(asked).toBe(true);
     await vi.waitFor(() =>
       expect(persistedNotifications()).toEqual([
-        expect.objectContaining({ type: "project-conversation-input-needed", conversationId: "conv-ask" }),
+        expect.objectContaining({
+          type: "project-conversation-input-needed",
+          conversationId: "conv-ask",
+        }),
       ]),
     );
 
     // The turn ends with the question still open: the ask already told the person.
     const records = createProductionConversationRecords(rowStore());
     await records.settleTurn(projectIdentity("conv-ask"), settled(), "user");
-    const reloaded = await fixture.recreateStore().getConversation(PROJECT, PROJECT_KEY, "conv-ask");
-    expect(reloaded).toMatchObject({ status: "waiting_for_input", pendingQuestionId: "q-7", promptCount: 1 });
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(PROJECT, PROJECT_KEY, "conv-ask");
+    expect(reloaded).toMatchObject({
+      status: "waiting_for_input",
+      pendingQuestionId: "q-7",
+      promptCount: 1,
+    });
     // A later conversation's notification arrives after anything the settle would have sent.
     await records.settleTurn(projectIdentity("conv-later"), settled(), "user");
     await vi.waitFor(() =>
-      expect(persistedNotifications()).toContainEqual(expect.objectContaining({ conversationId: "conv-later" })),
+      expect(persistedNotifications()).toContainEqual(
+        expect.objectContaining({ conversationId: "conv-later" }),
+      ),
     );
-    expect(persistedNotifications().filter((n) => n.type === "project-conversation-input-needed")).toHaveLength(1);
+    expect(
+      persistedNotifications().filter(
+        (n) => n.type === "project-conversation-input-needed",
+      ),
+    ).toHaveLength(1);
   });
 
   it("leaves a session conversation's settled turn to the session's own notices", async () => {
@@ -220,16 +289,26 @@ describe("conversation rows of a project conversation the core runs", () => {
     await fixture.seedConversation(
       PROJECT,
       SESSION,
-      makeConversationState({ id: "conv-s", status: "running", activeTurnSource: "user" }),
+      makeConversationState({
+        id: "conv-s",
+        status: "running",
+        activeTurnSource: "user",
+      }),
     );
 
     await createProductionConversationRecords(rowStore()).settleTurn(
-      { projectPath: PROJECT, storeSessionName: SESSION, conversationId: "conv-s" },
+      {
+        projectPath: PROJECT,
+        storeSessionName: SESSION,
+        conversationId: "conv-s",
+      },
       settled(),
       "user",
     );
 
-    const reloaded = await fixture.recreateStore().getConversation(PROJECT, SESSION, "conv-s");
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(PROJECT, SESSION, "conv-s");
     expect(reloaded).toMatchObject({ status: "awaiting", promptCount: 1 });
     expect(persistedNotifications()).toEqual([]);
   });
@@ -240,14 +319,28 @@ describe("conversation rows of a project conversation the core runs", () => {
     await fixture.seedConversation(
       PROJECT,
       SESSION,
-      makeConversationState({ id: "conv-s", agentBackend: "claude", promptCount: 0, backendRef: null }),
+      makeConversationState({
+        id: "conv-s",
+        agentBackend: "claude",
+        promptCount: 0,
+        backendRef: null,
+      }),
     );
     const records = createProductionConversationRecords(rowStore());
     await records.recordWithdrawn(
-      { projectPath: PROJECT, storeSessionName: SESSION, conversationId: "conv-s" },
+      {
+        projectPath: PROJECT,
+        storeSessionName: SESSION,
+        conversationId: "conv-s",
+      },
       {
         cause: "user:conv-s:1",
-        request: { kind: "user_message", text: "Hello", backend: "codex", inputOrigin: "user" },
+        request: {
+          kind: "user_message",
+          text: "Hello",
+          backend: "codex",
+          inputOrigin: "user",
+        },
         reason: "Review queued deliveries before sending another prompt.",
       },
     );

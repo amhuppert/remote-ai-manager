@@ -7,16 +7,28 @@ import type {
 import type { ApplyServiceDeps } from "@/lib/agent-capabilities/apply";
 import type { ConversationStartCapabilityComposerInput } from "@/lib/agent-capabilities/default-deps";
 import type { ComposeConversationStartResult } from "@/lib/agent-capabilities/runtime-composer";
-import type { ConversationState, TranscriptMessage } from "@/lib/conversations/schemas";
+import type {
+  ConversationState,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { TranscriptEntry, TranscriptBroadcastMeta } from "@/lib/prompt/transcript";
+import type {
+  TranscriptEntry,
+  TranscriptBroadcastMeta,
+} from "@/lib/prompt/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { Logger } from "@/lib/logging";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import type { MemoryIndexContextRequest, PreparedMemoryIndexDelivery } from "@/lib/memory/index-live-context";
-import type { AgentCallRequest, AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
+import type {
+  MemoryIndexContextRequest,
+  PreparedMemoryIndexDelivery,
+} from "@/lib/memory/index-live-context";
+import type {
+  AgentCallRequest,
+  AgentCallResult,
+} from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
 import type { NotepadInjectionSource } from "@/lib/notepads/injection";
 import type { ActorConfig } from "@/lib/conversation-core/contributions/resolve-model-effort";
@@ -79,7 +91,10 @@ export interface TranscriptDependencies {
   getTranscriptPath(conversationId: string): Promise<string>;
 
   /** The latest total the transcript records for a cost lineage, or null (a task that resumed a session is charged against it). */
-  readLineageCumulativeCost?(conversationId: string, lineageId: string): Promise<number | null>;
+  readLineageCumulativeCost?(
+    conversationId: string,
+    lineageId: string,
+  ): Promise<number | null>;
 
   /** Durable queue handoff: deduplicate by message id and propagate disk errors. */
   appendTranscriptEntryOnce(
@@ -205,7 +220,9 @@ export interface ConversationPolicyInfrastructure {
     worktreePath: string;
     transientPortableMcp?: PortableMcpConfig;
   }): Promise<PortableMcpConfig>;
-  composeCapabilities(input: ConversationStartCapabilityComposerInput): Promise<ComposeConversationStartResult>;
+  composeCapabilities(
+    input: ConversationStartCapabilityComposerInput,
+  ): Promise<ComposeConversationStartResult>;
   /**
    * Compose capability runtime config for a project conversation. Uses the
    * fixed backend persisted on the project-conversation record and omits any

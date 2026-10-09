@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
-import { hasCollabPrefix, parseConversationCommand } from "@/lib/conversation-commands/parse";
+import {
+  hasCollabPrefix,
+  parseConversationCommand,
+} from "@/lib/conversation-commands/parse";
 import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
@@ -17,14 +20,20 @@ import { ProjectCollaborationUnsupportedError } from "@/lib/project-conversation
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AdmissionRefusal, ConversationCore, HoldTurn } from "./executor";
-import { backendLocked, type ConversationIdentity } from "./conversation-record";
+import {
+  backendLocked,
+  type ConversationIdentity,
+} from "./conversation-record";
 
 export interface CoreConversationPromptDeps {
   sendUserMessage: ConversationCore["sendUserMessage"];
   /** The core's admission, the same rules every entry uses; null when work may start. */
   admission: ConversationCore["admission"];
   /** A conversation that has not run takes the backend its first input chose. */
-  adoptBackend(identity: ConversationIdentity, backend: AgentBackendId): Promise<void>;
+  adoptBackend(
+    identity: ConversationIdentity,
+    backend: AgentBackendId,
+  ): Promise<void>;
   clearPendingPromptText(
     projectPath: string,
     storeSessionName: string,
@@ -32,9 +41,14 @@ export interface CoreConversationPromptDeps {
     expectedText: string,
   ): Promise<boolean>;
   /** The conversation command service: persists the command message and runs the command to its outcome. */
-  dispatchCommand(input: ConversationCommandDispatchInput): Promise<RunCommandOutcome>;
+  dispatchCommand(
+    input: ConversationCommandDispatchInput,
+  ): Promise<RunCommandOutcome>;
   /** A command the backend cannot run, refused before anything is recorded; null when admitted. */
-  commandRefusal(prompt: string, backend: AgentBackendId): Promise<Response | null>;
+  commandRefusal(
+    prompt: string,
+    backend: AgentBackendId,
+  ): Promise<Response | null>;
   log: Pick<Logger, "info" | "warn">;
 }
 
@@ -76,7 +90,11 @@ export async function admitCoreCollaboration(
     );
   }
   await deps.adoptBackend(
-    { projectPath, storeSessionName: conversationTargetStoreSessionName(target), conversationId: conversation.id },
+    {
+      projectPath,
+      storeSessionName: conversationTargetStoreSessionName(target),
+      conversationId: conversation.id,
+    },
     backend,
   );
   return null;
@@ -89,9 +107,12 @@ export async function admitCoreCollaboration(
 function collaborationRefusal(target: ConversationTarget): Response {
   if (target.scope === "project") {
     const refusal = new ProjectCollaborationUnsupportedError();
-    return NextResponse.json({ error: refusal.message, code: refusal.code } satisfies ApiError, {
-      status: refusal.statusCode,
-    });
+    return NextResponse.json(
+      { error: refusal.message, code: refusal.code } satisfies ApiError,
+      {
+        status: refusal.statusCode,
+      },
+    );
   }
   return NextResponse.json(
     {
@@ -102,7 +123,10 @@ function collaborationRefusal(target: ConversationTarget): Response {
   );
 }
 
-const REFUSAL_RESPONSES: Record<AdmissionRefusal["code"], { status: number; code: string }> = {
+const REFUSAL_RESPONSES: Record<
+  AdmissionRefusal["code"],
+  { status: number; code: string }
+> = {
   busy: { status: 409, code: "CONVERSATION_BUSY" },
   owned: { status: 409, code: "CONVERSATION_OWNED" },
   queue_review: { status: 409, code: "QUEUE_REVIEW_REQUIRED" },
@@ -114,7 +138,10 @@ const REFUSAL_RESPONSES: Record<AdmissionRefusal["code"], { status: number; code
 /** One response per admission refusal, whichever entry was refused. */
 function refusal(admission: AdmissionRefusal): Response {
   const { status, code } = REFUSAL_RESPONSES[admission.code];
-  return NextResponse.json({ error: admission.message, code } satisfies ApiError, { status });
+  return NextResponse.json(
+    { error: admission.message, code } satisfies ApiError,
+    { status },
+  );
 }
 
 /**
@@ -134,7 +161,9 @@ export async function admitCoreConversationCommand(
 /** The prompt request's own event stream: what the client reads while the turn runs. */
 function eventStream() {
   const encoder = new TextEncoder();
-  const sink: { controller: ReadableStreamDefaultController<Uint8Array> | null } = { controller: null };
+  const sink: {
+    controller: ReadableStreamDefaultController<Uint8Array> | null;
+  } = { controller: null };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       sink.controller = controller;
@@ -148,7 +177,9 @@ function eventStream() {
     emit(event: string, data: unknown): void {
       if (event === "error" || event === "aborted") endingReported = true;
       try {
-        sink.controller?.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        sink.controller?.enqueue(
+          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
       } catch {
         // The sender went away; the work is unaffected.
       }
@@ -163,7 +194,11 @@ function eventStream() {
     },
     response: () =>
       new Response(stream, {
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
       }),
   };
 }
@@ -190,10 +225,13 @@ export async function promptCoreConversation(
   }
   const text = body.prompt.trim();
   if (hasCollabPrefix(text)) return collaborationRefusal(target);
-  const feedback = body.documentFeedback !== undefined || body.notepadFeedback !== undefined;
+  const feedback =
+    body.documentFeedback !== undefined || body.notepadFeedback !== undefined;
   if (text.length === 0 && (body.images?.length ?? 0) === 0 && !feedback) {
     return NextResponse.json(
-      { error: "Either prompt text, an image or feedback is required" } satisfies ApiError,
+      {
+        error: "Either prompt text, an image or feedback is required",
+      } satisfies ApiError,
       { status: 400 },
     );
   }
@@ -228,12 +266,17 @@ export async function promptCoreConversation(
   const command = parseConversationCommand(text);
   if (command !== null) {
     const refused =
-      (await deps.commandRefusal(text, backend)) ?? (await admitCoreConversationCommand(deps, conversation, "command"));
+      (await deps.commandRefusal(text, backend)) ??
+      (await admitCoreConversationCommand(deps, conversation, "command"));
     if (refused !== null) return refused;
     // The command service reads the backend from the row: a first input's choice is taken first.
     if (backend !== conversation.agentBackend) {
       await deps.adoptBackend(
-        { projectPath, storeSessionName: conversationTargetStoreSessionName(target), conversationId: conversation.id },
+        {
+          projectPath,
+          storeSessionName: conversationTargetStoreSessionName(target),
+          conversationId: conversation.id,
+        },
         backend,
       );
     }
@@ -244,10 +287,18 @@ export async function promptCoreConversation(
   const admission = await deps.sendUserMessage({
     conversationId: conversation.id,
     text,
-    ...(body.images !== undefined && body.images.length > 0 ? { images: body.images } : {}),
-    ...(body.documentFeedback !== undefined ? { documentFeedback: body.documentFeedback } : {}),
-    ...(body.notepadFeedback !== undefined ? { notepadFeedback: [body.notepadFeedback] } : {}),
-    ...(body.modelSelection !== undefined ? { modelSelection: body.modelSelection } : {}),
+    ...(body.images !== undefined && body.images.length > 0
+      ? { images: body.images }
+      : {}),
+    ...(body.documentFeedback !== undefined
+      ? { documentFeedback: body.documentFeedback }
+      : {}),
+    ...(body.notepadFeedback !== undefined
+      ? { notepadFeedback: [body.notepadFeedback] }
+      : {}),
+    ...(body.modelSelection !== undefined
+      ? { modelSelection: body.modelSelection }
+      : {}),
     ...(body.backend !== undefined ? { backend: body.backend } : {}),
     // Review feedback is composed by CC from comments, not typed by the person.
     inputOrigin: feedback ? "generated" : "user",
@@ -255,7 +306,10 @@ export async function promptCoreConversation(
   });
   if (admission.kind === "refused") {
     events.close();
-    deps.log.warn("conversation_core.prompt_refused", { conversationId: conversation.id, code: admission.code });
+    deps.log.warn("conversation_core.prompt_refused", {
+      conversationId: conversation.id,
+      code: admission.code,
+    });
     return refusal(admission);
   }
   deps.log.info("conversation_core.prompt_accepted", {
@@ -298,7 +352,10 @@ function runCommand(
   const { projectPath, target, conversation, body } = input;
   const events = eventStream();
   const modelSelection: BackendModelSelection | undefined = body.modelSelection;
-  deps.log.info("conversation_core.command_dispatched", { conversationId: conversation.id, command: command.command });
+  deps.log.info("conversation_core.command_dispatched", {
+    conversationId: conversation.id,
+    command: command.command,
+  });
   void (async () => {
     try {
       const outcome = await deps.dispatchCommand({
@@ -308,7 +365,10 @@ function runCommand(
         // for the commands that need one; its notices still reach the project conversation.
         ...(target.scope === "session"
           ? { sessionName: target.sessionName }
-          : { sessionName: null, noticeSessionName: conversationTargetStoreSessionName(target) }),
+          : {
+              sessionName: null,
+              noticeSessionName: conversationTargetStoreSessionName(target),
+            }),
         conversationId: conversation.id,
         parsed: command,
         rawText: text,

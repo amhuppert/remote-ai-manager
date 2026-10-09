@@ -28,7 +28,10 @@ import type {
   ConversationCheckpointStart,
   CoreConversationCheckpoints,
 } from "@/lib/conversation-checkpoints/operation-contract";
-import type { PendingConversationQuestion, QuestionCommand } from "@/lib/conversation-core/turn/types";
+import type {
+  PendingConversationQuestion,
+  QuestionCommand,
+} from "@/lib/conversation-core/turn/types";
 import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
 import type { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
@@ -69,7 +72,10 @@ import {
   forgetConversationPersistence,
 } from "./persistence-adapter";
 import { createLogger } from "@/lib/logging";
-import { ConversationBindingNotFoundError, type EnsureActorInputData } from "./actor-input-loader";
+import {
+  ConversationBindingNotFoundError,
+  type EnsureActorInputData,
+} from "./actor-input-loader";
 import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 
 import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
@@ -142,8 +148,6 @@ export interface ActiveConversationTurnDescription {
   readonly autonomous: boolean;
   readonly originMessageId: string | null;
 }
-
-
 
 export interface ConversationAdmissionDeps {
   readState(identity: {
@@ -330,7 +334,10 @@ export interface ConversationManagerDependencies {
    */
   isCoreOwnedConversation?(conversationId: string): boolean;
   /** Stops the turn the core runs for this conversation; settled once that turn ends. */
-  stopCoreConversation?(conversationId: string): { requested: boolean; settled: Promise<void> };
+  stopCoreConversation?(conversationId: string): {
+    requested: boolean;
+    settled: Promise<void>;
+  };
   /** The conversation is going away: the core runs nothing more in it and closes its runtime. */
   retireCoreConversation?(conversationId: string): Promise<void>;
   /** The core takes the conversation's next queued message when it is idle. */
@@ -344,11 +351,19 @@ export interface ConversationManagerDependencies {
   /** A question the agent of a core conversation asks, or its clearing, recorded on the row. */
   /** A debug command on a core conversation, applied by the core's debug mode. */
   coreDebugCommand?(
-    identity: { projectPath: string; sessionName: string; conversationId: string },
+    identity: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
     command: DebugCommand,
   ): Promise<ConversationCommandOutcome>;
   coreQuestionCommand?(
-    identity: { projectPath: string; sessionName: string; conversationId: string },
+    identity: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
     command: QuestionCommand,
   ): Promise<boolean>;
   /** The checkpoint owner of core conversations; undefined while run supervision is not running. */
@@ -521,7 +536,9 @@ export function createConversationManager(
   ): boolean {
     const core = coreCheckpointOwner(conversationId);
     if (core !== null)
-      return core.kind === "core" && core.owner.acceptsQueuedInput(conversationId);
+      return (
+        core.kind === "core" && core.owner.acceptsQueuedInput(conversationId)
+      );
     const key = conversationRuntimeKey(
       projectPath,
       sessionName,
@@ -963,7 +980,8 @@ export function createConversationManager(
   ): Promise<void> {
     const identity = conversationStoreIdentity(binding.address);
     // The core runs it: there is no actor to host or repair.
-    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true) return;
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true)
+      return;
     const key = conversationRuntimeKey(
       identity.projectPath,
       identity.sessionName,
@@ -1612,7 +1630,12 @@ export function createConversationManager(
       });
       return {
         kind: "settled",
-        turn: { attemptId: `core:${conversationId}`, outcome, status: "awaiting", pendingQuestion: null },
+        turn: {
+          attemptId: `core:${conversationId}`,
+          outcome,
+          status: "awaiting",
+          pendingQuestion: null,
+        },
       };
     }
     const admission = await submitConversationTurn(input);
@@ -1705,7 +1728,12 @@ export function createConversationManager(
     command: QuestionCommand,
   ): Promise<boolean> {
     if (deps.isCoreOwnedConversation?.(conversationId) === true) {
-      return (await deps.coreQuestionCommand?.({ projectPath, sessionName, conversationId }, command)) ?? false;
+      return (
+        (await deps.coreQuestionCommand?.(
+          { projectPath, sessionName, conversationId },
+          command,
+        )) ?? false
+      );
     }
     const actor = getConversationActor(
       projectPath,
@@ -4217,7 +4245,9 @@ export function createConversationManager(
   function getConversationRuntimeConfiguration(
     conversationId: string,
   ):
-    | Readonly<import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot>
+    | Readonly<
+        import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot
+      >
     | undefined {
     for (const [key, actor] of host.entries()) {
       if (

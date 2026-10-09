@@ -8,7 +8,10 @@ import type { BackendConversationTranscriptProjection } from "@/lib/agent-backen
 import { conversationTranscriptFrame } from "@/lib/agent-backends/transcript";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { Logger } from "@/lib/logging";
-import type { TranscriptBroadcastMeta, TranscriptEntry } from "@/lib/prompt/transcript";
+import type {
+  TranscriptBroadcastMeta,
+  TranscriptEntry,
+} from "@/lib/prompt/transcript";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
@@ -18,20 +21,35 @@ import {
   resolveFailureClassifierForBackend,
 } from "@/lib/conversation-core/turn/failure-classification";
 import { wireTurnAbort } from "@/lib/conversation-core/turn/abort-wiring";
-import type { TurnExecutionOutcome, TurnInterruption } from "@/lib/conversation-core/turn/turn-result";
+import type {
+  TurnExecutionOutcome,
+  TurnInterruption,
+} from "@/lib/conversation-core/turn/turn-result";
 import { withRuntimeReplacementRetry } from "@/lib/conversation-core/turn/with-runtime-replacement-retry";
 import type { executeAgentCall as ExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { AgentCallRequest, AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
+import type {
+  AgentCallRequest,
+  AgentCallResult,
+} from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
-import type { HostedConversation, RuntimeHost, RuntimeRequirements } from "./runtime-host";
+import type {
+  HostedConversation,
+  RuntimeHost,
+  RuntimeRequirements,
+} from "./runtime-host";
 
 export interface TurnEngineDeps {
   host: RuntimeHost;
   executeAgentCall: typeof ExecuteAgentCall;
-  transcript: Pick<TranscriptDependencies, "safeAppendTranscriptEntry" | "safeAppendTranscriptEntryOnce">;
+  transcript: Pick<
+    TranscriptDependencies,
+    "safeAppendTranscriptEntry" | "safeAppendTranscriptEntryOnce"
+  >;
   projection(backend: AgentBackendId): BackendConversationTranscriptProjection;
   /** Safety-net timeout and inactivity bound for one backend invocation; 0 disables either. */
-  timeouts(backend: AgentBackendId): Promise<{ timeoutMs: number; stallTimeoutMs: number }>;
+  timeouts(
+    backend: AgentBackendId,
+  ): Promise<{ timeoutMs: number; stallTimeoutMs: number }>;
   /** A turn could not verify its child processes stopped; the conversation stays blocked until collected. */
   onCleanupUnverified?(conversation: HostedConversation, message: string): void;
   /** The provider compacted the agent's context; per-turn deliveries keyed to it must start over. */
@@ -104,43 +122,73 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       const { conversation } = request;
       const conversationId = conversation.conversationId;
       const backend = conversation.backend;
-      const scopeRef = scopeRefFromStoreSessionName(request.broadcast.storeSessionName);
+      const scopeRef = scopeRefFromStoreSessionName(
+        request.broadcast.storeSessionName,
+      );
       const projection = deps.projection(backend);
       const append = (entry: TranscriptEntry) =>
-        deps.transcript.safeAppendTranscriptEntry(conversationId, entry, request.broadcast);
+        deps.transcript.safeAppendTranscriptEntry(
+          conversationId,
+          entry,
+          request.broadcast,
+        );
       const appendBackendEntry = (entry: TranscriptEntry) =>
         entry.id !== undefined
-          ? deps.transcript.safeAppendTranscriptEntryOnce(conversationId, { ...entry, id: entry.id }, request.broadcast)
+          ? deps.transcript.safeAppendTranscriptEntryOnce(
+              conversationId,
+              { ...entry, id: entry.id },
+              request.broadcast,
+            )
           : append(entry);
 
       const cancelledBeforeStart = (): TurnExecutionOutcome => ({
         kind: "not_started",
         reason: "cancelled",
         message: "The turn was cancelled before it started",
-        ...(request.signal.reason === "shutdown" ? { interruption: { reason: "shutdown" as const } } : {}),
+        ...(request.signal.reason === "shutdown"
+          ? { interruption: { reason: "shutdown" as const } }
+          : {}),
       });
       if (request.signal.aborted) return cancelledBeforeStart();
       let runtime: ConversationBackendRuntime;
       try {
-        ({ runtime } = await deps.host.obtain(conversation, request.requirements));
+        ({ runtime } = await deps.host.obtain(
+          conversation,
+          request.requirements,
+        ));
       } catch (error) {
         deps.log.error("conversation_core.runtime_unavailable", {
           conversationId,
           backend,
           error: getErrorMessage(error),
         });
-        return { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
+        return {
+          kind: "not_started",
+          reason: "configuration",
+          message: getErrorMessage(error),
+        };
       }
 
       let timeouts: { timeoutMs: number; stallTimeoutMs: number };
       try {
         timeouts = await deps.timeouts(backend);
       } catch (error) {
-        deps.log.error("conversation_core.timeouts_unavailable", { conversationId, backend, error: getErrorMessage(error) });
-        return { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
+        deps.log.error("conversation_core.timeouts_unavailable", {
+          conversationId,
+          backend,
+          error: getErrorMessage(error),
+        });
+        return {
+          kind: "not_started",
+          reason: "configuration",
+          message: getErrorMessage(error),
+        };
       }
       const { timeoutMs, stallTimeoutMs } = timeouts;
-      const abortState: { abortController: AbortController; timeoutHandle?: ReturnType<typeof setTimeout> } = {
+      const abortState: {
+        abortController: AbortController;
+        timeoutHandle?: ReturnType<typeof setTimeout>;
+      } = {
         abortController: new AbortController(),
       };
       const abort = wireTurnAbort({
@@ -157,13 +205,15 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       abort.abortController.signal.addEventListener(
         "abort",
         () => {
-          closing ??= deps.host.release(conversationId).catch((error: unknown) =>
-            deps.log.error("conversation_core.abort_close_failed", {
-              conversationId,
-              backend,
-              error: getErrorMessage(error),
-            }),
-          );
+          closing ??= deps.host
+            .release(conversationId)
+            .catch((error: unknown) =>
+              deps.log.error("conversation_core.abort_close_failed", {
+                conversationId,
+                backend,
+                error: getErrorMessage(error),
+              }),
+            );
         },
         { once: true },
       );
@@ -172,7 +222,8 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       const touch = () => abort.notifyActivity();
       watchdogs.set(conversationId, touch);
       const stopListening = async (): Promise<void> => {
-        if (watchdogs.get(conversationId) === touch) watchdogs.delete(conversationId);
+        if (watchdogs.get(conversationId) === touch)
+          watchdogs.delete(conversationId);
         request.signal.removeEventListener("abort", cancel);
         abort.cleanup();
         if (closing !== null) await closing;
@@ -189,7 +240,9 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       const contentBlocks: MessageContentBlock[] = [];
       let persistedContent = 0;
       let workRef: AgentSessionRef | null | undefined;
-      const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
+      const onEvent = async (
+        event: ConversationBackendEvent,
+      ): Promise<void> => {
         abort.notifyActivity();
         switch (event.type) {
           case "backend_init": {
@@ -218,13 +271,15 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
             break;
           case "input_accepted":
             // The agent already has the input: a receipt that cannot be recorded must not cost the turn.
-            await deps.recordAccepted?.(conversation, event).catch((error: unknown) =>
-              deps.log.warn("conversation_core.application_receipt_failed", {
-                conversationId,
-                backend,
-                error: getErrorMessage(error),
-              }),
-            );
+            await deps
+              .recordAccepted?.(conversation, event)
+              .catch((error: unknown) =>
+                deps.log.warn("conversation_core.application_receipt_failed", {
+                  conversationId,
+                  backend,
+                  error: getErrorMessage(error),
+                }),
+              );
             break;
           default:
             break;
@@ -236,8 +291,14 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         getRuntime: () => runtime,
         async replaceRuntime() {
           // A format or repair call must resume the work this call completed.
-          if (workRef === null) throw new Error("Cannot replace the runtime: the completed work has no continuation");
-          runtime = await deps.host.replace(conversationId, workRef === undefined ? conversation.persistedRef : workRef);
+          if (workRef === null)
+            throw new Error(
+              "Cannot replace the runtime: the completed work has no continuation",
+            );
+          runtime = await deps.host.replace(
+            conversationId,
+            workRef === undefined ? conversation.persistedRef : workRef,
+          );
           return runtime;
         },
         classify: (error) => classifyFailureForBackend(backend, error),
@@ -251,13 +312,22 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
             workRef = result.backendRef;
             // Unverified cleanup keeps the runtime's processes owned: no new runtime may
             // start beside them, and the operator must hear about it.
-            if (result.cleanupFailure !== undefined && deps.host.recordCleanupFailure(conversationId, result.cleanupFailure)) {
+            if (
+              result.cleanupFailure !== undefined &&
+              deps.host.recordCleanupFailure(
+                conversationId,
+                result.cleanupFailure,
+              )
+            ) {
               deps.log.error("conversation_core.cleanup_unverified", {
                 conversationId,
                 backend,
                 message: result.cleanupFailure.message,
               });
-              deps.onCleanupUnverified?.(conversation, result.cleanupFailure.message);
+              deps.onCleanupUnverified?.(
+                conversation,
+                result.cleanupFailure.message,
+              );
             }
           },
         },
@@ -269,7 +339,10 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           : abort.stallFired()
             ? { reason: "stalled", timeoutMs: stallTimeoutMs }
             : request.signal.aborted
-              ? { reason: request.signal.reason === "shutdown" ? "shutdown" : "user" }
+              ? {
+                  reason:
+                    request.signal.reason === "shutdown" ? "shutdown" : "user",
+                }
               : undefined;
 
       let result: AgentCallResult;
@@ -282,7 +355,9 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
             backend,
             writeCapability: request.writeCapability,
             structuredOutputTurns: request.structuredOutputTurns,
-            ...(request.outputFormat?.type === "json_schema" ? { outputSchema: request.outputFormat.schema } : {}),
+            ...(request.outputFormat?.type === "json_schema"
+              ? { outputSchema: request.outputFormat.schema }
+              : {}),
             ...(request.requirements.fsWritePolicy !== undefined
               ? { fsWritePolicy: request.requirements.fsWritePolicy }
               : {}),
@@ -294,12 +369,21 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
               signal: abort.abortController.signal,
               modelSelection: request.requirements.modelSelection,
               autonomous: request.autonomous,
-              ...(request.waitForBackgroundTasks ? { waitForBackgroundTasks: true } : {}),
-              ...(request.onUserQuestion !== undefined ? { onUserQuestion: request.onUserQuestion } : {}),
+              ...(request.waitForBackgroundTasks
+                ? { waitForBackgroundTasks: true }
+                : {}),
+              ...(request.onUserQuestion !== undefined
+                ? { onUserQuestion: request.onUserQuestion }
+                : {}),
               sessionInstructions: [],
               userPromptText: request.userPromptText ?? request.promptText,
-              ...(request.imageRefs !== undefined && request.imageRefs.length > 0 ? { imageRefs: request.imageRefs } : {}),
-              ...(request.promptContext !== undefined ? { promptContext: request.promptContext } : {}),
+              ...(request.imageRefs !== undefined &&
+              request.imageRefs.length > 0
+                ? { imageRefs: request.imageRefs }
+                : {}),
+              ...(request.promptContext !== undefined
+                ? { promptContext: request.promptContext }
+                : {}),
               onEvent,
             }),
             getFailureClassifier: resolveFailureClassifierForBackend,
@@ -327,15 +411,23 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       if (result.compacted === true) {
         // Bookkeeping about the provider's compaction must never cost the finished turn.
         await deps.onCompacted?.(conversationId).catch((error: unknown) =>
-          deps.log.warn("conversation_core.compaction_reset_failed", { conversationId, error: getErrorMessage(error) }),
+          deps.log.warn("conversation_core.compaction_reset_failed", {
+            conversationId,
+            error: getErrorMessage(error),
+          }),
         );
       }
       const outcome = result.outcome;
       const adapterBlocks =
-        outcome.kind === "completed" || outcome.kind === "failed" ? outcome.contentBlocks : undefined;
+        outcome.kind === "completed" || outcome.kind === "failed"
+          ? outcome.contentBlocks
+          : undefined;
       if (adapterBlocks !== undefined) {
         // Blocks a backend returned without streaming them still belong in the transcript.
-        if (projection.persistContentEvents && adapterBlocks.length > persistedContent) {
+        if (
+          projection.persistContentEvents &&
+          adapterBlocks.length > persistedContent
+        ) {
           await append({
             timestamp: new Date().toISOString(),
             type: "assistant",
@@ -347,7 +439,10 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           timestamp: new Date().toISOString(),
           backendRef: result.backendRef,
           durationMs: result.usage.durationMs ?? null,
-          numTurns: outcome.kind === "completed" || outcome.kind === "failed" ? (outcome.numTurns ?? null) : null,
+          numTurns:
+            outcome.kind === "completed" || outcome.kind === "failed"
+              ? (outcome.numTurns ?? null)
+              : null,
           contextTokens: result.usage.contextTokens ?? null,
           contextWindowMax: result.usage.contextWindowMax ?? null,
           costUsd: result.usage.costUsd ?? null,
@@ -363,7 +458,9 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           timestamp: new Date().toISOString(),
           type: "notice",
           role: "notice",
-          content: [{ type: "text", text: `Turn stopped: ${outcome.error.message}` }],
+          content: [
+            { type: "text", text: `Turn stopped: ${outcome.error.message}` },
+          ],
         });
       }
       deps.log.info("conversation_core.turn_completed", {
@@ -372,7 +469,11 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         outcome: outcome.kind,
         ...(stopped !== undefined ? { interruption: stopped.reason } : {}),
       });
-      return { kind: "call_result", result, ...(stopped !== undefined ? { interruption: stopped } : {}) };
+      return {
+        kind: "call_result",
+        result,
+        ...(stopped !== undefined ? { interruption: stopped } : {}),
+      };
     },
   };
 }

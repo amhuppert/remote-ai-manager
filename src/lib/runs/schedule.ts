@@ -101,7 +101,10 @@ export interface RunPlan {
   /** A lane's provisioning or publication was requested and has not settled. */
   laneWorkInFlight: boolean;
   /** Each dependency edge, keyed `source->target`, with how its route stands now. */
-  routes: ReadonlyMap<string, { source: string; target: string; resolution: RouteEdgeResolution["kind"] }>;
+  routes: ReadonlyMap<
+    string,
+    { source: string; target: string; resolution: RouteEdgeResolution["kind"] }
+  >;
   /**
    * Some started context can still move without the owner, or a start is
    * due, whatever the Run's control says: a pause or fault holds this work,
@@ -296,10 +299,12 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
 
   const laneState = (lane: string) => laneStateOf(facts, lane);
   const definedLanes = facts.definition.lanes ?? [];
-  const settlementOf = (key: string) => projection.settlementByContextId.get(key);
+  const settlementOf = (key: string) =>
+    projection.settlementByContextId.get(key);
   const membersOf = (lane: string) => laneMembers(defined, lane);
   const isSkipped = (key: string): boolean => settlementOf(key) === "skipped";
-  const skippedLane = (lane: string): boolean => laneSkipped(defined, lane, isSkipped);
+  const skippedLane = (lane: string): boolean =>
+    laneSkipped(defined, lane, isSkipped);
   const published = (lane: string): boolean =>
     laneState(lane)?.publication?.outcome.kind === "published";
   const provisioned = (lane: string | undefined): boolean =>
@@ -313,7 +318,11 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     for (const from of reached)
       for (const c of defined)
         if (!isSkipped(c.key) && c.dependsOn.includes(from)) reached.add(c.key);
-    return new Set(defined.flatMap((c) => (c.lane !== undefined && reached.has(c.key) ? [c.lane] : [])));
+    return new Set(
+      defined.flatMap((c) =>
+        c.lane !== undefined && reached.has(c.key) ? [c.lane] : [],
+      ),
+    );
   };
   /**
    * Unpublished lanes `c` waits for. A lane context waits for the lanes whose
@@ -326,7 +335,9 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     if (c.lane !== undefined) return codeFromLanes(c);
     const before = lanesWaitingFor(c.key);
     return definedLanes.flatMap((lane) =>
-      published(lane.key) || skippedLane(lane.key) || before.has(lane.key) ? [] : [lane.key],
+      published(lane.key) || skippedLane(lane.key) || before.has(lane.key)
+        ? []
+        : [lane.key],
     );
   };
   const codeFromLanes = (c: RunDefinitionContext): string[] => [
@@ -390,7 +401,10 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
         laneActions.push({ kind: "provision", lane: lane.key });
       continue;
     }
-    if (state.provision.outcome.kind !== "provisioned" || state.publication !== null)
+    if (
+      state.provision.outcome.kind !== "provisioned" ||
+      state.publication !== null
+    )
       continue;
     // Sealed: every member is done or skipped, loops included.
     if (
@@ -442,7 +456,11 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     if (state.kind === "next" && entry !== undefined) {
       const pass = state.pass + 1;
       const carried: ContractInput[] = [];
-      for (let q = Math.max(0, state.pass - CARRIED_PASSES + 1); q <= state.pass; q++)
+      for (
+        let q = Math.max(0, state.pass - CARRIED_PASSES + 1);
+        q <= state.pass;
+        q++
+      )
         carried.push({
           key: loop.exit,
           title: `${titleOf(loop.exit)} (pass ${q + 1})`,
@@ -531,7 +549,11 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
     routes: new Map(
       projection.edges.map((edge) => [
         edge.edgeId,
-        { source: edge.logicalSourceId, target: edge.targetContextId, resolution: edge.resolution.kind },
+        {
+          source: edge.logicalSourceId,
+          target: edge.targetContextId,
+          resolution: edge.resolution.kind,
+        },
       ]),
     ),
   };
@@ -587,7 +609,8 @@ export function decideNext(
   observed: ObservedContexts,
 ): Pick<RunPlan, "starts" | "laneActions"> {
   const { paused, cancelled, fault } = facts.control;
-  if (paused || cancelled || fault !== null) return { starts: [], laneActions: [] };
+  if (paused || cancelled || fault !== null)
+    return { starts: [], laneActions: [] };
   const { starts, laneActions } = planRun(facts, observed);
   return { starts, laneActions };
 }
@@ -611,10 +634,16 @@ function ownerReasons(facts: RunFacts, observed: ObservedContexts): string[] {
         ? invocation.key
         : `${invocation.key} (pass ${invocation.pass + 1})`;
     if (progress === null) return [];
-    const questions = (observed.get(invocation.contextId)?.openQuestions ?? 0) > 0 ? [`${label}: question`] : [];
+    const questions =
+      (observed.get(invocation.contextId)?.openQuestions ?? 0) > 0
+        ? [`${label}: question`]
+        : [];
     if (progress.kind === "halted")
       return [...questions, `${label}: halted (${progress.halt})`];
-    if (progress.kind === "waiting" && progress.obligation.kind === "await_approval")
+    if (
+      progress.kind === "waiting" &&
+      progress.obligation.kind === "await_approval"
+    )
       return [...questions, `${label}: approval`];
     return questions;
   });
@@ -640,13 +669,17 @@ export function deriveRunProgress(
   );
   // Cancellation revokes the permit, so a start no Context took up never will.
   if (facts.control.cancelled)
-    return started.every((p) => p === null || isTerminal(p)) && !plan.laneWorkInFlight
+    return started.every((p) => p === null || isTerminal(p)) &&
+      !plan.laneWorkInFlight
       ? { kind: "cancelled" }
       : { kind: "stopping" };
   // Success outranks pause: work that drained during a pause and finished the run is done.
   if (plan.complete) return { kind: "succeeded" };
   if (facts.control.fault !== null)
-    return { kind: "needs_owner", reasons: [`run: ${facts.control.fault.detail}`] };
+    return {
+      kind: "needs_owner",
+      reasons: [`run: ${facts.control.fault.detail}`],
+    };
   // The Run's permit stops new effects; the ones already admitted drain.
   if (facts.control.paused)
     return { kind: "paused", draining: active || laneStepRunning };

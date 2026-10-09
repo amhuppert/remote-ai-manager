@@ -46,7 +46,8 @@ function harness(
   };
   const bridge = createCoreQueueBridge({
     queue,
-    enrollment: (conversationId) => (conversationId === "conv-1" ? conversationEnrollment : null),
+    enrollment: (conversationId) =>
+      conversationId === "conv-1" ? conversationEnrollment : null,
     isBusy: () => busy,
     async send(input) {
       sent.push(input);
@@ -86,10 +87,19 @@ describe("the core's message queue bridge", () => {
       {
         conversationId: "conv-1",
         text: "Then fix the tests",
-        images: [{ attachmentId: "queued-0", mediaType: "image/png", base64Data: "aGk=" }],
+        images: [
+          {
+            attachmentId: "queued-0",
+            mediaType: "image/png",
+            base64Data: "aGk=",
+          },
+        ],
         modelSelection: { modelId: "opus", parameters: {} },
         inputOrigin: "user",
-        queuedDelivery: { messageIds: ["q-1", "q-2"], deliveryAttemptId: "att-1" },
+        queuedDelivery: {
+          messageIds: ["q-1", "q-2"],
+          deliveryAttemptId: "att-1",
+        },
       },
     ]);
     expect(h.marks).toEqual([]);
@@ -98,31 +108,61 @@ describe("the core's message queue bridge", () => {
   it("hands a project conversation's queued batch to the core, claimed under the project conversation's storage key", async () => {
     const projectStore = storeSessionNameFromScopeRef({ scope: "project" });
     const h = harness(
-      { deliveryAttemptId: "att-p", messageIds: ["q-p"], hasUserMessage: true, content: [{ type: "text", text: "Next" }], command: null },
+      {
+        deliveryAttemptId: "att-p",
+        messageIds: ["q-p"],
+        hasUserMessage: true,
+        content: [{ type: "text", text: "Next" }],
+        command: null,
+      },
       accepted,
       false,
       { ...enrollment, sessionName: projectStore },
     );
     await h.bridge.drain("conv-1");
 
-    expect(h.claims).toEqual([{ projectPath: "/repo", sessionName: projectStore, conversationId: "conv-1" }]);
-    expect(h.sent).toEqual([expect.objectContaining({ conversationId: "conv-1", text: "Next", inputOrigin: "user" })]);
+    expect(h.claims).toEqual([
+      {
+        projectPath: "/repo",
+        sessionName: projectStore,
+        conversationId: "conv-1",
+      },
+    ]);
+    expect(h.sent).toEqual([
+      expect.objectContaining({
+        conversationId: "conv-1",
+        text: "Next",
+        inputOrigin: "user",
+      }),
+    ]);
     expect(h.marks).toEqual([]);
   });
 
   it("returns a batch the core would not take to the queue", async () => {
     const h = harness(
-      { deliveryAttemptId: "att-2", messageIds: ["q-3"], content: [{ type: "text", text: "Run notice" }], command: null },
+      {
+        deliveryAttemptId: "att-2",
+        messageIds: ["q-3"],
+        content: [{ type: "text", text: "Run notice" }],
+        command: null,
+      },
       { kind: "refused", code: "busy", message: "Conversation is busy" },
     );
     await h.bridge.drain("conv-1");
-    expect(h.sent).toEqual([expect.objectContaining({ inputOrigin: "generated" })]);
+    expect(h.sent).toEqual([
+      expect.objectContaining({ inputOrigin: "generated" }),
+    ]);
     expect(h.marks).toEqual(["pending:att-2"]);
   });
 
   it("claims nothing while the conversation runs a turn; its end drains the queue", async () => {
     const h = harness(
-      { deliveryAttemptId: "att-3", messageIds: ["q-4"], content: [{ type: "text", text: "Later" }], command: null },
+      {
+        deliveryAttemptId: "att-3",
+        messageIds: ["q-4"],
+        content: [{ type: "text", text: "Later" }],
+        command: null,
+      },
       accepted,
       true,
     );
@@ -152,7 +192,12 @@ describe("the core's message queue bridge", () => {
         content: [{ type: "text", text: "/commit" }],
         command: { command: "commit", hint: "focus on the API" },
       },
-      { deliveryAttemptId: "att-2", messageIds: ["q-2"], content: [{ type: "text", text: "Then deploy" }], command: null },
+      {
+        deliveryAttemptId: "att-2",
+        messageIds: ["q-2"],
+        content: [{ type: "text", text: "Then deploy" }],
+        command: null,
+      },
     ];
     const commands: string[] = [];
     const sent: unknown[] = [];
@@ -168,7 +213,8 @@ describe("the core's message queue bridge", () => {
           return { status: "dispatched", jobId: "job-1", usedFallback: false };
         },
       },
-      enrollment: (conversationId) => (conversationId === "conv-1" ? enrollment : null),
+      enrollment: (conversationId) =>
+        conversationId === "conv-1" ? enrollment : null,
       isBusy: () => false,
       async send(input) {
         sent.push(input.text);

@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile, chmod } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+  chmod,
+} from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -48,7 +57,9 @@ describe("artifacts", () => {
     await writeFile(stored, "tampered");
 
     await expect(store.read(ref.artifactId)).rejects.toThrow(/do not match/);
-    await expect(store.read(`sha256:${"0".repeat(64)}`)).rejects.toThrow(/missing/);
+    await expect(store.read(`sha256:${"0".repeat(64)}`)).rejects.toThrow(
+      /missing/,
+    );
     await expect(store.read("../escape")).rejects.toThrow(/not an artifact/);
   });
 
@@ -58,13 +69,21 @@ describe("artifacts", () => {
     const notes = await store.snapshot(Buffer.from("notes\n"));
     const entries = [
       { artifactId: plan.artifactId, path: ".cc/run-docs/run-1/plan.md" },
-      { artifactId: notes.artifactId, path: ".cc/run-docs/run-1/notes/today.md" },
+      {
+        artifactId: notes.artifactId,
+        path: ".cc/run-docs/run-1/notes/today.md",
+      },
     ];
 
     await store.materialize(worktree, entries);
     const copy = path.join(worktree, ".cc/run-docs/run-1/plan.md");
     expect(await readFile(copy, "utf8")).toBe("# Plan\n");
-    expect(await readFile(path.join(worktree, ".cc/run-docs/run-1/notes/today.md"), "utf8")).toBe("notes\n");
+    expect(
+      await readFile(
+        path.join(worktree, ".cc/run-docs/run-1/notes/today.md"),
+        "utf8",
+      ),
+    ).toBe("notes\n");
     expect((await stat(copy)).mode & 0o222).toBe(0);
 
     await chmod(copy, 0o644);
@@ -77,30 +96,43 @@ describe("artifacts", () => {
     const store = createArtifactStore({ root });
     const plan = await store.snapshot(Buffer.from("# Plan\n"));
 
-    await expect(store.materialize(worktree, [{ artifactId: plan.artifactId, path: "../outside.md" }])).rejects.toThrow(
-      /inside/,
-    );
-    await expect(store.materialize(worktree, [{ artifactId: plan.artifactId, path: "/tmp/outside.md" }])).rejects.toThrow(
-      /inside/,
-    );
+    await expect(
+      store.materialize(worktree, [
+        { artifactId: plan.artifactId, path: "../outside.md" },
+      ]),
+    ).rejects.toThrow(/inside/);
+    await expect(
+      store.materialize(worktree, [
+        { artifactId: plan.artifactId, path: "/tmp/outside.md" },
+      ]),
+    ).rejects.toThrow(/inside/);
   });
 
   it("refuses to write through a linked directory, wherever it is on the way, and writes nothing there", async () => {
     const store = createArtifactStore({ root });
     const plan = await store.snapshot(Buffer.from("# Plan\n"));
-    const elsewhere = await mkdtemp(path.join(tmpdir(), "cc-artifacts-elsewhere-"));
+    const elsewhere = await mkdtemp(
+      path.join(tmpdir(), "cc-artifacts-elsewhere-"),
+    );
     try {
       await mkdir(path.join(worktree, ".cc"), { recursive: true });
       await symlink(elsewhere, path.join(worktree, ".cc/run-docs"));
       await expect(
-        store.materialize(worktree, [{ artifactId: plan.artifactId, path: ".cc/run-docs/ctx/plan.md" }]),
+        store.materialize(worktree, [
+          { artifactId: plan.artifactId, path: ".cc/run-docs/ctx/plan.md" },
+        ]),
       ).rejects.toThrow(/link/);
 
       await rm(path.join(worktree, ".cc/run-docs"));
       await mkdir(path.join(worktree, ".cc/run-docs/ctx"), { recursive: true });
       await symlink(elsewhere, path.join(worktree, ".cc/run-docs/ctx/notes"));
       await expect(
-        store.materialize(worktree, [{ artifactId: plan.artifactId, path: ".cc/run-docs/ctx/notes/plan.md" }]),
+        store.materialize(worktree, [
+          {
+            artifactId: plan.artifactId,
+            path: ".cc/run-docs/ctx/notes/plan.md",
+          },
+        ]),
       ).rejects.toThrow(/link/);
 
       expect(readdirSync(elsewhere)).toEqual([]);
@@ -114,8 +146,12 @@ describe("artifacts", () => {
     const plan = await store.snapshot(Buffer.from("# Plan\n"));
     const name = `${"x".repeat(237)}.md`;
 
-    await store.materialize(worktree, [{ artifactId: plan.artifactId, path: `.cc/run-docs/ctx/${name}` }]);
+    await store.materialize(worktree, [
+      { artifactId: plan.artifactId, path: `.cc/run-docs/ctx/${name}` },
+    ]);
 
-    expect(existsSync(path.join(worktree, ".cc/run-docs/ctx", name))).toBe(true);
+    expect(existsSync(path.join(worktree, ".cc/run-docs/ctx", name))).toBe(
+      true,
+    );
   });
 });

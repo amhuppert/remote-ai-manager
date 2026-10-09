@@ -40,7 +40,10 @@ export function pickSessionConversation(
   conversations: readonly { id: string }[],
   isRunSeat: (conversationId: string) => boolean,
 ): string | null {
-  return conversations.find((conversation) => !isRunSeat(conversation.id))?.id ?? null;
+  return (
+    conversations.find((conversation) => !isRunSeat(conversation.id))?.id ??
+    null
+  );
 }
 
 /**

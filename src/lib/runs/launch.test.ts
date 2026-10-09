@@ -26,7 +26,10 @@ function resolve(
       branch: "csm/session",
     },
     owner: { conversationId: "owner-1", sessionName: "session" },
-    laneTargets: (laneId) => ({ worktreePath: `/repo/.worktrees/session.${laneId}`, branch: `csm/session-${laneId}` }),
+    laneTargets: (laneId) => ({
+      worktreePath: `/repo/.worktrees/session.${laneId}`,
+      branch: `csm/session-${laneId}`,
+    }),
     seats: { implementer: sonnet, reviewers },
   });
 }

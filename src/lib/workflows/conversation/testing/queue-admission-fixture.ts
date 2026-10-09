@@ -1,4 +1,7 @@
-import type { ConversationTurnSubmission, TurnAdmission } from "@/lib/conversation-core/turn/turn-spec";
+import type {
+  ConversationTurnSubmission,
+  TurnAdmission,
+} from "@/lib/conversation-core/turn/turn-spec";
 
 /** Queue tests capture the admission boundary without executing a provider. */
 export function createQueueAdmissionFixture(

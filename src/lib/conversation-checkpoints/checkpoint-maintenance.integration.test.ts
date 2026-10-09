@@ -978,7 +978,8 @@ describe("checkpoint retirement", () => {
     const original =
       fixture!.persistence.store.upsertConversationMachineSnapshot;
     let failSnapshots = false;
-    const { setPersistenceDeps } = await import("@/lib/workflows/conversation/persistence");
+    const { setPersistenceDeps } =
+      await import("@/lib/workflows/conversation/persistence");
     setPersistenceDeps({
       getConversationMachineSnapshot:
         fixture!.persistence.store.getConversationMachineSnapshot,
@@ -1753,7 +1754,8 @@ describe.each(["session", "project"] as const)(
           gate.resolve();
         };
         const store = fixture!.persistence.store;
-        const { setPersistenceDeps } = await import("@/lib/workflows/conversation/persistence");
+        const { setPersistenceDeps } =
+          await import("@/lib/workflows/conversation/persistence");
         setPersistenceDeps({
           getConversationMachineSnapshot: store.getConversationMachineSnapshot,
           deleteConversationMachineSnapshot:

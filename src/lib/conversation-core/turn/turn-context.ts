@@ -75,5 +75,11 @@ export async function prepareTaskPrompt(
 /** The parts of a turn the context contributions read. */
 export type TurnContextExecution = Pick<
   ExecutePromptInput,
-  "projectPath" | "target" | "worktreePath" | "role" | "persistence" | "executionAttemptId" | "debugMode"
+  | "projectPath"
+  | "target"
+  | "worktreePath"
+  | "role"
+  | "persistence"
+  | "executionAttemptId"
+  | "debugMode"
 > & { turn: Pick<ExecutePromptInput["turn"], "inputOrigin" | "promptText"> };

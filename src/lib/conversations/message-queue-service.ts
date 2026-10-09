@@ -249,13 +249,23 @@ export function claimDebugAnswerTransform(
   claimed: PendingQueuedMessage | null;
   refused: PendingQueuedMessage | null;
 } {
-  const answer = queue.find((entry) => entry.status === "pending" && entry.metadata?.kind === "question_answers");
-  if (answer === undefined || queue.some((entry) => entry.status === "delivering")) {
+  const answer = queue.find(
+    (entry) =>
+      entry.status === "pending" && entry.metadata?.kind === "question_answers",
+  );
+  if (
+    answer === undefined ||
+    queue.some((entry) => entry.status === "delivering")
+  ) {
     return { queue: [...queue], claimed: null, refused: null };
   }
   if (isAttemptLimitReached(answer)) {
     const refused = refuseAttemptLimitEntry(answer, now);
-    return { queue: queue.map((entry) => (entry.id === answer.id ? refused : entry)), claimed: null, refused };
+    return {
+      queue: queue.map((entry) => (entry.id === answer.id ? refused : entry)),
+      claimed: null,
+      refused,
+    };
   }
   const claimed: PendingQueuedMessage = {
     ...answer,
@@ -265,7 +275,11 @@ export function claimDebugAnswerTransform(
     updatedAt: now,
     attemptCount: answer.attemptCount + 1,
   };
-  return { queue: queue.map((entry) => (entry.id === answer.id ? claimed : entry)), claimed, refused: null };
+  return {
+    queue: queue.map((entry) => (entry.id === answer.id ? claimed : entry)),
+    claimed,
+    refused: null,
+  };
 }
 
 export function claimLiveDeliveryTransform(
@@ -1042,8 +1056,15 @@ export function createMessageQueueService(
       conversationId,
       "claimNextTurnBatch",
       (conversation) => {
-        if (input.debugHold === true && conversation.debugMode?.active === true) {
-          const answer = claimDebugAnswerTransform(conversation.pendingQueue, attemptId, now);
+        if (
+          input.debugHold === true &&
+          conversation.debugMode?.active === true
+        ) {
+          const answer = claimDebugAnswerTransform(
+            conversation.pendingQueue,
+            attemptId,
+            now,
+          );
           conversation.pendingQueue = answer.queue;
           return {
             claimed: answer.claimed === null ? [] : [answer.claimed],

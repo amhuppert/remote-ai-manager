@@ -39,7 +39,12 @@ export default function NewConversationProfileButton({
       confirmLabel="Create conversation"
       onConfirm={onCreate}
       {...(onCreateCore !== undefined
-        ? { secondaryAction: { label: "Create core conversation", onConfirm: onCreateCore } }
+        ? {
+            secondaryAction: {
+              label: "Create core conversation",
+              onConfirm: onCreateCore,
+            },
+          }
         : {})}
       disabled={disabled || pending}
       trigger={

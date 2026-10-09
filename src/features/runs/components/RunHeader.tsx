@@ -19,26 +19,47 @@ export interface RunControls {
   onOpenConversation(conversationId: string): void;
 }
 
-function Stat({ value, label, tone }: { value: React.ReactNode; label: string; tone?: "amber" | "cyan" | "red" }) {
+function Stat({
+  value,
+  label,
+  tone,
+}: {
+  value: React.ReactNode;
+  label: string;
+  tone?: "amber" | "cyan" | "red";
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-[6px]">
       <span
         className={cn(
           "font-mono text-[1.35rem] leading-none font-medium tabular-nums",
-          tone === "amber" ? "text-amber" : tone === "cyan" ? "text-cyan" : tone === "red" ? "text-red" : "text-text-primary",
+          tone === "amber"
+            ? "text-amber"
+            : tone === "cyan"
+              ? "text-cyan"
+              : tone === "red"
+                ? "text-red"
+                : "text-text-primary",
         )}
       >
         {value}
       </span>
-      <span className="font-mono text-[0.7rem] font-medium tracking-[0.1em] text-text-tertiary uppercase">{label}</span>
+      <span className="font-mono text-[0.7rem] font-medium tracking-[0.1em] text-text-tertiary uppercase">
+        {label}
+      </span>
     </div>
   );
 }
 
 function elapsed(from: string, to: string | null, now: number): string {
   const end = to !== null ? new Date(to).getTime() : now;
-  const minutes = Math.max(0, Math.round((end - new Date(from).getTime()) / 60_000));
-  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  const minutes = Math.max(
+    0,
+    Math.round((end - new Date(from).getTime()) / 60_000),
+  );
+  return minutes < 60
+    ? `${minutes}m`
+    : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 /**
@@ -61,20 +82,31 @@ export function RunHeader({
   // The clock is read once; the live page ticks it from its own timer.
   const [mountedAt] = useState(() => Date.now());
   const status = runStatus(run.status);
-  const finished = run.status.kind === "succeeded" || run.status.kind === "cancelled";
+  const finished =
+    run.status.kind === "succeeded" || run.status.kind === "cancelled";
   const paused = run.status.kind === "paused";
-  const done = run.contexts.filter((context) => context.state.kind === "succeeded").length;
-  const total = run.contexts.filter((context) => context.state.kind !== "skipped").length;
-  const working = run.contexts.filter((context) => context.state.kind === "running").length;
+  const done = run.contexts.filter(
+    (context) => context.state.kind === "succeeded",
+  ).length;
+  const total = run.contexts.filter(
+    (context) => context.state.kind !== "skipped",
+  ).length;
+  const working = run.contexts.filter(
+    (context) => context.state.kind === "running",
+  ).length;
   const agentContext = run.kind === "agent" ? run.contexts[0] : undefined;
   // Questions go to the owner conversation, not the person.
-  const needsYou = run.attention.filter((item) => item.kind !== "question").length;
+  const needsYou = run.attention.filter(
+    (item) => item.kind !== "question",
+  ).length;
   return (
     <header className="flex flex-col gap-xl">
       <div className="flex flex-col gap-md">
         <div className="flex min-w-0 items-center gap-sm font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary">
           {leading}
-          <span className="uppercase max-640:hidden">{run.kind === "workflow" ? "Workflow run" : "Agent run"}</span>
+          <span className="uppercase max-640:hidden">
+            {run.kind === "workflow" ? "Workflow run" : "Agent run"}
+          </span>
           <span aria-hidden="true" className="max-640:hidden">
             /
           </span>
@@ -93,23 +125,33 @@ export function RunHeader({
             <div className="flex flex-wrap items-center gap-x-lg gap-y-[4px] font-mono text-[0.72rem] text-text-secondary">
               <button
                 type="button"
-                onClick={() => controls.onOpenConversation(run.owner.conversationId)}
+                onClick={() =>
+                  controls.onOpenConversation(run.owner.conversationId)
+                }
                 className="inline-flex cursor-pointer items-center gap-[6px] rounded-sm border-0 bg-transparent p-0 font-mono text-[0.72rem] text-text-secondary transition-colors duration-150 hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
               >
                 <BackendDiamond backend={run.owner.backend} />
                 <span>
-                  Owned by <span className="text-text-primary">{run.owner.title}</span>
+                  Owned by{" "}
+                  <span className="text-text-primary">{run.owner.title}</span>
                 </span>
                 <ArrowUpRightIcon size={11} />
               </button>
               <span>started {formatLocalTime(run.startedAt)}</span>
-              {run.kind === "workflow" ? <span>definition revision {run.definitionRevision}</span> : null}
+              {run.kind === "workflow" ? (
+                <span>definition revision {run.definitionRevision}</span>
+              ) : null}
             </div>
           </div>
           {finished ? null : (
             <div className="flex shrink-0 items-center gap-sm max-640:basis-full">
               {paused ? (
-                <Button touch variant="default" size="sm" onClick={controls.onResume}>
+                <Button
+                  touch
+                  variant="default"
+                  size="sm"
+                  onClick={controls.onResume}
+                >
                   <PlayIcon size={13} />
                   Resume
                 </Button>
@@ -125,7 +167,13 @@ export function RunHeader({
                   Pause
                 </Button>
               )}
-              <Button touch variant="danger" size="sm" onClick={() => setConfirming(true)} disabled={run.status.kind === "stopping"}>
+              <Button
+                touch
+                variant="danger"
+                size="sm"
+                onClick={() => setConfirming(true)}
+                disabled={run.status.kind === "stopping"}
+              >
                 <StopIcon size={11} />
                 Cancel run
               </Button>
@@ -137,17 +185,34 @@ export function RunHeader({
         {run.kind === "workflow" ? (
           <>
             <Stat value={`${done}/${total}`} label="Contexts done" />
-            <Stat value={working} label="Working" tone={working > 0 ? "cyan" : undefined} />
+            <Stat
+              value={working}
+              label="Working"
+              tone={working > 0 ? "cyan" : undefined}
+            />
           </>
         ) : (
           <>
-            <Stat value={`${agentContext?.tasks.done ?? 0}/${agentContext?.tasks.total ?? 0}`} label="Tasks done" />
-            <Stat value={agentContext?.reviews.length ?? 0} label="Review rounds" />
+            <Stat
+              value={`${agentContext?.tasks.done ?? 0}/${agentContext?.tasks.total ?? 0}`}
+              label="Tasks done"
+            />
+            <Stat
+              value={agentContext?.reviews.length ?? 0}
+              label="Review rounds"
+            />
           </>
         )}
-        <Stat value={needsYou} label="Needs you" tone={needsYou > 0 ? "amber" : undefined} />
+        <Stat
+          value={needsYou}
+          label="Needs you"
+          tone={needsYou > 0 ? "amber" : undefined}
+        />
         <Stat value={formatUsd(run.costUsd)} label="Cost" />
-        <Stat value={elapsed(run.startedAt, run.finishedAt, now ?? mountedAt)} label={finished ? "Duration" : "Elapsed"} />
+        <Stat
+          value={elapsed(run.startedAt, run.finishedAt, now ?? mountedAt)}
+          label={finished ? "Duration" : "Elapsed"}
+        />
       </div>
       <ConfirmDialog
         open={confirming}

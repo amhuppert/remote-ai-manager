@@ -6,7 +6,11 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { ComposedTooling } from "./runtime-application-state";
-import { createRuntimeHost, type HostedConversation, type RuntimeRequirements } from "./runtime-host";
+import {
+  createRuntimeHost,
+  type HostedConversation,
+  type RuntimeRequirements,
+} from "./runtime-host";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -48,7 +52,11 @@ function harness() {
       return runtime;
     },
   };
-  const seeds: Array<{ conversationId: string; composed: ComposedTooling; runtime: unknown }> = [];
+  const seeds: Array<{
+    conversationId: string;
+    composed: ComposedTooling;
+    runtime: unknown;
+  }> = [];
   let seedFailure: Error | null = null;
   const host = createRuntimeHost({
     factory: () => factory,
@@ -56,13 +64,20 @@ function harness() {
       return { sessionInstructions: instructions, alignmentVersion: null };
     },
     async tooling() {
-      return { overrides: { portableMcp: { servers: [] } }, capabilityState: { cascades: {} } };
+      return {
+        overrides: { portableMcp: { servers: [] } },
+        capabilityState: { cascades: {} },
+      };
     },
     async beginSeed(hosted) {
       return {
         async commit(composed, runtime) {
           if (seedFailure !== null) throw seedFailure;
-          seeds.push({ conversationId: hosted.target.conversationId, composed, runtime });
+          seeds.push({
+            conversationId: hosted.target.conversationId,
+            composed,
+            runtime,
+          });
         },
       };
     },
@@ -134,11 +149,19 @@ describe("runtime host", () => {
   it("retires and replaces the runtime when what it was created with changes", async () => {
     const h = harness();
     await h.host.obtain(conversation, sonnet);
-    await h.host.obtain(conversation, { ...sonnet, modelSelection: { modelId: "opus", parameters: {} } });
+    await h.host.obtain(conversation, {
+      ...sonnet,
+      modelSelection: { modelId: "opus", parameters: {} },
+    });
     h.setInstructions(["You are a CC agent.", "New reference document."]);
-    await h.host.obtain(conversation, { ...sonnet, modelSelection: { modelId: "opus", parameters: {} } });
+    await h.host.obtain(conversation, {
+      ...sonnet,
+      modelSelection: { modelId: "opus", parameters: {} },
+    });
 
-    expect(h.created.map((r) => [r.input.modelSelection.modelId, r.closed])).toEqual([
+    expect(
+      h.created.map((r) => [r.input.modelSelection.modelId, r.closed]),
+    ).toEqual([
       ["sonnet", true],
       ["opus", true],
       ["opus", false],
@@ -151,22 +174,34 @@ describe("runtime host", () => {
     await h.host.obtain(conversation, sonnet);
     h.created[0]?.kill();
     const next = await h.host.obtain(
-      { ...conversation, persistedRef: { backend: "claude", ref: "sdk-session-2" } },
+      {
+        ...conversation,
+        persistedRef: { backend: "claude", ref: "sdk-session-2" },
+      },
       sonnet,
     );
 
     expect(next.created).toBe(true);
-    expect(h.created[1]?.input.persistedRef).toEqual({ backend: "claude", ref: "sdk-session-2" });
+    expect(h.created[1]?.input.persistedRef).toEqual({
+      backend: "claude",
+      ref: "sdk-session-2",
+    });
   });
 
   it("replaces a runtime mid-turn with the continuity the completed work produced", async () => {
     const h = harness();
     await h.host.obtain(conversation, sonnet);
-    const replacement = await h.host.replace("conv-1", { backend: "claude", ref: "sdk-session-3" });
+    const replacement = await h.host.replace("conv-1", {
+      backend: "claude",
+      ref: "sdk-session-3",
+    });
 
     expect(h.created[0]?.closed).toBe(true);
     expect(replacement).toBe(h.created[1]);
-    expect(h.created[1]?.input.persistedRef).toEqual({ backend: "claude", ref: "sdk-session-3" });
+    expect(h.created[1]?.input.persistedRef).toEqual({
+      backend: "claude",
+      ref: "sdk-session-3",
+    });
   });
 
   it("keeps a runtime whose close failed, and creates no replacement until it is collected", async () => {
@@ -191,7 +226,8 @@ describe("runtime host", () => {
     const close = runtime.close.bind(runtime);
     let closable = false;
     runtime.close = async () => {
-      if (!closable) throw new Error("child process cleanup could not be verified");
+      if (!closable)
+        throw new Error("child process cleanup could not be verified");
       await close();
     };
     expect(h.host.closeFailure("conv-1")).toBeNull();
@@ -220,9 +256,14 @@ describe("runtime host", () => {
     };
 
     await expect(
-      h.host.obtain(conversation, { ...sonnet, modelSelection: { modelId: "opus", parameters: {} } }),
+      h.host.obtain(conversation, {
+        ...sonnet,
+        modelSelection: { modelId: "opus", parameters: {} },
+      }),
     ).rejects.toThrow(/cleanup/);
-    await expect(h.host.obtain(conversation, sonnet)).rejects.toThrow(/did not close/);
+    await expect(h.host.obtain(conversation, sonnet)).rejects.toThrow(
+      /did not close/,
+    );
     expect(h.created).toHaveLength(1);
   });
 
@@ -242,17 +283,26 @@ describe("runtime host", () => {
     const h = harness();
     const first = await h.host.obtain(conversation, sonnet);
     await h.host.obtain(conversation, sonnet);
-    const replacement = await h.host.replace("conv-1", { backend: "claude", ref: "sdk-session-3" });
+    const replacement = await h.host.replace("conv-1", {
+      backend: "claude",
+      ref: "sdk-session-3",
+    });
 
     expect(h.seeds).toEqual([
       {
         conversationId: "conv-1",
-        composed: { overrides: { portableMcp: { servers: [] } }, capabilityState: { cascades: {} } },
+        composed: {
+          overrides: { portableMcp: { servers: [] } },
+          capabilityState: { cascades: {} },
+        },
         runtime: first.runtime,
       },
       {
         conversationId: "conv-1",
-        composed: { overrides: { portableMcp: { servers: [] } }, capabilityState: { cascades: {} } },
+        composed: {
+          overrides: { portableMcp: { servers: [] } },
+          capabilityState: { cascades: {} },
+        },
         runtime: replacement,
       },
     ]);
@@ -262,7 +312,9 @@ describe("runtime host", () => {
     const h = harness();
     h.failSeeding(new Error("database is locked"));
 
-    await expect(h.host.obtain(conversation, sonnet)).rejects.toThrow(/database is locked/);
+    await expect(h.host.obtain(conversation, sonnet)).rejects.toThrow(
+      /database is locked/,
+    );
     expect(h.created).toHaveLength(1);
     await h.host.release("conv-1");
     expect(h.created[0]?.closed).toBe(true);

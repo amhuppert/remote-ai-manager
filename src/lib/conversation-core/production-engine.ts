@@ -1,7 +1,10 @@
 import { getConversationTranscriptProjection } from "@/lib/agent-backends/conversation-policy";
 import { createCapabilityConfigComposer } from "@/lib/agent-capabilities/runtime-seed";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
-import { conversationTargetStoreSessionName, type ConversationTarget } from "@/lib/conversations/conversation-target";
+import {
+  conversationTargetStoreSessionName,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { recordConversationCostSettlement } from "@/lib/conversations/cost-settlement";
 import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
@@ -9,7 +12,11 @@ import { generateAndApplyConversationName } from "@/lib/conversations/name-gener
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { admitExplicitModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { getConversation, getSession, mutateConversation } from "@/lib/state-store";
+import {
+  getConversation,
+  getSession,
+  mutateConversation,
+} from "@/lib/state-store";
 import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
 import {
   resolveBackendStallTimeoutMs,
@@ -23,13 +30,25 @@ import { persistTurnImages } from "@/lib/conversation-core/contributions/image-p
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
 import { createCheckpointContinuation } from "./checkpoints";
 import type { TaskTurnPort } from "./executor";
-import { createTaskLane, createTaskTurns, type TaskLane, type TaskLaneDeps } from "./task-turns";
+import {
+  createTaskLane,
+  createTaskTurns,
+  type TaskLane,
+  type TaskLaneDeps,
+} from "./task-turns";
 import { acquireQuerySlot } from "@/lib/shared/query-semaphore";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
-import { getTaskTranscriptProjection, resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
+import {
+  getTaskTranscriptProjection,
+  resolveAgentBackendTurnDefaults,
+} from "@/lib/agent-backends/conversation-policy";
 import { prepareTaskPrompt } from "@/lib/conversation-core/turn/turn-context";
 import { readLineageCumulativeCost } from "@/lib/conversation-core/turn/task-run-cost";
-import { createInteractiveTurns, type InteractiveTurnDeps, type InteractiveTurns } from "./interactive-turns";
+import {
+  createInteractiveTurns,
+  type InteractiveTurnDeps,
+  type InteractiveTurns,
+} from "./interactive-turns";
 import { createProductionConversationRecords } from "./production-records";
 import { createRuntimeApplicationState } from "./runtime-application-state";
 import { prepareTurnInput } from "./turn-input";
@@ -49,10 +68,14 @@ export interface CoreTurnRuntime {
 const log = createLogger("conversation-core");
 
 /** A session conversation works in its session's worktree; a project conversation in the project root. */
-async function worktreeOf(projectPath: string, target: ConversationTarget): Promise<string> {
+async function worktreeOf(
+  projectPath: string,
+  target: ConversationTarget,
+): Promise<string> {
   if (target.scope === "project") return projectPath;
   const session = await getSession(projectPath, target.sessionName);
-  if (session === null) throw new Error(`Session ${target.sessionName} no longer exists`);
+  if (session === null)
+    throw new Error(`Session ${target.sessionName} no longer exists`);
   return session.worktreePath;
 }
 
@@ -66,7 +89,9 @@ export async function createProductionTurnRuntime(options: {
   startDebugVerification: InteractiveTurnDeps["startDebugVerification"];
 }): Promise<CoreTurnRuntime> {
   const deps = await loadConversationTurnDependencies();
-  const composeCapabilitySeed = createCapabilityConfigComposer(deps.policy.composeCapabilities);
+  const composeCapabilitySeed = createCapabilityConfigComposer(
+    deps.policy.composeCapabilities,
+  );
   const applicationState = createRuntimeApplicationState({
     conversations: { getConversation, mutateConversation },
     publish: publishEvent,
@@ -86,7 +111,10 @@ export async function createProductionTurnRuntime(options: {
         },
         conversation.profile,
       );
-      return { sessionInstructions: prepared.sessionInstructions, alignmentVersion: prepared.alignmentVersion };
+      return {
+        sessionInstructions: prepared.sessionInstructions,
+        alignmentVersion: prepared.alignmentVersion,
+      };
     },
     async tooling(conversation) {
       const portableMcp = await deps.policy.composePortableMcp({
@@ -98,7 +126,8 @@ export async function createProductionTurnRuntime(options: {
       const seed = await resolveCapabilitySeedForNewRuntime(
         {
           composeCapabilityConfigForConversation: composeCapabilitySeed,
-          composeCapabilityConfigForProjectConversation: deps.policy.composeDurableProject,
+          composeCapabilityConfigForProjectConversation:
+            deps.policy.composeDurableProject,
         },
         {
           projectPath: conversation.projectPath,
@@ -116,13 +145,22 @@ export async function createProductionTurnRuntime(options: {
         },
       );
       return {
-        overrides: { portableMcp, ...(seed?.capabilities !== undefined ? { capabilities: seed.capabilities } : {}) },
-        ...(seed?.runtimeState !== undefined ? { capabilityState: seed.runtimeState } : {}),
+        overrides: {
+          portableMcp,
+          ...(seed?.capabilities !== undefined
+            ? { capabilities: seed.capabilities }
+            : {}),
+        },
+        ...(seed?.runtimeState !== undefined
+          ? { capabilityState: seed.runtimeState }
+          : {}),
       };
     },
     beginSeed: applicationState.beginSeed,
     callbacks(conversation) {
-      const storeSessionName = conversationTargetStoreSessionName(conversation.target);
+      const storeSessionName = conversationTargetStoreSessionName(
+        conversation.target,
+      );
       const identity = {
         projectPath: conversation.projectPath,
         projectName: conversation.projectName,
@@ -137,10 +175,14 @@ export async function createProductionTurnRuntime(options: {
             applyToHostedActor: () => ({ applied: false }),
             publish: publishEvent,
             appendTranscriptEntryOnce: (conversationId, entry) =>
-              deps.transcript.safeAppendTranscriptEntryOnce(conversationId, entry, {
-                projectName: conversation.projectName,
-                storeSessionName,
-              }),
+              deps.transcript.safeAppendTranscriptEntryOnce(
+                conversationId,
+                entry,
+                {
+                  projectName: conversation.projectName,
+                  storeSessionName,
+                },
+              ),
           }).catch((error: unknown) =>
             log.warn("conversation_core.cost_settlement_failed", {
               conversationId: conversation.conversationId,
@@ -160,7 +202,11 @@ export async function createProductionTurnRuntime(options: {
             null,
           );
           const summary = info.tasks
-            .map((task) => (task.description !== null ? `${task.taskId} (${task.description})` : task.taskId))
+            .map((task) =>
+              task.description !== null
+                ? `${task.taskId} (${task.description})`
+                : task.taskId,
+            )
             .join(", ");
           log.warn("conversation_core.background_tasks_lost", {
             conversationId: conversation.conversationId,
@@ -213,11 +259,15 @@ export async function createProductionTurnRuntime(options: {
         stallTimeoutMs: resolveBackendStallTimeoutMs(backend, config),
       };
     },
-    onCompacted: (conversationId) => deps.effects.resetMemoryIndexDelivery(conversationId),
+    onCompacted: (conversationId) =>
+      deps.effects.resetMemoryIndexDelivery(conversationId),
     recordAccepted: applicationState.recordAccepted,
     onCleanupUnverified(conversation) {
       void deps.effects
-        .notifyRuntimeCleanup({ target: conversation.target, worktreePath: conversation.worktreePath })
+        .notifyRuntimeCleanup({
+          target: conversation.target,
+          worktreePath: conversation.worktreePath,
+        })
         .catch((error: unknown) =>
           log.error("conversation_core.cleanup_notification_failed", {
             conversationId: conversation.conversationId,
@@ -240,8 +290,16 @@ export async function createProductionTurnRuntime(options: {
       now: () => new Date().toISOString(),
       log,
     }),
-    async resolveModelSelection({ projectPath, backend, transcriptPath, explicit }) {
-      const priorMessages = explicit === null ? await deps.transcript.readConversationMessages(transcriptPath) : [];
+    async resolveModelSelection({
+      projectPath,
+      backend,
+      transcriptPath,
+      explicit,
+    }) {
+      const priorMessages =
+        explicit === null
+          ? await deps.transcript.readConversationMessages(transcriptPath)
+          : [];
       const selection = resolveTurnModelSelection({
         backend,
         config: await deps.execution.readConfig(),
@@ -257,7 +315,10 @@ export async function createProductionTurnRuntime(options: {
     },
     prepareInput: (request) => prepareTurnInput(deps, request),
     nameConversation(input) {
-      void generateAndApplyConversationName({ ...input, trigger: "auto" }).catch((error: unknown) =>
+      void generateAndApplyConversationName({
+        ...input,
+        trigger: "auto",
+      }).catch((error: unknown) =>
         log.warn("conversation_core.naming_failed", {
           conversationId: input.conversationId,
           error: getErrorMessage(error),
@@ -265,12 +326,20 @@ export async function createProductionTurnRuntime(options: {
       );
     },
     async requestUserQuestion(scope, questions, signal) {
-      const { inTurnQuestionService } = await import("@/lib/conversations/in-turn-question-service");
+      const { inTurnQuestionService } =
+        await import("@/lib/conversations/in-turn-question-service");
       return inTurnQuestionService.request(scope, questions, signal);
     },
     async persistImages({ conversationId, promptText, images }) {
-      const persisted = await persistTurnImages(deps.transcript, { conversationId, promptText, images });
-      return { promptText: persisted.assembled.rewrittenPromptText, imageRefs: persisted.imageRefs };
+      const persisted = await persistTurnImages(deps.transcript, {
+        conversationId,
+        promptText,
+        images,
+      });
+      return {
+        promptText: persisted.assembled.rewrittenPromptText,
+        imageRefs: persisted.imageRefs,
+      };
     },
     queuedDelivery: ({ identity, delivery, appendUserEntry }) =>
       createQueuedDeliveryAccounting(deps.effects, {
@@ -319,7 +388,11 @@ export async function createProductionTurnRuntime(options: {
     },
     async resolveSettings({ projectPath, backend, modelSelection, timeoutMs }) {
       const config = await deps.execution.readConfig();
-      const defaults = resolveAgentBackendTurnDefaults({ backend, config, explicit: { modelSelection } });
+      const defaults = resolveAgentBackendTurnDefaults({
+        backend,
+        config,
+        explicit: { modelSelection },
+      });
       const admission = await deps.execution.admitConfiguredModelSelection({
         backend,
         projectPath,
@@ -346,7 +419,8 @@ export async function createProductionTurnRuntime(options: {
     transcript: deps.transcript,
     projection: getTaskTranscriptProjection,
     getProjectDisplayName,
-    lineageCost: (conversationId, lineageId) => readLineageCumulativeCost(conversationId, lineageId),
+    lineageCost: (conversationId, lineageId) =>
+      readLineageCumulativeCost(conversationId, lineageId),
   });
   return {
     host,
@@ -357,7 +431,8 @@ export async function createProductionTurnRuntime(options: {
     taskLane: () =>
       createTaskLane({
         ...taskProtocol,
-        acquireSlot: (label, signal) => acquireQuerySlot(label, signal !== undefined ? { signal } : {}),
+        acquireSlot: (label, signal) =>
+          acquireQuerySlot(label, signal !== undefined ? { signal } : {}),
       }),
   };
 }

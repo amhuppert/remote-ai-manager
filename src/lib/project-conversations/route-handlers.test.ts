@@ -745,7 +745,9 @@ describe("a project conversation the shared core runs", () => {
       },
       executeProjectPromptStream: async (input) => {
         legacyTurns.push(input.promptText);
-        throw new Error("a core conversation's prompt must not reach the conversation actor");
+        throw new Error(
+          "a core conversation's prompt must not reach the conversation actor",
+        );
       },
       coreConversations: {
         owns: (conversationId) => conversationId === "c1",
@@ -774,7 +776,10 @@ describe("a project conversation the shared core runs", () => {
     });
     h.store.set("c1", makeConv({ id: "c1" }));
     const prompt = (body: unknown) =>
-      h.handlers.promptPOST(jsonRequest(body), ctx({ name: "demo", conversationId: "c1" }));
+      h.handlers.promptPOST(
+        jsonRequest(body),
+        ctx({ name: "demo", conversationId: "c1" }),
+      );
     return { prompt, prompts, sent, lockChecks, legacyTurns };
   }
 
@@ -800,13 +805,19 @@ describe("a project conversation the shared core runs", () => {
       projectPath: "/repo",
       target: { scope: "project", projectName: "demo", conversationId: "c1" },
     });
-    expect(h.sent).toEqual([expect.objectContaining({ conversationId: "c1", text: "Hello" })]);
+    expect(h.sent).toEqual([
+      expect.objectContaining({ conversationId: "c1", text: "Hello" }),
+    ]);
     expect(h.lockChecks).toEqual([]);
     expect(h.legacyTurns).toEqual([]);
   });
 
   it("answers a core conversation that is already running a turn with CONVERSATION_BUSY", async () => {
-    const h = coreHarness({ kind: "refused", code: "busy", message: "Conversation is busy — a turn is already running" });
+    const h = coreHarness({
+      kind: "refused",
+      code: "busy",
+      message: "Conversation is busy — a turn is already running",
+    });
     const res = await h.prompt({ prompt: "Hello" });
 
     expect(res.status).toBe(409);
@@ -820,7 +831,10 @@ describe("a project conversation the shared core runs", () => {
 
     expect(res.status).toBe(400);
     const refusal = new ProjectCollaborationUnsupportedError();
-    expect(await res.json()).toEqual({ error: refusal.message, code: refusal.code });
+    expect(await res.json()).toEqual({
+      error: refusal.message,
+      code: refusal.code,
+    });
     expect(h.sent).toEqual([]);
   });
 
@@ -844,10 +858,19 @@ describe("a project conversation the shared core runs", () => {
       return create(projectPath, opts);
     };
 
-    const res = await h.handlers.createPOST(jsonRequest({ engine: "core", name: "Core chat" }), ctx({ name: "demo" }));
+    const res = await h.handlers.createPOST(
+      jsonRequest({ engine: "core", name: "Core chat" }),
+      ctx({ name: "demo" }),
+    );
 
     expect(res.status).toBe(201);
-    expect(enrolled).toEqual([{ conversationId: "new-1", projectPath: "/repo", scope: { scope: "project" } }]);
+    expect(enrolled).toEqual([
+      {
+        conversationId: "new-1",
+        projectPath: "/repo",
+        scope: { scope: "project" },
+      },
+    ]);
     expect(order).toEqual(["enrolled", "conversation-created"]);
     // The engine is how the route hands the conversation over, not a property of the conversation.
     expect(created).toEqual([{ name: "Core chat" }]);
@@ -857,7 +880,10 @@ describe("a project conversation the shared core runs", () => {
     const enrolled: unknown[] = [];
     const h = harness({ enrollInCore: (input) => enrolled.push(input) });
 
-    expect((await h.handlers.createPOST(jsonRequest({}), ctx({ name: "demo" }))).status).toBe(201);
+    expect(
+      (await h.handlers.createPOST(jsonRequest({}), ctx({ name: "demo" })))
+        .status,
+    ).toBe(201);
     expect(enrolled).toEqual([]);
   });
 
@@ -868,10 +894,15 @@ describe("a project conversation the shared core runs", () => {
       },
     });
 
-    const res = await h.handlers.createPOST(jsonRequest({ engine: "core" }), ctx({ name: "demo" }));
+    const res = await h.handlers.createPOST(
+      jsonRequest({ engine: "core" }),
+      ctx({ name: "demo" }),
+    );
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toMatchObject({ error: expect.stringContaining("database is locked") });
+    expect(await res.json()).toMatchObject({
+      error: expect.stringContaining("database is locked"),
+    });
     expect(h.store.get("new-1")?.archived).toBe(true);
     expect(h.broadcasts).toEqual([]);
   });

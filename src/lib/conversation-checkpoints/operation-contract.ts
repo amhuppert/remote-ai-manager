@@ -1,5 +1,8 @@
 import type { CheckpointRefusal } from "./admission";
-import type { CheckpointHandoffEligibility, CheckpointReceipt } from "./receipt";
+import type {
+  CheckpointHandoffEligibility,
+  CheckpointReceipt,
+} from "./receipt";
 import type { CheckpointHandoffRequest, CheckpointOperation } from "./schemas";
 import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 
@@ -76,7 +79,9 @@ export interface CoreConversationCheckpoints {
     address: ConversationAddress,
     options: { recover: string | null },
   ): Promise<ConversationCheckpointCheck>;
-  start(input: ConversationCheckpointRequest): Promise<ConversationCheckpointStart>;
+  start(
+    input: ConversationCheckpointRequest,
+  ): Promise<ConversationCheckpointStart>;
   cancel(input: {
     address: ConversationAddress;
     operationId: string;

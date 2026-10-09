@@ -13,9 +13,15 @@ import type { CoreTurnRuntime } from "@/lib/conversation-core/production-engine"
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
 import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
 import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
-import { storeSessionNameFromScopeRef, type ConversationScopeRef } from "@/lib/conversations/conversation-target";
+import {
+  storeSessionNameFromScopeRef,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
 import { getGlobalValue } from "@/lib/shared/global-singleton";
-import { createConversationCoreRepo, type ConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
+import {
+  createConversationCoreRepo,
+  type ConversationCoreRepo,
+} from "@/lib/state-store/conversation-core-repo";
 import { getStateDb } from "@/lib/state-store/store";
 import type { Supervision } from "./supervision";
 
@@ -36,8 +42,16 @@ export function loadedCoreTurnRuntime(): Promise<CoreTurnRuntime> | undefined {
 }
 
 /** Stops a core conversation's turn; `settled` once that turn has ended. Queued notices still run. */
-export function stopCoreConversation(conversationId: string): { requested: boolean; settled: Promise<void> } {
-  return composedSupervision()?.core.stopConversation(conversationId) ?? { requested: false, settled: Promise.resolve() };
+export function stopCoreConversation(conversationId: string): {
+  requested: boolean;
+  settled: Promise<void>;
+} {
+  return (
+    composedSupervision()?.core.stopConversation(conversationId) ?? {
+      requested: false,
+      settled: Promise.resolve(),
+    }
+  );
 }
 
 /** The checkpoint owner of core conversations, once run supervision is composed. */
@@ -46,19 +60,32 @@ export function coreCheckpoints(): CoreCheckpoints | undefined {
 }
 
 /** The core takes the conversation's next queued message, if it is idle and has one. */
-export async function drainCoreConversation(conversationId: string): Promise<void> {
+export async function drainCoreConversation(
+  conversationId: string,
+): Promise<void> {
   await composedSupervision()?.drainConversationQueue(conversationId);
 }
 
 /** A question a core conversation's agent asks, or its clearing, recorded on the conversation row. */
 export async function coreQuestionCommand(
-  identity: { projectPath: string; sessionName: string; conversationId: string },
+  identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  },
   command: QuestionCommand,
 ): Promise<boolean> {
   const questions = createProductionConversationQuestions();
-  const row = { projectPath: identity.projectPath, storeSessionName: identity.sessionName, conversationId: identity.conversationId };
+  const row = {
+    projectPath: identity.projectPath,
+    storeSessionName: identity.sessionName,
+    conversationId: identity.conversationId,
+  };
   return command.kind === "register_question"
-    ? questions.ask(row, { questionId: command.questionId, questions: command.questions })
+    ? questions.ask(row, {
+        questionId: command.questionId,
+        questions: command.questions,
+      })
     : questions.clear(row, command.questionId);
 }
 
@@ -70,23 +97,43 @@ export async function holdCoreConversationWhileIdle<T>(
   conversationId: string,
   holder: HoldHolder,
   work: () => Promise<T>,
-): Promise<{ kind: "ran"; value: T } | { kind: "busy"; reason: string } | { kind: "not_core" }> {
+): Promise<
+  | { kind: "ran"; value: T }
+  | { kind: "busy"; reason: string }
+  | { kind: "not_core" }
+> {
   const supervision = composedSupervision();
-  if (supervision === undefined || !coreOwnsConversation(conversationId)) return { kind: "not_core" };
-  const held = await supervision.core.whileIdle(conversationId, work, holder, { holds: "claim" });
+  if (supervision === undefined || !coreOwnsConversation(conversationId))
+    return { kind: "not_core" };
+  const held = await supervision.core.whileIdle(conversationId, work, holder, {
+    holds: "claim",
+  });
   return held.kind === "busy"
-    ? { kind: "busy", reason: held.reason ?? "The conversation is running a turn or has one waiting to start" }
+    ? {
+        kind: "busy",
+        reason:
+          held.reason ??
+          "The conversation is running a turn or has one waiting to start",
+      }
     : held;
 }
 
 /** A debug command on a core conversation, applied by the core's debug mode. */
 export async function coreDebugCommand(
-  identity: { projectPath: string; sessionName: string; conversationId: string },
+  identity: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  },
   command: DebugCommand,
 ): Promise<CoreDebugCommandOutcome> {
   const supervision = composedSupervision();
   if (supervision === undefined) {
-    return { kind: "refused", code: "not_found", message: "Run supervision is not running" };
+    return {
+      kind: "refused",
+      code: "not_found",
+      message: "Run supervision is not running",
+    };
   }
   return supervision.debug.command(identity.conversationId, command);
 }
@@ -99,15 +146,24 @@ export async function runCoreTask(input: {
 }): Promise<TurnExecutionOutcome> {
   const supervision = composedSupervision();
   if (supervision === undefined) {
-    return { kind: "not_started", reason: "configuration", message: "Run supervision is not running" };
+    return {
+      kind: "not_started",
+      reason: "configuration",
+      message: "Run supervision is not running",
+    };
   }
   return supervision.core.runTask(input);
 }
 
 /** Whether a core conversation's running turn takes a queued message now. */
-export async function coreAcceptsLive(conversationId: string): Promise<boolean> {
+export async function coreAcceptsLive(
+  conversationId: string,
+): Promise<boolean> {
   const runtime = loadedCoreTurnRuntime();
-  return runtime !== undefined && (await runtime).interactiveTurns.acceptsLive(conversationId);
+  return (
+    runtime !== undefined &&
+    (await runtime).interactiveTurns.acceptsLive(conversationId)
+  );
 }
 
 /** A queued message the queue claimed, delivered into a core conversation's running turn. */
@@ -116,18 +172,23 @@ export async function deliverCoreLive(
   request: UserTurnRequest,
 ): Promise<DeliveryClass> {
   const runtime = loadedCoreTurnRuntime();
-  if (runtime === undefined) throw new Error("The conversation core is not running");
+  if (runtime === undefined)
+    throw new Error("The conversation core is not running");
   return (await runtime).interactiveTurns.deliverLive(identity, request);
 }
 
 /** A core conversation is going away: nothing more runs in it, and its runtime is closed. */
-export async function retireCoreConversation(conversationId: string): Promise<void> {
+export async function retireCoreConversation(
+  conversationId: string,
+): Promise<void> {
   await composedSupervision()?.core.retireConversation(conversationId);
   const runtime = loadedCoreTurnRuntime();
   if (runtime !== undefined) await (await runtime).host.release(conversationId);
 }
 
-let cached: { db: ReturnType<typeof getStateDb>; repo: ConversationCoreRepo } | undefined;
+let cached:
+  | { db: ReturnType<typeof getStateDb>; repo: ConversationCoreRepo }
+  | undefined;
 /** One prepared repository per database handle, so a reopened database is never read through a closed one. */
 function coreRepo(): ConversationCoreRepo {
   const db = getStateDb();
@@ -137,7 +198,11 @@ function coreRepo(): ConversationCoreRepo {
 
 /** A core conversation that has not run takes the backend its first input chose. */
 export async function adoptCoreConversationBackend(
-  identity: { projectPath: string; storeSessionName: string; conversationId: string },
+  identity: {
+    projectPath: string;
+    storeSessionName: string;
+    conversationId: string;
+  },
   backend: AgentBackendId,
 ): Promise<void> {
   await createProductionConversationRecords().adoptBackend(identity, backend);
@@ -157,7 +222,11 @@ export function coreOwnsConversation(conversationId: string): boolean {
  * Hands a new interactive conversation's turns to the core. Only safe before
  * anyone can address the conversation: the actor refuses it from then on.
  */
-export function enrollInCore(input: { conversationId: string; projectPath: string; scope: ConversationScopeRef }): void {
+export function enrollInCore(input: {
+  conversationId: string;
+  projectPath: string;
+  scope: ConversationScopeRef;
+}): void {
   coreRepo().enrollInteractive({
     conversationId: input.conversationId,
     projectPath: input.projectPath,

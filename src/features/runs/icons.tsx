@@ -14,7 +14,11 @@ const stroke = {
   strokeLinejoin: "miter" as const,
 };
 
-function Svg({ size = 16, children, filled = false }: IconProps & { children: React.ReactNode; filled?: boolean }) {
+function Svg({
+  size = 16,
+  children,
+  filled = false,
+}: IconProps & { children: React.ReactNode; filled?: boolean }) {
   return (
     <svg
       viewBox="0 0 24 24"

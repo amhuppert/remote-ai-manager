@@ -1,9 +1,18 @@
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
-import { targetFromStoreSessionName, type ConversationTarget } from "@/lib/conversations/conversation-target";
-import type { AskQuestionItem, MessageContentBlock } from "@/lib/conversations/schemas";
+import {
+  targetFromStoreSessionName,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
+import type {
+  AskQuestionItem,
+  MessageContentBlock,
+} from "@/lib/conversations/schemas";
 import type { InTurnQuestionReply } from "@/lib/conversations/in-turn-question-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
-import type { TranscriptBroadcastMeta, TranscriptEntry } from "@/lib/prompt/transcript";
+import type {
+  TranscriptBroadcastMeta,
+  TranscriptEntry,
+} from "@/lib/prompt/transcript";
 import type { QueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
 import {
   composeUserTranscriptBlocks,
@@ -14,11 +23,17 @@ import type { Logger } from "@/lib/logging";
 import { isRuntimeCreatedWithoutResume } from "@/lib/memory/delivery-decision";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import { fingerprintAssembledInput, fingerprintSubmittedInput } from "@/lib/conversation-checkpoints/input-fingerprint";
+import {
+  fingerprintAssembledInput,
+  fingerprintSubmittedInput,
+} from "@/lib/conversation-checkpoints/input-fingerprint";
 import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
 import type { ContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import { isInputDeliveryUncertain, markPromptNotDelivered } from "@/lib/agent-backends/errors";
+import {
+  isInputDeliveryUncertain,
+  markPromptNotDelivered,
+} from "@/lib/agent-backends/errors";
 import {
   classifyDelivery,
   type DeliveryClass,
@@ -26,7 +41,11 @@ import {
   type PreparedTurnInput,
   type TurnInputRequest,
 } from "./turn-input";
-import { toPromptActorResult, type TurnExecutionOutcome, type TurnInterruption } from "@/lib/conversation-core/turn/turn-result";
+import {
+  toPromptActorResult,
+  type TurnExecutionOutcome,
+  type TurnInterruption,
+} from "@/lib/conversation-core/turn/turn-result";
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
 import {
@@ -39,12 +58,19 @@ import {
 } from "./conversation-record";
 import type { TurnStream, UserTurnPort } from "./executor";
 import type { UserTurnRequest } from "./schemas";
-import { failedTurn, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
+import {
+  failedTurn,
+  runRecordedTurn,
+  turnResultOf,
+  recordedResult,
+} from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
 import type { TurnEngine } from "./turn-engine";
 
 /** The conversation row as an interactive turn reads it. */
-type ConversationRowRead = NonNullable<Awaited<ReturnType<ConversationRecordPort["read"]>>>;
+type ConversationRowRead = NonNullable<
+  Awaited<ReturnType<ConversationRecordPort["read"]>>
+>;
 
 /** A cleanup turn's report, handed to the debug workflow's verification. */
 export interface DebugVerificationStart {
@@ -77,7 +103,10 @@ export interface InteractiveTurnDeps {
   continuation(input: {
     identity: ConversationIdentity;
     row: ConversationRowRead;
-  }): Promise<{ continuation: ContinuationSeed; seed: PreparedCheckpointSeed | null }>;
+  }): Promise<{
+    continuation: ContinuationSeed;
+    seed: PreparedCheckpointSeed | null;
+  }>;
   /** The turn's input: the message and the contributions ahead of it, with what its acceptance owes. */
   prepareInput(request: TurnInputRequest): Promise<PreparedTurnInput>;
   nameConversation(input: {
@@ -106,9 +135,17 @@ export interface InteractiveTurnDeps {
     appendUserEntry(): Promise<void>;
   }): QueuedDeliveryAccounting;
   /** A batch no turn sent stays in the queue, failed with the reason, for the person to resend or discard. */
-  failQueued(input: { identity: ConversationIdentity; delivery: QueuedDeliveryMetadata; error: string }): Promise<void>;
+  failQueued(input: {
+    identity: ConversationIdentity;
+    delivery: QueuedDeliveryMetadata;
+    error: string;
+  }): Promise<void>;
   /** A batch that was never sent goes back to pending, to be delivered again. */
-  returnQueued(input: { identity: ConversationIdentity; delivery: QueuedDeliveryMetadata; error: string }): Promise<void>;
+  returnQueued(input: {
+    identity: ConversationIdentity;
+    delivery: QueuedDeliveryMetadata;
+    error: string;
+  }): Promise<void>;
   transcript: {
     appendTranscriptEntryOnce(
       conversationId: string,
@@ -132,7 +169,9 @@ interface PreparedInput {
 function outcomeMessage(outcome: TurnExecutionOutcome): string {
   if (outcome.kind === "not_started") return outcome.message;
   const call = outcome.result?.outcome;
-  return call?.kind === "failed" ? call.error.message : "The turn ended before its input was sent";
+  return call?.kind === "failed"
+    ? call.error.message
+    : "The turn ended before its input was sent";
 }
 
 function stoppedMessage(interruption: TurnInterruption): string {
@@ -152,14 +191,20 @@ function stoppedMessage(interruption: TurnInterruption): string {
  * What the person's request hears when the turn ends without succeeding: why
  * it stopped, or the failure, unless the backend already reported it live.
  */
-function reportEnding(stream: TurnStream | null, outcome: TurnExecutionOutcome, streamedErrors: Set<string>): void {
+function reportEnding(
+  stream: TurnStream | null,
+  outcome: TurnExecutionOutcome,
+  streamedErrors: Set<string>,
+): void {
   if (stream === null) return;
   const error = (message: string) => {
     if (!streamedErrors.has(message)) stream.emit("error", { message });
   };
   if (outcome.kind === "not_started") {
-    if (outcome.interruption !== undefined) stream.emit("aborted", { message: stoppedMessage(outcome.interruption) });
-    else if (outcome.reason === "cancelled") stream.emit("aborted", { message: "Prompt execution was cancelled" });
+    if (outcome.interruption !== undefined)
+      stream.emit("aborted", { message: stoppedMessage(outcome.interruption) });
+    else if (outcome.reason === "cancelled")
+      stream.emit("aborted", { message: "Prompt execution was cancelled" });
     else error(outcome.message);
     return;
   }
@@ -177,12 +222,14 @@ async function renderMessage(
   conversationId: string,
   request: UserTurnRequest,
 ): Promise<PreparedInput> {
-  const { effectivePromptText, isDrainedFeedbackBatch } = resolveTurnPromptText({
-    promptText: request.text,
-    documentFeedback: request.documentFeedback,
-    notepadFeedback: request.notepadFeedback,
-    isQueuedDelivery: request.queuedDelivery !== undefined,
-  });
+  const { effectivePromptText, isDrainedFeedbackBatch } = resolveTurnPromptText(
+    {
+      promptText: request.text,
+      documentFeedback: request.documentFeedback,
+      notepadFeedback: request.notepadFeedback,
+      isQueuedDelivery: request.queuedDelivery !== undefined,
+    },
+  );
   const persisted = await deps.persistImages({
     conversationId,
     promptText: effectivePromptText,
@@ -217,7 +264,6 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(getErrorMessage(error));
 }
 
-
 /** A person's messages to an enrolled conversation, and the receipts their turns still owe. */
 export interface InteractiveTurns extends UserTurnPort {
   /** Whether the conversation's running turn could take a queued message now. */
@@ -229,7 +275,10 @@ export interface InteractiveTurns extends UserTurnPort {
    * the next turn; `uncertain`, and `accepted` input the queue could not
    * release, hold them for review.
    */
-  deliverLive(identity: ConversationIdentity, request: UserTurnRequest): Promise<DeliveryClass>;
+  deliverLive(
+    identity: ConversationIdentity,
+    request: UserTurnRequest,
+  ): Promise<DeliveryClass>;
   /**
    * Settles receipts the conversation's earlier turns could not, such as a
    * checkpoint delivery's acceptance; one that still fails stays retained.
@@ -242,7 +291,9 @@ export interface InteractiveTurns extends UserTurnPort {
  * row bookkeeping as seat turns: the ordinary conversation's context, model
  * and continuity, streamed live to the request that sent it.
  */
-export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTurns {
+export function createInteractiveTurns(
+  deps: InteractiveTurnDeps,
+): InteractiveTurns {
   /**
    * Receipts still unsettled when their turn ended keep an owner here and are
    * settled before the conversation's next turn prepares its own context.
@@ -254,8 +305,13 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
   const running = new Map<string, RunningTurn>();
 
   function retain(conversationId: string, input: PreparedTurnInput): void {
-    deps.log.error("conversation_core.input_receipts_unsettled", { conversationId });
-    unsettled.set(conversationId, [...(unsettled.get(conversationId) ?? []), input]);
+    deps.log.error("conversation_core.input_receipts_unsettled", {
+      conversationId,
+    });
+    unsettled.set(conversationId, [
+      ...(unsettled.get(conversationId) ?? []),
+      input,
+    ]);
   }
 
   /** Why the running turn cannot take a queued message now; null when it can. */
@@ -265,7 +321,11 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
     if (turn.settling) return "turn_settling";
     const runtime = deps.host.runtime(conversationId);
     // Only input that joins this turn, or is refused once it ends: the runtime closes with the turn.
-    if (runtime?.queueUserInput === undefined || runtime.liveInput !== "running_turn") return "runtime_not_turn_bound";
+    if (
+      runtime?.queueUserInput === undefined ||
+      runtime.liveInput !== "running_turn"
+    )
+      return "runtime_not_turn_bound";
     const row = await deps.records.read(turn.identity);
     if (row === null) return "no_conversation";
     // A question waits for its answer, debug mode takes no queued input, a collaboration holds the conversation.
@@ -277,16 +337,28 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
 
   async function acceptsLive(conversationId: string): Promise<boolean> {
     const reason = await liveRefusal(conversationId);
-    if (reason !== null) deps.log.info("conversation_core.live_input_declined", { conversationId, reason });
+    if (reason !== null)
+      deps.log.info("conversation_core.live_input_declined", {
+        conversationId,
+        reason,
+      });
     return reason === null;
   }
 
-  async function deliverInto(turn: RunningTurn, request: UserTurnRequest, delivery: QueuedDeliveryMetadata): Promise<DeliveryClass> {
+  async function deliverInto(
+    turn: RunningTurn,
+    request: UserTurnRequest,
+    delivery: QueuedDeliveryMetadata,
+  ): Promise<DeliveryClass> {
     const { identity } = turn;
     const conversationId = identity.conversationId;
     const runtime = deps.host.runtime(conversationId);
     if (runtime?.queueUserInput === undefined) {
-      await deps.returnQueued({ identity, delivery, error: "The running turn ended before it could take this message" });
+      await deps.returnQueued({
+        identity,
+        delivery,
+        error: "The running turn ended before it could take this message",
+      });
       return "not_sent";
     }
     const message = await renderMessage(deps, conversationId, request);
@@ -301,11 +373,19 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
     const accounting = deps.queuedDelivery({
       identity,
       delivery,
-      appendUserEntry: () => deps.transcript.appendTranscriptEntryOnce(conversationId, entry, turn.broadcast),
+      appendUserEntry: () =>
+        deps.transcript.appendTranscriptEntryOnce(
+          conversationId,
+          entry,
+          turn.broadcast,
+        ),
     });
     const prepared = await deps.prepareInput({
       mode: "live",
-      execution: { ...turn.execution, turn: { inputOrigin: request.inputOrigin, promptText: request.text } },
+      execution: {
+        ...turn.execution,
+        turn: { inputOrigin: request.inputOrigin, promptText: request.text },
+      },
       promptText: message.promptText,
       briefingAttemptId: delivery.deliveryAttemptId,
       archive: () => accounting.appendAcceptedUserEntry(),
@@ -323,13 +403,19 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           })),
         ],
         userPromptText: request.text,
-        ...(prepared.promptContext !== undefined ? { promptContext: prepared.promptContext } : {}),
+        ...(prepared.promptContext !== undefined
+          ? { promptContext: prepared.promptContext }
+          : {}),
         // A live delivery joins a turn that already reported its continuity.
         onAccepted: () => prepared.accepted(null),
       });
     } catch (error) {
       // The port rejects ambiguous delivery as uncertain; any other rejection is a refusal before sending.
-      prepared.failed(isInputDeliveryUncertain(error) ? error : markPromptNotDelivered(asError(error)));
+      prepared.failed(
+        isInputDeliveryUncertain(error)
+          ? error
+          : markPromptNotDelivered(asError(error)),
+      );
       deps.log.warn("conversation_core.live_delivery_failed", {
         conversationId,
         deliveryAttemptId: delivery.deliveryAttemptId,
@@ -341,9 +427,17 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
     if (!(await prepared.settle())) retain(conversationId, prepared);
     // Sent rows the queue has not released are held for review, as a turn's are.
     if (outcome === "not_sent")
-      await deps.returnQueued({ identity, delivery, error: "Not sent into the running turn; it goes with the next turn" });
+      await deps.returnQueued({
+        identity,
+        delivery,
+        error: "Not sent into the running turn; it goes with the next turn",
+      });
     else await accounting.settleAfterTurn();
-    deps.log.info("conversation_core.live_delivery", { conversationId, deliveryAttemptId: delivery.deliveryAttemptId, outcome });
+    deps.log.info("conversation_core.live_delivery", {
+      conversationId,
+      deliveryAttemptId: delivery.deliveryAttemptId,
+      outcome,
+    });
     return outcome;
   }
 
@@ -354,15 +448,26 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
     for (const input of retained) {
       if (!(await input.settle())) still.push(input);
     }
-    if (still.length > 0) deps.log.error("conversation_core.input_receipts_unsettled", { conversationId, count: still.length });
-    if (still.length > 0) unsettled.set(conversationId, [...still, ...(unsettled.get(conversationId) ?? [])]);
+    if (still.length > 0)
+      deps.log.error("conversation_core.input_receipts_unsettled", {
+        conversationId,
+        count: still.length,
+      });
+    if (still.length > 0)
+      unsettled.set(conversationId, [
+        ...still,
+        ...(unsettled.get(conversationId) ?? []),
+      ]);
   }
 
   function settleRetained(conversationId: string): Promise<void> {
-    const next = (settling.get(conversationId) ?? Promise.resolve()).then(() => settleRetainedNow(conversationId));
+    const next = (settling.get(conversationId) ?? Promise.resolve()).then(() =>
+      settleRetainedNow(conversationId),
+    );
     settling.set(conversationId, next);
     void next.finally(() => {
-      if (settling.get(conversationId) === next) settling.delete(conversationId);
+      if (settling.get(conversationId) === next)
+        settling.delete(conversationId);
     });
     return next;
   }
@@ -372,11 +477,20 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
     acceptsLive,
     async deliverLive(identity, request) {
       const delivery = request.queuedDelivery;
-      if (delivery === undefined) throw new Error("Live input is a queued message the queue claimed");
+      if (delivery === undefined)
+        throw new Error("Live input is a queued message the queue claimed");
       const turn = running.get(identity.conversationId);
       // Checked again after the row read: a turn that began settling meanwhile waits for no new delivery.
-      if (turn === undefined || !(await acceptsLive(identity.conversationId)) || turn.settling) {
-        await deps.returnQueued({ identity, delivery, error: "No running turn could take it; it goes with the next turn" });
+      if (
+        turn === undefined ||
+        !(await acceptsLive(identity.conversationId)) ||
+        turn.settling
+      ) {
+        await deps.returnQueued({
+          identity,
+          delivery,
+          error: "No running turn could take it; it goes with the next turn",
+        });
         return "not_sent";
       }
       const work = deliverInto(turn, request, delivery);
@@ -389,27 +503,53 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
     },
     async notStarted({ conversationId, enrollment, request, reason, endedBy }) {
       const delivery = request.queuedDelivery;
-      const identity = { projectPath: enrollment.projectPath, storeSessionName: enrollment.sessionName, conversationId };
+      const identity = {
+        projectPath: enrollment.projectPath,
+        storeSessionName: enrollment.sessionName,
+        conversationId,
+      };
       if (delivery === undefined) {
         // A debug turn the person stopped before it started still failed its phase, and can be retried.
         if (endedBy !== "person") return;
         const row = await deps.records.read(identity);
         if (row === null || runtimeDebugMode(row.debugMode) === null) return;
-        await deps.records.settleTurn(identity, settlementOf({ kind: "not_started", reason: "cancelled", message: reason }), "user");
+        await deps.records.settleTurn(
+          identity,
+          settlementOf({
+            kind: "not_started",
+            reason: "cancelled",
+            message: reason,
+          }),
+          "user",
+        );
         return;
       }
       // Provably never sent: a batch the server stopped is delivered after the restart.
       if (endedBy === "server") {
-        await deps.returnQueued({ identity, delivery, error: "The server stopped before it was sent" });
+        await deps.returnQueued({
+          identity,
+          delivery,
+          error: "The server stopped before it was sent",
+        });
         return;
       }
       await deps.failQueued({
         identity,
         delivery,
-        error: endedBy === "person" ? "Stopped before it was sent" : `Not sent: ${reason}`,
+        error:
+          endedBy === "person"
+            ? "Stopped before it was sent"
+            : `Not sent: ${reason}`,
       });
     },
-    async run({ conversationId, enrollment, request, attemptId, signal, stream }) {
+    async run({
+      conversationId,
+      enrollment,
+      request,
+      attemptId,
+      signal,
+      stream,
+    }) {
       const identity = {
         projectPath: enrollment.projectPath,
         storeSessionName: enrollment.sessionName,
@@ -423,18 +563,29 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
       const streamedErrors = new Set<string>();
       let turnWorktree: string | null = null;
       // Whatever ends the turn, from here on, the queue is told what became of its batch.
-      let ran: TurnExecutionOutcome = { kind: "not_started", reason: "configuration", message: "The turn did not run" };
+      let ran: TurnExecutionOutcome = {
+        kind: "not_started",
+        reason: "configuration",
+        message: "The turn did not run",
+      };
       try {
         const row = await deps.records.read(identity);
         if (row === null) {
           const failure = `Conversation ${conversationId} no longer exists`;
-          ran = { kind: "not_started", reason: "configuration", message: failure };
+          ran = {
+            kind: "not_started",
+            reason: "configuration",
+            message: failure,
+          };
           stream?.emit("error", { message: failure });
           return failedTurn(failure);
         }
         // In debug mode the session's phase decides the turn's context and the report it asks for.
         const debugMode = runtimeDebugMode(row.debugMode);
-        const outputFormat = debugMode === null ? undefined : resolveDebugOutputFormat(debugMode.phase);
+        const outputFormat =
+          debugMode === null
+            ? undefined
+            : resolveDebugOutputFormat(debugMode.phase);
         const recorded = await runRecordedTurn(deps, identity, "user", () =>
           runMessage(row, debugMode, outputFormat),
         );
@@ -451,9 +602,16 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           });
         }
         reportEnding(stream, outcome, streamedErrors);
-        return recordedResult(turnResultOf(outcome, outputFormat, null), recorded);
+        return recordedResult(
+          turnResultOf(outcome, outputFormat, null),
+          recorded,
+        );
       } catch (error) {
-        ran = { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
+        ran = {
+          kind: "not_started",
+          reason: "configuration",
+          message: getErrorMessage(error),
+        };
         throw error;
       } finally {
         await settleQueued(ran);
@@ -498,31 +656,53 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
             explicit: request.modelSelection ?? null,
           });
         } catch (error) {
-          deps.log.warn("conversation_core.model_selection_refused", { conversationId, error: getErrorMessage(error) });
-          return { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
+          deps.log.warn("conversation_core.model_selection_refused", {
+            conversationId,
+            error: getErrorMessage(error),
+          });
+          return {
+            kind: "not_started",
+            reason: "configuration",
+            message: getErrorMessage(error),
+          };
         }
         let resumed: Awaited<ReturnType<InteractiveTurnDeps["continuation"]>>;
         try {
           resumed = await deps.continuation({ identity, row });
         } catch (error) {
-          deps.log.error("conversation_core.continuation_unavailable", { conversationId, error: getErrorMessage(error) });
-          return { kind: "not_started", reason: "configuration", message: getErrorMessage(error) };
+          deps.log.error("conversation_core.continuation_unavailable", {
+            conversationId,
+            error: getErrorMessage(error),
+          });
+          return {
+            kind: "not_started",
+            reason: "configuration",
+            message: getErrorMessage(error),
+          };
         }
         const { seed } = resumed;
         // A checkpoint retired the provider continuation: its seed starts a fresh runtime that resumes nothing.
         const resumeRef = seed === null ? persistedRef : null;
         if (seed !== null && deps.host.isLive(conversationId)) {
-          deps.log.warn("checkpoint.stale_runtime_closed", { conversationId, operationId: seed.operationId });
+          deps.log.warn("checkpoint.stale_runtime_closed", {
+            conversationId,
+            operationId: seed.operationId,
+          });
           await deps.host.release(conversationId);
         }
         // Settled once the turn is going to run: from here the profile is locked.
         const profile = await deps.records.admitProfile(identity);
         const input = await renderMessage(deps, conversationId, request);
-        const broadcast = { projectName, storeSessionName: enrollment.sessionName };
+        const broadcast = {
+          projectName,
+          storeSessionName: enrollment.sessionName,
+        };
         const messageId =
           delivery === undefined
             ? undefined
-            : (delivery.subscriptionBatchId ?? delivery.messageIds[0] ?? delivery.deliveryAttemptId);
+            : (delivery.subscriptionBatchId ??
+              delivery.messageIds[0] ??
+              delivery.deliveryAttemptId);
         const userEntry: TranscriptEntry = {
           ...(messageId !== undefined ? { id: messageId } : {}),
           timestamp: new Date().toISOString(),
@@ -545,12 +725,23 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
             identity,
             delivery,
             appendUserEntry: () =>
-              deps.transcript.appendTranscriptEntryOnce(conversationId, { ...userEntry, id: messageId }, broadcast),
+              deps.transcript.appendTranscriptEntryOnce(
+                conversationId,
+                { ...userEntry, id: messageId },
+                broadcast,
+              ),
           });
         }
         const owned = accounting;
-        const target = targetFromStoreSessionName(projectName, enrollment.sessionName, conversationId);
-        const worktreePath = await deps.worktreeOf(enrollment.projectPath, target);
+        const target = targetFromStoreSessionName(
+          projectName,
+          enrollment.sessionName,
+          conversationId,
+        );
+        const worktreePath = await deps.worktreeOf(
+          enrollment.projectPath,
+          target,
+        );
         turnWorktree = worktreePath;
         const execution: TurnInputRequest["execution"] = {
           projectPath: enrollment.projectPath,
@@ -592,7 +783,10 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           // run, distinguishable from one that never did.
           await seed?.bind({
             attemptId,
-            inputFingerprint: fingerprintAssembledInput({ promptText: prepared.promptText, images: input.imageRefs }),
+            inputFingerprint: fingerprintAssembledInput({
+              promptText: prepared.promptText,
+              images: input.imageRefs,
+            }),
             submittedInputFingerprint: fingerprintSubmittedInput({
               promptText: request.text,
               images: request.images ?? [],
@@ -614,21 +808,34 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
               executionClass: "ordinary-conversation",
               persistedRef: resumeRef,
               // A project conversation has no session for its agent to act in as itself.
-              ...(target.scope === "session" ? { callerIdentity: conversationId } : {}),
+              ...(target.scope === "session"
+                ? { callerIdentity: conversationId }
+                : {}),
               profile,
             },
-            requirements: { modelSelection, instructionSelection: { autonomous: false } },
+            requirements: {
+              modelSelection,
+              instructionSelection: { autonomous: false },
+            },
             onUserQuestion: (questions, questionSignal) =>
               deps.requestUserQuestion(
-                { projectPath: enrollment.projectPath, sessionName: enrollment.sessionName, conversationId },
+                {
+                  projectPath: enrollment.projectPath,
+                  sessionName: enrollment.sessionName,
+                  conversationId,
+                },
                 questions,
                 questionSignal,
               ),
             broadcast,
             promptText: prepared.dispatchPromptText,
             userPromptText: prepared.userPromptText,
-            ...(prepared.promptContext !== undefined ? { promptContext: prepared.promptContext } : {}),
-            ...(input.imageRefs.length > 0 ? { imageRefs: input.imageRefs } : {}),
+            ...(prepared.promptContext !== undefined
+              ? { promptContext: prepared.promptContext }
+              : {}),
+            ...(input.imageRefs.length > 0
+              ? { imageRefs: input.imageRefs }
+              : {}),
             observe: {
               sending: () => prepared.sending(),
               failed: (error) => prepared.failed(error),
@@ -642,7 +849,10 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
               await deps.records.recordContinuity(identity, ref);
               // A delivered seed's acceptance that cannot be recorded now is retried by its receipt.
               await prepared.backendInit(ref).catch((error: unknown) =>
-                deps.log.warn("conversation_core.input_receipts_failed", { conversationId, error: getErrorMessage(error) }),
+                deps.log.warn("conversation_core.input_receipts_failed", {
+                  conversationId,
+                  error: getErrorMessage(error),
+                }),
               );
             },
             async onEvent(event) {
@@ -665,11 +875,13 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
             },
             signal,
           });
-          if (debugMode !== null) await recordDebugReport(turnOutcome, debugMode, broadcast);
+          if (debugMode !== null)
+            await recordDebugReport(turnOutcome, debugMode, broadcast);
           return turnOutcome;
         } finally {
           turn.settling = true;
-          if (running.get(conversationId) === turn) running.delete(conversationId);
+          if (running.get(conversationId) === turn)
+            running.delete(conversationId);
           await Promise.allSettled([...turn.deliveries]);
           if (!(await prepared.settle())) retain(conversationId, prepared);
         }
@@ -682,7 +894,12 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
         broadcast: { projectName: string; storeSessionName: string },
       ): Promise<void> {
         const presented = toPromptActorResult(turnOutcome);
-        if (presented.structuredOutput === undefined || presented.error != null || turnOutcome.interruption !== undefined) return;
+        if (
+          presented.structuredOutput === undefined ||
+          presented.error != null ||
+          turnOutcome.interruption !== undefined
+        )
+          return;
         await deps.transcript
           .appendTranscriptEntryOnce(
             conversationId,
@@ -691,23 +908,44 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
               timestamp: new Date().toISOString(),
               type: "assistant",
               role: "assistant",
-              content: [{ type: "debug_structured", phase: debugMode.phase, payload: presented.structuredOutput }],
+              content: [
+                {
+                  type: "debug_structured",
+                  phase: debugMode.phase,
+                  payload: presented.structuredOutput,
+                },
+              ],
             },
             broadcast,
           )
           .catch((error: unknown) =>
-            deps.log.warn("conversation_core.debug_report_append_failed", { conversationId, error: getErrorMessage(error) }),
+            deps.log.warn("conversation_core.debug_report_append_failed", {
+              conversationId,
+              error: getErrorMessage(error),
+            }),
           );
       }
 
       /** What the queue is owed for this turn's batch: released, held for review, or failed unsent. */
-      async function settleQueued(outcome: TurnExecutionOutcome): Promise<void> {
+      async function settleQueued(
+        outcome: TurnExecutionOutcome,
+      ): Promise<void> {
         if (delivery === undefined) return;
         const owned: QueuedDeliveryAccounting | null = accounting;
         try {
           // Input that may have reached the agent is held for review; input proven unsent is failed with its reason.
-          if (evidence !== null && classifyDelivery(evidence) !== "not_sent" && owned !== null) await owned.settleAfterTurn();
-          else await deps.failQueued({ identity, delivery, error: outcomeMessage(outcome) });
+          if (
+            evidence !== null &&
+            classifyDelivery(evidence) !== "not_sent" &&
+            owned !== null
+          )
+            await owned.settleAfterTurn();
+          else
+            await deps.failQueued({
+              identity,
+              delivery,
+              error: outcomeMessage(outcome),
+            });
         } catch (error) {
           deps.log.error("conversation_core.queued_delivery_settle_failed", {
             conversationId,
@@ -716,7 +954,6 @@ export function createInteractiveTurns(deps: InteractiveTurnDeps): InteractiveTu
           });
         }
       }
-
     },
   };
 }

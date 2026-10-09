@@ -46,7 +46,13 @@ import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { jsonError, notFound } from "@/lib/shared/route-resolution";
 import { getProjectConversation, getSession } from "@/lib/state-store";
-import type { ConversationCheckpointCancel, ConversationCheckpointCheck, ConversationCheckpointReconcile, ConversationCheckpointRequest, ConversationCheckpointStart } from "@/lib/conversation-checkpoints/operation-contract";
+import type {
+  ConversationCheckpointCancel,
+  ConversationCheckpointCheck,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointRequest,
+  ConversationCheckpointStart,
+} from "@/lib/conversation-checkpoints/operation-contract";
 import {
   cancelConversationCheckpoint,
   checkConversationCheckpoint,

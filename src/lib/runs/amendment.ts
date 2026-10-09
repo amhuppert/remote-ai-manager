@@ -2,7 +2,12 @@ import { isDeepStrictEqual } from "node:util";
 import { planRun, type ObservedContexts } from "./schedule";
 import type { FrozenCharter } from "./charter";
 import type { ProposedDocument } from "./documents";
-import { laneCodePrerequisites, laneMembers, laneSkipped, loopOf } from "./topology";
+import {
+  laneCodePrerequisites,
+  laneMembers,
+  laneSkipped,
+  loopOf,
+} from "./topology";
 import {
   laneStateOf,
   type RunDefinitionContext,
@@ -42,9 +47,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** A context's entry as its owner wrote it, or null. */
-export function writtenEntry(authored: Record<string, unknown> | undefined, key: string): Record<string, unknown> | null {
+export function writtenEntry(
+  authored: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, unknown> | null {
   const contexts = authored?.contexts;
-  const entry = Array.isArray(contexts) ? contexts.find((c) => isRecord(c) && c.key === key) : undefined;
+  const entry = Array.isArray(contexts)
+    ? contexts.find((c) => isRecord(c) && c.key === key)
+    : undefined;
   return isRecord(entry) ? entry : null;
 }
 
@@ -64,7 +74,14 @@ function placeOf(entry: Record<string, unknown>): unknown {
  * again may fill in another backend or model while its owner changed nothing.
  */
 function givenOf(entry: Record<string, unknown>): unknown {
-  const { key: _key, dependsOn: _dependsOn, when: _when, lane: _lane, routing: _routing, ...given } = entry;
+  const {
+    key: _key,
+    dependsOn: _dependsOn,
+    when: _when,
+    lane: _lane,
+    routing: _routing,
+    ...given
+  } = entry;
   return given;
 }
 
@@ -95,11 +112,16 @@ function startedChange(
  */
 export function frozenKeys(facts: RunFacts): Set<string> {
   const started = new Set(facts.invocations.map((i) => i.key));
-  const startedLoops = (facts.definition.loops ?? []).filter((loop) => loop.body.some((key) => started.has(key)));
+  const startedLoops = (facts.definition.loops ?? []).filter((loop) =>
+    loop.body.some((key) => started.has(key)),
+  );
   return new Set([...started, ...startedLoops.flatMap((loop) => loop.body)]);
 }
 
-const loopKeyOf = (loops: readonly RunLoop[] | undefined, key: string): string | null => loopOf(loops, key)?.key ?? null;
+const loopKeyOf = (
+  loops: readonly RunLoop[] | undefined,
+  key: string,
+): string | null => loopOf(loops, key)?.key ?? null;
 
 const ROUTE_DECISION: Partial<Record<string, string>> = {
   active: "taken",
@@ -107,7 +129,10 @@ const ROUTE_DECISION: Partial<Record<string, string>> = {
   omitted: "dropped, its source having been skipped",
 };
 
-const memberKeysOf = (contexts: readonly RunDefinitionContext[], lane: string) =>
+const memberKeysOf = (
+  contexts: readonly RunDefinitionContext[],
+  lane: string,
+) =>
   laneMembers(contexts, lane)
     .map((c) => c.key)
     .sort();
@@ -131,7 +156,12 @@ export function amendDefinition(
   const proposedByKey = new Map(proposed.contexts.map((c) => [c.key, c]));
 
   if (current.authored === undefined || proposed.authored === undefined)
-    return { ok: false, issues: ["the run was launched before its definition could be read back, so it cannot be amended"] };
+    return {
+      ok: false,
+      issues: [
+        "the run was launched before its definition could be read back, so it cannot be amended",
+      ],
+    };
   const started = new Set(facts.invocations.map((i) => i.key));
   const startedLoops = (current.loops ?? []).filter((loop) =>
     loop.body.some((key) => started.has(key)),
@@ -144,20 +174,28 @@ export function amendDefinition(
     const wasWritten = writtenEntry(current.authored, key);
     const nowWritten = writtenEntry(proposed.authored, key);
     if (now === undefined || nowWritten === null) {
-      issues.push(`"${key}" has started, so it stays in the run; cancel the run to stop it`);
+      issues.push(
+        `"${key}" has started, so it stays in the run; cancel the run to stop it`,
+      );
       continue;
     }
     const change =
       wasWritten === null
         ? `"${key}" has started, and the run holds no written definition of it to compare with`
-        : startedChange(key, { written: wasWritten, compiled: was }, { written: nowWritten, compiled: now });
+        : startedChange(
+            key,
+            { written: wasWritten, compiled: was },
+            { written: nowWritten, compiled: now },
+          );
     if (change !== null) issues.push(change);
     // Joining or leaving a loop would run it again, or end it, after its result was used.
     if (loopKeyOf(current.loops, key) !== loopKeyOf(proposed.loops, key))
       issues.push(`"${key}" has started, so the loop it runs in cannot change`);
   }
 
-  const proposedLoops = new Map((proposed.loops ?? []).map((loop) => [loop.key, loop]));
+  const proposedLoops = new Map(
+    (proposed.loops ?? []).map((loop) => [loop.key, loop]),
+  );
   for (const loop of startedLoops) {
     const amended = proposedLoops.get(loop.key);
     if (amended === undefined) {
@@ -167,31 +205,54 @@ export function amendDefinition(
     const { maxPasses: was, ...shape } = loop;
     const { maxPasses: now, ...amendedShape } = amended;
     if (!same(shape, amendedShape))
-      issues.push(`loop "${loop.key}" has started, so only its maxPasses can change`);
+      issues.push(
+        `loop "${loop.key}" has started, so only its maxPasses can change`,
+      );
     else if (now < was)
-      issues.push(`loop "${loop.key}" has started, so its maxPasses can only rise from ${was}`);
+      issues.push(
+        `loop "${loop.key}" has started, so its maxPasses can only rise from ${was}`,
+      );
   }
 
   const proposedLanes = proposed.lanes ?? [];
   for (const lane of current.lanes ?? []) {
     if (laneStateOf(facts, lane.key) === undefined) continue;
-    if (!same(memberKeysOf(current.contexts, lane.key), memberKeysOf(proposed.contexts, lane.key)))
-      issues.push(`lane "${lane.key}" has been provisioned, or asked to be, so which contexts work in it cannot change`);
+    if (
+      !same(
+        memberKeysOf(current.contexts, lane.key),
+        memberKeysOf(proposed.contexts, lane.key),
+      )
+    )
+      issues.push(
+        `lane "${lane.key}" has been provisioned, or asked to be, so which contexts work in it cannot change`,
+      );
     const amended = proposedLanes.find((l) => l.key === lane.key);
     const placement = (l: RunLane | undefined) =>
-      l === undefined ? null : { laneId: l.laneId, worktreePath: l.worktreePath, branch: l.branch, target: l.target };
+      l === undefined
+        ? null
+        : {
+            laneId: l.laneId,
+            worktreePath: l.worktreePath,
+            branch: l.branch,
+            target: l.target,
+          };
     if (amended !== undefined && !same(placement(lane), placement(amended)))
-      issues.push(`lane "${lane.key}" has been provisioned, or asked to be, so its worktree and branch cannot change`);
+      issues.push(
+        `lane "${lane.key}" has been provisioned, or asked to be, so its worktree and branch cannot change`,
+      );
     if (!same(lane.checks, amended?.checks ?? []))
-      issues.push(`lane "${lane.key}" has been provisioned, or asked to be, so its publication checks cannot change`);
+      issues.push(
+        `lane "${lane.key}" has been provisioned, or asked to be, so its publication checks cannot change`,
+      );
     const had = laneCodePrerequisites(current.contexts, lane.key);
-    const gained = [...laneCodePrerequisites(proposed.contexts, lane.key)].filter((from) => !had.has(from));
+    const gained = [
+      ...laneCodePrerequisites(proposed.contexts, lane.key),
+    ].filter((from) => !had.has(from));
     if (gained.length > 0)
       issues.push(
         `lane "${lane.key}" was provisioned, or asked to be, without the code of lane ${quoted(gained)}, so its contexts cannot come to need it`,
       );
   }
-
 
   if (issues.length > 0) return { ok: false, issues };
   // The compiler kept every lane the run named where it was, and a provisioned lane's checks are unchanged.
@@ -221,22 +282,36 @@ export function amendDefinition(
       route.resolution === "inactive" &&
       proposedByKey.has(route.target) &&
       next.keys.get(route.target)?.kind !== "skipped";
-    if (now === undefined ? !dropped : now.resolution === route.resolution) continue;
-    issues.push(`the route from "${route.source}" to "${route.target}" was ${decided}, and this amendment would change that`);
+    if (now === undefined ? !dropped : now.resolution === route.resolution)
+      continue;
+    issues.push(
+      `the route from "${route.source}" to "${route.target}" was ${decided}, and this amendment would change that`,
+    );
   }
   for (const [key, state] of plan.keys) {
     if (state.kind !== "skipped" || !proposedByKey.has(key)) continue;
     if (next.keys.get(key)?.kind !== "skipped")
-      issues.push(`"${key}" was skipped by a route that already ran, so it stays skipped; add a new context for that work instead`);
+      issues.push(
+        `"${key}" was skipped by a route that already ran, so it stays skipped; add a new context for that work instead`,
+      );
   }
   // A skipped lane contributed no code, and lanes and the session went on without it: it stays skipped.
   for (const lane of current.lanes ?? []) {
     if (laneStateOf(facts, lane.key) !== undefined) continue;
     const isSkipped = (key: string) => plan.keys.get(key)?.kind === "skipped";
-    if (memberKeysOf(current.contexts, lane.key).length === 0 || !laneSkipped(current.contexts, lane.key, isSkipped))
+    if (
+      memberKeysOf(current.contexts, lane.key).length === 0 ||
+      !laneSkipped(current.contexts, lane.key, isSkipped)
+    )
       continue;
-    if (memberKeysOf(proposed.contexts, lane.key).some((key) => next.keys.get(key)?.kind !== "skipped"))
-      issues.push(`lane "${lane.key}" was skipped, as every context in it was; put new work in a new lane`);
+    if (
+      memberKeysOf(proposed.contexts, lane.key).some(
+        (key) => next.keys.get(key)?.kind !== "skipped",
+      )
+    )
+      issues.push(
+        `lane "${lane.key}" was skipped, as every context in it was; put new work in a new lane`,
+      );
   }
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, title: proposed.title, definition };

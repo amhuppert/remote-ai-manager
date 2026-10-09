@@ -174,7 +174,11 @@ function readDependencies(contexts: readonly WorkflowContextRequest[]): {
         });
       else if (earlier === undefined)
         known.push({ key, position, when, outputOnly });
-      else if (earlier.when !== undefined || when !== undefined || earlier.outputOnly !== outputOnly)
+      else if (
+        earlier.when !== undefined ||
+        when !== undefined ||
+        earlier.outputOnly !== outputOnly
+      )
         issues.push({
           path,
           message: `"${key}" is already listed; list a guarded or output-only dependency once`,
@@ -206,7 +210,10 @@ function checkRoutes(
   const issues: DefinitionIssue[] = [];
   const indexOf = new Map(contexts.map((c, index) => [c.key, index]));
   const unusableSources = new Set<string>();
-  const elseRoutes = new Map<string, { target: string; path: DefinitionIssue["path"] }>();
+  const elseRoutes = new Map<
+    string,
+    { target: string; path: DefinitionIssue["path"] }
+  >();
   const guarded = new Set<string>();
   contexts.forEach((target, index) => {
     for (const dependency of dependencies[index] ?? []) {
@@ -214,7 +221,13 @@ function checkRoutes(
       if (guard === undefined) continue;
       const source = dependency.key;
       const sourceIndex = indexOf.get(source) ?? -1;
-      const path = ["contexts", index, "dependsOn", dependency.position, "when"];
+      const path = [
+        "contexts",
+        index,
+        "dependsOn",
+        dependency.position,
+        "when",
+      ];
       const sourceSchema = contexts[sourceIndex]?.outputSchema;
       if (sourceSchema === undefined) {
         issues.push({
@@ -247,7 +260,10 @@ function checkRoutes(
       guarded.add(source);
       const unsupported = validateOutputSchemaDeclaration(guard.schema);
       for (const issue of unsupported)
-        issues.push({ path: [...path, "schema"], message: describeSchemaIssue(issue) });
+        issues.push({
+          path: [...path, "schema"],
+          message: describeSchemaIssue(issue),
+        });
       if (unsupported.length > 0) continue;
       for (const issue of checkGuardCompatibility(guard.schema, sourceSchema))
         issues.push({
@@ -296,16 +312,25 @@ function checkLoops(
     const base = ["loops", l];
     let sound = true;
     if (loopKeys.has(loop.key))
-      issues.push({ path: [...base, "key"], message: `Loop key "${loop.key}" is already used` });
+      issues.push({
+        path: [...base, "key"],
+        message: `Loop key "${loop.key}" is already used`,
+      });
     loopKeys.add(loop.key);
     const members = new Set<string>();
     loop.body.forEach((member, b) => {
       const owner = loopOf.get(member);
       if (!indexOf.has(member)) {
-        issues.push({ path: [...base, "body", b], message: `"${member}" names no context in this workflow` });
+        issues.push({
+          path: [...base, "body", b],
+          message: `"${member}" names no context in this workflow`,
+        });
         sound = false;
       } else if (members.has(member)) {
-        issues.push({ path: [...base, "body", b], message: `"${member}" is already in this loop` });
+        issues.push({
+          path: [...base, "body", b],
+          message: `"${member}" is already in this loop`,
+        });
       } else if (owner !== undefined) {
         issues.push({
           path: [...base, "body", b],
@@ -319,7 +344,10 @@ function checkLoops(
     });
     for (const end of ["entry", "exit"] as const) {
       if (loop.body.includes(loop[end])) continue;
-      issues.push({ path: [...base, end], message: `The ${end} "${loop[end]}" must be in the loop's body` });
+      issues.push({
+        path: [...base, end],
+        message: `The ${end} "${loop[end]}" must be in the loop's body`,
+      });
       sound = false;
     }
     if (!sound) return;
@@ -339,7 +367,11 @@ function checkLoops(
             path,
             message: `"${dependency.key}" is inside loop "${loop.key}"; work outside the loop can depend only on its exit "${loop.exit}", which carries the final pass's result`,
           });
-        else if (inside && context.key !== loop.entry && dependency.when !== undefined)
+        else if (
+          inside &&
+          context.key !== loop.entry &&
+          dependency.when !== undefined
+        )
           issues.push({
             path: [...path, "when"],
             message: `Routes inside loop "${loop.key}" are not supported: route into its entry "${loop.entry}" or out of its exit "${loop.exit}"`,
@@ -353,7 +385,8 @@ function checkLoops(
     for (let grew = true; grew; ) {
       grew = false;
       for (const member of members) {
-        if (reached.has(member) || !depsOf(member).some((d) => reached.has(d))) continue;
+        if (reached.has(member) || !depsOf(member).some((d) => reached.has(d)))
+          continue;
         reached.add(member);
         grew = true;
       }
@@ -364,7 +397,10 @@ function checkLoops(
         if (members.has(dependency)) leads.add(dependency);
     loop.body.forEach((member, b) => {
       if (!reached.has(member))
-        issues.push({ path: [...base, "body", b], message: `"${member}" is not reached from the loop's entry "${loop.entry}"` });
+        issues.push({
+          path: [...base, "body", b],
+          message: `"${member}" is not reached from the loop's entry "${loop.entry}"`,
+        });
       else if (!leads.has(member))
         issues.push({
           path: [...base, "body", b],
@@ -391,9 +427,14 @@ function checkLoops(
     }
     const unsupported = validateOutputSchemaDeclaration(loop.until.schema);
     const unmatched =
-      unsupported.length > 0 ? [] : checkGuardCompatibility(loop.until.schema, exitSchema);
+      unsupported.length > 0
+        ? []
+        : checkGuardCompatibility(loop.until.schema, exitSchema);
     for (const issue of unsupported)
-      issues.push({ path: [...base, "until", "schema"], message: describeSchemaIssue(issue) });
+      issues.push({
+        path: [...base, "until", "schema"],
+        message: describeSchemaIssue(issue),
+      });
     for (const issue of unmatched)
       issues.push({
         path: [...base, "until", "schema"],
@@ -443,13 +484,21 @@ function checkLanes(
     });
   });
 
-  const used = new Set(contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])));
+  const used = new Set(
+    contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])),
+  );
   const declared = new Set<string>();
   (request.lanes ?? []).forEach((lane, index) => {
     if (declared.has(lane.key))
-      issues.push({ path: ["lanes", index, "key"], message: `Lane "${lane.key}" is already declared` });
+      issues.push({
+        path: ["lanes", index, "key"],
+        message: `Lane "${lane.key}" is already declared`,
+      });
     else if (!used.has(lane.key))
-      issues.push({ path: ["lanes", index, "key"], message: `No context works in lane "${lane.key}"` });
+      issues.push({
+        path: ["lanes", index, "key"],
+        message: `No context works in lane "${lane.key}"`,
+      });
     declared.add(lane.key);
   });
 
@@ -457,9 +506,15 @@ function checkLanes(
     const lane = workspaceOf(context);
     if (lane === null) continue;
     for (const dependency of dependencies[contexts.indexOf(context)] ?? []) {
-      if (dependency.outputOnly || workspaceOfKey(dependency.key) !== null) continue;
+      if (dependency.outputOnly || workspaceOfKey(dependency.key) !== null)
+        continue;
       issues.push({
-        path: ["contexts", contexts.indexOf(context), "dependsOn", dependency.position],
+        path: [
+          "contexts",
+          contexts.indexOf(context),
+          "dependsOn",
+          dependency.position,
+        ],
         message: `"${dependency.key}" works in the session worktree, whose results are never committed, so lane "${lane}" cannot see its code. Mark the dependency outputOnly if "${context.key}" needs only its result, or place "${dependency.key}" in a lane.`,
       });
     }
@@ -469,7 +524,10 @@ function checkLanes(
 }
 
 /** One step something waits on before it can go: a context finishing, a lane starting, a lane publishing. */
-type WaitNode = `context:${string}` | `starts:${string}` | `publishes:${string}`;
+type WaitNode =
+  | `context:${string}`
+  | `starts:${string}`
+  | `publishes:${string}`;
 
 /**
  * Wait barriers: a lane's contexts start only once the lane starts, which
@@ -488,7 +546,10 @@ function checkWaits(
 ): DefinitionIssue[] {
   const issues: DefinitionIssue[] = [];
   const laneOfKey = new Map(contexts.map((c) => [c.key, workspaceOf(c)]));
-  const edges = new Map<WaitNode, Array<{ to: WaitNode; at?: DefinitionIssue["path"] }>>();
+  const edges = new Map<
+    WaitNode,
+    Array<{ to: WaitNode; at?: DefinitionIssue["path"] }>
+  >();
   const wait = (from: WaitNode, to: WaitNode, at?: DefinitionIssue["path"]) => {
     const list = edges.get(from) ?? [];
     list.push(at === undefined ? { to } : { to, at });
@@ -520,12 +581,17 @@ function checkWaits(
   const visit = (node: WaitNode): boolean => {
     state.set(node, "visiting");
     for (const edge of edges.get(node) ?? []) {
-      const step = edge.at === undefined ? { node: edge.to } : { node: edge.to, at: edge.at };
+      const step =
+        edge.at === undefined
+          ? { node: edge.to }
+          : { node: edge.to, at: edge.at };
       if (state.get(edge.to) === "visiting") {
         // The steps since the cycle's first node; the search's root is not on the trail.
         const start = trail.findIndex((earlier) => earlier.node === edge.to);
         const cycle = [...trail.slice(start + 1), step];
-        const located = [...cycle].reverse().find((earlier) => earlier.at !== undefined);
+        const located = [...cycle]
+          .reverse()
+          .find((earlier) => earlier.at !== undefined);
         issues.push({
           path: located?.at ?? ["contexts"],
           message: `These wait for each other and never start: ${[edge.to, ...cycle.map((earlier) => earlier.node)].map(describe).join(" → ")}. Mark a dependency outputOnly, or move the contexts into one lane.`,
@@ -544,14 +610,18 @@ function checkWaits(
     if (state.get(node) === undefined && visit(node)) return issues;
   }
 
-  const lanes = [...new Set(contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])))];
+  const lanes = [
+    ...new Set(contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane]))),
+  ];
   const after = (from: WaitNode): Set<WaitNode> => {
     const reached = new Set<WaitNode>([from]);
     for (const node of reached)
       for (const edge of edges.get(node) ?? []) reached.add(edge.to);
     return reached;
   };
-  const afterPublication = new Map(lanes.map((lane) => [lane, after(`publishes:${lane}`)]));
+  const afterPublication = new Map(
+    lanes.map((lane) => [lane, after(`publishes:${lane}`)]),
+  );
   contexts.forEach((context, index) => {
     if (context.lane !== undefined) return;
     const self: WaitNode = `context:${context.key}`;
@@ -559,7 +629,8 @@ function checkWaits(
     const before = reader ? after(self) : new Set<WaitNode>();
     const blocked = lanes.find(
       (lane) =>
-        !(afterPublication.get(lane)?.has(self) ?? false) && !before.has(`publishes:${lane}`),
+        !(afterPublication.get(lane)?.has(self) ?? false) &&
+        !before.has(`publishes:${lane}`),
     );
     if (blocked === undefined) return;
     issues.push({
@@ -668,14 +739,18 @@ function ancestorsOf(
 function analyzeWorkflow(request: {
   contexts: readonly WorkflowContextRequest[];
   loops?: readonly RunLoop[] | undefined;
-  lanes?: ReadonlyArray<{ key: string; checks?: string[] | undefined }> | undefined;
+  lanes?:
+    | ReadonlyArray<{ key: string; checks?: string[] | undefined }>
+    | undefined;
 }): WorkflowAnalysis {
   const { contexts } = request;
   const read = readDependencies(contexts);
   const dependsOn = keysOf(read.dependencies);
   const when = read.dependencies.map((list) =>
     Object.fromEntries(
-      list.flatMap((d) => (d.when === undefined ? [] : [[d.key, d.when] as const])),
+      list.flatMap((d) =>
+        d.when === undefined ? [] : [[d.key, d.when] as const],
+      ),
     ),
   );
   const none = { dependsOn, when, deferred: [] };
@@ -774,7 +849,11 @@ export const workflowLaunchRequestSchema = z
   .strict()
   .superRefine((request, ctx) => {
     for (const issue of analyzeWorkflow(request).issues)
-      ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
+      ctx.addIssue({
+        code: "custom",
+        path: issue.path,
+        message: issue.message,
+      });
     const keys = new Set(request.contexts.map((context) => context.key));
     const unknownKeys = (
       what: string,
@@ -790,13 +869,24 @@ export const workflowLaunchRequestSchema = z
           });
       });
     request.documents?.forEach((document, index) =>
-      unknownKeys(`Document "${document.path}"`, document.appliesTo, ["documents", index]),
+      unknownKeys(`Document "${document.path}"`, document.appliesTo, [
+        "documents",
+        index,
+      ]),
     );
     request.charter?.invariants?.forEach((invariant, index) =>
-      unknownKeys(`Invariant "${invariant.id}"`, invariant.appliesTo, ["charter", "invariants", index]),
+      unknownKeys(`Invariant "${invariant.id}"`, invariant.appliesTo, [
+        "charter",
+        "invariants",
+        index,
+      ]),
     );
     request.charter?.sourcesOfTruth?.forEach((source, index) =>
-      unknownKeys(`Source "${source.id}"`, source.appliesTo, ["charter", "sourcesOfTruth", index]),
+      unknownKeys(`Source "${source.id}"`, source.appliesTo, [
+        "charter",
+        "sourcesOfTruth",
+        index,
+      ]),
     );
   });
 export type WorkflowLaunchRequest = z.infer<typeof workflowLaunchRequestSchema>;
@@ -804,7 +894,9 @@ export type WorkflowLaunchRequest = z.infer<typeof workflowLaunchRequestSchema>;
 type Seats = { implementer: ResolvedSeat; reviewers: ResolvedSeat[] };
 
 /** The workflow as written, minus its documents, which the run keeps as revisions instead. */
-export function withoutDocuments(request: WorkflowLaunchRequest): Omit<WorkflowLaunchRequest, "documents"> {
+export function withoutDocuments(
+  request: WorkflowLaunchRequest,
+): Omit<WorkflowLaunchRequest, "documents"> {
   const { documents: _documents, ...rest } = request;
   return rest;
 }
@@ -843,7 +935,9 @@ export function compileWorkflow(
     owner: input.owner,
     ...(input.charter !== undefined ? { charter: input.charter } : {}),
     ...(input.documents !== undefined ? { documents: input.documents } : {}),
-    ...(input.request.loops !== undefined ? { loops: input.request.loops } : {}),
+    ...(input.request.loops !== undefined
+      ? { loops: input.request.loops }
+      : {}),
     ...(lanes.length > 0 ? { lanes } : {}),
     // Documents are kept as revisions, which `run definition` shows; their inline contents stay out of the record.
     authored: withoutDocuments(input.request),
@@ -858,7 +952,9 @@ export function compileWorkflow(
       } = context;
       const lane = laneKey === undefined ? undefined : laneByKey.get(laneKey);
       const outputOnly = (authored ?? []).flatMap((entry) =>
-        typeof entry !== "string" && entry.outputOnly === true ? [entry.key] : [],
+        typeof entry !== "string" && entry.outputOnly === true
+          ? [entry.key]
+          : [],
       );
       const seats = input.seats[key];
       if (seats === undefined)
@@ -893,16 +989,22 @@ export function compileWorkflow(
  * two runs in one session never share a lane worktree or branch.
  */
 function freezeLanes(
-  input: LaunchPlacement & { request: WorkflowLaunchRequest; existingLanes?: readonly RunLane[] },
+  input: LaunchPlacement & {
+    request: WorkflowLaunchRequest;
+    existingLanes?: readonly RunLane[];
+  },
 ): RunLane[] {
   const runTag = input.runId.replace(/^run-/, "").slice(0, 8);
   const keys = [
     ...new Set(
-      input.request.contexts.flatMap((c) => (c.lane === undefined ? [] : [c.lane])),
+      input.request.contexts.flatMap((c) =>
+        c.lane === undefined ? [] : [c.lane],
+      ),
     ),
   ];
   return keys.map((key) => {
-    const checks = input.request.lanes?.find((lane) => lane.key === key)?.checks ?? [];
+    const checks =
+      input.request.lanes?.find((lane) => lane.key === key)?.checks ?? [];
     const existing = input.existingLanes?.find((lane) => lane.key === key);
     // Named once: whatever configuration names new lanes now, this one stays where it is.
     if (existing !== undefined) return { ...existing, checks };

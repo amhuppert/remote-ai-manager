@@ -12,10 +12,18 @@ import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo
 import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
 import { createWorkspaceAdmission, type WorkspaceAdmission } from "./admission";
 import type { WorkspaceEvidence } from "./evidence";
-import { createWorkspaceExecutor, type WorkspaceExecutor, type WorkspaceExecutorDeps } from "./executor";
+import {
+  createWorkspaceExecutor,
+  type WorkspaceExecutor,
+  type WorkspaceExecutorDeps,
+} from "./executor";
 import { createDirectLaneIntegrator } from "./testing/direct-lane-integrator";
 import { createFakeLaneGit } from "./testing/fake-lane-git";
-import { laneProvisionReportSchema, type LaneTarget, type WorkspaceBindingRequest } from "./schemas";
+import {
+  laneProvisionReportSchema,
+  type LaneTarget,
+  type WorkspaceBindingRequest,
+} from "./schemas";
 
 const now = "2026-10-04T10:00:00.000Z";
 const session = "/repo/.worktrees/session";
@@ -32,7 +40,10 @@ const lane: LaneTarget = {
 };
 
 function fakeGit() {
-  const fake = createFakeLaneGit({ "csm/session": "h0", "csm/session-1-api": "h0" });
+  const fake = createFakeLaneGit({
+    "csm/session": "h0",
+    "csm/session-1-api": "h0",
+  });
   fake.adopt(laneWorktree, "csm/session-1-api");
   return fake;
 }
@@ -60,10 +71,15 @@ function newExecutor(
   admission: WorkspaceAdmission = createWorkspaceAdmission(),
   touchRequester: WorkspaceExecutorDeps["touchRequester"] = () => {},
 ): WorkspaceExecutor {
-  const runCheck: WorkspaceExecutorDeps["runCheck"] = async ({ binding, command }) => {
+  const runCheck: WorkspaceExecutorDeps["runCheck"] = async ({
+    binding,
+    command,
+  }) => {
     checks.push({ command, worktreePath: binding.worktreePath });
     if (checkGate !== null) await checkGate;
-    return command === failingCheck ? { status: "failed", detail: "2 type errors" } : { status: "passed" };
+    return command === failingCheck
+      ? { status: "failed", detail: "2 type errors" }
+      : { status: "passed" };
   };
   return createWorkspaceExecutor({
     transaction: (fn) => fixture.db.transaction(fn)(),
@@ -99,15 +115,21 @@ function intent(
 const run = { kind: "run" as const, id: "run-1" };
 const ctx = { kind: "context" as const, id: "ctx-a" };
 
-async function settled(executor: WorkspaceExecutor, request: PendingIntent): Promise<unknown> {
+async function settled(
+  executor: WorkspaceExecutor,
+  request: PendingIntent,
+): Promise<unknown> {
   await executor.submit(request);
   await executor.drain();
   const state = executor.outcome(request.cause);
-  if (state.kind !== "settled") throw new Error(`Expected settled, got ${state.kind}`);
+  if (state.kind !== "settled")
+    throw new Error(`Expected settled, got ${state.kind}`);
   return state.outcome;
 }
 
-const laneBinding = (scope: WorkspaceBindingRequest["scope"]): WorkspaceBindingRequest => ({
+const laneBinding = (
+  scope: WorkspaceBindingRequest["scope"],
+): WorkspaceBindingRequest => ({
   kind: "lane",
   projectPath: "/repo",
   sessionName: "session",
@@ -117,7 +139,12 @@ const laneBinding = (scope: WorkspaceBindingRequest["scope"]): WorkspaceBindingR
 });
 
 const publish = (checksToRun: string[] = []) =>
-  intent(run, { kind: "publish", bindingId: `lane:${laneWorktree}`, lane, checks: checksToRun });
+  intent(run, {
+    kind: "publish",
+    bindingId: `lane:${laneWorktree}`,
+    lane,
+    checks: checksToRun,
+  });
 
 beforeEach(() => {
   fixture = createPersistenceFixture();
@@ -138,16 +165,36 @@ afterEach(async () => {
 describe("lane provisioning", () => {
   it("starts a lane from the session branch's current head", async () => {
     fake.state.heads.set("csm/session", "h7");
-    expect(await settled(newExecutor(), intent(run, { kind: "provision", bindingId: `lane:${laneWorktree}`, lane }))).toEqual({
+    expect(
+      await settled(
+        newExecutor(),
+        intent(run, {
+          kind: "provision",
+          bindingId: `lane:${laneWorktree}`,
+          lane,
+        }),
+      ),
+    ).toEqual({
       kind: "provisioned",
       baseline: "h7",
     });
-    expect(fake.state.provisioned).toEqual([{ worktreePath: laneWorktree, base: "h7" }]);
+    expect(fake.state.provisioned).toEqual([
+      { worktreePath: laneWorktree, base: "h7" },
+    ]);
   });
 
   it("refuses with the reason when the worktree cannot be made", async () => {
     fake.state.provisionFails = "The init script failed";
-    expect(await settled(newExecutor(), intent(run, { kind: "provision", bindingId: `lane:${laneWorktree}`, lane }))).toEqual({
+    expect(
+      await settled(
+        newExecutor(),
+        intent(run, {
+          kind: "provision",
+          bindingId: `lane:${laneWorktree}`,
+          lane,
+        }),
+      ),
+    ).toEqual({
       kind: "refused",
       detail: "The init script failed",
     });
@@ -155,31 +202,70 @@ describe("lane provisioning", () => {
 });
 
 describe("lane landing", () => {
-  async function bound(executor: WorkspaceExecutor, scope: WorkspaceBindingRequest["scope"]) {
-    await settled(executor, intent(ctx, { kind: "bind", bindingId: "ctx-a", binding: laneBinding(scope) }));
+  async function bound(
+    executor: WorkspaceExecutor,
+    scope: WorkspaceBindingRequest["scope"],
+  ) {
+    await settled(
+      executor,
+      intent(ctx, {
+        kind: "bind",
+        bindingId: "ctx-a",
+        binding: laneBinding(scope),
+      }),
+    );
   }
 
   it("commits an accepted candidate's scope to the lane branch, marked with the operation", async () => {
     const executor = newExecutor();
     await bound(executor, { mode: "owned", paths: ["src/api"] });
     fake.state.dirt.set(laneWorktree, ["src/api/route.ts"]);
-    const accept = intent(ctx, { kind: "accept", bindingId: "ctx-a", evidence: "git:t1:t1" });
-    expect(await settled(executor, accept)).toEqual({ kind: "accepted", receipt: "commit:c1" });
+    const accept = intent(ctx, {
+      kind: "accept",
+      bindingId: "ctx-a",
+      evidence: "git:t1:t1",
+    });
+    expect(await settled(executor, accept)).toEqual({
+      kind: "accepted",
+      receipt: "commit:c1",
+    });
     expect(fake.state.landed).toEqual([
-      { worktreePath: laneWorktree, paths: ["src/api"], message: expect.stringContaining(`CC-Landing: ${accept.cause}`) },
+      {
+        worktreePath: laneWorktree,
+        paths: ["src/api"],
+        message: expect.stringContaining(`CC-Landing: ${accept.cause}`),
+      },
     ]);
   });
 
   it("lands every path for a full scope, accepts unchanged work without a commit, and refuses a changed candidate", async () => {
     const executor = newExecutor();
     await bound(executor, { mode: "full" });
-    expect(await settled(executor, intent(ctx, { kind: "accept", bindingId: "ctx-a", evidence: "git:t1:t1" }))).toEqual({
+    expect(
+      await settled(
+        executor,
+        intent(ctx, {
+          kind: "accept",
+          bindingId: "ctx-a",
+          evidence: "git:t1:t1",
+        }),
+      ),
+    ).toEqual({
       kind: "accepted",
       receipt: "unchanged:h0",
     });
     expect(fake.state.landed[0]?.paths).toBeNull();
     content = "git:t2:t2";
-    expect(await settled(executor, intent(ctx, { kind: "accept", bindingId: "ctx-a", evidence: "git:t1:t1" }))).toEqual({
+    expect(
+      await settled(
+        executor,
+        intent(ctx, {
+          kind: "accept",
+          bindingId: "ctx-a",
+          evidence: "git:t1:t1",
+        }),
+      ),
+    ).toEqual({
       kind: "candidate_changed",
     });
   });
@@ -188,7 +274,11 @@ describe("lane landing", () => {
     const repo = createWorkspaceRepo(fixture.db);
     const executor = newExecutor();
     await bound(executor, { mode: "full" });
-    const accept = intent(ctx, { kind: "accept", bindingId: "ctx-a", evidence: "git:t1:t1" });
+    const accept = intent(ctx, {
+      kind: "accept",
+      bindingId: "ctx-a",
+      evidence: "git:t1:t1",
+    });
     // The last process moved the branch and stopped before storing the receipt.
     repo.insertOperationIfAbsent({
       cause: accept.cause,
@@ -202,7 +292,10 @@ describe("lane landing", () => {
       updatedAt: now,
     });
     fake.state.heads.set(lane.branch, "c9");
-    fake.state.messages.set("c9", `Context ctx-a\n\nCC-Landing: ${accept.cause}`);
+    fake.state.messages.set(
+      "c9",
+      `Context ctx-a\n\nCC-Landing: ${accept.cause}`,
+    );
 
     const restarted = newExecutor();
     await restarted.recover();
@@ -212,7 +305,9 @@ describe("lane landing", () => {
     });
     expect(fake.state.landed).toEqual([]);
     // The interrupted landing may not have resynced the lane's index.
-    expect(fake.state.resynced).toEqual([{ worktreePath: laneWorktree, paths: null }]);
+    expect(fake.state.resynced).toEqual([
+      { worktreePath: laneWorktree, paths: null },
+    ]);
   });
 });
 
@@ -220,10 +315,18 @@ describe("lane publication", () => {
   it("merges the session head into the lane, checks it there, and publishes it as one marked commit", async () => {
     const executor = newExecutor();
     const request = publish(["typecheck"]);
-    expect(await settled(executor, request)).toEqual({ kind: "published", commit: "c2", incorporated: "h0" });
+    expect(await settled(executor, request)).toEqual({
+      kind: "published",
+      commit: "c2",
+      incorporated: "h0",
+    });
     expect(fake.state.merges).toEqual(["h0"]);
-    expect(checks).toEqual([{ command: "typecheck", worktreePath: laneWorktree }]);
-    expect(fake.state.messages.get("c2")).toContain(`CC-Publication: ${request.cause}`);
+    expect(checks).toEqual([
+      { command: "typecheck", worktreePath: laneWorktree },
+    ]);
+    expect(fake.state.messages.get("c2")).toContain(
+      `CC-Publication: ${request.cause}`,
+    );
     expect(fake.state.heads.get("csm/session")).toBe("c2");
     expect(fake.state.removed).toEqual([laneWorktree]);
   });
@@ -238,7 +341,9 @@ describe("lane publication", () => {
     failingCheck = "typecheck";
     expect(await settled(newExecutor(), publish(["typecheck"]))).toEqual({
       kind: "publication_failed",
-      detail: expect.stringContaining('"typecheck" failed on the lane merged with h0: 2 type errors'),
+      detail: expect.stringContaining(
+        '"typecheck" failed on the lane merged with h0: 2 type errors',
+      ),
     });
     expect(fake.state.heads.get("csm/session")).toBe("h0");
     expect(fake.state.removed).toEqual([]);
@@ -252,35 +357,62 @@ describe("lane publication", () => {
     });
     fake.state.dirt.set(session, []);
     fake.state.beforePublish = () => fake.state.heads.set("csm/session", "h9");
-    expect(await settled(newExecutor(), publish())).toEqual({ kind: "publication_stale", head: "h9" });
+    expect(await settled(newExecutor(), publish())).toEqual({
+      kind: "publication_stale",
+      head: "h9",
+    });
   });
 
   it("publishes two lanes into one session one after the other, the second merging the first's result", async () => {
     const uiWorktree = "/repo/.worktrees/session.1-ui";
-    const ui: LaneTarget = { ...lane, laneId: "1-ui", worktreePath: uiWorktree, branch: "csm/session-1-ui" };
+    const ui: LaneTarget = {
+      ...lane,
+      laneId: "1-ui",
+      worktreePath: uiWorktree,
+      branch: "csm/session-1-ui",
+    };
     fake.state.heads.set(ui.branch, "h0");
     fake.adopt(uiWorktree, ui.branch);
     const executor = newExecutor();
     const first = publish();
-    const second = intent(run, { kind: "publish", bindingId: `lane:${uiWorktree}`, lane: ui, checks: [] });
+    const second = intent(run, {
+      kind: "publish",
+      bindingId: `lane:${uiWorktree}`,
+      lane: ui,
+      checks: [],
+    });
     await executor.submit(first);
     await executor.submit(second);
     await executor.drain();
 
     const firstOutcome = executor.outcome(first.cause);
     const secondOutcome = executor.outcome(second.cause);
-    expect(firstOutcome).toMatchObject({ kind: "settled", outcome: { kind: "published", incorporated: "h0" } });
+    expect(firstOutcome).toMatchObject({
+      kind: "settled",
+      outcome: { kind: "published", incorporated: "h0" },
+    });
     const firstCommit =
-      firstOutcome.kind === "settled" && typeof firstOutcome.outcome === "object" && firstOutcome.outcome !== null && "commit" in firstOutcome.outcome
+      firstOutcome.kind === "settled" &&
+      typeof firstOutcome.outcome === "object" &&
+      firstOutcome.outcome !== null &&
+      "commit" in firstOutcome.outcome
         ? firstOutcome.outcome.commit
         : null;
-    expect(secondOutcome).toMatchObject({ kind: "settled", outcome: { kind: "published", incorporated: firstCommit } });
+    expect(secondOutcome).toMatchObject({
+      kind: "settled",
+      outcome: { kind: "published", incorporated: firstCommit },
+    });
     expect(fake.state.merges).toEqual(["h0", firstCommit]);
   });
 
   it("starts a waiting publication once the one before it settles, without another drain", async () => {
     const uiWorktree = "/repo/.worktrees/session.1-ui";
-    const ui: LaneTarget = { ...lane, laneId: "1-ui", worktreePath: uiWorktree, branch: "csm/session-1-ui" };
+    const ui: LaneTarget = {
+      ...lane,
+      laneId: "1-ui",
+      worktreePath: uiWorktree,
+      branch: "csm/session-1-ui",
+    };
     fake.state.heads.set(ui.branch, "h0");
     fake.adopt(uiWorktree, ui.branch);
     let release: () => void = () => {};
@@ -306,20 +438,37 @@ describe("lane publication", () => {
       intent(run, {
         kind: "provision",
         bindingId: "lane:/repo/.worktrees/session.1-docs",
-        lane: { ...lane, laneId: "1-docs", worktreePath: "/repo/.worktrees/session.1-docs", branch: "csm/session-1-docs" },
+        lane: {
+          ...lane,
+          laneId: "1-docs",
+          worktreePath: "/repo/.worktrees/session.1-docs",
+          branch: "csm/session-1-docs",
+        },
       }),
       "lane:/repo/.worktrees/session.1-docs",
     );
     void executor.drain();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const second = intent(run, { kind: "publish", bindingId: `lane:${uiWorktree}`, lane: ui, checks: [] });
+    const second = intent(run, {
+      kind: "publish",
+      bindingId: `lane:${uiWorktree}`,
+      lane: ui,
+      checks: [],
+    });
     await executor.submit(second);
     await new Promise((resolve) => setTimeout(resolve, 20));
     fake.state.mergeGate = null;
     release();
-    for (let tries = 0; tries < 50 && executor.outcome(second.cause).kind !== "settled"; tries++)
+    for (
+      let tries = 0;
+      tries < 50 && executor.outcome(second.cause).kind !== "settled";
+      tries++
+    )
       await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(executor.outcome(second.cause)).toMatchObject({ kind: "settled", outcome: { kind: "published" } });
+    expect(executor.outcome(second.cause)).toMatchObject({
+      kind: "settled",
+      outcome: { kind: "published" },
+    });
   });
 
   it("leaves a merge in progress in the lane alone and asks the owner to finish or abort it", async () => {
@@ -342,16 +491,31 @@ describe("lane publication", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(executor.outcome(request.cause).kind).toBe("running");
     expect(fake.state.heads.get("csm/session")).toBe("h0");
-    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    const turn = admission.tryAcquire({
+      worktree: session,
+      kind: "interactive_write",
+      holder: "owner-turn",
+    });
     expect(turn).not.toBeNull();
     if (turn !== null) admission.release(turn);
-    for (let tries = 0; tries < 200 && executor.outcome(request.cause).kind !== "settled"; tries++)
+    for (
+      let tries = 0;
+      tries < 200 && executor.outcome(request.cause).kind !== "settled";
+      tries++
+    )
       await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(executor.outcome(request.cause)).toMatchObject({ kind: "settled", outcome: { kind: "published" } });
+    expect(executor.outcome(request.cause)).toMatchObject({
+      kind: "settled",
+      outcome: { kind: "published" },
+    });
   });
 
   it("reports a publication whose branch moved but whose worktree could not be refreshed as uncertain", async () => {
-    fake.state.publishOutcome = { kind: "refresh_failed", commit: "c9", detail: "unable to unlink src/a.ts" };
+    fake.state.publishOutcome = {
+      kind: "refresh_failed",
+      commit: "c9",
+      detail: "unable to unlink src/a.ts",
+    };
     expect(await settled(newExecutor(), publish())).toEqual({
       kind: "publication_uncertain",
       detail: expect.stringContaining("c9"),
@@ -369,8 +533,18 @@ describe("lane publication", () => {
 
   it("refuses with a reason even when the failure it met carried no message", async () => {
     fake.state.provisionFails = "";
-    const outcome = await settled(newExecutor(), intent(run, { kind: "provision", bindingId: `lane:${laneWorktree}`, lane }));
-    expect(laneProvisionReportSchema.parse(outcome)).toEqual({ kind: "refused", detail: expect.stringMatching(/\S/) });
+    const outcome = await settled(
+      newExecutor(),
+      intent(run, {
+        kind: "provision",
+        bindingId: `lane:${laneWorktree}`,
+        lane,
+      }),
+    );
+    expect(laneProvisionReportSchema.parse(outcome)).toEqual({
+      kind: "refused",
+      detail: expect.stringMatching(/\S/),
+    });
   });
 
   it("refuses a lane holding changes no member landed", async () => {
@@ -384,7 +558,11 @@ describe("lane publication", () => {
 
   it("waits for an interactive turn in the session worktree before touching the session branch", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    const turn = admission.tryAcquire({
+      worktree: session,
+      kind: "interactive_write",
+      holder: "owner-turn",
+    });
     if (turn === null) throw new Error("no grant");
     const executor = newExecutor(admission);
     const request = publish();
@@ -407,7 +585,8 @@ describe("lane publication", () => {
     const request = publish(["typecheck"]);
     await executor.submit(request);
     const drained = executor.drain();
-    while (checks.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+    while (checks.length === 0)
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
     permits.close("run:run-1", now);
     releaseChecks();
@@ -418,12 +597,19 @@ describe("lane publication", () => {
 
   it("tells its run when a pause sent it back to the queue, so a run resumed meanwhile submits it again", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    const turn = admission.tryAcquire({
+      worktree: session,
+      kind: "interactive_write",
+      holder: "owner-turn",
+    });
     if (turn === null) throw new Error("no grant");
     const request = publish();
     // As the Run does on a touch: submit its pending step again under its current permit.
     const executor: WorkspaceExecutor = newExecutor(admission, () => {
-      void executor.submit({ ...request, permit: permits.current("run:run-1") });
+      void executor.submit({
+        ...request,
+        permit: permits.current("run:run-1"),
+      });
     });
     await executor.submit(request);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -444,7 +630,11 @@ describe("lane publication", () => {
 
   it("does not publish through a pause it spent waiting for the session: it goes back to the queue, and runs again once resumed", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    const turn = admission.tryAcquire({
+      worktree: session,
+      kind: "interactive_write",
+      holder: "owner-turn",
+    });
     if (turn === null) throw new Error("no grant");
     const executor = newExecutor(admission);
     const request = publish();
@@ -469,7 +659,11 @@ describe("lane publication", () => {
 
   it("stops without waiting for the session when cancelled while it inspects the lane", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    const turn = admission.tryAcquire({
+      worktree: session,
+      kind: "interactive_write",
+      holder: "owner-turn",
+    });
     if (turn === null) throw new Error("no grant");
     let inspected = () => {};
     fake.state.inspectGate = new Promise((resolve) => (inspected = resolve));
@@ -483,10 +677,15 @@ describe("lane publication", () => {
     await drained;
     expect(executor.outcome(request.cause)).toEqual({
       kind: "settled",
-      outcome: { kind: "publication_failed", detail: "Stopped before publishing" },
+      outcome: {
+        kind: "publication_failed",
+        detail: "Stopped before publishing",
+      },
     });
     expect(fake.state.merges).toEqual([]);
-    expect(admission.held().map((grant) => grant.holder)).toEqual(["owner-turn"]);
+    expect(admission.held().map((grant) => grant.holder)).toEqual([
+      "owner-turn",
+    ]);
   });
 
   it("after a restart, recognizes a publication by its marker, and otherwise runs the attempt again", async () => {
@@ -506,7 +705,10 @@ describe("lane publication", () => {
     const done = publish();
     interrupted(done, { incorporated: "h0" });
     fake.state.heads.set("csm/session", "c5");
-    fake.state.messages.set("c5", `Publish lane api\n\nCC-Publication: ${done.cause}`);
+    fake.state.messages.set(
+      "c5",
+      `Publish lane api\n\nCC-Publication: ${done.cause}`,
+    );
     const notYet = publish();
     interrupted(notYet, { incorporated: "h0" });
 
@@ -535,10 +737,17 @@ describe("lane publication", () => {
       updatedAt: now,
     });
     fake.state.heads.set("csm/session", "c5");
-    fake.state.messages.set("c5", `Publish lane api\n\nCC-Publication: ${request.cause}`);
+    fake.state.messages.set(
+      "c5",
+      `Publish lane api\n\nCC-Publication: ${request.cause}`,
+    );
     fake.state.refresh = "refreshed";
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({ worktree: session, kind: "interactive_write", holder: "owner-turn" });
+    const turn = admission.tryAcquire({
+      worktree: session,
+      kind: "interactive_write",
+      holder: "owner-turn",
+    });
     if (turn === null) throw new Error("no grant");
 
     const recovered = newExecutor(admission).recover();
@@ -566,14 +775,20 @@ describe("lane publication", () => {
       updatedAt: now,
     });
     fake.state.heads.set("csm/session", "c5");
-    fake.state.messages.set("c5", `Publish lane api\n\nCC-Publication: ${request.cause}`);
+    fake.state.messages.set(
+      "c5",
+      `Publish lane api\n\nCC-Publication: ${request.cause}`,
+    );
     fake.state.refresh = "diverged";
 
     const restarted = newExecutor();
     await restarted.recover();
     expect(restarted.outcome(request.cause)).toEqual({
       kind: "settled",
-      outcome: { kind: "publication_uncertain", detail: expect.stringContaining("c5") },
+      outcome: {
+        kind: "publication_uncertain",
+        detail: expect.stringContaining("c5"),
+      },
     });
     expect(fake.state.removed).toEqual([]);
   });

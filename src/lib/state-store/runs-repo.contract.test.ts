@@ -1,6 +1,10 @@
 import { afterEach, describe, it } from "vitest";
 import { contextContractSchema } from "@/lib/execution-context/schemas";
-import { runBoundarySchema, runRecordSchema, type RunCharterRevision } from "@/lib/runs/schemas";
+import {
+  runBoundarySchema,
+  runRecordSchema,
+  type RunCharterRevision,
+} from "@/lib/runs/schemas";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -30,7 +34,9 @@ const contract = contextContractSchema.parse({
   ],
   checks: ["typecheck"],
   deferredChecks: ["test"],
-  inputs: [{ key: "api", title: "Build the API", output: { endpoint: "/v1/x" } }],
+  inputs: [
+    { key: "api", title: "Build the API", output: { endpoint: "/v1/x" } },
+  ],
   humanApproval: true,
   ownerQuestions: true,
   documentPublishing: true,
@@ -51,7 +57,16 @@ const contract = contextContractSchema.parse({
     testStrategy: "Behaviour tests",
     knownAmbiguities: ["Retries"],
     invariants: [{ id: "no-mocks", statement: "No internal mocks" }],
-    sourcesOfTruth: [{ rank: 1, id: "spec", label: "Spec", type: "spec", locator: "specs/notice.md", description: "The spec" }],
+    sourcesOfTruth: [
+      {
+        rank: 1,
+        id: "spec",
+        label: "Spec",
+        type: "spec",
+        locator: "specs/notice.md",
+        description: "The spec",
+      },
+    ],
     documentPath: ".cc/run-docs/run-1.implement.1/charter.md",
   },
 });
@@ -94,7 +109,13 @@ const charterRevisions: RunCharterRevision[] = [
       vocabulary: ["notice"],
       testStrategy: "Behaviour tests",
       knownAmbiguities: ["Retries"],
-      invariants: [{ id: "no-mocks", statement: "No internal mocks", appliesTo: ["implement"] }],
+      invariants: [
+        {
+          id: "no-mocks",
+          statement: "No internal mocks",
+          appliesTo: ["implement"],
+        },
+      ],
       sourcesOfTruth: [
         {
           rank: 1,
@@ -107,7 +128,10 @@ const charterRevisions: RunCharterRevision[] = [
         },
       ],
     },
-    bundles: { default: `sha256:${"a".repeat(64)}`, byKey: { implement: `sha256:${"b".repeat(64)}` } },
+    bundles: {
+      default: `sha256:${"a".repeat(64)}`,
+      byKey: { implement: `sha256:${"b".repeat(64)}` },
+    },
   },
   {
     revision: 3,
@@ -146,7 +170,12 @@ describe("runs repository", () => {
                 key: "implement",
                 dependsOn: ["plan", "review"],
                 when: {
-                  plan: { schema: { type: "object", properties: { go: { const: true } } } },
+                  plan: {
+                    schema: {
+                      type: "object",
+                      properties: { go: { const: true } },
+                    },
+                  },
                   review: { else: true as const },
                 },
                 routing: { cardinality: "exactlyOne" as const },
@@ -161,7 +190,10 @@ describe("runs repository", () => {
                 laneId: "1-api",
                 worktreePath: "/repo/.worktrees/session.1-api",
                 branch: "csm/session-1-api",
-                target: { worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+                target: {
+                  worktreePath: "/repo/.worktrees/session",
+                  branch: "csm/session",
+                },
                 checks: ["typecheck"],
               },
             ],
@@ -171,11 +203,19 @@ describe("runs repository", () => {
                 body: ["implement"],
                 entry: "implement",
                 exit: "implement",
-                until: { schema: { type: "object", properties: { done: { const: true } } } },
+                until: {
+                  schema: {
+                    type: "object",
+                    properties: { done: { const: true } },
+                  },
+                },
                 maxPasses: 3,
               },
             ],
-            authored: { title: "Fix the notice", contexts: [{ key: "implement", brief: "Fix it", lane: "api" }] },
+            authored: {
+              title: "Fix the notice",
+              contexts: [{ key: "implement", brief: "Fix it", lane: "api" }],
+            },
           },
           documents: [
             // Every optional field set, though a published revision has no reason and an amended one no publisher.
@@ -194,7 +234,13 @@ describe("runs repository", () => {
                 appliesTo: ["implement"],
               },
             },
-            { path: "notes/plan.md", revision: 2, source: "amend" as const, at: "2026-10-07T11:00:00.000Z", document: null },
+            {
+              path: "notes/plan.md",
+              revision: 2,
+              source: "amend" as const,
+              at: "2026-10-07T11:00:00.000Z",
+              document: null,
+            },
           ],
           charter: charterRevisions,
           invocations: [
@@ -203,22 +249,35 @@ describe("runs repository", () => {
               pass: 1,
               contextId: "run-1.implement.1",
               startCause: "run-1:start:implement:1",
-              froze: { charter: 2, documents: [{ path: "notes/plan.md", revision: 1 }] },
+              froze: {
+                charter: 2,
+                documents: [{ path: "notes/plan.md", revision: 1 }],
+              },
             },
           ],
           lanes: {
             api: {
-              provision: { attempt: 2, outcome: { kind: "provisioned" as const, baseline: "b0" } },
+              provision: {
+                attempt: 2,
+                outcome: { kind: "provisioned" as const, baseline: "b0" },
+              },
               publication: {
                 attempt: 3,
-                outcome: { kind: "published" as const, commit: "p3", incorporated: "h2" },
+                outcome: {
+                  kind: "published" as const,
+                  commit: "p3",
+                  incorporated: "h2",
+                },
               },
             },
           },
           control: {
             paused: true,
             cancelled: true,
-            fault: { detail: "The definition could not be read", at: "2026-10-03T10:04:00.000Z" },
+            fault: {
+              detail: "The definition could not be read",
+              at: "2026-10-03T10:04:00.000Z",
+            },
           },
         },
         revision: 4,
@@ -250,7 +309,11 @@ describe("runs repository", () => {
         occurrence: "run-1.implement.1:progress:3",
         kind: "question" as const,
         summary: "Fix it: the agent asked you a question.",
-        detail: { kind: "question" as const, contextId: "run-1.implement.1", questionId: "q-1" },
+        detail: {
+          kind: "question" as const,
+          contextId: "run-1.implement.1",
+          questionId: "q-1",
+        },
         recordedAt: "2026-10-03T10:05:00.000Z",
       }),
       persist: (value) => {
@@ -275,31 +338,40 @@ describe("runs repository", () => {
         otherWorkRemains: true,
       },
     },
-    { kind: "succeeded" as const, detail: { kind: "succeeded" as const, outputs: { api: { summary: "Built." }, docs: null } } },
-  ])("round-trips a $detail.kind boundary's detail, with its optional and open fields", async ({ kind, detail }) => {
-    fixture = createPersistenceFixture();
-    const db = fixture.db;
-    const repo = createRunsRepo(db);
-    await assertRoundTripDurability({
-      label: `run boundary (${detail.kind})`,
-      schema: runBoundarySchema,
-      buildMaximalFixture: () => ({
-        seq: 1,
-        runId: "run-1",
-        occurrence: `run-1:${detail.kind}`,
-        kind,
-        summary: "Fix it: something happened.",
-        detail,
-        recordedAt: "2026-10-03T10:05:00.000Z",
-      }),
-      persist: (value) => {
-        repo.recordBoundary(value);
-        return value;
+    {
+      kind: "succeeded" as const,
+      detail: {
+        kind: "succeeded" as const,
+        outputs: { api: { summary: "Built." }, docs: null },
       },
-      reload: (value) =>
-        createRunsRepo(db)
-          .boundaries(value.runId)
-          .find((b) => b.seq === value.seq) ?? null,
-    });
-  });
+    },
+  ])(
+    "round-trips a $detail.kind boundary's detail, with its optional and open fields",
+    async ({ kind, detail }) => {
+      fixture = createPersistenceFixture();
+      const db = fixture.db;
+      const repo = createRunsRepo(db);
+      await assertRoundTripDurability({
+        label: `run boundary (${detail.kind})`,
+        schema: runBoundarySchema,
+        buildMaximalFixture: () => ({
+          seq: 1,
+          runId: "run-1",
+          occurrence: `run-1:${detail.kind}`,
+          kind,
+          summary: "Fix it: something happened.",
+          detail,
+          recordedAt: "2026-10-03T10:05:00.000Z",
+        }),
+        persist: (value) => {
+          repo.recordBoundary(value);
+          return value;
+        },
+        reload: (value) =>
+          createRunsRepo(db)
+            .boundaries(value.runId)
+            .find((b) => b.seq === value.seq) ?? null,
+      });
+    },
+  );
 });

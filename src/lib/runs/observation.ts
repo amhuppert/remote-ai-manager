@@ -22,9 +22,14 @@ export function describeRun(
       on: defined.dependsOn,
     };
     const pass = state.kind === "skipped" ? 0 : state.pass;
-    const context = state.kind === "started" ? (inspected.contexts.get(state.contextId) ?? null) : null;
+    const context =
+      state.kind === "started"
+        ? (inspected.contexts.get(state.contextId) ?? null)
+        : null;
     const invocation =
-      state.kind === "started" ? record.facts.invocations.find((i) => i.contextId === state.contextId) : undefined;
+      state.kind === "started"
+        ? record.facts.invocations.find((i) => i.contextId === state.contextId)
+        : undefined;
 
     return {
       key: defined.key,
@@ -35,8 +40,12 @@ export function describeRun(
       skipped: state.kind === "skipped",
       loop: loopOf(loops, defined.key)?.key ?? null,
       lane: defined.lane ?? null,
-      waitingOnLaneProvision: state.kind === "waiting" && state.publications === undefined ? (state.lane ?? null) : null,
-      waitingOnPublications: state.kind === "waiting" ? (state.publications ?? []) : [],
+      waitingOnLaneProvision:
+        state.kind === "waiting" && state.publications === undefined
+          ? (state.lane ?? null)
+          : null,
+      waitingOnPublications:
+        state.kind === "waiting" ? (state.publications ?? []) : [],
       pass: pass + 1,
       progress: context?.progress ?? null,
       occurrence: context?.occurrence ?? null,
@@ -76,7 +85,11 @@ export function describeRun(
     ],
     halts: plan.halts.map((halt) => halt.reason),
     lanes: (record.facts.definition.lanes ?? []).map((lane) => {
-      const skipped = laneSkipped(record.facts.definition.contexts, lane.key, (key) => plan.keys.get(key)?.kind === "skipped");
+      const skipped = laneSkipped(
+        record.facts.definition.contexts,
+        lane.key,
+        (key) => plan.keys.get(key)?.kind === "skipped",
+      );
       return {
         key: lane.key,
         worktreePath: lane.worktreePath,
@@ -97,17 +110,23 @@ export function describeRun(
       };
     }),
     charter: currentCharter(record.facts.charter),
-    documents: currentDocuments(record.facts.documents).map(({ path, revision, source, by, reason, document }) => ({
-      path,
-      revision,
-      source,
-      ...(by !== undefined ? { by } : {}),
-      ...(reason !== undefined ? { reason } : {}),
-      bytes: document.bytes,
-      description: document.description,
-      ...(document.readWhen !== undefined ? { readWhen: document.readWhen } : {}),
-      ...(document.appliesTo !== undefined ? { appliesTo: document.appliesTo } : {}),
-    })),
+    documents: currentDocuments(record.facts.documents).map(
+      ({ path, revision, source, by, reason, document }) => ({
+        path,
+        revision,
+        source,
+        ...(by !== undefined ? { by } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+        bytes: document.bytes,
+        description: document.description,
+        ...(document.readWhen !== undefined
+          ? { readWhen: document.readWhen }
+          : {}),
+        ...(document.appliesTo !== undefined
+          ? { appliesTo: document.appliesTo }
+          : {}),
+      }),
+    ),
   };
 }
 
@@ -117,13 +136,20 @@ function laneView(
   skipped: boolean,
 ): Pick<RunView["lanes"][number], "state" | "attempt" | "detail" | "commit"> {
   const none = { attempt: null, detail: null, commit: null };
-  if (state === undefined) return { state: skipped ? "skipped" : "waiting", ...none };
+  if (state === undefined)
+    return { state: skipped ? "skipped" : "waiting", ...none };
   const { provision, publication } = state;
   if (provision.outcome.kind === "requested")
     return { state: "provisioning", ...none, attempt: provision.attempt };
   if (provision.outcome.kind === "refused")
-    return { state: "provision_failed", ...none, attempt: provision.attempt, detail: provision.outcome.detail };
-  if (provision.outcome.kind === "cancelled") return { state: "cancelled", ...none, attempt: provision.attempt };
+    return {
+      state: "provision_failed",
+      ...none,
+      attempt: provision.attempt,
+      detail: provision.outcome.detail,
+    };
+  if (provision.outcome.kind === "cancelled")
+    return { state: "cancelled", ...none, attempt: provision.attempt };
   if (publication === null) return { state: "working", ...none };
   const at = { attempt: publication.attempt, detail: null, commit: null };
   const outcome = publication.outcome;
@@ -133,7 +159,11 @@ function laneView(
     case "published":
       return { state: "published", ...at, commit: outcome.commit };
     case "publication_stale":
-      return { state: "stale", ...at, detail: `The session branch moved to ${outcome.head} after the lane was checked` };
+      return {
+        state: "stale",
+        ...at,
+        detail: `The session branch moved to ${outcome.head} after the lane was checked`,
+      };
     case "publish_blocked":
       return { state: "blocked", ...at, detail: outcome.detail };
     case "publication_failed":

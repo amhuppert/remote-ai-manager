@@ -58,7 +58,6 @@ export interface TaskRunActive extends TaskTurnSpec {
 
 export type ActiveTurn = ConversationTurnActive | TaskRunActive;
 
-
 export interface ConversationContext {
   _schemaVersion: 1;
 
@@ -223,9 +222,6 @@ export interface ConversationInput extends Omit<
 export interface PrepareTurnOutput {
   transcriptPath: string;
 }
-
-
-
 
 /** Input for the prepareTurn actor (resource acquisition). */
 export interface PrepareTurnInput {

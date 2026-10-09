@@ -830,7 +830,13 @@ describe("queueMessage for a conversation the core runs", () => {
         request: {
           kind: "user_message",
           text: "also this",
-          images: [{ attachmentId: "queued-0", mediaType: "image/png", base64Data: "AAAA" }],
+          images: [
+            {
+              attachmentId: "queued-0",
+              mediaType: "image/png",
+              base64Data: "AAAA",
+            },
+          ],
           inputOrigin: "user",
           queuedDelivery: { messageIds: ["msg-1"], deliveryAttemptId: "att-9" },
         },
@@ -873,15 +879,26 @@ describe("queueMessage for a conversation the core runs", () => {
       backend: "codex",
       deps: coreDeps({ deliverLive: async () => "uncertain" }),
     });
-    expect(held).toMatchObject({ deliveryTiming: "in_turn", entry: { status: "uncertain" } });
+    expect(held).toMatchObject({
+      deliveryTiming: "in_turn",
+      entry: { status: "uncertain" },
+    });
   });
 
   it("leaves a queued message for the next turn when the core cannot say whether its turn takes it", async () => {
     const failing = async (): Promise<boolean> => {
       throw new Error("database is locked");
     };
-    for (const core of [coreDeps({ owns: failing }), coreDeps({ acceptsLive: failing })]) {
-      const result = await queueMessage({ ...baseParams, text: "saved", backend: "codex", deps: core });
+    for (const core of [
+      coreDeps({ owns: failing }),
+      coreDeps({ acceptsLive: failing }),
+    ]) {
+      const result = await queueMessage({
+        ...baseParams,
+        text: "saved",
+        backend: "codex",
+        deps: core,
+      });
       expect(result.deliveryTiming).toBe("next_turn");
     }
     expect(claimLiveDeliveryMock).not.toHaveBeenCalled();

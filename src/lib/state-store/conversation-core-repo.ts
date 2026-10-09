@@ -221,7 +221,9 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     getEnrollment: db.prepare(
       `SELECT conversation_id, project_path, session_name, enrolled_at FROM core_interactive_conversations WHERE conversation_id = ?`,
     ),
-    unenroll: db.prepare(`DELETE FROM core_interactive_conversations WHERE conversation_id = ?`),
+    unenroll: db.prepare(
+      `DELETE FROM core_interactive_conversations WHERE conversation_id = ?`,
+    ),
     lastConsumedMessage: db.prepare(
       `SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'consumed' AND json_extract(request_json, '$.kind') = 'user_message' ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
     ),
@@ -381,7 +383,9 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
       return raw === undefined ? null : mailboxFromRow(raw);
     },
     queuedFor(conversationId) {
-      return st.queuedFor.all(conversationId).map((raw: unknown) => mailboxFromRow(raw));
+      return st.queuedFor
+        .all(conversationId)
+        .map((raw: unknown) => mailboxFromRow(raw));
     },
     conversationsWithQueued() {
       return z

@@ -1,9 +1,19 @@
 import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
-import type { InputDelivery, PreparedTurnInput, TurnInputRequest } from "../turn-input";
+import type {
+  InputDelivery,
+  PreparedTurnInput,
+  TurnInputRequest,
+} from "../turn-input";
 
 /** Turn input with no contributions: the message as it is, kept and released on acceptance. */
-export function passthroughTurnInput(request: TurnInputRequest): PreparedTurnInput {
-  const delivery: InputDelivery = { dispatched: false, accepted: null, provenUndelivered: false };
+export function passthroughTurnInput(
+  request: TurnInputRequest,
+): PreparedTurnInput {
+  const delivery: InputDelivery = {
+    dispatched: false,
+    accepted: null,
+    provenUndelivered: false,
+  };
   return {
     promptText: request.promptText,
     dispatchPromptText: request.promptText,

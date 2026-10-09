@@ -29,20 +29,33 @@ describe("the conversation row's holds in production", () => {
     fixture = createPersistenceFixture();
     fixture.seedProject("/repo");
     fixture.seedSession("/repo", "session");
-    await fixture.seedConversation("/repo", "session", makeConversationState({ id: "chat-s", pendingQueue: [awaitingReview] }));
+    await fixture.seedConversation(
+      "/repo",
+      "session",
+      makeConversationState({ id: "chat-s", pendingQueue: [awaitingReview] }),
+    );
 
     const holds = createProductionConversationHold(() => fixture.db);
-    expect(await holds.refusal("chat-s", "message")).toMatchObject({ code: "queue_review" });
+    expect(await holds.refusal("chat-s", "message")).toMatchObject({
+      code: "queue_review",
+    });
   });
 
   it("reads a project conversation's row too", async () => {
     fixture = createPersistenceFixture();
     fixture.seedProject("/repo");
-    await fixture.seedProjectConversation("/repo", makeConversationState({ id: "chat-p", pendingQueue: [awaitingReview] }));
+    await fixture.seedProjectConversation(
+      "/repo",
+      makeConversationState({ id: "chat-p", pendingQueue: [awaitingReview] }),
+    );
 
     const holds = createProductionConversationHold(() => fixture.db);
-    expect(await holds.refusal("chat-p", "message")).toMatchObject({ code: "queue_review" });
-    expect(await holds.refusal("chat-p", "command")).toMatchObject({ code: "queue_review" });
+    expect(await holds.refusal("chat-p", "message")).toMatchObject({
+      code: "queue_review",
+    });
+    expect(await holds.refusal("chat-p", "command")).toMatchObject({
+      code: "queue_review",
+    });
     expect(await holds.refusal("unknown", "message")).toBeNull();
   });
 });

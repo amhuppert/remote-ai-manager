@@ -7,7 +7,11 @@ import type {
   ConversationBackendRuntime,
   ConversationQueuedUserInput,
 } from "@/lib/agent-backends/conversation";
-import { InputDeliveryUncertainError, isPromptNotDeliveredFailure, markPromptNotDelivered } from "@/lib/agent-backends/errors";
+import {
+  InputDeliveryUncertainError,
+  isPromptNotDeliveredFailure,
+  markPromptNotDelivered,
+} from "@/lib/agent-backends/errors";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
@@ -18,10 +22,18 @@ import {
   createInteractiveTurns,
   type InteractiveTurnDeps,
 } from "./interactive-turns";
-import { prepareTurnInput, type InputDelivery, type TurnInputDependencies, type TurnInputRequest } from "./turn-input";
+import {
+  prepareTurnInput,
+  type InputDelivery,
+  type TurnInputDependencies,
+  type TurnInputRequest,
+} from "./turn-input";
 import type { TurnRequest } from "./turn-engine";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
-import { storeSessionNameFromScopeRef, type ConversationTarget } from "@/lib/conversations/conversation-target";
+import {
+  storeSessionNameFromScopeRef,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
 
 const enrollment = {
   conversationId: "conv-1",
@@ -29,21 +41,30 @@ const enrollment = {
   sessionName: "session",
   enrolledAt: "2026-10-03T10:00:00.000Z",
 };
-const identity = { projectPath: "/repo", storeSessionName: "session", conversationId: "conv-1" };
+const identity = {
+  projectPath: "/repo",
+  storeSessionName: "session",
+  conversationId: "conv-1",
+};
 
-const message = (overrides: Partial<UserTurnRequest> = {}): UserTurnRequest => ({
+const message = (
+  overrides: Partial<UserTurnRequest> = {},
+): UserTurnRequest => ({
   kind: "user_message",
   text: "Hello",
   inputOrigin: "user",
   ...overrides,
 });
 
-function outcomeOf(execution: ReturnType<typeof settledConversationTurn>): TurnExecutionOutcome {
+function outcomeOf(
+  execution: ReturnType<typeof settledConversationTurn>,
+): TurnExecutionOutcome {
   if (execution.kind !== "settled") throw new Error("fixture");
   return execution.turn.outcome;
 }
 
-const completed = (text = "Hi") => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text } }));
+const completed = (text = "Hi") =>
+  outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text } }));
 
 interface Row {
   backendRef: AgentSessionRef | null;
@@ -124,7 +145,11 @@ function harness(
     },
     async admitProfile() {
       events.push("admit-profile");
-      return { instructionBlock: "You review security.", snapshot: null, lockedAt: "2026-10-03T10:00:00.000Z" };
+      return {
+        instructionBlock: "You review security.",
+        snapshot: null,
+        lockedAt: "2026-10-03T10:00:00.000Z",
+      };
     },
   };
   const deps: InteractiveTurnDeps = {
@@ -144,16 +169,25 @@ function harness(
     },
     async worktreeOf(projectPath, target) {
       worktreeTargets.push(target);
-      return target.scope === "session" ? `${projectPath}/.worktrees/${target.sessionName}` : projectPath;
+      return target.scope === "session"
+        ? `${projectPath}/.worktrees/${target.sessionName}`
+        : projectPath;
     },
     async resolveModelSelection(input) {
       selections.push(input);
       return input.explicit ?? { modelId: "opus", parameters: {} };
     },
-    continuation: async () => ({ continuation: { kind: "ordinary" }, seed: null }),
+    continuation: async () => ({
+      continuation: { kind: "ordinary" },
+      seed: null,
+    }),
     async prepareInput(request) {
       contexts.push(request);
-      const delivery: InputDelivery = { dispatched: false, accepted: null, provenUndelivered: false };
+      const delivery: InputDelivery = {
+        dispatched: false,
+        accepted: null,
+        provenUndelivered: false,
+      };
       return {
         promptText: `<memory-index/>\n\n${request.promptText}`,
         dispatchPromptText: `<memory-index/>\n\n${request.promptText}`,
@@ -186,7 +220,8 @@ function harness(
       return { status: "answered" as const, answers: {} };
     },
     async persistImages(input) {
-      if (input.images.length === 0) return { promptText: input.promptText, imageRefs: [] };
+      if (input.images.length === 0)
+        return { promptText: input.promptText, imageRefs: [] };
       return {
         promptText: `${input.promptText} [Image #3]`,
         imageRefs: input.images.map((image) => ({
@@ -214,7 +249,9 @@ function harness(
           events.push(`release:${delivery.deliveryAttemptId}`);
         },
         async settleAfterTurn() {
-          events.push(released ? "queue-settled" : `review:${delivery.deliveryAttemptId}`);
+          events.push(
+            released ? "queue-settled" : `review:${delivery.deliveryAttemptId}`,
+          );
         },
       };
     },
@@ -237,7 +274,10 @@ function harness(
   };
   // One port for the harness's life, as production composes it once.
   const port = createInteractiveTurns(deps);
-  const run = (request: UserTurnRequest, signal = new AbortController().signal) =>
+  const run = (
+    request: UserTurnRequest,
+    signal = new AbortController().signal,
+  ) =>
     port.run({
       conversationId: "conv-1",
       enrollment: turnEnrollment,
@@ -270,7 +310,10 @@ function harness(
 }
 
 /** A runtime that takes input into its running turn, recording what it was sent; `send` decides each delivery. */
-function liveRuntime(send: (input: ConversationQueuedUserInput) => Promise<void> = (input) => input.onAccepted?.() ?? Promise.resolve()) {
+function liveRuntime(
+  send: (input: ConversationQueuedUserInput) => Promise<void> = (input) =>
+    input.onAccepted?.() ?? Promise.resolve(),
+) {
   const sent: ConversationQueuedUserInput[] = [];
   const runtime: ConversationBackendRuntime = {
     backend: "codex",
@@ -298,7 +341,10 @@ function realTurnInput(finished: string[] = []): TurnInputDependencies {
       readLiveReference: async () => null,
       readNotepadForInjection: async () => null,
     },
-    effects: { recordNotepadDeliveries: async () => {}, recordMemoryIndexDeliveries: async () => {} },
+    effects: {
+      recordNotepadDeliveries: async () => {},
+      recordMemoryIndexDeliveries: async () => {},
+    },
     subscriptions: {
       prepareBriefing: async () => ({
         block: "<briefing/>",
@@ -325,14 +371,27 @@ describe("interactive turns", () => {
     const h = harness(async () => completed("Hi"));
     const result = await h.run(message());
 
-    expect(result).toMatchObject({ status: "succeeded", finalText: "Hi", failure: null });
+    expect(result).toMatchObject({
+      status: "succeeded",
+      finalText: "Hi",
+      failure: null,
+    });
     expect(h.selections).toEqual([
-      { projectPath: "/repo", backend: "claude", transcriptPath: "/t/conv-1.jsonl", explicit: null },
+      {
+        projectPath: "/repo",
+        backend: "claude",
+        transcriptPath: "/t/conv-1.jsonl",
+        explicit: null,
+      },
     ]);
     expect(h.contexts[0]).toMatchObject({
       execution: {
         projectPath: "/repo",
-        target: { scope: "session", sessionName: "session", conversationId: "conv-1" },
+        target: {
+          scope: "session",
+          sessionName: "session",
+          conversationId: "conv-1",
+        },
         worktreePath: "/repo/.worktrees/session",
         role: null,
         persistence: "durable",
@@ -359,22 +418,49 @@ describe("interactive turns", () => {
         modelSelection: { modelId: "opus", parameters: {} },
         instructionSelection: { autonomous: false },
       },
-      userEntry: { type: "user", content: [{ type: "text", text: "Hello" }], modelSelection: { modelId: "opus", parameters: {} } },
+      userEntry: {
+        type: "user",
+        content: [{ type: "text", text: "Hello" }],
+        modelSelection: { modelId: "opus", parameters: {} },
+      },
     });
-    expect(h.events).toEqual(["begin:user", "admit-profile", "receipts-finished", "release:conv-1", "settle:true:user"]);
+    expect(h.events).toEqual([
+      "begin:user",
+      "admit-profile",
+      "receipts-finished",
+      "release:conv-1",
+      "settle:true:user",
+    ]);
     expect(h.named).toEqual([]);
   });
 
   it("runs a project conversation's message in the project root as the project, with no session identity for the agent", async () => {
-    const projectEnrollment = { ...enrollment, sessionName: storeSessionNameFromScopeRef({ scope: "project" }) };
-    const h = harness(async () => completed("Hi"), undefined, projectEnrollment);
+    const projectEnrollment = {
+      ...enrollment,
+      sessionName: storeSessionNameFromScopeRef({ scope: "project" }),
+    };
+    const h = harness(
+      async () => completed("Hi"),
+      undefined,
+      projectEnrollment,
+    );
     const result = await h.run(message());
 
     expect(result).toMatchObject({ status: "succeeded", finalText: "Hi" });
-    const target = { scope: "project", projectName: "repo", conversationId: "conv-1" };
+    const target = {
+      scope: "project",
+      projectName: "repo",
+      conversationId: "conv-1",
+    };
     expect(h.worktreeTargets).toEqual([target]);
-    expect(h.contexts[0]?.execution).toMatchObject({ target, worktreePath: "/repo" });
-    expect(h.turns[0]?.conversation).toMatchObject({ target, worktreePath: "/repo" });
+    expect(h.contexts[0]?.execution).toMatchObject({
+      target,
+      worktreePath: "/repo",
+    });
+    expect(h.turns[0]?.conversation).toMatchObject({
+      target,
+      worktreePath: "/repo",
+    });
     // The agent of a project conversation has no session to act in (CC_CONVERSATION is session-only).
     expect(h.turns[0]?.conversation).not.toHaveProperty("callerIdentity");
   });
@@ -383,7 +469,10 @@ describe("interactive turns", () => {
     const block = { type: "text" as const, text: "Hi" };
     const h = harness(async (turn) => {
       await turn.onBackendInit?.({ backend: "claude", ref: "sdk-2" });
-      const events: ConversationBackendEvent[] = [{ type: "input_accepted" }, { type: "content", block }];
+      const events: ConversationBackendEvent[] = [
+        { type: "input_accepted" },
+        { type: "content", block },
+      ];
       for (const event of events) await turn.onEvent?.(event);
       return completed("Hi");
     });
@@ -398,35 +487,65 @@ describe("interactive turns", () => {
     const cancelled = harness(async () => ({
       ...outcomeOf(
         settledConversationTurn({
-          outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } },
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "aborted",
+              message: "aborted",
+            },
+          },
         }),
       ),
       interruption: { reason: "user" },
     }));
     expect((await cancelled.run(message())).status).toBe("cancelled");
-    expect(cancelled.streamed).toEqual([["aborted", { message: "Prompt execution was cancelled" }]]);
+    expect(cancelled.streamed).toEqual([
+      ["aborted", { message: "Prompt execution was cancelled" }],
+    ]);
 
     const timedOut = harness(async () => ({
       ...outcomeOf(
         settledConversationTurn({
-          outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } },
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "aborted",
+              message: "aborted",
+            },
+          },
         }),
       ),
       interruption: { reason: "timeout", timeoutMs: 5000 },
     }));
     await timedOut.run(message());
-    expect(timedOut.streamed).toEqual([["aborted", { message: "Prompt execution timed out after 5000ms" }]]);
+    expect(timedOut.streamed).toEqual([
+      ["aborted", { message: "Prompt execution timed out after 5000ms" }],
+    ]);
 
     const failure = harness(async (turn) => {
       await turn.onEvent?.({ type: "error", message: "SDK transport closed" });
       return outcomeOf(
         settledConversationTurn({
-          outcome: { kind: "failed", error: { backend: "claude", failureKind: "backend_error", message: "SDK transport closed" } },
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "backend_error",
+              message: "SDK transport closed",
+            },
+          },
         }),
       );
     });
-    expect(await failure.run(message())).toMatchObject({ status: "failed", failure: "SDK transport closed" });
-    expect(failure.streamed).toEqual([["error", { message: "SDK transport closed" }]]);
+    expect(await failure.run(message())).toMatchObject({
+      status: "failed",
+      failure: "SDK transport closed",
+    });
+    expect(failure.streamed).toEqual([
+      ["error", { message: "SDK transport closed" }],
+    ]);
   });
 
   it("refuses a model the project does not admit without running the turn, and leaves the turn uncounted", async () => {
@@ -434,16 +553,30 @@ describe("interactive turns", () => {
     h.deps.resolveModelSelection = async () => {
       throw new Error('Model "gpt-x" is not available for this project');
     };
-    const result = await h.run(message({ modelSelection: { modelId: "gpt-x", parameters: {} } }));
+    const result = await h.run(
+      message({ modelSelection: { modelId: "gpt-x", parameters: {} } }),
+    );
 
-    expect(result).toMatchObject({ status: "failed", failure: 'Model "gpt-x" is not available for this project' });
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: 'Model "gpt-x" is not available for this project',
+    });
     expect(h.turns).toEqual([]);
-    expect(h.streamed).toEqual([["error", { message: 'Model "gpt-x" is not available for this project' }]]);
-    expect(h.events).toEqual(["begin:user", "release:conv-1", "settle:false:user"]);
+    expect(h.streamed).toEqual([
+      ["error", { message: 'Model "gpt-x" is not available for this project' }],
+    ]);
+    expect(h.events).toEqual([
+      "begin:user",
+      "release:conv-1",
+      "settle:false:user",
+    ]);
   });
 
   it("takes the backend its first message chose, and refuses a different one once the conversation has run", async () => {
-    const fresh = harness(async () => completed(), { backendRef: null, promptCount: 0 });
+    const fresh = harness(async () => completed(), {
+      backendRef: null,
+      promptCount: 0,
+    });
     await fresh.run(message({ backend: "codex" }));
     expect(fresh.events).toContain("adopt:codex");
     expect(fresh.turns[0]?.conversation.backend).toBe("codex");
@@ -459,7 +592,9 @@ describe("interactive turns", () => {
   it("settles the conversation's profile before the turn and runs the agent under it", async () => {
     const h = harness(async () => completed());
     await h.run(message());
-    expect(h.events.indexOf("admit-profile")).toBeGreaterThan(h.events.indexOf("begin:user"));
+    expect(h.events.indexOf("admit-profile")).toBeGreaterThan(
+      h.events.indexOf("begin:user"),
+    );
     expect(h.turns[0]?.conversation.profile).toEqual({
       instructionBlock: "You review security.",
       snapshot: null,
@@ -504,7 +639,9 @@ describe("interactive turns", () => {
       await h.run(message());
 
       expect(outcome).toBe("accepted");
-      expect(h.contexts.map((context) => [context.mode, context.briefingAttemptId])).toEqual([
+      expect(
+        h.contexts.map((context) => [context.mode, context.briefingAttemptId]),
+      ).toEqual([
         ["turn", "attempt-1"],
         ["live", "att-9"],
       ]);
@@ -514,7 +651,9 @@ describe("interactive turns", () => {
           userPromptText: "Also this",
         }),
       ]);
-      expect(h.events).toEqual(expect.arrayContaining(["archive:att-9", "release:att-9"]));
+      expect(h.events).toEqual(
+        expect.arrayContaining(["archive:att-9", "release:att-9"]),
+      );
       expect(h.archived.map((entry) => entry.id)).toContain("q-att-9");
     });
 
@@ -529,7 +668,9 @@ describe("interactive turns", () => {
       });
       h.holdRuntime(liveRuntime().runtime);
       seen.push(await h.port.acceptsLive("conv-1"));
-      expect(await h.port.deliverLive(identity, queued("Too early"))).toBe("not_sent");
+      expect(await h.port.deliverLive(identity, queued("Too early"))).toBe(
+        "not_sent",
+      );
       expect(h.events).toContainEqual(expect.stringMatching(/^pending:att-9:/));
       await h.run(message());
       seen.push(await h.port.acceptsLive("conv-1"));
@@ -560,14 +701,21 @@ describe("interactive turns", () => {
 
     it("returns an unsent message to the queue and holds an uncertain one for review", async () => {
       const outcomes: unknown[] = [];
-      const failures: Error[] = [new Error("The turn ended"), new InputDeliveryUncertainError("No acknowledgement")];
+      const failures: Error[] = [
+        new Error("The turn ended"),
+        new InputDeliveryUncertainError("No acknowledgement"),
+      ];
       const live = liveRuntime(async () => {
         throw failures.shift();
       });
       const h = harness(async (turn) => {
         await turn.onEvent?.({ type: "input_accepted" });
-        outcomes.push(await h.port.deliverLive(identity, queued("One", "att-1")));
-        outcomes.push(await h.port.deliverLive(identity, queued("Two", "att-2")));
+        outcomes.push(
+          await h.port.deliverLive(identity, queued("One", "att-1")),
+        );
+        outcomes.push(
+          await h.port.deliverLive(identity, queued("Two", "att-2")),
+        );
         return completed();
       });
       h.holdRuntime(live.runtime);
@@ -583,7 +731,9 @@ describe("interactive turns", () => {
       const inputDeps = realTurnInput(finished);
       // As Cursor refuses an attachment before anything is sent.
       const live = liveRuntime(async () => {
-        throw new Error("Cursor steering accepts text only; attachments require the next turn");
+        throw new Error(
+          "Cursor steering accepts text only; attachments require the next turn",
+        );
       });
       let outcome: unknown;
       const h = harness(async (turn) => {
@@ -647,13 +797,19 @@ describe("interactive turns", () => {
 
     it("ends the turn only once a live delivery it took has settled", async () => {
       let deliver = () => {};
-      const live = liveRuntime((input) => new Promise((resolve) => (deliver = () => resolve(input.onAccepted?.()))));
+      const live = liveRuntime(
+        (input) =>
+          new Promise(
+            (resolve) => (deliver = () => resolve(input.onAccepted?.())),
+          ),
+      );
       let delivery: Promise<unknown> | undefined;
       const h = harness(async (turn) => {
         await turn.onEvent?.({ type: "input_accepted" });
         delivery = h.port.deliverLive(identity, queued("Late"));
         // The turn ends while the send is in flight.
-        while (live.sent.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+        while (live.sent.length === 0)
+          await new Promise((resolve) => setTimeout(resolve, 1));
         setTimeout(() => deliver(), 10);
         return completed();
       });
@@ -667,12 +823,31 @@ describe("interactive turns", () => {
 
   it("saves a message's images with the transcript and hands them to the agent with their numbered text", async () => {
     const h = harness(async () => completed());
-    await h.run(message({ text: "What is this?", images: [{ attachmentId: "a-1", mediaType: "image/png", base64Data: "aGk=" }] }));
+    await h.run(
+      message({
+        text: "What is this?",
+        images: [
+          { attachmentId: "a-1", mediaType: "image/png", base64Data: "aGk=" },
+        ],
+      }),
+    );
 
     expect(h.contexts[0]?.promptText).toBe("What is this? [Image #3]");
-    expect(h.turns[0]?.imageRefs).toEqual([{ index: 3, mediaType: "image/png", path: "/t/images/3.png", base64Data: "aGk=" }]);
+    expect(h.turns[0]?.imageRefs).toEqual([
+      {
+        index: 3,
+        mediaType: "image/png",
+        path: "/t/images/3.png",
+        base64Data: "aGk=",
+      },
+    ]);
     expect(h.turns[0]?.userEntry?.content).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: "image_ref", imagePath: "/t/images/3.png" })]),
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "image_ref",
+          imagePath: "/t/images/3.png",
+        }),
+      ]),
     );
   });
 
@@ -680,14 +855,25 @@ describe("interactive turns", () => {
     const h = harness(async () => completed());
     const documentFeedback = {
       items: [
-        { docPath: "docs/plan.md", path: "docs/plan.md", headingLabel: "Rollout", line: 12, quote: "Ship it", note: "Too early" },
+        {
+          docPath: "docs/plan.md",
+          path: "docs/plan.md",
+          headingLabel: "Rollout",
+          line: 12,
+          quote: "Ship it",
+          note: "Too early",
+        },
       ],
     };
-    await h.run(message({ text: "", documentFeedback, inputOrigin: "generated" }));
+    await h.run(
+      message({ text: "", documentFeedback, inputOrigin: "generated" }),
+    );
 
     expect(h.contexts[0]?.promptText).toContain("Too early");
     expect(h.turns[0]?.userEntry?.content).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: "document_feedback" })]),
+      expect.arrayContaining([
+        expect.objectContaining({ type: "document_feedback" }),
+      ]),
     );
   });
 
@@ -697,14 +883,24 @@ describe("interactive turns", () => {
       return completed();
     });
     const delivery = { messageIds: ["q-1"], deliveryAttemptId: "att-q" };
-    await h.run(message({ text: "Queued while busy", queuedDelivery: delivery }));
+    await h.run(
+      message({ text: "Queued while busy", queuedDelivery: delivery }),
+    );
 
     expect(h.turns[0]?.userEntry).toBeNull();
-    expect(h.archived).toEqual([expect.objectContaining({ id: "q-1", role: "user" })]);
+    expect(h.archived).toEqual([
+      expect.objectContaining({ id: "q-1", role: "user" }),
+    ]);
     expect(h.events).toEqual(
-      expect.arrayContaining(["archive:att-q", "release:att-q", "queue-settled"]),
+      expect.arrayContaining([
+        "archive:att-q",
+        "release:att-q",
+        "queue-settled",
+      ]),
     );
-    expect(h.events.indexOf("archive:att-q")).toBeLessThan(h.events.indexOf("release:att-q"));
+    expect(h.events.indexOf("archive:att-q")).toBeLessThan(
+      h.events.indexOf("release:att-q"),
+    );
   });
 
   it("fails a queued delivery the turn never sent, keeping it visible with the reason", async () => {
@@ -712,7 +908,12 @@ describe("interactive turns", () => {
     h.deps.resolveModelSelection = async () => {
       throw new Error("Model gpt-x is not available");
     };
-    await h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-2"], deliveryAttemptId: "att-r" } }));
+    await h.run(
+      message({
+        text: "Queued",
+        queuedDelivery: { messageIds: ["q-2"], deliveryAttemptId: "att-r" },
+      }),
+    );
 
     expect(h.events).toContain("failed:att-r:Model gpt-x is not available");
     expect(h.events.some((event) => event.startsWith("review:"))).toBe(false);
@@ -725,7 +926,8 @@ describe("interactive turns", () => {
       await turn.onEvent?.({ type: "input_accepted" });
       return completed();
     });
-    h.deps.prepareInput = (request) => prepareTurnInput(realTurnInput(), request);
+    h.deps.prepareInput = (request) =>
+      prepareTurnInput(realTurnInput(), request);
     const accounting = h.deps.queuedDelivery;
     h.deps.queuedDelivery = (input) => ({
       ...accounting(input),
@@ -737,7 +939,12 @@ describe("interactive turns", () => {
         released.push(input.delivery.deliveryAttemptId);
       },
     });
-    await h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-7"], deliveryAttemptId: "att-7" } }));
+    await h.run(
+      message({
+        text: "Queued",
+        queuedDelivery: { messageIds: ["q-7"], deliveryAttemptId: "att-7" },
+      }),
+    );
     expect(released).toEqual([]);
 
     await h.run(message({ text: "Next" }));
@@ -747,14 +954,30 @@ describe("interactive turns", () => {
   it("fails a queued batch whose send provably never reached the agent, rather than holding it for review", async () => {
     const h = harness(async (turn) => {
       turn.observe?.sending();
-      turn.observe?.failed(markPromptNotDelivered(new Error("the provider socket closed before the prompt was written")));
+      turn.observe?.failed(
+        markPromptNotDelivered(
+          new Error("the provider socket closed before the prompt was written"),
+        ),
+      );
       return outcomeOf(
         settledConversationTurn({
-          outcome: { kind: "failed", error: { backend: "claude", failureKind: "backend_error", message: "socket closed" } },
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "backend_error",
+              message: "socket closed",
+            },
+          },
         }),
       );
     });
-    await h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-5"], deliveryAttemptId: "att-5" } }));
+    await h.run(
+      message({
+        text: "Queued",
+        queuedDelivery: { messageIds: ["q-5"], deliveryAttemptId: "att-5" },
+      }),
+    );
 
     expect(h.events).toContainEqual(expect.stringMatching(/^failed:att-5:/));
     expect(h.events).not.toContain("review:att-5");
@@ -763,8 +986,18 @@ describe("interactive turns", () => {
   it("fails a batch the person stopped before it was sent, and gives one the server stopped back to the queue", async () => {
     const h = harness(async () => completed());
     const queued = (attempt: string) =>
-      message({ text: "Queued", queuedDelivery: { messageIds: [`q-${attempt}`], deliveryAttemptId: attempt } });
-    const notStarted = (attempt: string, endedBy: "person" | "server" | "failure", reason: string) =>
+      message({
+        text: "Queued",
+        queuedDelivery: {
+          messageIds: [`q-${attempt}`],
+          deliveryAttemptId: attempt,
+        },
+      });
+    const notStarted = (
+      attempt: string,
+      endedBy: "person" | "server" | "failure",
+      reason: string,
+    ) =>
       h.port.notStarted?.({
         conversationId: "conv-1",
         enrollment,
@@ -798,7 +1031,12 @@ describe("interactive turns", () => {
       throw new Error("database is locked");
     };
     await expect(
-      h.run(message({ text: "Queued", queuedDelivery: { messageIds: ["q-9"], deliveryAttemptId: "att-9" } })),
+      h.run(
+        message({
+          text: "Queued",
+          queuedDelivery: { messageIds: ["q-9"], deliveryAttemptId: "att-9" },
+        }),
+      ),
     ).rejects.toThrow("database is locked");
     expect(h.turns).toEqual([]);
     expect(h.events).toEqual(["failed:att-9:database is locked"]);
@@ -806,22 +1044,41 @@ describe("interactive turns", () => {
 
   it("lets the agent ask the person in the middle of a turn", async () => {
     const h = harness(async (turn) => {
-      await turn.onUserQuestion?.([{ question: "Which database?", options: [], multiSelect: false, required: true, allowNote: true }], new AbortController().signal);
+      await turn.onUserQuestion?.(
+        [
+          {
+            question: "Which database?",
+            options: [],
+            multiSelect: false,
+            required: true,
+            allowNote: true,
+          },
+        ],
+        new AbortController().signal,
+      );
       return completed();
     });
     await h.run(message());
     expect(h.events).toContain("asked:conv-1:1");
-    expect(h.turns[0]?.requirements.instructionSelection).toEqual({ autonomous: false });
+    expect(h.turns[0]?.requirements.instructionSelection).toEqual({
+      autonomous: false,
+    });
   });
 
   it("names a conversation from its first message", async () => {
-    const h = harness(async () => completed(), { backendRef: null, promptCount: 0 });
+    const h = harness(async () => completed(), {
+      backendRef: null,
+      promptCount: 0,
+    });
     await h.run(message({ text: "Fix the flaky login test" }));
     expect(h.named).toEqual(["Fix the flaky login test"]);
   });
 
   it("delivers the full context to a continuing conversation whose runtime cannot resume", async () => {
-    const h = harness(async () => completed(), { backendRef: null, promptCount: 3 });
+    const h = harness(async () => completed(), {
+      backendRef: null,
+      promptCount: 3,
+    });
     await h.run(message());
     expect(h.contexts[0]?.runtimeCreatedWithoutResume).toBe(true);
   });
@@ -830,12 +1087,25 @@ describe("interactive turns", () => {
     const report = { removedProbes: ["src/a.ts:12"] };
 
     it("runs the person's turn with the session's debug context and its phase's report format", async () => {
-      const h = harness(async () => completed(), { backendRef: null, promptCount: 2, debugMode: debugSession("hypothesizing") });
+      const h = harness(async () => completed(), {
+        backendRef: null,
+        promptCount: 2,
+        debugMode: debugSession("hypothesizing"),
+      });
       await h.run(message({ text: "It crashes on save" }));
-      expect(h.contexts[0]?.execution.debugMode).toMatchObject({ phase: "hypothesizing", debugSessionId: "dbg-1" });
-      expect(h.turns[0]?.outputFormat).toEqual(resolveDebugOutputFormat("hypothesizing"));
+      expect(h.contexts[0]?.execution.debugMode).toMatchObject({
+        phase: "hypothesizing",
+        debugSessionId: "dbg-1",
+      });
+      expect(h.turns[0]?.outputFormat).toEqual(
+        resolveDebugOutputFormat("hypothesizing"),
+      );
 
-      const waiting = harness(async () => completed(), { backendRef: null, promptCount: 2, debugMode: debugSession("awaiting_reproduction") });
+      const waiting = harness(async () => completed(), {
+        backendRef: null,
+        promptCount: 2,
+        debugMode: debugSession("awaiting_reproduction"),
+      });
       await waiting.run(message({ text: "What should I try?" }));
       expect(waiting.turns[0]?.outputFormat).toBeUndefined();
 
@@ -847,18 +1117,51 @@ describe("interactive turns", () => {
 
     it("keeps the report with the phase it answered, and hands a cleanup report to verification", async () => {
       const h = harness(
-        async () => outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "Removed.", structuredOutput: report } })),
-        { backendRef: null, promptCount: 2, debugMode: debugSession("cleanup_instrumentation") },
+        async () =>
+          outcomeOf(
+            settledConversationTurn({
+              outcome: {
+                kind: "completed",
+                text: "Removed.",
+                structuredOutput: report,
+              },
+            }),
+          ),
+        {
+          backendRef: null,
+          promptCount: 2,
+          debugMode: debugSession("cleanup_instrumentation"),
+        },
       );
-      h.settleWithDebug({ kind: "verify_cleanup", debugMode: { ...debugSession("cleanup_instrumentation"), debugSessionId: "dbg-1", cleanupVerificationAttempt: 2 } });
+      h.settleWithDebug({
+        kind: "verify_cleanup",
+        debugMode: {
+          ...debugSession("cleanup_instrumentation"),
+          debugSessionId: "dbg-1",
+          cleanupVerificationAttempt: 2,
+        },
+      });
       await h.run(message({ text: "Fixed, clean up" }));
 
       expect(h.archived).toEqual([
-        expect.objectContaining({ role: "assistant", content: [{ type: "debug_structured", phase: "cleanup_instrumentation", payload: report }] }),
+        expect.objectContaining({
+          role: "assistant",
+          content: [
+            {
+              type: "debug_structured",
+              phase: "cleanup_instrumentation",
+              payload: report,
+            },
+          ],
+        }),
       ]);
       expect(h.verifications).toEqual([
         {
-          identity: { projectPath: "/repo", storeSessionName: "session", conversationId: "conv-1" },
+          identity: {
+            projectPath: "/repo",
+            storeSessionName: "session",
+            conversationId: "conv-1",
+          },
           worktreePath: "/repo/.worktrees/session",
           structuredOutput: report,
           debugSessionId: "dbg-1",
@@ -869,7 +1172,11 @@ describe("interactive turns", () => {
     });
 
     it("settles a debug turn the person stopped before it started, so its phase can mark it failed", async () => {
-      const h = harness(async () => completed(), { backendRef: null, promptCount: 2, debugMode: debugSession("analyzing_evidence") });
+      const h = harness(async () => completed(), {
+        backendRef: null,
+        promptCount: 2,
+        debugMode: debugSession("analyzing_evidence"),
+      });
       await h.port.notStarted?.({
         conversationId: "conv-1",
         enrollment,
@@ -900,11 +1207,19 @@ describe("interactive turns", () => {
               outcome: {
                 kind: "failed",
                 contentBlocks: [],
-                error: { backend: "claude", failureKind: "backend_error", message: "transport closed" },
+                error: {
+                  backend: "claude",
+                  failureKind: "backend_error",
+                  message: "transport closed",
+                },
               },
             }),
           ),
-        { backendRef: null, promptCount: 2, debugMode: debugSession("hypothesizing") },
+        {
+          backendRef: null,
+          promptCount: 2,
+          debugMode: debugSession("hypothesizing"),
+        },
       );
       await h.run(message({ text: "It crashes" }));
       expect(h.archived).toEqual([]);
@@ -916,6 +1231,8 @@ describe("interactive turns", () => {
     const h = harness(async () => completed(), null);
     expect(await h.run(message())).toMatchObject({ status: "failed" });
     expect(h.events).toEqual([]);
-    expect(h.streamed).toEqual([["error", { message: "Conversation conv-1 no longer exists" }]]);
+    expect(h.streamed).toEqual([
+      ["error", { message: "Conversation conv-1 no longer exists" }],
+    ]);
   });
 });

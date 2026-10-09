@@ -11,11 +11,7 @@ import {
   type WorkspaceAdmission,
 } from "./admission";
 import type { WorkspaceEvidence } from "./evidence";
-import {
-  landingMarker,
-  publicationMarker,
-  type LaneGit,
-} from "./lane-git";
+import { landingMarker, publicationMarker, type LaneGit } from "./lane-git";
 import type { LaneIntegrator } from "./lane-integrator";
 import {
   laneJobId,
@@ -96,13 +92,19 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-const STOPPED = { kind: "publication_failed", detail: "Stopped before publishing" } as const;
+const STOPPED = {
+  kind: "publication_failed",
+  detail: "Stopped before publishing",
+} as const;
 /** A publication whose permit closed while it waited for the session: it goes back to the queue unrun. */
 const UNADMITTED = Symbol("unadmitted");
 
 /** Why an operation was refused: the error's message, or what failed when it carried none. */
 function refusalDetail(operation: WorkspaceOperation, error: unknown): string {
-  return getErrorMessage(error) || `The ${operation.kind} operation failed without a message`;
+  return (
+    getErrorMessage(error) ||
+    `The ${operation.kind} operation failed without a message`
+  );
 }
 
 /** The grants an operation holds; each is released early when its step ends, and the rest when it settles. */
@@ -150,8 +152,10 @@ export function createWorkspaceExecutor(
     const binding = deps.repo
       .listBindings(worktree, "waiting")
       .filter((b) => runningBindings.has(b.bindingId));
-    const others = [...deps.repo.listBindings(worktree, "bound"), ...binding]
-      .filter((b) => b.bindingId !== operation.bindingId);
+    const others = [
+      ...deps.repo.listBindings(worktree, "bound"),
+      ...binding,
+    ].filter((b) => b.bindingId !== operation.bindingId);
     return !others.some((other) =>
       bindingScopesOverlap(other.request.scope, operation.binding.scope),
     );
@@ -166,16 +170,26 @@ export function createWorkspaceExecutor(
     record: WorkspaceOperationRecord,
     operation: WorkspaceOperation,
   ): GrantRequest | null {
-    if (operation.kind === "bind" || operation.kind === "provision") return null;
+    if (operation.kind === "bind" || operation.kind === "provision")
+      return null;
     // Admitted holding the lane; it takes the session only briefly, twice.
     if (operation.kind === "publish")
-      return { worktree: operation.lane.worktreePath, kind: "git", holder: record.cause };
+      return {
+        worktree: operation.lane.worktreePath,
+        kind: "git",
+        holder: record.cause,
+      };
     const binding = bindingOf(operation.bindingId).request;
     // Landing moves the lane branch: nothing else may use the lane meanwhile.
     if (operation.kind === "accept" && binding.kind === "lane")
-      return { worktree: binding.worktreePath, kind: "git", holder: record.cause };
+      return {
+        worktree: binding.worktreePath,
+        kind: "git",
+        holder: record.cause,
+      };
     // Checks read the whole tree, so they exclude every supervised writer.
-    const paths = operation.kind === "check" ? undefined : scopePaths(binding.scope);
+    const paths =
+      operation.kind === "check" ? undefined : scopePaths(binding.scope);
     return {
       worktree: binding.worktreePath,
       kind: "stable_read",
@@ -229,7 +243,10 @@ export function createWorkspaceExecutor(
       case "verify":
         return {
           kind: "verified",
-          changed: !deps.evidence.sameContent(await capture(), operation.evidence),
+          changed: !deps.evidence.sameContent(
+            await capture(),
+            operation.evidence,
+          ),
         };
       case "accept": {
         const current = await capture();
@@ -287,7 +304,9 @@ export function createWorkspaceExecutor(
     signal: AbortSignal,
     held: Held,
   ): Promise<Grant | null> {
-    const grant = await deps.admission.acquire(request, signal).catch(() => null);
+    const grant = await deps.admission
+      .acquire(request, signal)
+      .catch(() => null);
     if (grant === null) return null;
     if (signal.aborted) {
       deps.admission.release(grant);
@@ -359,36 +378,46 @@ export function createWorkspaceExecutor(
     if (integrated.kind === "failed")
       return { kind: "publication_failed", detail: integrated.detail };
 
-    const final = await underSession(lane, record.cause, signal, held, async () => {
-      if (!stillAdmitted(record)) return UNADMITTED;
-      const published = await deps.lanes.publish({
-        projectPath: lane.projectPath,
-        sessionName: lane.sessionName,
-        laneBranch: lane.branch,
-        targetBranch: lane.sessionBranch,
-        targetWorktreePath: lane.sessionWorktreePath,
-        expectedHead: head,
-        message: `Publish lane ${lane.laneId}\n\n${publicationMarker(record.cause)}`,
-        jobId: laneJobId(record.cause),
-      });
-      switch (published.kind) {
-        case "published":
-          return { kind: "published", commit: published.commit, incorporated: head };
-        case "unchanged":
-          return { kind: "published", commit: head, incorporated: head };
-        case "stale":
-          return { kind: "publication_stale", head: published.head };
-        case "blocked":
-          return { kind: "publish_blocked", detail: published.detail };
-        case "failed":
-          return { kind: "publication_failed", detail: published.detail };
-        case "refresh_failed":
-          return {
-            kind: "publication_uncertain",
-            detail: `Branch ${lane.sessionBranch} now holds the publication ${published.commit}, but the session worktree could not be brought to it: ${published.detail}. Bring ${lane.sessionWorktreePath} to ${published.commit} once nothing in it needs keeping, then ask for a new attempt.`,
-          };
-      }
-    });
+    const final = await underSession(
+      lane,
+      record.cause,
+      signal,
+      held,
+      async () => {
+        if (!stillAdmitted(record)) return UNADMITTED;
+        const published = await deps.lanes.publish({
+          projectPath: lane.projectPath,
+          sessionName: lane.sessionName,
+          laneBranch: lane.branch,
+          targetBranch: lane.sessionBranch,
+          targetWorktreePath: lane.sessionWorktreePath,
+          expectedHead: head,
+          message: `Publish lane ${lane.laneId}\n\n${publicationMarker(record.cause)}`,
+          jobId: laneJobId(record.cause),
+        });
+        switch (published.kind) {
+          case "published":
+            return {
+              kind: "published",
+              commit: published.commit,
+              incorporated: head,
+            };
+          case "unchanged":
+            return { kind: "published", commit: head, incorporated: head };
+          case "stale":
+            return { kind: "publication_stale", head: published.head };
+          case "blocked":
+            return { kind: "publish_blocked", detail: published.detail };
+          case "failed":
+            return { kind: "publication_failed", detail: published.detail };
+          case "refresh_failed":
+            return {
+              kind: "publication_uncertain",
+              detail: `Branch ${lane.sessionBranch} now holds the publication ${published.commit}, but the session worktree could not be brought to it: ${published.detail}. Bring ${lane.sessionWorktreePath} to ${published.commit} once nothing in it needs keeping, then ask for a new attempt.`,
+            };
+        }
+      },
+    );
     return final ?? STOPPED;
   }
 
@@ -411,7 +440,10 @@ export function createWorkspaceExecutor(
         held,
       );
       if (session === null) return null;
-      const unlock = deps.lanes.trySessionLock(lane.projectPath, lane.sessionName);
+      const unlock = deps.lanes.trySessionLock(
+        lane.projectPath,
+        lane.sessionName,
+      );
       if (unlock !== null) {
         try {
           return await step();
@@ -427,7 +459,10 @@ export function createWorkspaceExecutor(
   }
 
   /** After the receipt is stored: a published lane's worktree and branch go, best effort. */
-  async function cleanUp(operation: WorkspaceOperation, outcome: unknown): Promise<void> {
+  async function cleanUp(
+    operation: WorkspaceOperation,
+    outcome: unknown,
+  ): Promise<void> {
     if (operation.kind !== "publish") return;
     const published =
       typeof outcome === "object" &&
@@ -509,12 +544,17 @@ export function createWorkspaceExecutor(
           kind: operation.kind,
           error: getErrorMessage(error),
         });
-        settle(record, { kind: "refused", detail: refusalDetail(operation, error) });
+        settle(record, {
+          kind: "refused",
+          detail: refusalDetail(operation, error),
+        });
         return;
       }
       if (request !== null) {
         try {
-          held.grants.push(await deps.admission.acquire(request, controller.signal));
+          held.grants.push(
+            await deps.admission.acquire(request, controller.signal),
+          );
         } catch {
           return;
         }
@@ -526,7 +566,11 @@ export function createWorkspaceExecutor(
         if (outcome === UNADMITTED) {
           // What it did so far is safe to repeat: nothing reached the session.
           deps.transaction(() =>
-            deps.repo.updateOperation(record.cause, { state: "queued", outcome: null, updatedAt: deps.now() }),
+            deps.repo.updateOperation(record.cause, {
+              state: "queued",
+              outcome: null,
+              updatedAt: deps.now(),
+            }),
           );
           requeued = true;
           return;
@@ -585,7 +629,9 @@ export function createWorkspaceExecutor(
    * commit is on its branch; null when it must run again. Only the marker
    * counts: a matching tree is not proof of the effect.
    */
-  async function alreadyDone(record: WorkspaceOperationRecord): Promise<unknown> {
+  async function alreadyDone(
+    record: WorkspaceOperationRecord,
+  ): Promise<unknown> {
     const operation = workspaceOperationSchema.parse(record.request);
     if (operation.kind === "publish") {
       const { lane } = operation;
@@ -607,14 +653,22 @@ export function createWorkspaceExecutor(
       const refresh =
         incorporated === null
           ? "diverged"
-          : await underSession(lane, record.cause, new AbortController().signal, { grants: [] }, () =>
-              deps.lanes.completePublication({
-                targetWorktreePath: lane.sessionWorktreePath,
-                from: incorporated,
-                to: commit,
-              }),
+          : await underSession(
+              lane,
+              record.cause,
+              new AbortController().signal,
+              { grants: [] },
+              () =>
+                deps.lanes.completePublication({
+                  targetWorktreePath: lane.sessionWorktreePath,
+                  from: incorporated,
+                  to: commit,
+                }),
             );
-      if (incorporated === null || (refresh !== "complete" && refresh !== "refreshed"))
+      if (
+        incorporated === null ||
+        (refresh !== "complete" && refresh !== "refreshed")
+      )
         return {
           kind: "publication_uncertain",
           detail: `Branch ${lane.sessionBranch} holds the publication ${commit}, but after a restart the session worktree could not safely be brought to it: it holds neither the publication nor exactly the tree it replaced, or files the publication would overwrite. Bring ${lane.sessionWorktreePath} to ${commit}, keeping whatever in it is new, then ask for a new attempt.`,
@@ -753,7 +807,8 @@ export function createWorkspaceExecutor(
     },
     async drain() {
       for (;;) {
-        for (const record of deps.repo.listOperations("queued")) tryStart(record);
+        for (const record of deps.repo.listOperations("queued"))
+          tryStart(record);
         if (inFlight.size === 0) return;
         // Whatever finishes may free what a queued operation waits for: look again.
         await Promise.race(inFlight);

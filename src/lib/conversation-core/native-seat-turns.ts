@@ -8,9 +8,17 @@ import {
   type ComposeImplementerLaneWriteEnvelopeInput,
   type ImplementerLaneWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import { resumableRef, type ConversationRecordPort } from "./conversation-record";
+import {
+  resumableRef,
+  type ConversationRecordPort,
+} from "./conversation-record";
 import type { SeatTurnPort } from "./executor";
-import { failedTurn as failed, runRecordedTurn, turnResultOf, recordedResult } from "./recorded-turn";
+import {
+  failedTurn as failed,
+  runRecordedTurn,
+  turnResultOf,
+  recordedResult,
+} from "./recorded-turn";
 import type { RuntimeHost } from "./runtime-host";
 import type { SeatTurnRequest, WorkOrderDocument } from "./schemas";
 import type { TurnEngine } from "./turn-engine";
@@ -20,9 +28,14 @@ export interface NativeSeatTurnDeps {
   records: ConversationRecordPort;
   host: Pick<RuntimeHost, "release">;
   getProjectDisplayName(projectPath: string): string;
-  composeWriteEnvelope(input: ComposeImplementerLaneWriteEnvelopeInput): ImplementerLaneWriteEnvelope;
+  composeWriteEnvelope(
+    input: ComposeImplementerLaneWriteEnvelopeInput,
+  ): ImplementerLaneWriteEnvelope;
   fsWriteRestriction(backend: AgentBackendId): FsWriteRestrictionSupport;
-  materializeDocuments(worktreePath: string, documents: readonly WorkOrderDocument[]): Promise<void>;
+  materializeDocuments(
+    worktreePath: string,
+    documents: readonly WorkOrderDocument[],
+  ): Promise<void>;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -67,7 +80,10 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
       });
       return { kind: "envelope", envelope, restriction, readOnly };
     } catch (error) {
-      return { kind: "refused", reason: `Cannot establish the write envelope: ${getErrorMessage(error)}` };
+      return {
+        kind: "refused",
+        reason: `Cannot establish the write envelope: ${getErrorMessage(error)}`,
+      };
     }
   }
 
@@ -88,10 +104,14 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
         conversationId,
       };
       const row = await deps.records.read(identity);
-      if (row === null) return failed(`Seat conversation ${conversationId} no longer exists`);
+      if (row === null)
+        return failed(`Seat conversation ${conversationId} no longer exists`);
       try {
         // Read-only copies of the work's frozen documents, at the paths its briefing names.
-        await deps.materializeDocuments(request.workspace.worktreePath, request.documents);
+        await deps.materializeDocuments(
+          request.workspace.worktreePath,
+          request.documents,
+        );
       } catch (error) {
         const reason = `A document this work needs could not be delivered: ${getErrorMessage(error)}`;
         deps.log.error("conversation_core.seat_documents_undelivered", {
@@ -104,58 +124,89 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
       const backend = request.seat.assignment.backend;
       const projectName = deps.getProjectDisplayName(binding.projectPath);
       const outputFormat =
-        request.outputSchema === undefined ? undefined : { type: "json_schema" as const, schema: request.outputSchema };
+        request.outputSchema === undefined
+          ? undefined
+          : { type: "json_schema" as const, schema: request.outputSchema };
       const promptText =
         confinement.kind === "envelope"
           ? `${renderWriteEnvelopeBriefing(confinement.envelope, confinement.restriction)}\n\n${request.message}`
           : request.message;
 
       const timeoutMs = request.timeoutMs;
-      const timeout = timeoutMs === null ? null : AbortSignal.timeout(timeoutMs);
-      const turnSignal = timeout === null ? signal : AbortSignal.any([signal, timeout]);
+      const timeout =
+        timeoutMs === null ? null : AbortSignal.timeout(timeoutMs);
+      const turnSignal =
+        timeout === null ? signal : AbortSignal.any([signal, timeout]);
 
-      const recorded = await runRecordedTurn(deps, identity, "workflow", async () => {
-        const profile = await deps.records.admitProfile(identity);
-        return deps.engine.runTurn({
-          conversation: {
-            conversationId,
-            projectPath: binding.projectPath,
-            projectName,
-            target: sessionConversationTarget(projectName, binding.sessionName, conversationId),
-            worktreePath: request.workspace.worktreePath,
-            backend,
-            executionClass: "governed-execution",
-            // A continuation from a different backend cannot be resumed here.
-            persistedRef: resumableRef(row, backend),
-            callerIdentity: conversationId,
-            profile,
-          },
-          requirements: {
-            modelSelection: request.seat.assignment.modelSelection,
-            ...(confinement.kind === "envelope" ? { fsWritePolicy: confinement.envelope.policy } : {}),
-            instructionSelection: { autonomous: true, askUserQuestionsEnabled: request.seat.canAsk },
-          },
-          broadcast: { projectName, storeSessionName: binding.sessionName },
-          promptText,
-          userEntry: {
-            timestamp: new Date().toISOString(),
-            type: "user",
-            role: "user",
-            content: [{ type: "text", text: promptText }],
-          },
-          onBackendInit: (ref) => deps.records.recordContinuity(identity, ref),
-          writeCapability:
-            request.seat.role === "reviewer" || (confinement.kind === "envelope" && confinement.readOnly)
-              ? "read_only"
-              : "write_capable",
-          autonomous: true,
-          waitForBackgroundTasks: request.kind === "work",
-          ...(outputFormat !== undefined ? { outputFormat, structuredOutputTurns: "work_then_format" as const } : {}),
-          signal: turnSignal,
-        });
-      });
-      const timedOut = timeout !== null && timeout.aborted && !signal.aborted ? timeoutMs : null;
-      return recordedResult(turnResultOf(recorded.outcome, outputFormat, timedOut), recorded);
+      const recorded = await runRecordedTurn(
+        deps,
+        identity,
+        "workflow",
+        async () => {
+          const profile = await deps.records.admitProfile(identity);
+          return deps.engine.runTurn({
+            conversation: {
+              conversationId,
+              projectPath: binding.projectPath,
+              projectName,
+              target: sessionConversationTarget(
+                projectName,
+                binding.sessionName,
+                conversationId,
+              ),
+              worktreePath: request.workspace.worktreePath,
+              backend,
+              executionClass: "governed-execution",
+              // A continuation from a different backend cannot be resumed here.
+              persistedRef: resumableRef(row, backend),
+              callerIdentity: conversationId,
+              profile,
+            },
+            requirements: {
+              modelSelection: request.seat.assignment.modelSelection,
+              ...(confinement.kind === "envelope"
+                ? { fsWritePolicy: confinement.envelope.policy }
+                : {}),
+              instructionSelection: {
+                autonomous: true,
+                askUserQuestionsEnabled: request.seat.canAsk,
+              },
+            },
+            broadcast: { projectName, storeSessionName: binding.sessionName },
+            promptText,
+            userEntry: {
+              timestamp: new Date().toISOString(),
+              type: "user",
+              role: "user",
+              content: [{ type: "text", text: promptText }],
+            },
+            onBackendInit: (ref) =>
+              deps.records.recordContinuity(identity, ref),
+            writeCapability:
+              request.seat.role === "reviewer" ||
+              (confinement.kind === "envelope" && confinement.readOnly)
+                ? "read_only"
+                : "write_capable",
+            autonomous: true,
+            waitForBackgroundTasks: request.kind === "work",
+            ...(outputFormat !== undefined
+              ? {
+                  outputFormat,
+                  structuredOutputTurns: "work_then_format" as const,
+                }
+              : {}),
+            signal: turnSignal,
+          });
+        },
+      );
+      const timedOut =
+        timeout !== null && timeout.aborted && !signal.aborted
+          ? timeoutMs
+          : null;
+      return recordedResult(
+        turnResultOf(recorded.outcome, outputFormat, timedOut),
+        recorded,
+      );
     },
   };
 }

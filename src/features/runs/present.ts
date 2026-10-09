@@ -83,10 +83,16 @@ export function contextState(state: ContextState): Presented {
     case "waiting": {
       const blockers = [
         ...state.dependencies,
-        ...state.provisionLanes.map(lane => `lane ${lane} setup`),
-        ...state.publicationLanes.map(lane => `lane ${lane} publication`),
+        ...state.provisionLanes.map((lane) => `lane ${lane} setup`),
+        ...state.publicationLanes.map((lane) => `lane ${lane} publication`),
       ];
-      return { label: blockers.length > 0 ? `Waits on ${blockers.join(", ")}` : "Ready to start", tone: "neutral" };
+      return {
+        label:
+          blockers.length > 0
+            ? `Waits on ${blockers.join(", ")}`
+            : "Ready to start",
+        tone: "neutral",
+      };
     }
     case "skipped":
       return { label: "Skipped", tone: "neutral" };
@@ -135,17 +141,27 @@ export function haltTitle(kind: ContextHaltKind): string {
 /** Why the halt stops the work, in one sentence. */
 export function haltExplanation(kind: ContextHaltKind): string {
   return {
-    retries_exhausted: "The context used every retry its policy allows and stopped instead of trying again.",
-    output_invalid: "The implementer's structured result failed validation, so nothing downstream can consume it yet.",
-    candidate_unstable: "Files in the reviewed scope kept changing while reviewers read them, so the review would not hold.",
-    plan_defect: "A blocking reviewer judged that the contract itself cannot be met as written.",
-    advice_invalid: "The implementer's answer to review advice could not be read.",
+    retries_exhausted:
+      "The context used every retry its policy allows and stopped instead of trying again.",
+    output_invalid:
+      "The implementer's structured result failed validation, so nothing downstream can consume it yet.",
+    candidate_unstable:
+      "Files in the reviewed scope kept changing while reviewers read them, so the review would not hold.",
+    plan_defect:
+      "A blocking reviewer judged that the contract itself cannot be met as written.",
+    advice_invalid:
+      "The implementer's answer to review advice could not be read.",
     unavailable: "The agent's backend refused the turn before it started.",
-    turn_failed: "The agent's turn ended with an error before it finished its work.",
-    interrupted: "The agent's turn stopped before it finished, usually a restart or a cancelled process.",
-    effect_uncertain: "A step that changes files or Git may or may not have completed; running it blindly could repeat it.",
-    reconcile_failed: "After a restart the engine could not match a recorded step with its outcome.",
-    workspace_refused: "The workspace refused a step, for example because its files were held by other work.",
+    turn_failed:
+      "The agent's turn ended with an error before it finished its work.",
+    interrupted:
+      "The agent's turn stopped before it finished, usually a restart or a cancelled process.",
+    effect_uncertain:
+      "A step that changes files or Git may or may not have completed; running it blindly could repeat it.",
+    reconcile_failed:
+      "After a restart the engine could not match a recorded step with its outcome.",
+    workspace_refused:
+      "The workspace refused a step, for example because its files were held by other work.",
   }[kind];
 }
 
@@ -157,26 +173,41 @@ export interface PresentedRemedy {
   emphasis: "primary" | "default";
 }
 
-export function remedy(r: Remedy, haltKind: ContextHaltKind, seat = "implementer"): PresentedRemedy {
+export function remedy(
+  r: Remedy,
+  haltKind: ContextHaltKind,
+  seat = "implementer",
+): PresentedRemedy {
   switch (r.kind) {
     case "continue":
-      if (haltKind === "effect_uncertain") return {
-        label: "Try again without evidence",
-        consequence: "May repeat a change that already landed. Inspect files and Git before another attempt.",
-        needsNote: null, emphasis: "default",
-      };
-      if (haltKind === "candidate_unstable") return {
-        label: "Review again once files settle",
-        consequence: "Resets the instability limit, freezes a new candidate and reviews it again.",
-        needsNote: null, emphasis: "default",
-      };
-      if (haltKind === "workspace_refused" || haltKind === "reconcile_failed") return {
-        label: "Ask again", consequence: "Asks the engine to reconcile the stopped step and try to continue.",
-        needsNote: null, emphasis: "primary",
-      };
+      if (haltKind === "effect_uncertain")
+        return {
+          label: "Try again without evidence",
+          consequence:
+            "May repeat a change that already landed. Inspect files and Git before another attempt.",
+          needsNote: null,
+          emphasis: "default",
+        };
+      if (haltKind === "candidate_unstable")
+        return {
+          label: "Review again once files settle",
+          consequence:
+            "Resets the instability limit, freezes a new candidate and reviews it again.",
+          needsNote: null,
+          emphasis: "default",
+        };
+      if (haltKind === "workspace_refused" || haltKind === "reconcile_failed")
+        return {
+          label: "Ask again",
+          consequence:
+            "Asks the engine to reconcile the stopped step and try to continue.",
+          needsNote: null,
+          emphasis: "primary",
+        };
       return {
         label: "Retry",
-        consequence: "Runs the stopped step again with the same agent and its conversation.",
+        consequence:
+          "Runs the stopped step again with the same agent and its conversation.",
         needsNote: null,
         emphasis: "primary",
       };
@@ -197,7 +228,8 @@ export function remedy(r: Remedy, haltKind: ContextHaltKind, seat = "implementer
     case "retry_capture":
       return {
         label: "Ask for the result again",
-        consequence: "The implementer reports its result again; its work is kept.",
+        consequence:
+          "The implementer reports its result again; its work is kept.",
         needsNote: null,
         emphasis: "primary",
       };
@@ -211,14 +243,16 @@ export function remedy(r: Remedy, haltKind: ContextHaltKind, seat = "implementer
     case "rereview":
       return {
         label: "Review again",
-        consequence: "Retires this review round and starts a new one; your reason goes to the reviewers.",
+        consequence:
+          "Retires this review round and starts a new one; your reason goes to the reviewers.",
         needsNote: "reason",
         emphasis: "default",
       };
     case "confirm_effect":
       return {
         label: "Authorize another attempt",
-        consequence: "Records your evidence and authorizes another attempt. Inspect the work first: the earlier attempt may already have changed files or Git.",
+        consequence:
+          "Records your evidence and authorizes another attempt. Inspect the work first: the earlier attempt may already have changed files or Git.",
         needsNote: "evidence",
         emphasis: "default",
       };
@@ -292,10 +326,16 @@ export function formatDuration(ms: number | null): string {
 
 /** Middle-truncated id, as the design system writes ids. */
 export function shortId(id: string, keep = 6): string {
-  return id.length <= keep * 2 + 1 ? id : `${id.slice(0, keep)}…${id.slice(-keep)}`;
+  return id.length <= keep * 2 + 1
+    ? id
+    : `${id.slice(0, keep)}…${id.slice(-keep)}`;
 }
 
 /** Whether the context is finished one way or another. */
 export function isSettled(state: ContextState): boolean {
-  return state.kind === "succeeded" || state.kind === "cancelled" || state.kind === "skipped";
+  return (
+    state.kind === "succeeded" ||
+    state.kind === "cancelled" ||
+    state.kind === "skipped"
+  );
 }

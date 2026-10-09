@@ -3,7 +3,10 @@ import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { compactionConfigSchema } from "@/lib/config/schemas";
-import type { GenerateCheckpointInput, generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
+import type {
+  GenerateCheckpointInput,
+  generateCheckpoint,
+} from "@/lib/conversation-checkpoints/generation";
 import { createConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
 import {
   CHECKPOINT_PAYLOAD_SCHEMA_VERSION,
@@ -33,17 +36,30 @@ import type { WorkspaceExecutorDeps } from "@/lib/workspace/executor";
 import type { RunBoundary } from "@/lib/runs/schemas";
 import { composeSupervision, type Supervision } from "../supervision";
 
-const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+const silent = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
 
 /** A valid frozen payload for operation `id` over `sourceBasis`; its seed hash is `sha256:<id>`. */
-export function checkpointPayload(id: string, sourceBasis: CheckpointSourceBasis, createdAt: string): CheckpointPayload {
+export function checkpointPayload(
+  id: string,
+  sourceBasis: CheckpointSourceBasis,
+  createdAt: string,
+): CheckpointPayload {
   const seedText = `## Working state\ncontinue from seq ${sourceBasis.capturedThroughSeq}\n`;
   return {
     id,
     schemaVersion: CHECKPOINT_PAYLOAD_SCHEMA_VERSION,
     sourceBasis,
     artifactProvenance: null,
-    versions: { generatorVersion: "gen-1", builderVersion: "builder-1", normalizerVersion: "norm-1" },
+    versions: {
+      generatorVersion: "gen-1",
+      builderVersion: "builder-1",
+      normalizerVersion: "norm-1",
+    },
     modelSelection: { modelId: "sonnet", parameters: {} },
     sections: { workingState: {}, recentDialogue: [], recoveryMap: {} },
     seedText,
@@ -61,8 +77,14 @@ export function checkpointPayload(id: string, sourceBasis: CheckpointSourceBasis
 }
 
 /** The payload the generator would return for the build `input` describes. */
-export function checkpointPayloadFor(input: GenerateCheckpointInput): CheckpointPayload {
-  return checkpointPayload(input.identity.checkpointId, input.source.basis, input.createdAt);
+export function checkpointPayloadFor(
+  input: GenerateCheckpointInput,
+): CheckpointPayload {
+  return checkpointPayload(
+    input.identity.checkpointId,
+    input.source.basis,
+    input.createdAt,
+  );
 }
 
 export const done = (finalText: string): CoreTurnResult => ({
@@ -131,8 +153,17 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     /** Every run boundary recorded, in order: what each owner's waking follow delivers. */
     get recorded(): RunBoundary[] {
       const runs = createRunsRepo(fixture.db);
-      const ids = z.array(z.string()).parse(fixture.db.prepare("SELECT run_id FROM runs ORDER BY rowid").pluck().all());
-      return ids.flatMap((id) => runs.boundaries(id)).sort((a, b) => a.seq - b.seq);
+      const ids = z
+        .array(z.string())
+        .parse(
+          fixture.db
+            .prepare("SELECT run_id FROM runs ORDER BY rowid")
+            .pluck()
+            .all(),
+        );
+      return ids
+        .flatMap((id) => runs.boundaries(id))
+        .sort((a, b) => a.seq - b.seq);
     },
     /** Runs whose owner was asked to follow them. */
     follows: [] as string[],
@@ -151,7 +182,9 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     conversationHold: { refusal: async () => null } as HoldSource,
     script: (async () => done("Done.")) as TurnScript,
     /** An enrolled conversation's turn, after its text is recorded. */
-    userTurn: (async () => done("Hello.")) as (input: Parameters<UserTurnPort["run"]>[0]) => Promise<CoreTurnResult>,
+    userTurn: (async () => done("Hello.")) as (
+      input: Parameters<UserTurnPort["run"]>[0],
+    ) => Promise<CoreTurnResult>,
     conversations: 0,
     /** Every acceptance check run, in order, with the binding it ran for. */
     checksRun: [] as Array<{ bindingId: string; command: string }>,
@@ -171,12 +204,19 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
       releases: [] as string[],
       /** Queued rows a checkpoint acceptance released. */
       confirmed: [] as string[],
-      repo: createConversationCheckpointsRepo(fixture.db, createWriteQueue(), fixture.store.checkpointContinuation),
+      repo: createConversationCheckpointsRepo(
+        fixture.db,
+        createWriteQueue(),
+        fixture.store.checkpointContinuation,
+      ),
     },
     compose(): Supervision {
       let self: Supervision | null = null;
       const checkRunner: WorkspaceExecutorDeps["runCheck"] = async (input) => {
-        harness.checksRun.push({ bindingId: input.bindingId, command: input.command });
+        harness.checksRun.push({
+          bindingId: input.bindingId,
+          command: input.command,
+        });
         return { status: "passed" };
       };
       const supervision = composeSupervision({
@@ -240,8 +280,15 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           readConversation(identity) {
             const scope = scopeRefFromStoreSessionName(identity.sessionName);
             return scope.scope === "project"
-              ? fixture.store.getProjectConversation(identity.projectPath, identity.conversationId)
-              : fixture.store.getConversation(identity.projectPath, scope.sessionName, identity.conversationId);
+              ? fixture.store.getProjectConversation(
+                  identity.projectPath,
+                  identity.conversationId,
+                )
+              : fixture.store.getConversation(
+                  identity.projectPath,
+                  scope.sessionName,
+                  identity.conversationId,
+                );
           },
           readEntries: async () => ({
             entries: structuredClone(harness.checkpoint.entries),
@@ -253,7 +300,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
             throw new Error("Checkpoint generation is faked in this harness");
           },
           generate: (input, deps) => harness.checkpoint.generate(input, deps),
-          resolveCaptureModel: async () => ({ modelId: "sonnet", parameters: {} }),
+          resolveCaptureModel: async () => ({
+            modelId: "sonnet",
+            parameters: {},
+          }),
           backendSupportsCheckpoint: () => true,
           background: { activity: () => null, epoch: () => 0 },
           async confirmQueuedDelivery(input) {
@@ -266,7 +316,9 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
               "test.confirm_queued_delivery",
               (row) => {
                 const before = row.pendingQueue.length;
-                row.pendingQueue = row.pendingQueue.filter((item) => !input.ids.includes(item.id));
+                row.pendingQueue = row.pendingQueue.filter(
+                  (item) => !input.ids.includes(item.id),
+                );
                 return before - row.pendingQueue.length;
               },
             );
@@ -274,18 +326,23 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           async appendUserEntryOnce() {},
           async worktreeOf(identity) {
             const scope = scopeRefFromStoreSessionName(identity.sessionName);
-            return scope.scope === "project" ? identity.projectPath : `${identity.projectPath}/.worktrees/${scope.sessionName}`;
+            return scope.scope === "project"
+              ? identity.projectPath
+              : `${identity.projectPath}/.worktrees/${scope.sessionName}`;
           },
           runtime: {
             async release(conversationId) {
               harness.checkpoint.releases.push(conversationId);
-              if (harness.checkpoint.closeFailure !== null) throw new Error(harness.checkpoint.closeFailure);
+              if (harness.checkpoint.closeFailure !== null)
+                throw new Error(harness.checkpoint.closeFailure);
             },
             async retryRelease(conversationId) {
               harness.checkpoint.releases.push(`retry:${conversationId}`);
-              if (harness.checkpoint.closeFailure !== null) throw new Error(harness.checkpoint.closeFailure);
+              if (harness.checkpoint.closeFailure !== null)
+                throw new Error(harness.checkpoint.closeFailure);
             },
-            closeFailure: async (conversationId) => harness.uncollected.get(conversationId) ?? null,
+            closeFailure: async (conversationId) =>
+              harness.uncollected.get(conversationId) ?? null,
           },
           async settleTurnReceipts() {},
           now: () => new Date().toISOString(),
@@ -307,7 +364,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           changedPaths: async () => [],
         },
         lanes: harness.lanes,
-        integrator: createDirectLaneIntegrator({ lanes: harness.lanes, runCheck: checkRunner }),
+        integrator: createDirectLaneIntegrator({
+          lanes: harness.lanes,
+          runCheck: checkRunner,
+        }),
         runCheck: checkRunner,
         async followOwner(run) {
           harness.follows.push(run.runId);

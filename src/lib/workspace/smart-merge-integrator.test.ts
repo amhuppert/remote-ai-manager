@@ -13,9 +13,15 @@ import type {
   ResolveConflictsInput,
   ResolveConflictsOutput,
 } from "@/lib/workflows/merge/actors";
-import type { RunValidationInput, RunValidationOutput } from "@/lib/workflows/validation-fix/actors";
+import type {
+  RunValidationInput,
+  RunValidationOutput,
+} from "@/lib/workflows/validation-fix/actors";
 import type { LaneTarget } from "./schemas";
-import { createLaneConflictActors, createSmartMergeIntegrator } from "./smart-merge-integrator";
+import {
+  createLaneConflictActors,
+  createSmartMergeIntegrator,
+} from "./smart-merge-integrator";
 import { createActor, toPromise } from "xstate";
 import type { ResolveConflictsParams } from "@/lib/sessions/conflict-resolution";
 
@@ -49,26 +55,44 @@ function harness(options: {
   let cleanup: "aborted" | "kept" | "none" = options.cleanup ?? "aborted";
   const machine = mergeMachine.provide({
     actors: {
-      getCurrentBranch: fromPromise<GetCurrentBranchOutput, GetCurrentBranchInput>(async () => ({
+      getCurrentBranch: fromPromise<
+        GetCurrentBranchOutput,
+        GetCurrentBranchInput
+      >(async () => ({
         branch: lane.branch,
       })),
-      classifyWorktree: fromPromise<ClassifyWorktreeOutput, ClassifyWorktreeInput>(async () => ({ kind: "clean" })),
-      mergeMain: fromPromise<MergeMainOutput, MergeMainInput>(async ({ input }) => {
-        calls.merges.push(input);
-        return options.merge ?? { status: "clean", conflictFiles: [] };
-      }),
-      resolveConflicts: fromPromise<ResolveConflictsOutput, ResolveConflictsInput>(async ({ input }) => {
+      classifyWorktree: fromPromise<
+        ClassifyWorktreeOutput,
+        ClassifyWorktreeInput
+      >(async () => ({ kind: "clean" })),
+      mergeMain: fromPromise<MergeMainOutput, MergeMainInput>(
+        async ({ input }) => {
+          calls.merges.push(input);
+          return options.merge ?? { status: "clean", conflictFiles: [] };
+        },
+      ),
+      resolveConflicts: fromPromise<
+        ResolveConflictsOutput,
+        ResolveConflictsInput
+      >(async ({ input }) => {
         calls.resolutions.push(input);
         return options.resolution ?? { status: "resolved", conflicts: [] };
       }),
-      commitResolution: fromPromise<CommitResolutionOutput, CommitResolutionInput>(async () => ({
+      commitResolution: fromPromise<
+        CommitResolutionOutput,
+        CommitResolutionInput
+      >(async () => ({
         hash: "m1",
         committedBy: "orchestrator",
       })),
-      runValidation: fromPromise<RunValidationOutput, RunValidationInput>(async ({ input }) => {
-        calls.validations.push(input);
-        return options.validation === undefined ? null : options.validation(input);
-      }),
+      runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
+        async ({ input }) => {
+          calls.validations.push(input);
+          return options.validation === undefined
+            ? null
+            : options.validation(input);
+        },
+      ),
     },
   });
   const integrator = createSmartMergeIntegrator({
@@ -81,16 +105,29 @@ function harness(options: {
     },
     log: { info: () => {}, warn: () => {} },
   });
-  const integrate = (checks: string[] = [], signal = new AbortController().signal) =>
-    integrator.integrate({ lane, head: "h7", checks, cause: "run-1:publish:api:1", signal });
+  const integrate = (
+    checks: string[] = [],
+    signal = new AbortController().signal,
+  ) =>
+    integrator.integrate({
+      lane,
+      head: "h7",
+      checks,
+      cause: "run-1:publish:api:1",
+      signal,
+    });
   return { integrate, calls, keep: () => (cleanup = "kept") };
 }
 
 describe("Smart Merge lane integration", () => {
   it("merges the captured session head into the lane and runs the lane's checks there, without publishing", async () => {
     const h = harness({});
-    expect(await h.integrate(["typecheck", "test"])).toEqual({ kind: "integrated" });
-    expect(h.calls.merges).toEqual([{ worktreePath: lane.worktreePath, targetBranch: "h7" }]);
+    expect(await h.integrate(["typecheck", "test"])).toEqual({
+      kind: "integrated",
+    });
+    expect(h.calls.merges).toEqual([
+      { worktreePath: lane.worktreePath, targetBranch: "h7" },
+    ]);
     expect(h.calls.validations).toEqual([
       expect.objectContaining({
         worktreePath: lane.worktreePath,
@@ -102,7 +139,9 @@ describe("Smart Merge lane integration", () => {
   });
 
   it("has the resolver agent settle conflicts as a fresh task, then checks the result", async () => {
-    const h = harness({ merge: { status: "conflicts", conflictFiles: ["src/shared.ts"] } });
+    const h = harness({
+      merge: { status: "conflicts", conflictFiles: ["src/shared.ts"] },
+    });
     expect(await h.integrate(["typecheck"])).toEqual({ kind: "integrated" });
     expect(h.calls.resolutions).toEqual([
       expect.objectContaining({
@@ -119,14 +158,19 @@ describe("Smart Merge lane integration", () => {
   it("fails with the reason, and leaves no merge in progress, when the resolver cannot settle the conflicts", async () => {
     const h = harness({
       merge: { status: "conflicts", conflictFiles: ["src/shared.ts"] },
-      resolution: { status: "unresolved", error: "Both sides rewrote the same function" },
+      resolution: {
+        status: "unresolved",
+        error: "Both sides rewrote the same function",
+      },
     });
     const result = await h.integrate();
     expect(result).toEqual({
       kind: "failed",
       detail: expect.stringContaining("src/shared.ts"),
     });
-    expect(result.kind === "failed" ? result.detail : "").toContain("Both sides rewrote the same function");
+    expect(result.kind === "failed" ? result.detail : "").toContain(
+      "Both sides rewrote the same function",
+    );
     expect(h.calls.aborted).toEqual([lane.worktreePath]);
   });
 
@@ -153,7 +197,11 @@ describe("Smart Merge lane integration", () => {
       merge: { status: "conflicts", conflictFiles: ["src/shared.ts"] },
       resolution: {
         status: "infrastructure",
-        failure: { kind: "backend_error", message: "The provider is unreachable", retryable: true },
+        failure: {
+          kind: "backend_error",
+          message: "The provider is unreachable",
+          retryable: true,
+        },
       },
     });
     const result = await h.integrate();
@@ -169,7 +217,9 @@ describe("Smart Merge lane integration", () => {
     });
     const result = await h.integrate();
     expect(result.kind === "failed" ? result.detail : "").toMatch(/commit/);
-    expect(result.kind === "failed" ? result.detail : "").toMatch(/in progress/);
+    expect(result.kind === "failed" ? result.detail : "").toMatch(
+      /in progress/,
+    );
   });
 
   it("starts nothing once its caller has stopped", async () => {
@@ -195,12 +245,24 @@ describe("Smart Merge lane integration", () => {
       },
     });
     const actor = createActor(actors.resolveConflicts, {
-      input: { worktreePath: lane.worktreePath, projectPath: "/repo", sessionName: "session", conversationId: "owner-1" },
+      input: {
+        worktreePath: lane.worktreePath,
+        projectPath: "/repo",
+        sessionName: "session",
+        conversationId: "owner-1",
+      },
     });
     actor.start();
-    expect(await toPromise(actor)).toEqual({ status: "resolved", conflicts: [] });
+    expect(await toPromise(actor)).toEqual({
+      status: "resolved",
+      conflicts: [],
+    });
     expect(received).toEqual([
-      expect.objectContaining({ worktreePath: lane.worktreePath, agentTurnDispatch: "fresh-run", signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        worktreePath: lane.worktreePath,
+        agentTurnDispatch: "fresh-run",
+        signal: expect.any(AbortSignal),
+      }),
     ]);
     expect(received[0]?.conversationId).toBeUndefined();
   });

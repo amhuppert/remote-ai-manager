@@ -1,6 +1,11 @@
 "use client";
 
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon } from "@/components/icons";
+import {
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CloseIcon,
+} from "@/components/icons";
 import { IconButton } from "@/components/ui/IconButton";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { StatusDot } from "@/components/ui/StatusDot";
@@ -11,7 +16,15 @@ import { cn } from "@/lib/ui/cn";
 import type { RunSummary } from "../model";
 import { formatUsd, runStatus } from "../present";
 
-function RailItem({ run, selected, onSelect }: { run: RunSummary; selected: boolean; onSelect(runId: string): void }) {
+function RailItem({
+  run,
+  selected,
+  onSelect,
+}: {
+  run: RunSummary;
+  selected: boolean;
+  onSelect(runId: string): void;
+}) {
   const status = runStatus(run.status);
   const active = run.finishedAt === null;
   return (
@@ -47,7 +60,9 @@ function RailItem({ run, selected, onSelect }: { run: RunSummary; selected: bool
         <span className="flex min-w-0 items-center gap-sm font-mono text-[0.7rem] text-text-tertiary">
           <StatusChip tone={status.tone}>{status.label}</StatusChip>
           <span className="min-w-0 truncate">
-            {run.kind === "workflow" ? `${run.contexts.done}/${run.contexts.total} · ` : ""}
+            {run.kind === "workflow"
+              ? `${run.contexts.done}/${run.contexts.total} · `
+              : ""}
             {formatUsd(run.costUsd)}
           </span>
           {run.attention > 0 ? (
@@ -64,7 +79,17 @@ function RailItem({ run, selected, onSelect }: { run: RunSummary; selected: bool
   );
 }
 
-function Group({ label, runs, selectedId, onSelect }: { label: string; runs: RunSummary[]; selectedId: string; onSelect(runId: string): void }) {
+function Group({
+  label,
+  runs,
+  selectedId,
+  onSelect,
+}: {
+  label: string;
+  runs: RunSummary[];
+  selectedId: string;
+  onSelect(runId: string): void;
+}) {
   if (runs.length === 0) return null;
   return (
     <section className="flex flex-col gap-[4px]">
@@ -73,7 +98,12 @@ function Group({ label, runs, selectedId, onSelect }: { label: string; runs: Run
       </h2>
       <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
         {runs.map((run) => (
-          <RailItem key={run.runId} run={run} selected={run.runId === selectedId} onSelect={onSelect} />
+          <RailItem
+            key={run.runId}
+            run={run}
+            selected={run.runId === selectedId}
+            onSelect={onSelect}
+          />
         ))}
       </ul>
     </section>
@@ -130,7 +160,10 @@ function CollapsedRail({
       <ul className="m-0 flex list-none flex-col gap-[4px] p-0">
         {runs.map((run) => (
           <li key={run.runId}>
-            <WithTooltip label={`${run.title} · ${runStatus(run.status).label}`} side="right">
+            <WithTooltip
+              label={`${run.title} · ${runStatus(run.status).label}`}
+              side="right"
+            >
               <button
                 type="button"
                 aria-label={run.title}
@@ -169,15 +202,31 @@ export function RunsRail({
   onToggle?(): void;
 }) {
   if (collapsed && onToggle !== undefined)
-    return <CollapsedRail runs={runs} selectedId={selectedId} onSelect={onSelect} onToggle={onToggle} />;
+    return (
+      <CollapsedRail
+        runs={runs}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        onToggle={onToggle}
+      />
+    );
   return (
     <nav aria-label="Runs" className="flex flex-col gap-xl">
       <div className="flex items-center gap-sm px-md">
-        <span className="font-display text-[1.05rem] font-bold text-text-primary">Runs</span>
-        <span className="font-mono text-[0.7rem] text-text-tertiary">this session</span>
+        <span className="font-display text-[1.05rem] font-bold text-text-primary">
+          Runs
+        </span>
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
+          this session
+        </span>
         {onToggle !== undefined ? (
           <WithTooltip label="Fold the rail">
-            <IconButton variant="ghost" aria-label="Fold the rail" onClick={onToggle} layoutClassName="ml-auto">
+            <IconButton
+              variant="ghost"
+              aria-label="Fold the rail"
+              onClick={onToggle}
+              layoutClassName="ml-auto"
+            >
               <ChevronLeftIcon />
             </IconButton>
           </WithTooltip>

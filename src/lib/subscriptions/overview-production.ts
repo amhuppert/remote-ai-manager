@@ -180,7 +180,9 @@ export function getSubscriptionOverviewService() {
       findJob: (id) => jobs.getJobRecord(id),
       findRun: (id) => {
         const run = runs.get(id);
-        return run === null ? null : { projectPath: run.projectPath, title: run.facts.title };
+        return run === null
+          ? null
+          : { projectPath: run.projectPath, title: run.facts.title };
       },
     });
     return createSubscriptionOverviewService({

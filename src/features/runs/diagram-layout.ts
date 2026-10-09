@@ -60,7 +60,10 @@ function depths(contexts: readonly RunContext[]): Map<string, number> {
     if (context === undefined || seen.has(key)) return 0;
     const next = new Set(seen).add(key);
     const parents = context.dependsOn.filter((parent) => byKey.has(parent));
-    const depth = parents.length === 0 ? 0 : 1 + Math.max(...parents.map((parent) => visit(parent, next)));
+    const depth =
+      parents.length === 0
+        ? 0
+        : 1 + Math.max(...parents.map((parent) => visit(parent, next)));
     memo.set(key, depth);
     return depth;
   };
@@ -74,14 +77,24 @@ export function layoutDiagram(input: {
   loops: readonly RunLoop[];
 }): DiagramLayout {
   const depth = depths(input.contexts);
-  const columns = Math.max(0, ...input.contexts.map((context) => depth.get(context.key) ?? 0)) + 1;
+  const columns =
+    Math.max(
+      0,
+      ...input.contexts.map((context) => depth.get(context.key) ?? 0),
+    ) + 1;
   const bandsSpec = [
-    { id: "session", label: "Session worktree", lane: null as RunLane | null, match: (c: RunContext) => c.placement.kind === "session" },
+    {
+      id: "session",
+      label: "Session worktree",
+      lane: null as RunLane | null,
+      match: (c: RunContext) => c.placement.kind === "session",
+    },
     ...input.lanes.map((lane) => ({
       id: `lane:${lane.key}`,
       label: `Lane ${lane.key}`,
       lane,
-      match: (c: RunContext) => c.placement.kind === "lane" && c.placement.lane === lane.key,
+      match: (c: RunContext) =>
+        c.placement.kind === "lane" && c.placement.lane === lane.key,
     })),
   ];
   const width = BAND_PAD_X * 2 + columns * NODE_WIDTH + (columns - 1) * GAP_X;
@@ -104,19 +117,33 @@ export function layoutDiagram(input: {
         y: top + BAND_HEADER + row * (NODE_HEIGHT + GAP_Y),
       });
     }
-    const height = BAND_HEADER + rows * NODE_HEIGHT + (rows - 1) * GAP_Y + BAND_PAD_BOTTOM;
-    bands.push({ id: spec.id, label: spec.label, lane: spec.lane, y: top, height });
+    const height =
+      BAND_HEADER + rows * NODE_HEIGHT + (rows - 1) * GAP_Y + BAND_PAD_BOTTOM;
+    bands.push({
+      id: spec.id,
+      label: spec.label,
+      lane: spec.lane,
+      y: top,
+      height,
+    });
     top += height + BAND_GAP;
   }
   const placed = new Map(nodes.map((node) => [node.key, node]));
   const loops = input.loops.flatMap((loop): PlacedLoop[] => {
-    const body = loop.body.map((key) => placed.get(key)).filter((node): node is PlacedNode => node !== undefined);
+    const body = loop.body
+      .map((key) => placed.get(key))
+      .filter((node): node is PlacedNode => node !== undefined);
     if (body.length === 0) return [];
     const left = Math.min(...body.map((node) => node.x)) - LOOP_PAD;
-    const right = Math.max(...body.map((node) => node.x + NODE_WIDTH)) + LOOP_PAD;
-    const upper = Math.min(...body.map((node) => node.y)) - LOOP_PAD - LOOP_LABEL;
-    const lower = Math.max(...body.map((node) => node.y + NODE_HEIGHT)) + LOOP_PAD;
-    return [{ loop, x: left, y: upper, width: right - left, height: lower - upper }];
+    const right =
+      Math.max(...body.map((node) => node.x + NODE_WIDTH)) + LOOP_PAD;
+    const upper =
+      Math.min(...body.map((node) => node.y)) - LOOP_PAD - LOOP_LABEL;
+    const lower =
+      Math.max(...body.map((node) => node.y + NODE_HEIGHT)) + LOOP_PAD;
+    return [
+      { loop, x: left, y: upper, width: right - left, height: lower - upper },
+    ];
   });
   return { nodes, bands, loops, width, height: Math.max(0, top - BAND_GAP) };
 }

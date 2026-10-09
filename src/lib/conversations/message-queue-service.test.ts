@@ -796,23 +796,40 @@ describe("messageQueueService.claimNextTurnBatch", () => {
     const store: FakeStore = { conversation };
     const { deps } = makeDeps(store);
     const service = createMessageQueueService(deps);
-    const key = { projectPath: "/project", sessionName: "session", conversationId: conversation.id };
-    await service.enqueue({ ...key, content: [textBlock("Run notice")], inputOrigin: "generated" });
+    const key = {
+      projectPath: "/project",
+      sessionName: "session",
+      conversationId: conversation.id,
+    };
+    await service.enqueue({
+      ...key,
+      content: [textBlock("Run notice")],
+      inputOrigin: "generated",
+    });
 
-    expect(await service.claimNextTurnBatch({ ...key, debugHold: true })).toBeNull();
+    expect(
+      await service.claimNextTurnBatch({ ...key, debugHold: true }),
+    ).toBeNull();
     expect(conversation.pendingQueue[0]?.status).toBe("pending");
 
     conversation.pendingQuestionId = "q-1";
     const answer = await service.enqueue({
       ...key,
-      content: [textBlock("<cc-question-answers batch=\"q-1\">{}</cc-question-answers>")],
+      content: [
+        textBlock('<cc-question-answers batch="q-1">{}</cc-question-answers>'),
+      ],
       inputOrigin: "generated",
       metadata: { kind: "question_answers", questionBatchId: "q-1" },
       consumePendingQuestionId: "q-1",
     });
     // Its answer continues the debug turn's work, ahead of the notice it holds.
-    expect(await service.claimNextTurnBatch({ ...key, debugHold: true })).toMatchObject({ messageIds: [answer?.id] });
-    expect(conversation.pendingQueue.map((row) => row.status)).toEqual(["pending", "delivering"]);
+    expect(
+      await service.claimNextTurnBatch({ ...key, debugHold: true }),
+    ).toMatchObject({ messageIds: [answer?.id] });
+    expect(conversation.pendingQueue.map((row) => row.status)).toEqual([
+      "pending",
+      "delivering",
+    ]);
   });
 
   it("leaves the conversation actor's own debug state to decide when its queue drains", async () => {
@@ -820,10 +837,20 @@ describe("messageQueueService.claimNextTurnBatch", () => {
     const store: FakeStore = { conversation };
     const { deps } = makeDeps(store);
     const service = createMessageQueueService(deps);
-    const key = { projectPath: "/project", sessionName: "session", conversationId: conversation.id };
-    await service.enqueue({ ...key, content: [textBlock("Queued")], inputOrigin: "user" });
+    const key = {
+      projectPath: "/project",
+      sessionName: "session",
+      conversationId: conversation.id,
+    };
+    await service.enqueue({
+      ...key,
+      content: [textBlock("Queued")],
+      inputOrigin: "user",
+    });
     // The actor drains on leaving debug mode, possibly before the row's debug state is written.
-    expect(await service.claimNextTurnBatch(key)).toMatchObject({ messageIds: [conversation.pendingQueue[0]?.id] });
+    expect(await service.claimNextTurnBatch(key)).toMatchObject({
+      messageIds: [conversation.pendingQueue[0]?.id],
+    });
   });
 });
 
@@ -912,20 +939,28 @@ describe("messageQueueService.enqueue", () => {
       conversationId: "conv-1",
       id: "unsent:user:conv-1:1",
       inputOrigin: "user" as const,
-      content: [textBlock("lost"), { type: "image" as const, mediaType: "image/png", base64Data: "aGk=" }],
-      failure: "The server restarted before this message could start, so it was not sent",
+      content: [
+        textBlock("lost"),
+        { type: "image" as const, mediaType: "image/png", base64Data: "aGk=" },
+      ],
+      failure:
+        "The server restarted before this message could start, so it was not sent",
     };
 
     const entry = await service.enqueue(input);
     expect(entry).toMatchObject({
       status: "failed",
       failedAt: NOW,
-      error: "The server restarted before this message could start, so it was not sent",
+      error:
+        "The server restarted before this message could start, so it was not sent",
       content: input.content,
     });
     expect(queuedMessageBlocksOrdinaryAdmission(entry)).toBe(true);
     expect(broadcasts).toEqual([
-      expect.objectContaining({ type: "message-queued", message: expect.objectContaining({ status: "failed" }) }),
+      expect.objectContaining({
+        type: "message-queued",
+        message: expect.objectContaining({ status: "failed" }),
+      }),
     ]);
 
     // A recovery replayed after a crash finds the row it already kept.

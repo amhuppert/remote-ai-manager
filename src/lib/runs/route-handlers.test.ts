@@ -71,7 +71,11 @@ let holdSeatFile: (() => Promise<void>) | null;
 let holdDocuments: (() => Promise<void>) | null;
 
 /** A hold the test releases, and a promise that settles once something waits on it. */
-function hold(): { wait: () => Promise<void>; reached: Promise<void>; release: () => void } {
+function hold(): {
+  wait: () => Promise<void>;
+  reached: Promise<void>;
+  release: () => void;
+} {
   let release = () => {};
   let reach = () => {};
   const released = new Promise<void>((resolve) => {
@@ -135,7 +139,10 @@ beforeEach(() => {
       return name === "repo" ? "/repo" : null;
     },
     async laneTargets({ sessionWorktreePath }) {
-      return (laneId) => ({ worktreePath: `${sessionWorktreePath}.${laneId}`, branch: `${branchPrefix}/lane-${laneId}` });
+      return (laneId) => ({
+        worktreePath: `${sessionWorktreePath}.${laneId}`,
+        branch: `${branchPrefix}/lane-${laneId}`,
+      });
     },
     async getSession(_projectPath, sessionName) {
       if (sessionName === "session-2") {
@@ -163,13 +170,27 @@ beforeEach(() => {
     },
     async resolveSeats({ request: launchRequest }) {
       seatResolutions += 1;
-      if (launchRequest.backend === "cursor" || (launchRequest.backend === "codex" && codexWithdrawn)) {
-        return { ok: false, status: 400, error: "Cursor is not available here", code: "backend_unavailable" };
+      if (
+        launchRequest.backend === "cursor" ||
+        (launchRequest.backend === "codex" && codexWithdrawn)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Cursor is not available here",
+          code: "backend_unavailable",
+        };
       }
       const seat =
         launchRequest.backend === "codex"
-          ? { backend: "codex" as const, modelSelection: { modelId: "gpt-5.4", parameters: {} } }
-          : { backend: "claude" as const, modelSelection: { modelId: "sonnet", parameters: {} } };
+          ? {
+              backend: "codex" as const,
+              modelSelection: { modelId: "gpt-5.4", parameters: {} },
+            }
+          : {
+              backend: "claude" as const,
+              modelSelection: { modelId: "sonnet", parameters: {} },
+            };
       return {
         ok: true,
         seats: {
@@ -190,19 +211,33 @@ beforeEach(() => {
       const latest = new Map(currentDocuments(current).map((r) => [r.path, r]));
       const issues = requests.flatMap((r, index) =>
         r.path.startsWith("missing")
-          ? [{ path: ["documents", index, "from"], message: `No file at "${r.from ?? ""}" in the session worktree` }]
-          : r.revision !== undefined && latest.get(r.path)?.revision !== r.revision
-            ? [{ path: ["documents", index, "revision"], message: `its latest is revision ${latest.get(r.path)?.revision ?? "none"}` }]
+          ? [
+              {
+                path: ["documents", index, "from"],
+                message: `No file at "${r.from ?? ""}" in the session worktree`,
+              },
+            ]
+          : r.revision !== undefined &&
+              latest.get(r.path)?.revision !== r.revision
+            ? [
+                {
+                  path: ["documents", index, "revision"],
+                  message: `its latest is revision ${latest.get(r.path)?.revision ?? "none"}`,
+                },
+              ]
             : [],
       );
       if (issues.length > 0) return { ok: false, issues };
       return {
         ok: true,
         documents: requests.map((r) => {
-          const kept = r.revision !== undefined ? latest.get(r.path) : undefined;
+          const kept =
+            r.revision !== undefined ? latest.get(r.path) : undefined;
           return {
             path: r.path,
-            artifactId: kept?.document.artifactId ?? `sha256:${r.contents ?? r.from ?? ""}`,
+            artifactId:
+              kept?.document.artifactId ??
+              `sha256:${r.contents ?? r.from ?? ""}`,
             bytes: kept?.document.bytes ?? 1,
             description: r.description,
             ...(r.readWhen !== undefined ? { readWhen: r.readWhen } : {}),
@@ -214,12 +249,17 @@ beforeEach(() => {
     },
     // Freezes the default bundle as the mission, and each named key's as the mission and key.
     async freezeCharter(charter) {
-      const named = [...(charter.invariants ?? []), ...(charter.sourcesOfTruth ?? [])].flatMap((e) => e.appliesTo ?? []);
+      const named = [
+        ...(charter.invariants ?? []),
+        ...(charter.sourcesOfTruth ?? []),
+      ].flatMap((e) => e.appliesTo ?? []);
       return {
         charter,
         bundles: {
           default: `sha256:${charter.mission}`,
-          byKey: Object.fromEntries(named.map((key) => [key, `sha256:${charter.mission}-${key}`])),
+          byKey: Object.fromEntries(
+            named.map((key) => [key, `sha256:${charter.mission}-${key}`]),
+          ),
         },
       };
     },
@@ -229,8 +269,16 @@ beforeEach(() => {
       if (holdSeatFile !== null) await holdSeatFile();
       const contents = seatFiles[file];
       return contents === undefined
-        ? { ok: false, message: `No file at "${file}" in your working directory` }
-        : { ok: true, path: file, artifactId: `sha256:${contents}`, bytes: contents.length };
+        ? {
+            ok: false,
+            message: `No file at "${file}" in your working directory`,
+          }
+        : {
+            ok: true,
+            path: file,
+            artifactId: `sha256:${contents}`,
+            bytes: contents.length,
+          };
     },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   };
@@ -276,29 +324,62 @@ describe("run routes", () => {
   it("freezes an agent launch's documents from the session worktree; its context reads them under the run's documents path", async () => {
     const { response } = await launch({
       brief: "Fix the duplicate notice",
-      documents: [{ path: "plan.md", from: "docs/plan.md", description: "The plan" }],
+      documents: [
+        { path: "plan.md", from: "docs/plan.md", description: "The plan" },
+      ],
     });
 
     expect(response.status).toBe(202);
-    expect(snapshots).toEqual([{ worktreePath: "/repo/.worktrees/session", paths: ["plan.md"] }]);
-    const contextId = supervision.runs.observe("run-1")?.record.facts.invocations[0]?.contextId ?? "";
-    expect(supervision.contexts.observe(contextId)?.record.facts.contract.current.documents).toEqual([
-      { artifactId: "sha256:docs/plan.md", path: `.cc/run-docs/${contextId}/plan.md`, description: "The plan" },
+    expect(snapshots).toEqual([
+      { worktreePath: "/repo/.worktrees/session", paths: ["plan.md"] },
     ]);
-    const shown = await json(await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
-    expect(shown.documents).toEqual([{ path: "plan.md", revision: 1, source: "launch", bytes: 1, description: "The plan" }]);
+    const contextId =
+      supervision.runs.observe("run-1")?.record.facts.invocations[0]
+        ?.contextId ?? "";
+    expect(
+      supervision.contexts.observe(contextId)?.record.facts.contract.current
+        .documents,
+    ).toEqual([
+      {
+        artifactId: "sha256:docs/plan.md",
+        path: `.cc/run-docs/${contextId}/plan.md`,
+        description: "The plan",
+      },
+    ]);
+    const shown = await json(
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
+    );
+    expect(shown.documents).toEqual([
+      {
+        path: "plan.md",
+        revision: 1,
+        source: "launch",
+        bytes: 1,
+        description: "The plan",
+      },
+    ]);
   });
 
   it("refuses a launch whose documents cannot be frozen, naming each problem, and launches nothing", async () => {
     const { response, payload } = await launch({
       brief: "Fix the duplicate notice",
-      documents: [{ path: "missing.md", from: "docs/missing.md", description: "Gone" }],
+      documents: [
+        { path: "missing.md", from: "docs/missing.md", description: "Gone" },
+      ],
     });
 
     expect(response.status).toBe(400);
     expect(payload).toEqual({
       error: "Invalid documents",
-      issues: [{ path: "documents.0.from", message: 'No file at "docs/missing.md" in the session worktree' }],
+      issues: [
+        {
+          path: "documents.0.from",
+          message: 'No file at "docs/missing.md" in the session worktree',
+        },
+      ],
     });
     expect(supervision.runs.observe("run-1")).toBeNull();
   });
@@ -328,14 +409,20 @@ describe("run routes", () => {
 
   it("refuses a launch from a supervised seat, whose child would wait on the seat's own workspace", async () => {
     await launch();
-    const response = await routes.launch(request({ brief: "Nested work" }, identity("conv-1")), params());
+    const response = await routes.launch(
+      request({ brief: "Nested work" }, identity("conv-1")),
+      params(),
+    );
     expect(response.status).toBe(403);
     expect(await json(response)).toMatchObject({ code: "seat_cannot_launch" });
   });
 
   it("refuses a launch from a conversation the inbox cannot wake, since nothing would reach it", async () => {
     unwakeable.add("other-1");
-    const response = await routes.launch(request({ brief: "Fix the notice" }, identity("other-1")), params());
+    const response = await routes.launch(
+      request({ brief: "Fix the notice" }, identity("other-1")),
+      params(),
+    );
     expect(response.status).toBe(409);
     expect(await json(response)).toMatchObject({ code: "owner_not_wakeable" });
     expect(supervision.runs.observe("run-1")).toBeNull();
@@ -439,10 +526,14 @@ describe("run routes", () => {
     };
     await launch();
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
-    const questionId = (view.contexts as Array<{ openQuestions: Array<{ questionId: string }> }>)[0]
-      ?.openQuestions[0]?.questionId;
+    const questionId = (
+      view.contexts as Array<{ openQuestions: Array<{ questionId: string }> }>
+    )[0]?.openQuestions[0]?.questionId;
     expect(questionId).toBeDefined();
 
     const cancelled = await routes.control(
@@ -451,8 +542,12 @@ describe("run routes", () => {
     );
     expect(cancelled.status).toBe(200);
     await quiesce(supervision);
-    expect(supervision.runs.observe("run-1")?.record.progress).toEqual({ kind: "cancelled" });
-    expect(supervision.requests.question(questionId ?? "")?.state).toBe("withdrawn");
+    expect(supervision.runs.observe("run-1")?.record.progress).toEqual({
+      kind: "cancelled",
+    });
+    expect(supervision.requests.question(questionId ?? "")?.state).toBe(
+      "withdrawn",
+    );
   });
 
   it("pauses, resumes and cancels a run for its owner only", async () => {
@@ -489,7 +584,11 @@ describe("run routes", () => {
         {
           title: "API then docs",
           contexts: [
-            { key: "api", brief: "Build the API", scope: { mode: "owned", paths: ["src/api"] } },
+            {
+              key: "api",
+              brief: "Build the API",
+              scope: { mode: "owned", paths: ["src/api"] },
+            },
             { key: "docs", brief: "Document the API", dependsOn: ["api"] },
           ],
         },
@@ -505,7 +604,10 @@ describe("run routes", () => {
     await quiesce(supervision);
 
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     expect(runViewSchema.safeParse(view).success).toBe(true);
     expect(view).toMatchObject({
@@ -518,8 +620,11 @@ describe("run routes", () => {
       ],
     });
     expect(
-      supervision.contexts.observe("run-1.docs")?.record.facts.contract.current.inputs,
-    ).toEqual([{ key: "api", title: "Build the API", output: { summary: "Done." } }]);
+      supervision.contexts.observe("run-1.docs")?.record.facts.contract.current
+        .inputs,
+    ).toEqual([
+      { key: "api", title: "Build the API", output: { summary: "Done." } },
+    ]);
   });
 
   it("freezes each context's own resolved seat, and names the context whose seat cannot be resolved", async () => {
@@ -529,8 +634,17 @@ describe("run routes", () => {
         {
           title: "Mixed backends",
           contexts: [
-            { key: "api", brief: "Build the API", backend: "codex", scope: { mode: "owned", paths: ["src/api"] } },
-            { key: "ui", brief: "Build the UI", scope: { mode: "owned", paths: ["src/ui"] } },
+            {
+              key: "api",
+              brief: "Build the API",
+              backend: "codex",
+              scope: { mode: "owned", paths: ["src/api"] },
+            },
+            {
+              key: "ui",
+              brief: "Build the UI",
+              scope: { mode: "owned", paths: ["src/ui"] },
+            },
           ],
         },
         identity("owner-1"),
@@ -538,8 +652,11 @@ describe("run routes", () => {
       params(),
     );
     expect(launched.status).toBe(202);
-    const definition = supervision.runs.observe("run-1")?.record.facts.definition.contexts;
-    expect(definition?.map((c) => [c.key, c.request.contract.implementer.backend])).toEqual([
+    const definition =
+      supervision.runs.observe("run-1")?.record.facts.definition.contexts;
+    expect(
+      definition?.map((c) => [c.key, c.request.contract.implementer.backend]),
+    ).toEqual([
       ["api", "codex"],
       ["ui", "claude"],
     ]);
@@ -550,7 +667,12 @@ describe("run routes", () => {
           title: "Unavailable backend",
           contexts: [
             { key: "api", brief: "Build the API" },
-            { key: "docs", brief: "Document it", backend: "cursor", dependsOn: ["api"] },
+            {
+              key: "docs",
+              brief: "Document it",
+              backend: "cursor",
+              dependsOn: ["api"],
+            },
           ],
         },
         identity("owner-1"),
@@ -571,8 +693,19 @@ describe("run routes", () => {
         {
           title: "Cycle with an unavailable seat",
           contexts: [
-            { key: "a", brief: "A", backend: "cursor", dependsOn: ["b"], scope: { mode: "readOnly" } },
-            { key: "b", brief: "B", dependsOn: ["a"], scope: { mode: "readOnly" } },
+            {
+              key: "a",
+              brief: "A",
+              backend: "cursor",
+              dependsOn: ["b"],
+              scope: { mode: "readOnly" },
+            },
+            {
+              key: "b",
+              brief: "B",
+              dependsOn: ["a"],
+              scope: { mode: "readOnly" },
+            },
           ],
         },
         identity("owner-1"),
@@ -580,14 +713,19 @@ describe("run routes", () => {
       params(),
     );
     expect(response.status).toBe(400);
-    expect(await json(response)).toMatchObject({ issues: [{ path: "contexts.1.dependsOn" }] });
+    expect(await json(response)).toMatchObject({
+      issues: [{ path: "contexts.1.dependsOn" }],
+    });
     expect(seatResolutions).toBe(0);
   });
 
   it("refuses a workflow launch from a supervised seat", async () => {
     await launch();
     const response = await routes.launchWorkflow(
-      request({ title: "Nested", contexts: [{ key: "a", brief: "Nested work" }] }, identity("conv-1")),
+      request(
+        { title: "Nested", contexts: [{ key: "a", brief: "Nested work" }] },
+        identity("conv-1"),
+      ),
       params(),
     );
     expect(response.status).toBe(403);
@@ -596,14 +734,26 @@ describe("run routes", () => {
 
   it("reports only the dependencies a waiting context still waits on", async () => {
     h.script = async (input) =>
-      input.request.message.startsWith("# Slow") ? new Promise(() => {}) : done("Done.");
+      input.request.message.startsWith("# Slow")
+        ? new Promise(() => {})
+        : done("Done.");
     await routes.launchWorkflow(
       request(
         {
           title: "Fan in",
           contexts: [
-            { key: "api", title: "API", brief: "Build the API", scope: { mode: "owned", paths: ["src/api"] } },
-            { key: "slow", title: "Slow", brief: "Take a while", scope: { mode: "owned", paths: ["src/slow"] } },
+            {
+              key: "api",
+              title: "API",
+              brief: "Build the API",
+              scope: { mode: "owned", paths: ["src/api"] },
+            },
+            {
+              key: "slow",
+              title: "Slow",
+              brief: "Take a while",
+              scope: { mode: "owned", paths: ["src/slow"] },
+            },
             { key: "docs", brief: "Document both", dependsOn: ["api", "slow"] },
           ],
         },
@@ -614,12 +764,22 @@ describe("run routes", () => {
     await quiesce(supervision, false);
 
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     expect(view.contexts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "api", progress: expect.objectContaining({ kind: "succeeded" }) }),
-        expect.objectContaining({ key: "docs", started: false, waitingOn: ["slow"] }),
+        expect.objectContaining({
+          key: "api",
+          progress: expect.objectContaining({ kind: "succeeded" }),
+        }),
+        expect.objectContaining({
+          key: "docs",
+          started: false,
+          waitingOn: ["slow"],
+        }),
       ]),
     );
   });
@@ -642,11 +802,18 @@ describe("run routes", () => {
     await quiesce(supervision, false);
 
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     expect(runViewSchema.safeParse(view).success).toBe(true);
     expect(view.contexts).toEqual([
-      expect.objectContaining({ key: "api", contextId: "run-1.api", started: true }),
+      expect.objectContaining({
+        key: "api",
+        contextId: "run-1.api",
+        started: true,
+      }),
       expect.objectContaining({
         key: "docs",
         contextId: "run-1.docs",
@@ -659,7 +826,10 @@ describe("run routes", () => {
   });
 
   it("shows a branch a route did not take as skipped", async () => {
-    h.script = async () => ({ ...done("Triaged."), structuredOutput: { kind: "feature" } });
+    h.script = async () => ({
+      ...done("Triaged."),
+      structuredOutput: { kind: "feature" },
+    });
     await routes.launchWorkflow(
       request(
         {
@@ -669,11 +839,35 @@ describe("run routes", () => {
               key: "triage",
               brief: "Triage the report",
               scope: { mode: "readOnly" },
-              outputSchema: { type: "object", properties: { kind: { type: "string", enum: ["bug", "feature"] } }, required: ["kind"] },
+              outputSchema: {
+                type: "object",
+                properties: {
+                  kind: { type: "string", enum: ["bug", "feature"] },
+                },
+                required: ["kind"],
+              },
               routing: { cardinality: "exactlyOne" },
             },
-            { key: "fix", brief: "Fix it", dependsOn: [{ key: "triage", when: { schema: { type: "object", properties: { kind: { const: "bug" } } } } }] },
-            { key: "design", brief: "Design it", dependsOn: [{ key: "triage", when: { else: true } }] },
+            {
+              key: "fix",
+              brief: "Fix it",
+              dependsOn: [
+                {
+                  key: "triage",
+                  when: {
+                    schema: {
+                      type: "object",
+                      properties: { kind: { const: "bug" } },
+                    },
+                  },
+                },
+              ],
+            },
+            {
+              key: "design",
+              brief: "Design it",
+              dependsOn: [{ key: "triage", when: { else: true } }],
+            },
           ],
         },
         identity("owner-1"),
@@ -683,19 +877,30 @@ describe("run routes", () => {
     await quiesce(supervision);
 
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     expect(runViewSchema.safeParse(view).success).toBe(true);
     expect(view.progress).toEqual({ kind: "succeeded" });
     expect(view.contexts).toEqual([
       expect.objectContaining({ key: "triage", started: true, skipped: false }),
-      expect.objectContaining({ key: "fix", started: false, skipped: true, waitingOn: [] }),
+      expect.objectContaining({
+        key: "fix",
+        started: false,
+        skipped: true,
+        waitingOn: [],
+      }),
       expect.objectContaining({ key: "design", started: true, skipped: false }),
     ]);
   });
 
   it("shows a loop's current pass and why the run halted when the loop ran out of passes", async () => {
-    h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
+    h.script = async () => ({
+      ...done("Reviewed."),
+      structuredOutput: { approved: false },
+    });
     await routes.launchWorkflow(
       request(
         {
@@ -706,7 +911,11 @@ describe("run routes", () => {
               key: "review",
               brief: "Review it",
               dependsOn: ["implement"],
-              outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+              outputSchema: {
+                type: "object",
+                properties: { approved: { type: "boolean" } },
+                required: ["approved"],
+              },
             },
           ],
           loops: [
@@ -715,7 +924,12 @@ describe("run routes", () => {
               body: ["implement", "review"],
               entry: "implement",
               exit: "review",
-              until: { schema: { type: "object", properties: { approved: { const: true } } } },
+              until: {
+                schema: {
+                  type: "object",
+                  properties: { approved: { const: true } },
+                },
+              },
               maxPasses: 2,
             },
           ],
@@ -727,23 +941,45 @@ describe("run routes", () => {
     await quiesce(supervision);
 
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     expect(runViewSchema.safeParse(view).success).toBe(true);
     expect(view.contexts).toEqual([
-      expect.objectContaining({ key: "implement", contextId: "run-1.implement.pass2", loop: "polish", pass: 2 }),
-      expect.objectContaining({ key: "review", contextId: "run-1.review.pass2", loop: "polish", pass: 2 }),
+      expect.objectContaining({
+        key: "implement",
+        contextId: "run-1.implement.pass2",
+        loop: "polish",
+        pass: 2,
+      }),
+      expect.objectContaining({
+        key: "review",
+        contextId: "run-1.review.pass2",
+        loop: "polish",
+        pass: 2,
+      }),
     ]);
-    expect(view.loops).toEqual([{ key: "polish", pass: 2, maxPasses: 2, state: "exhausted" }]);
+    expect(view.loops).toEqual([
+      { key: "polish", pass: 2, maxPasses: 2, state: "exhausted" },
+    ]);
     expect(view.progress).toEqual({
       kind: "needs_owner",
-      reasons: ['loop "polish": "review" did not meet the exit condition in 2 passes'],
+      reasons: [
+        'loop "polish": "review" did not meet the exit condition in 2 passes',
+      ],
     });
-    expect(view.halts).toEqual(['loop "polish": "review" did not meet the exit condition in 2 passes']);
+    expect(view.halts).toEqual([
+      'loop "polish": "review" did not meet the exit condition in 2 passes',
+    ]);
   });
 
   it("shows a loop whose entry route was not taken as skipped", async () => {
-    h.script = async () => ({ ...done("Gated."), structuredOutput: { go: false } });
+    h.script = async () => ({
+      ...done("Gated."),
+      structuredOutput: { go: false },
+    });
     await routes.launchWorkflow(
       request(
         {
@@ -753,18 +989,36 @@ describe("run routes", () => {
               key: "gate",
               brief: "Decide",
               scope: { mode: "readOnly" },
-              outputSchema: { type: "object", properties: { go: { type: "boolean" } }, required: ["go"] },
+              outputSchema: {
+                type: "object",
+                properties: { go: { type: "boolean" } },
+                required: ["go"],
+              },
             },
             {
               key: "implement",
               brief: "Implement it",
-              dependsOn: [{ key: "gate", when: { schema: { type: "object", properties: { go: { const: true } } } } }],
+              dependsOn: [
+                {
+                  key: "gate",
+                  when: {
+                    schema: {
+                      type: "object",
+                      properties: { go: { const: true } },
+                    },
+                  },
+                },
+              ],
             },
             {
               key: "review",
               brief: "Review it",
               dependsOn: ["implement"],
-              outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+              outputSchema: {
+                type: "object",
+                properties: { approved: { type: "boolean" } },
+                required: ["approved"],
+              },
             },
           ],
           loops: [
@@ -773,7 +1027,12 @@ describe("run routes", () => {
               body: ["implement", "review"],
               entry: "implement",
               exit: "review",
-              until: { schema: { type: "object", properties: { approved: { const: true } } } },
+              until: {
+                schema: {
+                  type: "object",
+                  properties: { approved: { const: true } },
+                },
+              },
               maxPasses: 2,
             },
           ],
@@ -785,10 +1044,15 @@ describe("run routes", () => {
     await quiesce(supervision);
 
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     expect(view.progress).toEqual({ kind: "succeeded" });
-    expect(view.loops).toEqual([{ key: "polish", pass: 0, maxPasses: 2, state: "skipped" }]);
+    expect(view.loops).toEqual([
+      { key: "polish", pass: 0, maxPasses: 2, state: "skipped" },
+    ]);
   });
 
   it("runs a lane, retries a publication the session's changes blocked, and then runs the work that needs it", async () => {
@@ -812,19 +1076,41 @@ describe("run routes", () => {
     await quiesce(supervision);
 
     const show = async () =>
-      json(await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
+      json(
+        await routes.show(
+          request(null, identity("owner-1"), "GET"),
+          params({ runId: "run-1" }),
+        ),
+      );
     const blocked = await show();
     expect(runViewSchema.safeParse(blocked).success).toBe(true);
     expect(blocked.progress).toMatchObject({ kind: "needs_owner" });
     expect(blocked.lanes).toEqual([
-      expect.objectContaining({ key: "api", state: "blocked", attempt: 1, detail: expect.stringContaining("notes.md") }),
+      expect.objectContaining({
+        key: "api",
+        state: "blocked",
+        attempt: 1,
+        detail: expect.stringContaining("notes.md"),
+      }),
     ]);
     expect(blocked.contexts).toEqual([
-      expect.objectContaining({ key: "api", lane: "api", contextId: "run-1.api" }),
-      expect.objectContaining({ key: "integrate", lane: null, started: false, waitingOnPublications: ["api"] }),
+      expect.objectContaining({
+        key: "api",
+        lane: "api",
+        contextId: "run-1.api",
+      }),
+      expect.objectContaining({
+        key: "integrate",
+        lane: null,
+        started: false,
+        waitingOnPublications: ["api"],
+      }),
     ]);
     expect(h.checksRun).toEqual([
-      expect.objectContaining({ command: "typecheck", bindingId: expect.stringContaining("lane:") }),
+      expect.objectContaining({
+        command: "typecheck",
+        bindingId: expect.stringContaining("lane:"),
+      }),
     ]);
 
     h.laneGit.state.dirt.set(session, []);
@@ -836,8 +1122,12 @@ describe("run routes", () => {
     await quiesce(supervision);
     const done = await show();
     expect(done.progress).toEqual({ kind: "succeeded" });
-    expect(done.lanes).toEqual([expect.objectContaining({ key: "api", state: "published", attempt: 2 })]);
-    expect(h.laneGit.state.removed).toEqual([expect.stringContaining("session.")]);
+    expect(done.lanes).toEqual([
+      expect.objectContaining({ key: "api", state: "published", attempt: 2 }),
+    ]);
+    expect(h.laneGit.state.removed).toEqual([
+      expect.stringContaining("session."),
+    ]);
   });
 
   it("refuses an invalid workflow definition with every located problem, launching nothing", async () => {
@@ -861,10 +1151,18 @@ describe("run routes", () => {
     expect(supervision.runs.observe("run-1")).toBeNull();
 
     const seat = await routes.launchWorkflow(
-      request({ title: "Nested", contexts: [{ key: "a", brief: "A", humanApproval: true }] }, identity("owner-1")),
+      request(
+        {
+          title: "Nested",
+          contexts: [{ key: "a", brief: "A", humanApproval: true }],
+        },
+        identity("owner-1"),
+      ),
       params(),
     );
-    expect(await json(seat)).toMatchObject({ code: "human_approval_unavailable" });
+    expect(await json(seat)).toMatchObject({
+      code: "human_approval_unavailable",
+    });
   });
 
   it("refuses human approval at agent launch until a person can decide it", async () => {
@@ -935,7 +1233,10 @@ describe("run routes", () => {
   });
 
   it("lets only the owner amend a workflow, running a halted loop further, and names each change started work forbids", async () => {
-    h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
+    h.script = async () => ({
+      ...done("Reviewed."),
+      structuredOutput: { approved: false },
+    });
     const polish = (maxPasses: number, implementBrief = "Implement it") => ({
       title: "Polish",
       contexts: [
@@ -944,7 +1245,11 @@ describe("run routes", () => {
           key: "review",
           brief: "Review it",
           dependsOn: ["implement"],
-          outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+          outputSchema: {
+            type: "object",
+            properties: { approved: { type: "boolean" } },
+            required: ["approved"],
+          },
         },
       ],
       loops: [
@@ -953,12 +1258,20 @@ describe("run routes", () => {
           body: ["implement", "review"],
           entry: "implement",
           exit: "review",
-          until: { schema: { type: "object", properties: { approved: { const: true } } } },
+          until: {
+            schema: {
+              type: "object",
+              properties: { approved: { const: true } },
+            },
+          },
           maxPasses,
         },
       ],
     });
-    await routes.launchWorkflow(request(polish(1), identity("owner-1")), params());
+    await routes.launchWorkflow(
+      request(polish(1), identity("owner-1")),
+      params(),
+    );
     await quiesce(supervision);
     const amend = (body: unknown, caller = "owner-1") =>
       routes.amend(request(body, identity(caller)), params({ runId: "run-1" }));
@@ -967,27 +1280,53 @@ describe("run routes", () => {
     expect(byOther.status).toBe(403);
 
     const readDefinition = async () =>
-      json(await routes.definition(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })));
-    expect(await readDefinition()).toEqual({ runId: "run-1", revision: 1, definition: polish(1) });
+      json(
+        await routes.definition(
+          request(null, identity("owner-1"), "GET"),
+          params({ runId: "run-1" }),
+        ),
+      );
+    expect(await readDefinition()).toEqual({
+      runId: "run-1",
+      revision: 1,
+      definition: polish(1),
+    });
 
     const amended = await amend({ definition: polish(2), basedOn: 1 });
     expect(amended.status).toBe(200);
     expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
-    expect(await readDefinition()).toEqual({ runId: "run-1", revision: 2, definition: polish(2) });
+    expect(await readDefinition()).toEqual({
+      runId: "run-1",
+      revision: 2,
+      definition: polish(2),
+    });
     await quiesce(supervision);
     const view = await json(
-      await routes.show(request(null, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.show(
+        request(null, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
-    expect(view.loops).toEqual([{ key: "polish", pass: 2, maxPasses: 2, state: "exhausted" }]);
+    expect(view.loops).toEqual([
+      { key: "polish", pass: 2, maxPasses: 2, state: "exhausted" },
+    ]);
     expect(view.definitionRevision).toBe(2);
 
-    const refused = await amend({ definition: polish(1, "Implement it differently") });
+    const refused = await amend({
+      definition: polish(1, "Implement it differently"),
+    });
     expect(refused.status).toBe(409);
     expect(await json(refused)).toMatchObject({
       code: "amendment_refused",
       issues: [
-        { path: "definition", message: expect.stringContaining('"implement" has started') },
-        { path: "definition", message: expect.stringContaining('loop "polish"') },
+        {
+          path: "definition",
+          message: expect.stringContaining('"implement" has started'),
+        },
+        {
+          path: "definition",
+          message: expect.stringContaining('loop "polish"'),
+        },
       ],
     });
   });
@@ -998,7 +1337,10 @@ describe("run routes", () => {
         {
           title: "Charted",
           contexts: [{ key: "build", brief: "Build it" }],
-          charter: { mission: "Ship", invariants: [{ id: "no-mocks", statement: "No internal mocks" }] },
+          charter: {
+            mission: "Ship",
+            invariants: [{ id: "no-mocks", statement: "No internal mocks" }],
+          },
         },
         identity("owner-1"),
       ),
@@ -1007,16 +1349,25 @@ describe("run routes", () => {
     expect(launched.status).toBe(202);
     await quiesce(supervision);
 
-    const contextId = supervision.runs.observe("run-1")?.record.facts.invocations[0]?.contextId ?? "";
-    const contract = supervision.contexts.observe(contextId)?.record.facts.contract.current;
-    expect(contract?.charter).toMatchObject({ mission: "Ship", invariants: [{ id: "no-mocks", statement: "No internal mocks" }] });
+    const contextId =
+      supervision.runs.observe("run-1")?.record.facts.invocations[0]
+        ?.contextId ?? "";
+    const contract =
+      supervision.contexts.observe(contextId)?.record.facts.contract.current;
+    expect(contract?.charter).toMatchObject({
+      mission: "Ship",
+      invariants: [{ id: "no-mocks", statement: "No internal mocks" }],
+    });
     expect(contract?.documents.map((d) => [d.path, d.artifactId])).toEqual([
       [`.cc/run-docs/${contextId}/charter.md`, "sha256:Ship"],
     ]);
   });
 
   it("freezes a workflow's documents again when it is amended, for the work that has not started", async () => {
-    h.script = async () => ({ ...done("Reviewed."), structuredOutput: { approved: false } });
+    h.script = async () => ({
+      ...done("Reviewed."),
+      structuredOutput: { approved: false },
+    });
     const polish = (maxPasses: number, plan: string) => ({
       title: "Polish",
       contexts: [
@@ -1025,7 +1376,11 @@ describe("run routes", () => {
           key: "review",
           brief: "Review it",
           dependsOn: ["implement"],
-          outputSchema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"] },
+          outputSchema: {
+            type: "object",
+            properties: { approved: { type: "boolean" } },
+            required: ["approved"],
+          },
         },
       ],
       loops: [
@@ -1034,18 +1389,29 @@ describe("run routes", () => {
           body: ["implement", "review"],
           entry: "implement",
           exit: "review",
-          until: { schema: { type: "object", properties: { approved: { const: true } } } },
+          until: {
+            schema: {
+              type: "object",
+              properties: { approved: { const: true } },
+            },
+          },
           maxPasses,
         },
       ],
       documents: [{ path: "plan.md", contents: plan, description: "The plan" }],
       charter: { mission: `Polish ${plan}` },
     });
-    await routes.launchWorkflow(request(polish(1, "v1"), identity("owner-1")), params());
+    await routes.launchWorkflow(
+      request(polish(1, "v1"), identity("owner-1")),
+      params(),
+    );
     await quiesce(supervision);
 
     const amended = await routes.amend(
-      request({ definition: polish(2, "v2"), basedOn: 1, reason: "The plan changed" }, identity("owner-1")),
+      request(
+        { definition: polish(2, "v2"), basedOn: 1, reason: "The plan changed" },
+        identity("owner-1"),
+      ),
       params({ runId: "run-1" }),
     );
     expect(amended.status).toBe(200);
@@ -1053,20 +1419,39 @@ describe("run routes", () => {
 
     expect(snapshots).toHaveLength(2);
     const record = supervision.runs.observe("run-1")?.record;
-    expect(record?.facts.documents.map((r) => [r.revision, r.source, r.document?.artifactId])).toEqual([
+    expect(
+      record?.facts.documents.map((r) => [
+        r.revision,
+        r.source,
+        r.document?.artifactId,
+      ]),
+    ).toEqual([
       [1, "launch", "sha256:v1"],
       [2, "amend", "sha256:v2"],
     ]);
-    expect(record?.facts.charter.map((r) => [r.revision, r.source, r.charter?.mission, r.reason])).toEqual([
+    expect(
+      record?.facts.charter.map((r) => [
+        r.revision,
+        r.source,
+        r.charter?.mission,
+        r.reason,
+      ]),
+    ).toEqual([
       [1, "launch", "Polish v1", null],
       [2, "amend", "Polish v2", "The plan changed"],
     ]);
     const planOf = (contextId: string | undefined) =>
       supervision.contexts
         .observe(contextId ?? "")
-        ?.record.facts.contract.current.documents.find((d) => d.path.endsWith("/plan.md"))?.artifactId;
-    const passes = record?.facts.invocations.filter((i) => i.key === "implement") ?? [];
-    expect(passes.map((i) => planOf(i.contextId))).toEqual(["sha256:v1", "sha256:v2"]);
+        ?.record.facts.contract.current.documents.find((d) =>
+          d.path.endsWith("/plan.md"),
+        )?.artifactId;
+    const passes =
+      record?.facts.invocations.filter((i) => i.key === "implement") ?? [];
+    expect(passes.map((i) => planOf(i.contextId))).toEqual([
+      "sha256:v1",
+      "sha256:v2",
+    ]);
   });
 
   it("reports a refusal as a conflict even when it comes from another copy of the run module, as the boot-time supervision is", async () => {
@@ -1101,7 +1486,15 @@ describe("run routes", () => {
     expect(retry.status).toBe(409);
     expect(await json(retry)).toMatchObject({ code: "run_control_refused" });
     const amended = await routes.amend(
-      request({ definition: { title: "Again", contexts: [{ key: "agent", brief: "Fix it" }] } }, identity("owner-1")),
+      request(
+        {
+          definition: {
+            title: "Again",
+            contexts: [{ key: "agent", brief: "Fix it" }],
+          },
+        },
+        identity("owner-1"),
+      ),
       params({ runId: "run-1" }),
     );
     expect(amended.status).toBe(409);
@@ -1120,13 +1513,23 @@ describe("run routes", () => {
         { key: "docs", brief: docsBrief, dependsOn: ["api"] },
       ],
     });
-    await routes.launchWorkflow(request(chain("Document it"), identity("owner-1")), params());
+    await routes.launchWorkflow(
+      request(chain("Document it"), identity("owner-1")),
+      params(),
+    );
     await quiesce(supervision, false);
-    expect(supervision.runs.observe("run-1")?.record.facts.invocations.map((i) => i.key)).toEqual(["api"]);
+    expect(
+      supervision.runs
+        .observe("run-1")
+        ?.record.facts.invocations.map((i) => i.key),
+    ).toEqual(["api"]);
     codexWithdrawn = true;
 
     const amended = await routes.amend(
-      request({ definition: chain("Document the routes") }, identity("owner-1")),
+      request(
+        { definition: chain("Document the routes") },
+        identity("owner-1"),
+      ),
       params({ runId: "run-1" }),
     );
     expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
@@ -1137,41 +1540,71 @@ describe("run routes", () => {
     const chain = (reviewers: Array<{ authority: "blocking" }>) => ({
       title: "Chain",
       contexts: [
-        { key: "api", brief: "Build it", ...(reviewers.length > 0 ? { reviewers } : {}) },
+        {
+          key: "api",
+          brief: "Build it",
+          ...(reviewers.length > 0 ? { reviewers } : {}),
+        },
         { key: "docs", brief: "Document it", dependsOn: ["api"] },
       ],
     });
-    await routes.launchWorkflow(request(chain([]), identity("owner-1")), params());
+    await routes.launchWorkflow(
+      request(chain([]), identity("owner-1")),
+      params(),
+    );
     await quiesce(supervision, false);
 
     const amended = await routes.amend(
-      request({ definition: chain([{ authority: "blocking" }]) }, identity("owner-1")),
+      request(
+        { definition: chain([{ authority: "blocking" }]) },
+        identity("owner-1"),
+      ),
       params({ runId: "run-1" }),
     );
     expect(amended.status).toBe(409);
     expect(await json(amended)).toMatchObject({
       code: "amendment_refused",
-      issues: [{ path: "definition", message: expect.stringContaining('"api" has started') }],
+      issues: [
+        {
+          path: "definition",
+          message: expect.stringContaining('"api" has started'),
+        },
+      ],
     });
-    expect(supervision.runs.observe("run-1")?.record.facts.definition.revision).toBe(1);
+    expect(
+      supervision.runs.observe("run-1")?.record.facts.definition.revision,
+    ).toBe(1);
   });
 
   it("keeps a run's lanes where they are when the branch prefix changed after launch", async () => {
     // The lane's context starts, and its turn stays open, before the branch prefix changes.
     h.laneGit.state.heads.set("csm/session", "h0");
     h.script = () => new Promise(() => {});
-    const laned = { title: "Laned", contexts: [{ key: "api", brief: "Build it", lane: "api" }] };
+    const laned = {
+      title: "Laned",
+      contexts: [{ key: "api", brief: "Build it", lane: "api" }],
+    };
     await routes.launchWorkflow(request(laned, identity("owner-1")), params());
     await quiesce(supervision, false);
-    expect(supervision.runs.observe("run-1")?.record.facts.invocations.map((i) => i.key)).toEqual(["api"]);
-    const launchedLane = supervision.runs.observe("run-1")?.record.facts.definition.lanes?.[0];
+    expect(
+      supervision.runs
+        .observe("run-1")
+        ?.record.facts.invocations.map((i) => i.key),
+    ).toEqual(["api"]);
+    const launchedLane =
+      supervision.runs.observe("run-1")?.record.facts.definition.lanes?.[0];
     branchPrefix = "team";
     const amended = await routes.amend(
-      request({ definition: { ...laned, title: "Laned again" } }, identity("owner-1")),
+      request(
+        { definition: { ...laned, title: "Laned again" } },
+        identity("owner-1"),
+      ),
       params({ runId: "run-1" }),
     );
     expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
-    expect(supervision.runs.observe("run-1")?.record.facts.definition.lanes?.[0]).toEqual(launchedLane);
+    expect(
+      supervision.runs.observe("run-1")?.record.facts.definition.lanes?.[0],
+    ).toEqual(launchedLane);
   });
 
   it("records a seat's task commands only for the seat's own context", async () => {
@@ -1202,8 +1635,14 @@ describe("run routes", () => {
 });
 
 describe("published documents", () => {
-  const publish = async (body: Record<string, unknown>, conversationId: string) => {
-    const response = await routes.publishDocument(request(body, identity(conversationId)), params());
+  const publish = async (
+    body: Record<string, unknown>,
+    conversationId: string,
+  ) => {
+    const response = await routes.publishDocument(
+      request(body, identity(conversationId)),
+      params(),
+    );
     return { status: response.status, ...(await json(response)) };
   };
 
@@ -1212,8 +1651,18 @@ describe("published documents", () => {
     const published: Array<Record<string, unknown>> = [];
     h.script = async (input) => {
       if (published.length === 0) {
-        published.push(await publish({ file: "docs/plan.md", as: "plan.md" }, input.conversationId));
-        published.push(await publish({ file: "notes/api.md", description: "The API's endpoints" }, input.conversationId));
+        published.push(
+          await publish(
+            { file: "docs/plan.md", as: "plan.md" },
+            input.conversationId,
+          ),
+        );
+        published.push(
+          await publish(
+            { file: "notes/api.md", description: "The API's endpoints" },
+            input.conversationId,
+          ),
+        );
       }
       return done("Done.");
     };
@@ -1225,7 +1674,9 @@ describe("published documents", () => {
             { key: "api", brief: "Build the API" },
             { key: "docs", brief: "Document it", dependsOn: ["api"] },
           ],
-          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+          documents: [
+            { path: "plan.md", contents: "v1", description: "The plan" },
+          ],
         },
         identity("owner-1"),
       ),
@@ -1234,23 +1685,56 @@ describe("published documents", () => {
     await quiesce(supervision);
 
     expect(published).toEqual([
-      { status: 200, ok: true, runId: "run-1", path: "plan.md", revision: 2, unchanged: false },
-      { status: 200, ok: true, runId: "run-1", path: "notes/api.md", revision: 1, unchanged: false },
+      {
+        status: 200,
+        ok: true,
+        runId: "run-1",
+        path: "plan.md",
+        revision: 2,
+        unchanged: false,
+      },
+      {
+        status: 200,
+        ok: true,
+        runId: "run-1",
+        path: "notes/api.md",
+        revision: 1,
+        unchanged: false,
+      },
     ]);
-    expect(seatReads).toEqual(["/repo/.worktrees/session", "/repo/.worktrees/session"]);
+    expect(seatReads).toEqual([
+      "/repo/.worktrees/session",
+      "/repo/.worktrees/session",
+    ]);
     const record = supervision.runs.observe("run-1")?.record;
     const [api, docs] = record?.facts.invocations ?? [];
     const frozen = (contextId: string | undefined) =>
-      supervision.contexts.observe(contextId ?? "")?.record.facts.contract.current.documents.map((d) => [d.path, d.artifactId]);
-    expect(frozen(api?.contextId)).toEqual([[`.cc/run-docs/${api?.contextId}/plan.md`, "sha256:v1"]]);
+      supervision.contexts
+        .observe(contextId ?? "")
+        ?.record.facts.contract.current.documents.map((d) => [
+          d.path,
+          d.artifactId,
+        ]);
+    expect(frozen(api?.contextId)).toEqual([
+      [`.cc/run-docs/${api?.contextId}/plan.md`, "sha256:v1"],
+    ]);
     expect(frozen(docs?.contextId)).toEqual([
       [`.cc/run-docs/${docs?.contextId}/plan.md`, "sha256:v2"],
       [`.cc/run-docs/${docs?.contextId}/notes/api.md`, "sha256:endpoints"],
     ]);
-    expect(record?.facts.documents.at(-1)).toMatchObject({ path: "notes/api.md", source: "publish", by: api?.contextId });
+    expect(record?.facts.documents.at(-1)).toMatchObject({
+      path: "notes/api.md",
+      source: "publish",
+      by: api?.contextId,
+    });
 
     const view = runViewSchema.parse(
-      await json(await routes.show(request(undefined, identity("owner-1"), "GET"), params({ runId: "run-1" }))),
+      await json(
+        await routes.show(
+          request(undefined, identity("owner-1"), "GET"),
+          params({ runId: "run-1" }),
+        ),
+      ),
     );
     expect(view.contexts.map((c) => [c.key, c.froze])).toEqual([
       ["api", { charter: null, documents: [{ path: "plan.md", revision: 1 }] }],
@@ -1269,15 +1753,23 @@ describe("published documents", () => {
 
   it("refuses a publication from anyone but a workflow context's current implementer, or one a declaration could not make", async () => {
     seatFiles = { "notes.md": "n" };
-    expect((await publish({ file: "notes.md", description: "N" }, "owner-1")).status).toBe(403);
+    expect(
+      (await publish({ file: "notes.md", description: "N" }, "owner-1")).status,
+    ).toBe(403);
 
     let agentSeat: Record<string, unknown> = {};
     h.script = async (input) => {
-      agentSeat = await publish({ file: "notes.md", description: "N" }, input.conversationId);
+      agentSeat = await publish(
+        { file: "notes.md", description: "N" },
+        input.conversationId,
+      );
       return done("Done.");
     };
     await launch();
-    expect(agentSeat).toMatchObject({ status: 409, error: expect.stringContaining("workflow") });
+    expect(agentSeat).toMatchObject({
+      status: 409,
+      error: expect.stringContaining("workflow"),
+    });
 
     const refusals: Array<Record<string, unknown>> = [];
     h.script = async (input) => {
@@ -1295,7 +1787,9 @@ describe("published documents", () => {
         {
           title: "One",
           contexts: [{ key: "only", brief: "Do it" }],
-          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+          documents: [
+            { path: "plan.md", contents: "v1", description: "The plan" },
+          ],
         },
         identity("owner-1"),
       ),
@@ -1304,11 +1798,24 @@ describe("published documents", () => {
     await quiesce(supervision);
 
     expect(refusals).toEqual([
-      expect.objectContaining({ status: 400, error: expect.stringContaining("No file") }),
-      expect.objectContaining({ status: 409, error: expect.stringContaining("reserved for the run's charter") }),
-      expect.objectContaining({ status: 409, error: expect.stringContaining("only by case") }),
+      expect.objectContaining({
+        status: 400,
+        error: expect.stringContaining("No file"),
+      }),
+      expect.objectContaining({
+        status: 409,
+        error: expect.stringContaining("reserved for the run's charter"),
+      }),
+      expect.objectContaining({
+        status: 409,
+        error: expect.stringContaining("only by case"),
+      }),
     ]);
-    expect(supervision.runs.observe("run-2")?.record.facts.documents.map((r) => [r.path, r.revision])).toEqual([["plan.md", 1]]);
+    expect(
+      supervision.runs
+        .observe("run-2")
+        ?.record.facts.documents.map((r) => [r.path, r.revision]),
+    ).toEqual([["plan.md", 1]]);
   });
 
   it("shows the run's current documents in its definition, so an amendment keeps a published revision by naming it", async () => {
@@ -1318,7 +1825,10 @@ describe("published documents", () => {
       if (!published) {
         published = true;
         await publish({ file: "plan.md" }, input.conversationId);
-        await publish({ file: "notes.md", description: "Notes" }, input.conversationId);
+        await publish(
+          { file: "notes.md", description: "Notes" },
+          input.conversationId,
+        );
         return done("Done.");
       }
       return new Promise(() => {});
@@ -1343,7 +1853,10 @@ describe("published documents", () => {
     await quiesce(supervision, false);
 
     const read = await json(
-      await routes.definition(request(undefined, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.definition(
+        request(undefined, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     const definition = read.definition as Record<string, unknown>;
     expect(definition.documents).toEqual([
@@ -1352,15 +1865,23 @@ describe("published documents", () => {
       { path: "notes.md", revision: 1, description: "Notes" },
     ]);
     // Inline contents are frozen once; the run record does not carry them.
-    expect(supervision.runs.observe("run-1")?.record.facts.definition.authored?.documents).toBeUndefined();
+    expect(
+      supervision.runs.observe("run-1")?.record.facts.definition.authored
+        ?.documents,
+    ).toBeUndefined();
 
     const amended = await routes.amend(
       request(
         {
           definition: {
             ...definition,
-            contexts: [...(definition.contexts as unknown[]), { key: "extra", brief: "More", dependsOn: ["docs"] }],
-            documents: (definition.documents as Array<{ path: string }>).filter((d) => d.path !== "glossary.md"),
+            contexts: [
+              ...(definition.contexts as unknown[]),
+              { key: "extra", brief: "More", dependsOn: ["docs"] },
+            ],
+            documents: (definition.documents as Array<{ path: string }>).filter(
+              (d) => d.path !== "glossary.md",
+            ),
           },
           basedOn: read.revision,
           reason: "The glossary moved",
@@ -1373,7 +1894,14 @@ describe("published documents", () => {
     expect(amended.status, JSON.stringify(amendedBody)).toBe(200);
     expect(amendedBody).toMatchObject({ removedDocuments: ["glossary.md"] });
     expect(
-      supervision.runs.observe("run-1")?.record.facts.documents.map((r) => [r.path, r.revision, r.source, r.reason ?? null]),
+      supervision.runs
+        .observe("run-1")
+        ?.record.facts.documents.map((r) => [
+          r.path,
+          r.revision,
+          r.source,
+          r.reason ?? null,
+        ]),
     ).toEqual([
       ["plan.md", 1, "launch", null],
       ["glossary.md", 1, "launch", null],
@@ -1384,13 +1912,22 @@ describe("published documents", () => {
 
     const stale = await routes.amend(
       request(
-        { definition: { ...definition, documents: [{ path: "plan.md", revision: 1, description: "The plan" }] } },
+        {
+          definition: {
+            ...definition,
+            documents: [
+              { path: "plan.md", revision: 1, description: "The plan" },
+            ],
+          },
+        },
         identity("owner-1"),
       ),
       params({ runId: "run-1" }),
     );
     expect(stale.status).toBe(400);
-    expect(await json(stale)).toMatchObject({ issues: [{ path: "documents.0.revision" }] });
+    expect(await json(stale)).toMatchObject({
+      issues: [{ path: "documents.0.revision" }],
+    });
   });
 
   it("refuses a publication whose context finished while its file was being frozen", async () => {
@@ -1400,7 +1937,12 @@ describe("published documents", () => {
     const pending: Array<Promise<Record<string, unknown>>> = [];
     h.script = async (input) => {
       if (pending.length > 0) return new Promise(() => {});
-      pending.push(publish({ file: "notes.md", description: "Notes" }, input.conversationId));
+      pending.push(
+        publish(
+          { file: "notes.md", description: "Notes" },
+          input.conversationId,
+        ),
+      );
       return done("Done.");
     };
     await routes.launchWorkflow(
@@ -1418,18 +1960,30 @@ describe("published documents", () => {
     );
     await quiesce(supervision, false);
     const api = supervision.runs.observe("run-1")?.record.facts.invocations[0];
-    expect(supervision.contexts.observe(api?.contextId ?? "")?.record.progress.kind).toBe("succeeded");
+    expect(
+      supervision.contexts.observe(api?.contextId ?? "")?.record.progress.kind,
+    ).toBe("succeeded");
 
     held.release();
-    expect(await pending[0]).toMatchObject({ status: 409, error: expect.stringContaining("has finished") });
-    expect(supervision.runs.observe("run-1")?.record.facts.documents).toEqual([]);
+    expect(await pending[0]).toMatchObject({
+      status: 409,
+      error: expect.stringContaining("has finished"),
+    });
+    expect(supervision.runs.observe("run-1")?.record.facts.documents).toEqual(
+      [],
+    );
   });
 
   it("names every document an amendment removed, even one published while the amendment was being prepared", async () => {
     seatFiles = { "late.md": "late" };
     const later: Array<() => Promise<Record<string, unknown>>> = [];
     h.script = async (input) => {
-      later.push(() => publish({ file: "late.md", description: "Late notes" }, input.conversationId));
+      later.push(() =>
+        publish(
+          { file: "late.md", description: "Late notes" },
+          input.conversationId,
+        ),
+      );
       return new Promise(() => {});
     };
     await routes.launchWorkflow(
@@ -1437,7 +1991,9 @@ describe("published documents", () => {
         {
           title: "API",
           contexts: [{ key: "api", brief: "Build the API" }],
-          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+          documents: [
+            { path: "plan.md", contents: "v1", description: "The plan" },
+          ],
         },
         identity("owner-1"),
       ),
@@ -1445,7 +2001,10 @@ describe("published documents", () => {
     );
     await quiesce(supervision, false);
     const read = await json(
-      await routes.definition(request(undefined, identity("owner-1"), "GET"), params({ runId: "run-1" })),
+      await routes.definition(
+        request(undefined, identity("owner-1"), "GET"),
+        params({ runId: "run-1" }),
+      ),
     );
     const definition = read.definition as Record<string, unknown>;
 
@@ -1456,7 +2015,10 @@ describe("published documents", () => {
         {
           definition: {
             ...definition,
-            contexts: [...(definition.contexts as unknown[]), { key: "extra", brief: "More", dependsOn: ["api"] }],
+            contexts: [
+              ...(definition.contexts as unknown[]),
+              { key: "extra", brief: "More", dependsOn: ["api"] },
+            ],
           },
           basedOn: read.revision,
         },
@@ -1465,12 +2027,18 @@ describe("published documents", () => {
       params({ runId: "run-1" }),
     );
     await held.reached;
-    expect(await later[0]?.()).toMatchObject({ status: 200, path: "late.md", revision: 1 });
+    expect(await later[0]?.()).toMatchObject({
+      status: 200,
+      path: "late.md",
+      revision: 1,
+    });
     held.release();
 
     const amended = await amending;
     expect(amended.status).toBe(200);
-    expect(await json(amended)).toMatchObject({ removedDocuments: ["late.md"] });
+    expect(await json(amended)).toMatchObject({
+      removedDocuments: ["late.md"],
+    });
   });
 
   it("refuses a publication over a revision another context published after the publisher started", async () => {
@@ -1482,11 +2050,17 @@ describe("published documents", () => {
     });
     h.script = async (input) => {
       if (input.request.message.includes("Alpha")) {
-        outcomes.alpha = await publish({ file: "a.md", as: "plan.md" }, input.conversationId);
+        outcomes.alpha = await publish(
+          { file: "a.md", as: "plan.md" },
+          input.conversationId,
+        );
         alphaDone();
       } else {
         await alphaPublished;
-        outcomes.beta = await publish({ file: "b.md", as: "plan.md" }, input.conversationId);
+        outcomes.beta = await publish(
+          { file: "b.md", as: "plan.md" },
+          input.conversationId,
+        );
       }
       return done("Done.");
     };
@@ -1495,10 +2069,20 @@ describe("published documents", () => {
         {
           title: "Side by side",
           contexts: [
-            { key: "alpha", brief: "Alpha work", scope: { mode: "owned", paths: ["src/a"] } },
-            { key: "beta", brief: "Beta work", scope: { mode: "owned", paths: ["src/b"] } },
+            {
+              key: "alpha",
+              brief: "Alpha work",
+              scope: { mode: "owned", paths: ["src/a"] },
+            },
+            {
+              key: "beta",
+              brief: "Beta work",
+              scope: { mode: "owned", paths: ["src/b"] },
+            },
           ],
-          documents: [{ path: "plan.md", contents: "v1", description: "The plan" }],
+          documents: [
+            { path: "plan.md", contents: "v1", description: "The plan" },
+          ],
         },
         identity("owner-1"),
       ),
@@ -1509,7 +2093,9 @@ describe("published documents", () => {
     expect(outcomes.alpha).toMatchObject({ status: 200, revision: 2 });
     expect(outcomes.beta).toMatchObject({
       status: 409,
-      error: expect.stringMatching(/plan\.md is at revision 2, published by run-1\.alpha after you started from revision 1/),
+      error: expect.stringMatching(
+        /plan\.md is at revision 2, published by run-1\.alpha after you started from revision 1/,
+      ),
     });
   });
 });

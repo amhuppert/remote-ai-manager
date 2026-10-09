@@ -335,8 +335,12 @@ describe("validation-fix (fresh-run dispatch, #78)", () => {
   });
 
   it("stops the fresh fix task when its caller is stopped", async () => {
-    const executeFreshTaskRun = vi.fn().mockResolvedValue(textOk("fixes applied"));
-    const { fixValidationErrors } = createValidationFixer(createTestDeps({ executeFreshTaskRun }));
+    const executeFreshTaskRun = vi
+      .fn()
+      .mockResolvedValue(textOk("fixes applied"));
+    const { fixValidationErrors } = createValidationFixer(
+      createTestDeps({ executeFreshTaskRun }),
+    );
     const controller = new AbortController();
     await fixValidationErrors({
       worktreePath: "/worktrees/merge-target",

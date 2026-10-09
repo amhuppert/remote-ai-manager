@@ -47,7 +47,9 @@ export function decideWakeDispatch(
       if (state === "planned") return "enqueue";
       // Proven never queued and never accepted. A one-time wait keeps its
       // explicit review; follow facts go back for another wake.
-      return state === "uncertain" && options.followOnly ? "release" : "uncertain";
+      return state === "uncertain" && options.followOnly
+        ? "release"
+        : "uncertain";
   }
 }
 

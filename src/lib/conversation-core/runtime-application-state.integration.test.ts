@@ -7,11 +7,17 @@ import { getConversationTranscriptProjection } from "@/lib/agent-backends/conver
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
-import { computeCascadeRuntimeHash, seedRuntimeApplicationState } from "@/lib/agent-capabilities/runtime-hashes";
+import {
+  computeCascadeRuntimeHash,
+  seedRuntimeApplicationState,
+} from "@/lib/agent-capabilities/runtime-hashes";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
-import { createPersistenceFixture, type PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { ConversationRecordPort } from "./conversation-record";
 import { createInteractiveTurns } from "./interactive-turns";
@@ -27,13 +33,26 @@ const SESSION = "session";
 const WORKTREE = mkdtempSync(path.join(tmpdir(), "cc-core-application-wt-"));
 const log = createCapturingLogger();
 
-const DOCS_MCP: PortableMcpConfig = { servers: [{ id: "docs", transport: "stdio", command: "/bin/true" }] };
+const DOCS_MCP: PortableMcpConfig = {
+  servers: [{ id: "docs", transport: "stdio", command: "/bin/true" }],
+};
 const reviewOff = [{ itemId: "review", enabled: false }];
 const SKILLS: ResolvedCapabilityCascade = {
   backend: "claude",
-  kinds: [{ kind: "skills", items: reviewOff.map((item) => ({ ...item, originLayer: "conversation" as const })) }],
+  kinds: [
+    {
+      kind: "skills",
+      items: reviewOff.map((item) => ({
+        ...item,
+        originLayer: "conversation" as const,
+      })),
+    },
+  ],
 };
-const skillsHash = computeCascadeRuntimeHash({ cascadeKind: "claude-skills", rows: reviewOff });
+const skillsHash = computeCascadeRuntimeHash({
+  cascadeKind: "claude-skills",
+  rows: reviewOff,
+});
 
 let fixture: PersistenceFixture;
 let closeProvider = () => {};
@@ -92,7 +111,10 @@ async function compose() {
       },
     }),
   );
-  const provider = createScriptedConversationBackend({ backend: "claude", responseText: JSON.stringify({ done: true }) });
+  const provider = createScriptedConversationBackend({
+    backend: "claude",
+    responseText: JSON.stringify({ done: true }),
+  });
   closeProvider = () => provider.close();
   const applicationState = createRuntimeApplicationState({
     conversations: fixture.deps,
@@ -101,7 +123,10 @@ async function compose() {
   });
   const host = createRuntimeHost({
     factory: () => provider.factory,
-    instructions: async () => ({ sessionInstructions: ["Work carefully."], alignmentVersion: null }),
+    instructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+    }),
     tooling: async () => ({
       overrides: { portableMcp: DOCS_MCP, capabilities: SKILLS },
       capabilityState: seedRuntimeApplicationState([
@@ -121,7 +146,10 @@ async function compose() {
   const engine = createTurnEngine({
     host,
     executeAgentCall,
-    transcript: { async safeAppendTranscriptEntry() {}, async safeAppendTranscriptEntryOnce() {} },
+    transcript: {
+      async safeAppendTranscriptEntry() {},
+      async safeAppendTranscriptEntryOnce() {},
+    },
     projection: getConversationTranscriptProjection,
     timeouts: async () => ({ timeoutMs: 0, stallTimeoutMs: 0 }),
     recordAccepted: applicationState.recordAccepted,
@@ -176,7 +204,10 @@ async function runSeatTurn(): Promise<unknown> {
           id: "implementer",
           profile: { tier: "builtin", id: "standard-agent" },
           backend: "claude",
-          modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         replacement: 0,
         canAsk: false,
@@ -196,11 +227,20 @@ async function runInteractiveTurn(): Promise<unknown> {
     records,
     host,
     worktreeOf: async () => WORKTREE,
-    resolveModelSelection: async () => ({ modelId: "sonnet", parameters: { effort: "medium" } }),
-    continuation: async () => ({ continuation: { kind: "ordinary" }, seed: null }),
+    resolveModelSelection: async () => ({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    }),
+    continuation: async () => ({
+      continuation: { kind: "ordinary" },
+      seed: null,
+    }),
     prepareInput: async (request) => passthroughTurnInput(request),
     nameConversation: () => {},
-    requestUserQuestion: async () => ({ status: "answered" as const, answers: {} }),
+    requestUserQuestion: async () => ({
+      status: "answered" as const,
+      answers: {},
+    }),
     persistImages: async ({ promptText }) => ({ promptText, imageRefs: [] }),
     queuedDelivery: () => {
       throw new Error("a direct message has no queued delivery");
@@ -213,7 +253,12 @@ async function runInteractiveTurn(): Promise<unknown> {
     log,
   }).run({
     conversationId: "conv-1",
-    enrollment: { conversationId: "conv-1", projectPath: PROJECT, sessionName: SESSION, enrolledAt: "2026-10-03T10:00:00.000Z" },
+    enrollment: {
+      conversationId: "conv-1",
+      projectPath: PROJECT,
+      sessionName: SESSION,
+      enrolledAt: "2026-10-03T10:00:00.000Z",
+    },
     request: { kind: "user_message", text: "Hello", inputOrigin: "user" },
     attemptId: "attempt-1",
     signal: new AbortController().signal,
@@ -230,14 +275,21 @@ describe("application state of core conversations", () => {
     async (_kind, runTurn) => {
       expect(await runTurn()).toMatchObject({ status: "succeeded" });
 
-      const row = await fixture.recreateStore().getConversation(PROJECT, SESSION, "conv-1");
+      const row = await fixture
+        .recreateStore()
+        .getConversation(PROJECT, SESSION, "conv-1");
       expect(row?.mcpRuntime).toEqual({
         lastAppliedConfigHash: computeEffectiveConfigHash(DOCS_MCP),
         lastApplyDisposition: "applied_now",
       });
       // Applied through the core's own receipt, never rejected by an apply that looks for a registered runtime.
       expect(row?.agentCapabilitiesRuntime).toEqual({
-        cascades: { "claude-skills": { appliedHash: skillsHash, lastApplyStatus: "applied" } },
+        cascades: {
+          "claude-skills": {
+            appliedHash: skillsHash,
+            lastApplyStatus: "applied",
+          },
+        },
       });
     },
   );

@@ -208,8 +208,15 @@ function seatOrder(
   role: SeatRef["role"],
 ): { workspace: TurnWorkspace; documents: WorkOrderDocument[] } {
   return {
-    workspace: turnWorkspaceAccess({ binding: facts.binding.request, need, role }),
-    documents: facts.contract.current.documents.map(({ artifactId, path }) => ({ artifactId, path })),
+    workspace: turnWorkspaceAccess({
+      binding: facts.binding.request,
+      need,
+      role,
+    }),
+    documents: facts.contract.current.documents.map(({ artifactId, path }) => ({
+      artifactId,
+      path,
+    })),
   };
 }
 
@@ -270,7 +277,11 @@ function seatRef(
   };
 }
 
-function implementerSeat(facts: ContextFacts, contextId: string, questions: Questions): SeatRef {
+function implementerSeat(
+  facts: ContextFacts,
+  contextId: string,
+  questions: Questions,
+): SeatRef {
   return seatRef(
     facts,
     contextId,
@@ -284,7 +295,8 @@ function implementerSeat(facts: ContextFacts, contextId: string, questions: Ques
 /** An answer wait, or a reviewer's continuation: steps that touch only the seat that asked. */
 function parksOneSeat(facts: ContextFacts, obligation: Obligation): boolean {
   if (obligation.kind === "await_answer") return true;
-  if (obligation.kind !== "work" || obligation.reason !== "continue") return false;
+  if (obligation.kind !== "work" || obligation.reason !== "continue")
+    return false;
   const answered = facts.requests.answered.find((a) => !a.continued);
   return answered !== undefined && answered.seat !== IMPLEMENTER;
 }
@@ -297,7 +309,10 @@ function parksOneSeat(facts: ContextFacts, obligation: Obligation): boolean {
  * are planned: they park and resume that seat alone, and their stable causes
  * make planning them again a no-op. Everything else waits for the batch.
  */
-export function planEffects(input: { facts: ContextFacts; othersPending: boolean }): {
+export function planEffects(input: {
+  facts: ContextFacts;
+  othersPending: boolean;
+}): {
   facts: ContextFacts;
   effects: PlannedEffect[];
 } {
@@ -313,7 +328,8 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
     return { facts, effects: [] };
   }
   const obligation = progress.obligation;
-  if (input.othersPending && !parksOneSeat(facts, obligation)) return { facts, effects: [] };
+  if (input.othersPending && !parksOneSeat(facts, obligation))
+    return { facts, effects: [] };
   const timeoutMs = facts.policy.invocationTimeoutMs;
   const nextCause = (kind: string): string => {
     const allocated = allocateCause(facts, kind);
@@ -390,7 +406,10 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
           facts,
           effects: pendingChecks.map((check) => ({
             executor: "workspace" as const,
-            cause: attemptCause(facts, `${contextId}:check:${roundId}:${check.command}`),
+            cause: attemptCause(
+              facts,
+              `${contextId}:check:${roundId}:${check.command}`,
+            ),
             request: {
               kind: "check" as const,
               bindingId: contextId,
@@ -497,7 +516,10 @@ export function planEffects(input: { facts: ContextFacts; othersPending: boolean
         effects: [
           {
             executor: "requests",
-            cause: attemptCause(facts, `${contextId}:answer:${obligation.questionId}`),
+            cause: attemptCause(
+              facts,
+              `${contextId}:answer:${obligation.questionId}`,
+            ),
             request: { kind: "answer", questionId: obligation.questionId },
           },
         ],
@@ -662,11 +684,21 @@ function planReviewContinuation(
     effects: [
       {
         executor: "conversation",
-        cause: attemptCause(facts, `${contextId}:review:${round.id}:${assignmentId}:${questionId}`),
+        cause: attemptCause(
+          facts,
+          `${contextId}:review:${round.id}:${assignmentId}:${questionId}`,
+        ),
         request: {
           kind: "review",
           ...seatOrder(facts, "stable_read", "reviewer"),
-          seat: seatRef(facts, contextId, assignmentId, "reviewer", assignment, "may_ask"),
+          seat: seatRef(
+            facts,
+            contextId,
+            assignmentId,
+            "reviewer",
+            assignment,
+            "may_ask",
+          ),
           roundId: round.id,
           message,
           outputSchema: REVIEW_VERDICT_OUTPUT_SCHEMA,

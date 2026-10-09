@@ -19,7 +19,9 @@ import {
   type ConversationRow,
 } from "./conversation-record";
 
-function outcomeOf(execution: ReturnType<typeof settledConversationTurn>): TurnExecutionOutcome {
+function outcomeOf(
+  execution: ReturnType<typeof settledConversationTurn>,
+): TurnExecutionOutcome {
   if (execution.kind !== "settled") throw new Error("fixture");
   return execution.turn.outcome;
 }
@@ -49,13 +51,23 @@ describe("conversation record", () => {
       outcomeOf(
         settledConversationTurn({
           backendRef: { backend: "claude", ref: "sdk-2" },
-          usage: { costUsd: 0.25, durationMs: 500, contextTokens: 1200, contextWindowMax: 200000 },
+          usage: {
+            costUsd: 0.25,
+            durationMs: 500,
+            contextTokens: 1200,
+            contextWindowMax: 200000,
+          },
           outcome: { kind: "completed", text: "Done.", numTurns: 3 },
         }),
       ),
     );
     const next = row();
-    applyTurnSettlement(next, settlement, "2026-10-03T10:00:00.000Z", "workflow");
+    applyTurnSettlement(
+      next,
+      settlement,
+      "2026-10-03T10:00:00.000Z",
+      "workflow",
+    );
 
     expect(next).toEqual({
       status: "awaiting",
@@ -81,7 +93,14 @@ describe("conversation record", () => {
     const kept = row();
     applyTurnSettlement(
       kept,
-      settlementOf(outcomeOf(settledConversationTurn({ backendRef: null, outcome: { kind: "completed", text: "" } }))),
+      settlementOf(
+        outcomeOf(
+          settledConversationTurn({
+            backendRef: null,
+            outcome: { kind: "completed", text: "" },
+          }),
+        ),
+      ),
       "t",
       "workflow",
     );
@@ -95,7 +114,14 @@ describe("conversation record", () => {
           settledConversationTurn({
             backendRef: null,
             continuationDisposition: "clear",
-            outcome: { kind: "failed", error: { backend: "claude", failureKind: "stale_resume_ref", message: "gone" } },
+            outcome: {
+              kind: "failed",
+              error: {
+                backend: "claude",
+                failureKind: "stale_resume_ref",
+                message: "gone",
+              },
+            },
           }),
         ),
       ),
@@ -109,15 +135,28 @@ describe("conversation record", () => {
     const next = row();
     applyTurnSettlement(
       next,
-      settlementOf({ kind: "not_started", reason: "configuration", message: "no runtime" }),
+      settlementOf({
+        kind: "not_started",
+        reason: "configuration",
+        message: "no runtime",
+      }),
       "2026-10-03T10:00:00.000Z",
       "workflow",
     );
-    expect(next).toMatchObject({ status: "awaiting", activeTurnSource: null, promptCount: 2, totalCostUsd: 1.5 });
+    expect(next).toMatchObject({
+      status: "awaiting",
+      activeTurnSource: null,
+      promptCount: 2,
+      totalCostUsd: 1.5,
+    });
   });
 
   it("leaves a person's finished turn unread for whoever was not watching, but not a workflow's", () => {
-    const settlement = settlementOf(outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } })));
+    const settlement = settlementOf(
+      outcomeOf(
+        settledConversationTurn({ outcome: { kind: "completed", text: "ok" } }),
+      ),
+    );
     const person = row();
     applyTurnSettlement(person, settlement, "t", "user");
     expect(person.unread).toBe(true);
@@ -128,7 +167,13 @@ describe("conversation record", () => {
   });
 
   it("carries a failed turn's reason, noting whether the transcript already explains it", () => {
-    expect(settlementOf({ kind: "not_started", reason: "configuration", message: "Model gpt-x is not available" }).failure).toEqual({
+    expect(
+      settlementOf({
+        kind: "not_started",
+        reason: "configuration",
+        message: "Model gpt-x is not available",
+      }).failure,
+    ).toEqual({
       message: "Model gpt-x is not available",
       recorded: false,
     });
@@ -136,40 +181,91 @@ describe("conversation record", () => {
       settlementOf(
         outcomeOf(
           settledConversationTurn({
-            outcome: { kind: "failed", error: { backend: "claude", failureKind: "backend_error", message: "transport closed" } },
+            outcome: {
+              kind: "failed",
+              error: {
+                backend: "claude",
+                failureKind: "backend_error",
+                message: "transport closed",
+              },
+            },
           }),
         ),
       ).failure,
     ).toEqual({ message: "transport closed", recorded: true });
-    expect(settlementOf({ kind: "not_started", reason: "cancelled", message: "cancelled" }).failure).toBeNull();
+    expect(
+      settlementOf({
+        kind: "not_started",
+        reason: "cancelled",
+        message: "cancelled",
+      }).failure,
+    ).toBeNull();
     expect(
       settlementOf({
         ...outcomeOf(
           settledConversationTurn({
-            outcome: { kind: "failed", error: { backend: "claude", failureKind: "aborted", message: "aborted" } },
+            outcome: {
+              kind: "failed",
+              error: {
+                backend: "claude",
+                failureKind: "aborted",
+                message: "aborted",
+              },
+            },
           }),
         ),
         interruption: { reason: "user" },
       }).failure,
     ).toBeNull();
-    expect(settlementOf(outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "ok" } }))).failure).toBeNull();
+    expect(
+      settlementOf(
+        outcomeOf(
+          settledConversationTurn({
+            outcome: { kind: "completed", text: "ok" },
+          }),
+        ),
+      ).failure,
+    ).toBeNull();
   });
 
   it("takes a first message's backend, and refuses a change once the conversation has run", () => {
-    const fresh = { ...row(), promptCount: 0, backendRef: null, agentBackend: "claude" as const };
+    const fresh = {
+      ...row(),
+      promptCount: 0,
+      backendRef: null,
+      agentBackend: "claude" as const,
+    };
     applyBackendAdoption(fresh, "codex");
     expect(fresh.agentBackend).toBe("codex");
-    expect(() => applyBackendAdoption({ ...row(), agentBackend: "claude" as const }, "codex")).toThrow(/after prompts/);
+    expect(() =>
+      applyBackendAdoption(
+        { ...row(), agentBackend: "claude" as const },
+        "codex",
+      ),
+    ).toThrow(/after prompts/);
     // A fork carries its source's continuation before its own first prompt: that fixes its backend too.
-    const forked = { ...row(), promptCount: 0, backendRef: { backend: "claude" as const, ref: "s-fork" } };
+    const forked = {
+      ...row(),
+      promptCount: 0,
+      backendRef: { backend: "claude" as const, ref: "s-fork" },
+    };
     expect(() => applyBackendAdoption(forked, "codex")).toThrow();
   });
 
   it("shows a conversation running from the moment its turn is taken up, before it has model capacity", () => {
-    const idle = { ...row(), status: "awaiting" as const, activeTurnSource: null };
+    const idle = {
+      ...row(),
+      status: "awaiting" as const,
+      activeTurnSource: null,
+    };
     applyTurnClaimed(idle, "t");
     // Every turn the core takes up moves the fence a released collaboration checks before it reclaims the conversation.
-    expect(idle).toMatchObject({ status: "running", activeTurnSource: null, lastActivityAt: "t", turnGeneration: 4 });
+    expect(idle).toMatchObject({
+      status: "running",
+      activeTurnSource: null,
+      lastActivityAt: "t",
+      turnGeneration: 4,
+    });
 
     // Taken up but never begun (stopped while waiting): idle again.
     expect(applyClaimEnded(idle)).toBe("awaiting");
@@ -184,14 +280,29 @@ describe("conversation record", () => {
   describe("questions", () => {
     const batch = {
       questionId: "q-1",
-      questions: [{ id: "0", question: "Which database?", options: [], multiSelect: false, required: true, allowNote: true }],
+      questions: [
+        {
+          id: "0",
+          question: "Which database?",
+          options: [],
+          multiSelect: false,
+          required: true,
+          allowNote: true,
+        },
+      ],
     };
 
     it("puts a running conversation in waiting for input with its question, once", () => {
       const asking = row();
       expect(applyQuestionAsked(asking, batch)).toBe(true);
-      expect(asking).toMatchObject({ status: "waiting_for_input", pendingQuestionId: "q-1", pendingQuestions: batch.questions });
-      expect(applyQuestionAsked(asking, { ...batch, questionId: "q-2" })).toBe(false);
+      expect(asking).toMatchObject({
+        status: "waiting_for_input",
+        pendingQuestionId: "q-1",
+        pendingQuestions: batch.questions,
+      });
+      expect(applyQuestionAsked(asking, { ...batch, questionId: "q-2" })).toBe(
+        false,
+      );
     });
 
     it("clears only the question it names, and the turn runs on", () => {
@@ -199,7 +310,11 @@ describe("conversation record", () => {
       applyQuestionAsked(asked, batch);
       expect(applyQuestionCleared(asked, "q-other")).toBe(false);
       expect(applyQuestionCleared(asked, "q-1")).toBe(true);
-      expect(asked).toMatchObject({ status: "running", pendingQuestionId: null, pendingQuestions: null });
+      expect(asked).toMatchObject({
+        status: "running",
+        pendingQuestionId: null,
+        pendingQuestions: null,
+      });
     });
 
     it("finishes an answer the queue already consumed: the asking turn runs on, a parked question leaves the conversation idle", () => {
@@ -211,21 +326,32 @@ describe("conversation record", () => {
       expect(applyQuestionCleared(running, "q-1")).toBe(true);
       expect(running.status).toBe("running");
 
-      const parked = { ...row(), activeTurnSource: null, status: "waiting_for_input" as const };
+      const parked = {
+        ...row(),
+        activeTurnSource: null,
+        status: "waiting_for_input" as const,
+      };
       expect(applyQuestionCleared(parked, "q-1")).toBe(true);
       expect(parked.status).toBe("awaiting");
 
       const parkedNamed = { ...row(), activeTurnSource: null };
       applyQuestionAsked(parkedNamed, batch);
       expect(applyQuestionCleared(parkedNamed, "q-1")).toBe(true);
-      expect(parkedNamed).toMatchObject({ status: "awaiting", pendingQuestionId: null });
+      expect(parkedNamed).toMatchObject({
+        status: "awaiting",
+        pendingQuestionId: null,
+      });
     });
 
     it("withdraws whatever question is pending when the person stops the conversation", () => {
       const parked = { ...row(), activeTurnSource: null };
       applyQuestionAsked(parked, batch);
       expect(applyQuestionWithdrawn(parked)).toBe(true);
-      expect(parked).toMatchObject({ status: "awaiting", pendingQuestionId: null, pendingQuestions: null });
+      expect(parked).toMatchObject({
+        status: "awaiting",
+        pendingQuestionId: null,
+        pendingQuestions: null,
+      });
       expect(applyQuestionWithdrawn(parked)).toBe(false);
 
       // A person's message started a new turn first: it already superseded the question.
@@ -240,7 +366,13 @@ describe("conversation record", () => {
       applyQuestionAsked(asked, batch);
       const { status } = applyTurnSettlement(
         asked,
-        settlementOf(outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "?" } }))),
+        settlementOf(
+          outcomeOf(
+            settledConversationTurn({
+              outcome: { kind: "completed", text: "?" },
+            }),
+          ),
+        ),
         "t",
         "user",
       );
@@ -252,7 +384,11 @@ describe("conversation record", () => {
       const asked = row();
       applyQuestionAsked(asked, batch);
       expect(applyTurnInterrupted(asked, "t")).toBe("waiting_for_input");
-      expect(asked).toMatchObject({ status: "waiting_for_input", activeTurnSource: null, pendingQuestionId: "q-1" });
+      expect(asked).toMatchObject({
+        status: "waiting_for_input",
+        activeTurnSource: null,
+        pendingQuestionId: "q-1",
+      });
       const plain = row();
       expect(applyTurnInterrupted(plain, "t")).toBe("awaiting");
 
@@ -260,19 +396,30 @@ describe("conversation record", () => {
       const inTurn = row();
       applyQuestionAsked(inTurn, { ...batch, questionId: "cc-in-turn-1" });
       expect(applyTurnInterrupted(inTurn, "t")).toBe("awaiting");
-      expect(inTurn).toMatchObject({ pendingQuestionId: null, pendingQuestions: null });
+      expect(inTurn).toMatchObject({
+        pendingQuestionId: null,
+        pendingQuestions: null,
+      });
     });
 
     it("lets a person's new message supersede an unanswered question", () => {
       const asked = row();
       applyQuestionAsked(asked, batch);
       applyTurnBegin(asked, "user", "t");
-      expect(asked).toMatchObject({ status: "running", activeTurnSource: "user", pendingQuestionId: null, unread: false });
+      expect(asked).toMatchObject({
+        status: "running",
+        activeTurnSource: "user",
+        pendingQuestionId: null,
+        unread: false,
+      });
     });
   });
 
   describe("debug mode", () => {
-    const debugging = (phase: DebugModePhase, overrides: Partial<DebugModeState> = {}): ConversationRow => ({
+    const debugging = (
+      phase: DebugModePhase,
+      overrides: Partial<DebugModeState> = {},
+    ): ConversationRow => ({
       ...row(),
       activeTurnSource: "user",
       unread: false,
@@ -295,16 +442,25 @@ describe("conversation record", () => {
     const settle = (draft: ConversationRow, outcome: TurnExecutionOutcome) =>
       applyTurnSettlement(draft, settlementOf(outcome), "t", "user");
     const report = (structuredOutput: unknown) =>
-      outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "", structuredOutput } }));
+      outcomeOf(
+        settledConversationTurn({
+          outcome: { kind: "completed", text: "", structuredOutput },
+        }),
+      );
 
     it("advances a hypothesizing turn that produced its report, and only an advance is left unread", () => {
       const draft = debugging("hypothesizing");
-      const hypotheses = ["A race", "A stale cache", "A wrong default"].map((description, index) => ({
-        id: `H${index + 1}`,
-        description,
-        instrumentationPlan: "Log the state before and after",
-      }));
-      const settled = settle(draft, report({ hypotheses, reproductionSteps: ["Start it", "Run it twice"] }));
+      const hypotheses = ["A race", "A stale cache", "A wrong default"].map(
+        (description, index) => ({
+          id: `H${index + 1}`,
+          description,
+          instrumentationPlan: "Log the state before and after",
+        }),
+      );
+      const settled = settle(
+        draft,
+        report({ hypotheses, reproductionSteps: ["Start it", "Run it twice"] }),
+      );
       expect(settled.debug?.kind).toBe("advance");
       expect(draft.debugMode).toMatchObject({
         phase: "awaiting_reproduction",
@@ -318,27 +474,49 @@ describe("conversation record", () => {
 
     it("keeps a phase turn without its report for retry, and a stopped one too, without marking them unread", () => {
       const plain = debugging("hypothesizing");
-      const failed = settle(plain, outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "I looked around" } })));
-      expect(failed.debug).toMatchObject({ kind: "turn_failed", lastError: "Turn did not produce a valid structured response" });
+      const failed = settle(
+        plain,
+        outcomeOf(
+          settledConversationTurn({
+            outcome: { kind: "completed", text: "I looked around" },
+          }),
+        ),
+      );
+      expect(failed.debug).toMatchObject({
+        kind: "turn_failed",
+        lastError: "Turn did not produce a valid structured response",
+      });
       expect(plain.debugMode?.lastTurnFailed).toBe(true);
       expect(plain.unread).toBe(false);
 
       const stopped = debugging("analyzing_evidence");
       const aborted = settle(
         stopped,
-        outcomeOf(settledConversationTurn({ outcome: { kind: "completed", text: "" } }, { reason: "user" })),
+        outcomeOf(
+          settledConversationTurn(
+            { outcome: { kind: "completed", text: "" } },
+            { reason: "user" },
+          ),
+        ),
       );
-      expect(aborted.debug).toMatchObject({ kind: "turn_failed", lastError: "Aborted: user" });
+      expect(aborted.debug).toMatchObject({
+        kind: "turn_failed",
+        lastError: "Aborted: user",
+      });
     });
 
     it("settles a follow-up in a waiting phase without change, and hands a cleanup report to verification", () => {
       const waiting = debugging("awaiting_reproduction");
-      expect(settle(waiting, report(undefined)).debug?.kind).toBe("followup_settled");
+      expect(settle(waiting, report(undefined)).debug?.kind).toBe(
+        "followup_settled",
+      );
       expect(waiting.debugMode?.phase).toBe("awaiting_reproduction");
       expect(waiting.unread).toBe(false);
 
       const cleanup = debugging("cleanup_instrumentation");
-      expect(settle(cleanup, report({ removed: ["src/a.ts"] })).debug?.kind).toBe("verify_cleanup");
+      expect(
+        settle(cleanup, report({ removed: ["src/a.ts"] })).debug?.kind,
+      ).toBe("verify_cleanup");
       expect(cleanup.debugMode?.cleanupVerificationAttempt).toBe(1);
     });
 
@@ -356,15 +534,29 @@ describe("conversation record", () => {
 
     it("applies only the commands legal in the current phase", () => {
       const ordinary = row();
-      expect(applyDebugCommandToRow(ordinary, { kind: "enter", logFilePath: "/w/log", debugSessionId: "dbg-2" }, "t")).not.toBeNull();
-      expect(ordinary.debugMode).toMatchObject({ active: true, phase: "hypothesizing", debugSessionId: "dbg-2" });
+      expect(
+        applyDebugCommandToRow(
+          ordinary,
+          { kind: "enter", logFilePath: "/w/log", debugSessionId: "dbg-2" },
+          "t",
+        ),
+      ).not.toBeNull();
+      expect(ordinary.debugMode).toMatchObject({
+        active: true,
+        phase: "hypothesizing",
+        debugSessionId: "dbg-2",
+      });
 
       const hypothesizing = debugging("hypothesizing");
       const before = structuredClone(hypothesizing.debugMode);
-      expect(applyDebugCommandToRow(hypothesizing, { kind: "mark_reproduced" }, "t")).toBeNull();
+      expect(
+        applyDebugCommandToRow(hypothesizing, { kind: "mark_reproduced" }, "t"),
+      ).toBeNull();
       expect(hypothesizing.debugMode).toEqual(before);
 
-      expect(applyDebugCommandToRow(hypothesizing, { kind: "exit" }, "t")).not.toBeNull();
+      expect(
+        applyDebugCommandToRow(hypothesizing, { kind: "exit" }, "t"),
+      ).not.toBeNull();
       expect(hypothesizing.debugMode).toBeNull();
     });
 
@@ -392,11 +584,23 @@ describe("conversation record", () => {
       metadata: null,
     };
     const free = { owner: null, debugMode: null, pendingQueue: [] };
-    const owned = { ...free, owner: { kind: "collaboration" as const, workflowId: "wf-1", attemptEpoch: 1 } };
+    const owned = {
+      ...free,
+      owner: {
+        kind: "collaboration" as const,
+        workflowId: "wf-1",
+        attemptEpoch: 1,
+      },
+    };
     const reviewing = { ...free, pendingQueue: [uncertain] };
     const debugging = {
       ...free,
-      debugMode: debugModeStateSchema.parse({ active: true, recording: true, logFilePath: "/tmp/debug.log", enteredAt: "t" }),
+      debugMode: debugModeStateSchema.parse({
+        active: true,
+        recording: true,
+        logFilePath: "/tmp/debug.log",
+        enteredAt: "t",
+      }),
     };
     const kinds = ["message", "delivery", "task", "command", "claim"] as const;
     const codes = (state: Parameters<typeof conversationHoldRefusal>[0]) =>
@@ -414,7 +618,13 @@ describe("conversation record", () => {
     });
 
     it("holds everything but the queue's own deliveries while queued deliveries await review", () => {
-      expect(codes(reviewing)).toEqual(["queue_review", null, "queue_review", "queue_review", "queue_review"]);
+      expect(codes(reviewing)).toEqual([
+        "queue_review",
+        null,
+        "queue_review",
+        "queue_review",
+        "queue_review",
+      ]);
       expect(conversationHoldRefusal(reviewing, "command")?.message).toBe(
         "Review queued deliveries before sending another prompt.",
       );
@@ -422,8 +632,16 @@ describe("conversation record", () => {
 
     it("lets a person keep talking in debug mode, and holds tasks, commands and claims until it ends", () => {
       // The queue decides itself which deliveries debug mode holds.
-      expect(codes(debugging)).toEqual([null, null, "debug_mode", "debug_mode", "debug_mode"]);
-      expect(conversationHoldRefusal(debugging, "task")?.message).toBe("Exit debug mode first");
+      expect(codes(debugging)).toEqual([
+        null,
+        null,
+        "debug_mode",
+        "debug_mode",
+        "debug_mode",
+      ]);
+      expect(conversationHoldRefusal(debugging, "task")?.message).toBe(
+        "Exit debug mode first",
+      );
     });
   });
 });

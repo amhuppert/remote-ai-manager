@@ -21,7 +21,11 @@ import { isQueuedUserMessage } from "@/lib/conversations/queued-input-provenance
 import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
 import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
-import { coreAcceptsLive, coreOwnsConversation, deliverCoreLive } from "@/lib/supervision/handles";
+import {
+  coreAcceptsLive,
+  coreOwnsConversation,
+  deliverCoreLive,
+} from "@/lib/supervision/handles";
 import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
 import {
   preparePassiveSubscriptionContext,
@@ -87,7 +91,10 @@ export interface QueueMessageDeps {
     owns(conversationId: string): Promise<boolean>;
     acceptsLive(conversationId: string): Promise<boolean>;
     /** Settles the claimed rows whatever the outcome. */
-    deliverLive(identity: ConversationIdentity, request: UserTurnRequest): Promise<DeliveryClass>;
+    deliverLive(
+      identity: ConversationIdentity,
+      request: UserTurnRequest,
+    ): Promise<DeliveryClass>;
   };
   subscriptions?: PassiveSubscriptionContextDependencies;
   ownSubscriptionReceipt?(
@@ -410,7 +417,12 @@ async function deliverThroughCore(
   entry: PendingQueuedMessage,
 ): Promise<QueueMessageResult> {
   const { projectPath, sessionName, conversationId } = params;
-  const claimed = await deps.claimLiveDelivery({ projectPath, sessionName, conversationId, id: entry.id });
+  const claimed = await deps.claimLiveDelivery({
+    projectPath,
+    sessionName,
+    conversationId,
+    id: entry.id,
+  });
   // No longer pending: cancelled, or claimed by a racing drain.
   if (claimed === null) return { entry, deliveryTiming: "in_turn" };
   const deliveryAttemptId = claimed.deliveryAttemptId;
@@ -426,7 +438,8 @@ async function deliverThroughCore(
     });
     return { entry, deliveryTiming: "in_turn" };
   }
-  const { promptText, images, documentFeedback, notepadFeedback } = queuedBatchToSubmitPrompt(claimed.content);
+  const { promptText, images, documentFeedback, notepadFeedback } =
+    queuedBatchToSubmitPrompt(claimed.content);
   const request: UserTurnRequest = {
     kind: "user_message",
     text: promptText,
@@ -438,7 +451,10 @@ async function deliverThroughCore(
   };
   let outcome: DeliveryClass;
   try {
-    outcome = await core.deliverLive({ projectPath, storeSessionName: sessionName, conversationId }, request);
+    outcome = await core.deliverLive(
+      { projectPath, storeSessionName: sessionName, conversationId },
+      request,
+    );
   } catch (error) {
     logger.error("queue.core_live_delivery_failed", {
       projectName: deps.getProjectDisplayName(projectPath),
@@ -461,7 +477,11 @@ async function deliverThroughCore(
   if (outcome === "not_sent") return { entry, deliveryTiming: "next_turn" };
   if (outcome === "uncertain") {
     return {
-      entry: { ...claimed, status: "uncertain", error: "It may have reached the agent; review it before sending again" },
+      entry: {
+        ...claimed,
+        status: "uncertain",
+        error: "It may have reached the agent; review it before sending again",
+      },
       deliveryTiming: "in_turn",
     };
   }
@@ -565,7 +585,8 @@ async function queueMessageInOrder(
 
   if (deps.core !== undefined) {
     const live = await coreLiveInput(params, deps, deps.core);
-    if (live === "accepts") return deliverThroughCore(params, deps, deps.core, entry);
+    if (live === "accepts")
+      return deliverThroughCore(params, deps, deps.core, entry);
     if (live === "declined") {
       // It waits for the next turn: the running turn's end, or the caller's drain, takes it.
       logger.info("queue.delivery_deferred", {

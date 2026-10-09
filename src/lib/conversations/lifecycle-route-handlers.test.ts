@@ -369,7 +369,10 @@ describe("POST_CREATE — a conversation the shared core runs", () => {
     const { deps, conversation } = makeDeps();
     const { POST_CREATE } = createConversationRouteHandlers(deps);
 
-    const response = await POST_CREATE(jsonRequest({ engine: "core" }), context({ name: "demo", session: "s1" }));
+    const response = await POST_CREATE(
+      jsonRequest({ engine: "core" }),
+      context({ name: "demo", session: "s1" }),
+    );
 
     expect(response.status).toBe(201);
     expect(deps.enrollInCore).toHaveBeenCalledWith({
@@ -396,10 +399,17 @@ describe("POST_CREATE — a conversation the shared core runs", () => {
     });
     const { POST_CREATE } = createConversationRouteHandlers(deps);
 
-    const response = await POST_CREATE(jsonRequest({ engine: "core" }), context({ name: "demo", session: "s1" }));
+    const response = await POST_CREATE(
+      jsonRequest({ engine: "core" }),
+      context({ name: "demo", session: "s1" }),
+    );
 
     expect(response.status).toBe(500);
-    expect(deps.deleteConversation).toHaveBeenCalledWith("/repos/demo", "s1", conversation.id);
+    expect(deps.deleteConversation).toHaveBeenCalledWith(
+      "/repos/demo",
+      "s1",
+      conversation.id,
+    );
     expect(deps.broadcast).not.toHaveBeenCalled();
   });
 });

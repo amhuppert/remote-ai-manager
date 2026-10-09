@@ -602,8 +602,14 @@ describe("commitChangesActor", () => {
 
 describe("the session conversation a merge, commit or rebase fix turn goes to", () => {
   it("is the most recently active one that takes task turns, passing over a run's seats", () => {
-    const conversations = [{ id: "seat" }, { id: "core-chat" }, { id: "actor-chat" }];
-    expect(pickSessionConversation(conversations, (id) => id === "seat")).toBe("core-chat");
+    const conversations = [
+      { id: "seat" },
+      { id: "core-chat" },
+      { id: "actor-chat" },
+    ];
+    expect(pickSessionConversation(conversations, (id) => id === "seat")).toBe(
+      "core-chat",
+    );
   });
 
   it("is none when only a run's seats are left", () => {

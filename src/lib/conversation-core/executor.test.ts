@@ -75,7 +75,9 @@ function commitTask(): TaskTurn {
 }
 
 function taskOutcome(text: string): TurnExecutionOutcome {
-  const execution = settledConversationTurn({ outcome: { kind: "completed", text } });
+  const execution = settledConversationTurn({
+    outcome: { kind: "completed", text },
+  });
   if (execution.kind !== "settled") throw new Error("fixture");
   return execution.turn.outcome;
 }
@@ -87,13 +89,25 @@ const turns: SeatTurnPort = {
   },
 };
 
-let interrupted: Array<{ projectPath: string; storeSessionName: string; conversationId: string }>;
+let interrupted: Array<{
+  projectPath: string;
+  storeSessionName: string;
+  conversationId: string;
+}>;
 let withdrawn: string[];
 let queuedRequests: unknown[];
 let notStarted: { cause: string; reason: string; endedBy: string }[];
 let taskCalls: string[];
-let nextTaskRun: () => Promise<{ result: CoreTurnResult; outcome: TurnExecutionOutcome }>;
-let userCalls: Array<{ conversationId: string; text: string; signal: AbortSignal; streamed: boolean }>;
+let nextTaskRun: () => Promise<{
+  result: CoreTurnResult;
+  outcome: TurnExecutionOutcome;
+}>;
+let userCalls: Array<{
+  conversationId: string;
+  text: string;
+  signal: AbortSignal;
+  streamed: boolean;
+}>;
 let nextUserResult: () => Promise<CoreTurnResult>;
 
 const taskTurns: TaskTurnPort = {
@@ -105,7 +119,11 @@ const taskTurns: TaskTurnPort = {
 
 const userTurns: UserTurnPort = {
   notStarted(input) {
-    notStarted.push({ cause: input.cause, reason: input.reason, endedBy: input.endedBy });
+    notStarted.push({
+      cause: input.cause,
+      reason: input.reason,
+      endedBy: input.endedBy,
+    });
   },
   async run(input) {
     queuedRequests.push(input.request);
@@ -138,7 +156,8 @@ function records(): ConversationCoreDeps["records"] {
     async endClaim(identity) {
       claims.push(`end:${identity.conversationId}`);
     },
-    hasPendingQuestion: (identity) => questionsPending.has(identity.conversationId),
+    hasPendingQuestion: (identity) =>
+      questionsPending.has(identity.conversationId),
     async withdrawQuestion(identity) {
       if (!questionsPending.delete(identity.conversationId)) return false;
       questionWithdrawals.push(identity.conversationId);
@@ -148,7 +167,10 @@ function records(): ConversationCoreDeps["records"] {
 }
 
 /** The real repository, whose first `failures` mailbox removals fail as a storage error would. */
-function failingDeletes(repo: ConversationCoreDeps["repo"], failures: number): ConversationCoreDeps["repo"] {
+function failingDeletes(
+  repo: ConversationCoreDeps["repo"],
+  failures: number,
+): ConversationCoreDeps["repo"] {
   let left = failures;
   return {
     ...repo,
@@ -162,7 +184,9 @@ function failingDeletes(repo: ConversationCoreDeps["repo"], failures: number): C
   };
 }
 
-function newCore(overrides: Partial<ConversationCoreDeps> = {}): ConversationCore {
+function newCore(
+  overrides: Partial<ConversationCoreDeps> = {},
+): ConversationCore {
   const repo = createConversationCoreRepo(fixture.db);
   return createConversationCore({
     transaction: (fn) => fixture.db.transaction(fn)(),
@@ -273,7 +297,10 @@ beforeEach(() => {
   queuedRequests = [];
   notStarted = [];
   taskCalls = [];
-  nextTaskRun = async () => ({ result: ok("feat: add notices"), outcome: taskOutcome("feat: add notices") });
+  nextTaskRun = async () => ({
+    result: ok("feat: add notices"),
+    outcome: taskOutcome("feat: add notices"),
+  });
   nextUserResult = async () => ok("Hi.");
   freeSlots = 2;
   slotWaiters = [];
@@ -368,7 +395,11 @@ describe("conversation core for seats", () => {
       new Promise((resolve) => {
         const signal = turnCalls[turnCalls.length - 1]?.signal;
         signal?.addEventListener("abort", () =>
-          resolve({ ...ok(), status: signal.reason === "shutdown" ? "interrupted" : "cancelled", finalText: null }),
+          resolve({
+            ...ok(),
+            status: signal.reason === "shutdown" ? "interrupted" : "cancelled",
+            finalText: null,
+          }),
         );
       });
     const intent = workIntent();
@@ -377,7 +408,10 @@ describe("conversation core for seats", () => {
 
     await core.shutdown();
     expect(turnCalls[0]?.signal.reason).toBe("shutdown");
-    expect(core.outcome(intent.cause)).toMatchObject({ kind: "settled", outcome: { status: "interrupted" } });
+    expect(core.outcome(intent.cause)).toMatchObject({
+      kind: "settled",
+      outcome: { status: "interrupted" },
+    });
   });
 
   describe("a person's message to an enrolled conversation", () => {
@@ -393,8 +427,18 @@ describe("conversation core for seats", () => {
       });
       if (sent.kind !== "accepted") throw new Error(sent.message);
 
-      expect(await sent.settled).toMatchObject({ status: "succeeded", conversationId: "conv-u", finalText: "Hi." });
-      expect(userCalls).toEqual([expect.objectContaining({ conversationId: "conv-u", text: "Hello", streamed: true })]);
+      expect(await sent.settled).toMatchObject({
+        status: "succeeded",
+        conversationId: "conv-u",
+        finalText: "Hi.",
+      });
+      expect(userCalls).toEqual([
+        expect.objectContaining({
+          conversationId: "conv-u",
+          text: "Hello",
+          streamed: true,
+        }),
+      ]);
       expect(events).toEqual(["content"]);
       expect(freeSlots).toBe(2);
     });
@@ -403,12 +447,20 @@ describe("conversation core for seats", () => {
       enroll();
       const worktree = "/repo/.worktrees/session";
       const core = newCore({ interactiveWorktree: async () => worktree });
-      const publication = admission.tryAcquire({ worktree, kind: "git", holder: "publish" });
+      const publication = admission.tryAcquire({
+        worktree,
+        kind: "git",
+        holder: "publish",
+      });
       if (publication === null) throw new Error("no grant");
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
 
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Hello",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(userCalls).toEqual([]);
 
@@ -416,20 +468,35 @@ describe("conversation core for seats", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(userCalls).toHaveLength(1);
       // Supervised writers still work beside it; Git operations wait for it.
-      const seat = admission.tryAcquire({ worktree, kind: "scoped_write", paths: ["src"], holder: "seat" });
+      const seat = admission.tryAcquire({
+        worktree,
+        kind: "scoped_write",
+        paths: ["src"],
+        holder: "seat",
+      });
       expect(seat).not.toBeNull();
       if (seat !== null) admission.release(seat);
-      expect(admission.tryAcquire({ worktree, kind: "git", holder: "publish-2" })).toBeNull();
+      expect(
+        admission.tryAcquire({ worktree, kind: "git", holder: "publish-2" }),
+      ).toBeNull();
 
       finish(ok());
       if (sent.kind === "accepted") await sent.settled;
       await core.conversationIdle("conv-u");
-      expect(admission.tryAcquire({ worktree, kind: "git", holder: "publish-3" })).not.toBeNull();
+      expect(
+        admission.tryAcquire({ worktree, kind: "git", holder: "publish-3" }),
+      ).not.toBeNull();
     });
 
     it("refuses a conversation the core does not run, and one already running a turn", async () => {
       const core = newCore();
-      expect(await core.sendUserMessage({ conversationId: "conv-x", text: "Hello", inputOrigin: "user" })).toMatchObject({
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-x",
+          text: "Hello",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "refused",
         code: "not_enrolled",
       });
@@ -437,9 +504,19 @@ describe("conversation core for seats", () => {
       enroll();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
-      const first = await core.sendUserMessage({ conversationId: "conv-u", text: "One", inputOrigin: "user" });
+      const first = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "One",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Two", inputOrigin: "user" })).toMatchObject({
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Two",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "refused",
         code: "busy",
       });
@@ -452,11 +529,16 @@ describe("conversation core for seats", () => {
       const core = newCore();
       nextUserResult = () =>
         new Promise((resolve) =>
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () =>
-            resolve({ ...ok(), status: "cancelled", finalText: null }),
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => resolve({ ...ok(), status: "cancelled", finalText: null }),
           ),
         );
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Long", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Long",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(core.stopConversation("conv-u").requested).toBe(true);
       if (sent.kind !== "accepted") throw new Error("refused");
@@ -469,20 +551,32 @@ describe("conversation core for seats", () => {
       enroll();
       freeSlots = 0;
       const core = newCore();
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Waiting", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Waiting",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       core.stopConversation("conv-u");
       if (sent.kind === "accepted") await sent.settled;
       await core.conversationIdle("conv-u");
-      expect(core.lastMessageRequest("conv-u")).toMatchObject({ text: "Waiting" });
-      expect(createConversationCoreRepo(fixture.db).queuedFor("conv-u")).toEqual([]);
+      expect(core.lastMessageRequest("conv-u")).toMatchObject({
+        text: "Waiting",
+      });
+      expect(
+        createConversationCoreRepo(fixture.db).queuedFor("conv-u"),
+      ).toEqual([]);
     });
 
     it("withdraws a message still waiting for model capacity when the person stops it", async () => {
       enroll();
       freeSlots = 0;
       const core = newCore();
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Hello",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(core.stopConversation("conv-u").requested).toBe(true);
@@ -490,7 +584,13 @@ describe("conversation core for seats", () => {
       expect(await sent.settled).toMatchObject({ status: "cancelled" });
       expect(userCalls).toEqual([]);
       await core.conversationIdle("conv-u");
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Again", inputOrigin: "user" })).toMatchObject({
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Again",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "accepted",
       });
     });
@@ -501,12 +601,25 @@ describe("conversation core for seats", () => {
       const crashed = newCore({
         slots: {
           acquire: (_label, signal) =>
-            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+            new Promise((_resolve, reject) =>
+              signal.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              ),
+            ),
         },
       });
-      const image = { attachmentId: "img-1", mediaType: "image/png" as const, base64Data: "aGk=" };
+      const image = {
+        attachmentId: "img-1",
+        mediaType: "image/png" as const,
+        base64Data: "aGk=",
+      };
       expect(
-        await crashed.sendUserMessage({ conversationId: "conv-u", text: "", images: [image], inputOrigin: "user" }),
+        await crashed.sendUserMessage({
+          conversationId: "conv-u",
+          text: "",
+          images: [image],
+          inputOrigin: "user",
+        }),
       ).toMatchObject({ kind: "accepted" });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -526,10 +639,16 @@ describe("conversation core for seats", () => {
       });
       await restarted.recover();
       expect(heldWhileRecording).toEqual([1]);
-      expect(reasons).toEqual(["The server restarted before this message could start, so it was not sent"]);
+      expect(reasons).toEqual([
+        "The server restarted before this message could start, so it was not sent",
+      ]);
       // The person gets the whole message back, images included, to send again.
       expect(withdrawn).toEqual([JSON.stringify([image])]);
-      const sent = await restarted.sendUserMessage({ conversationId: "conv-u", text: "Again", inputOrigin: "user" });
+      const sent = await restarted.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Again",
+        inputOrigin: "user",
+      });
       if (sent.kind !== "accepted") throw new Error(sent.message);
       expect(await sent.settled).toMatchObject({ status: "succeeded" });
       expect(userCalls.map((call) => call.text)).toEqual(["Again"]);
@@ -547,13 +666,24 @@ describe("conversation core for seats", () => {
           },
         },
       });
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "One", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "One",
+        inputOrigin: "user",
+      });
       if (sent.kind !== "accepted") throw new Error(sent.message);
-      expect(await sent.settled).toMatchObject({ status: "failed", failure: "database is locked" });
+      expect(await sent.settled).toMatchObject({
+        status: "failed",
+        failure: "database is locked",
+      });
 
       failSettlement = false;
       await core.conversationIdle("conv-u");
-      const next = await core.sendUserMessage({ conversationId: "conv-u", text: "Two", inputOrigin: "user" });
+      const next = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Two",
+        inputOrigin: "user",
+      });
       if (next.kind !== "accepted") throw new Error(next.message);
       expect(await next.settled).toMatchObject({ status: "succeeded" });
     });
@@ -561,8 +691,14 @@ describe("conversation core for seats", () => {
     it("asks an idle conversation's queue for its next turn once its mailbox is empty", async () => {
       enroll();
       const idle: string[] = [];
-      const core = newCore({ onConversationIdle: (conversationId) => idle.push(conversationId) });
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" });
+      const core = newCore({
+        onConversationIdle: (conversationId) => idle.push(conversationId),
+      });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Hello",
+        inputOrigin: "user",
+      });
       if (sent.kind !== "accepted") throw new Error(sent.message);
       await sent.settled;
       await core.conversationIdle("conv-u");
@@ -573,10 +709,17 @@ describe("conversation core for seats", () => {
       enroll();
       nextUserResult = () =>
         new Promise((resolve) =>
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () => resolve({ ...ok(), status: "cancelled" })),
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => resolve({ ...ok(), status: "cancelled" }),
+          ),
         );
       const core = newCore();
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Long", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Long",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       const stop = core.stopConversation("conv-u");
       expect(stop.requested).toBe(true);
@@ -589,7 +732,11 @@ describe("conversation core for seats", () => {
       enroll();
       freeSlots = 0;
       const core = newCore();
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Hello",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(claims).toEqual(["claim:conv-u"]);
       expect(userCalls).toEqual([]);
@@ -601,11 +748,20 @@ describe("conversation core for seats", () => {
       expect(claims).toEqual(["claim:conv-u", "end:conv-u"]);
 
       freeSlots = 1;
-      const next = await core.sendUserMessage({ conversationId: "conv-u", text: "Again", inputOrigin: "user" });
+      const next = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Again",
+        inputOrigin: "user",
+      });
       if (next.kind !== "accepted") throw new Error("refused");
       await next.settled;
       await core.conversationIdle("conv-u");
-      expect(claims).toEqual(["claim:conv-u", "end:conv-u", "claim:conv-u", "end:conv-u"]);
+      expect(claims).toEqual([
+        "claim:conv-u",
+        "end:conv-u",
+        "claim:conv-u",
+        "end:conv-u",
+      ]);
     });
 
     it("after a crash, ends the claim of a turn that was still waiting to start", async () => {
@@ -613,7 +769,11 @@ describe("conversation core for seats", () => {
       const crashed = newCore({
         slots: {
           acquire: (_label, signal) =>
-            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+            new Promise((_resolve, reject) =>
+              signal.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              ),
+            ),
         },
       });
       void crashed.runTask({ conversationId: "conv-u", turn: commitTask() });
@@ -630,19 +790,39 @@ describe("conversation core for seats", () => {
       const idle: string[] = [];
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
-      const core = newCore({ onConversationIdle: (conversationId) => idle.push(conversationId) });
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      const core = newCore({
+        onConversationIdle: (conversationId) => idle.push(conversationId),
+      });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(await core.whileIdle("conv-u", async () => "applied")).toEqual({ kind: "busy" });
+      expect(await core.whileIdle("conv-u", async () => "applied")).toEqual({
+        kind: "busy",
+      });
       finish(ok());
       if (sent.kind === "accepted") await sent.settled;
       await core.conversationIdle("conv-u");
       idle.length = 0;
 
       let release: () => void = () => {};
-      const command = core.whileIdle("conv-u", () => new Promise<string>((resolve) => (release = () => resolve("applied"))));
+      const command = core.whileIdle(
+        "conv-u",
+        () =>
+          new Promise<string>(
+            (resolve) => (release = () => resolve("applied")),
+          ),
+      );
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Meanwhile", inputOrigin: "user" })).toMatchObject({
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Meanwhile",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "refused",
         code: "busy",
       });
@@ -656,15 +836,30 @@ describe("conversation core for seats", () => {
     it("holds the conversation for maintenance: nothing starts until the holder lets go", async () => {
       enroll();
       const idle: string[] = [];
-      const core = newCore({ onConversationIdle: (conversationId) => idle.push(conversationId) });
-      const lease = core.hold("conv-u", { kind: "checkpoint", requestId: "req-1" });
+      const core = newCore({
+        onConversationIdle: (conversationId) => idle.push(conversationId),
+      });
+      const lease = core.hold("conv-u", {
+        kind: "checkpoint",
+        requestId: "req-1",
+      });
       if (lease.kind !== "held") throw new Error("not held");
-      expect(core.hold("conv-u", { kind: "checkpoint", requestId: "req-2" })).toMatchObject({ kind: "busy" });
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Meanwhile", inputOrigin: "user" })).toMatchObject({
+      expect(
+        core.hold("conv-u", { kind: "checkpoint", requestId: "req-2" }),
+      ).toMatchObject({ kind: "busy" });
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Meanwhile",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "refused",
         code: "busy",
       });
-      expect(await core.whileIdle("conv-u", async () => "applied")).toEqual({ kind: "busy" });
+      expect(await core.whileIdle("conv-u", async () => "applied")).toEqual({
+        kind: "busy",
+      });
       expect(core.isBusy("conv-u")).toBe(true);
 
       lease.release();
@@ -676,7 +871,10 @@ describe("conversation core for seats", () => {
     it("tells a holder to stop when the conversation is going away", async () => {
       enroll();
       const core = newCore();
-      const lease = core.hold("conv-u", { kind: "checkpoint", requestId: "req-1" });
+      const lease = core.hold("conv-u", {
+        kind: "checkpoint",
+        requestId: "req-1",
+      });
       if (lease.kind !== "held") throw new Error("not held");
       const retired = core.retireConversation("conv-u");
       expect(lease.signal.aborted).toBe(true);
@@ -689,12 +887,18 @@ describe("conversation core for seats", () => {
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const core = newCore({ holds: { refusal: async () => null } });
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Working", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Working",
+        inputOrigin: "user",
+      });
       if (sent.kind !== "accepted") throw new Error(sent.message);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       for (const turn of ["message", "command", "claim"] as const) {
-        expect(await core.admission("conv-u", turn)).toMatchObject({ code: "busy" });
+        expect(await core.admission("conv-u", turn)).toMatchObject({
+          code: "busy",
+        });
       }
       expect(await core.admission("conv-u", "task")).toBeNull();
 
@@ -717,7 +921,10 @@ describe("conversation core for seats", () => {
           ...records(),
           async recordWithdrawn(_identity, unsent) {
             withdrawn.push(`conv-u:${unsent.request.text}`);
-            handedBack.push({ reason: unsent.reason, mailbox: repo.getMailbox(unsent.cause)?.state ?? null });
+            handedBack.push({
+              reason: unsent.reason,
+              mailbox: repo.getMailbox(unsent.cause)?.state ?? null,
+            });
           },
         },
         holds: {
@@ -734,15 +941,23 @@ describe("conversation core for seats", () => {
         inputOrigin: "user",
         queuedDelivery: { messageIds: ["q-9"], deliveryAttemptId: "att-9" },
       });
-      const direct = core.sendUserMessage({ conversationId: "conv-u", text: "Direct", inputOrigin: "user" });
+      const direct = core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Direct",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       for (const release of reads) release(null);
       const [queued, typed] = await Promise.all([delivery, direct]);
-      if (queued.kind !== "accepted" || typed.kind !== "accepted") throw new Error("not admitted");
+      if (queued.kind !== "accepted" || typed.kind !== "accepted")
+        throw new Error("not admitted");
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // The delivery left something to review while the direct message waited.
-      held = { code: "queue_review", message: "Review queued deliveries before sending another prompt." };
+      held = {
+        code: "queue_review",
+        message: "Review queued deliveries before sending another prompt.",
+      };
       finish(ok("Done."));
       expect(await typed.settled).toMatchObject({
         status: "failed",
@@ -752,7 +967,12 @@ describe("conversation core for seats", () => {
       // The person's words go back to them for review rather than being dropped, saying why,
       // while the mailbox still holds them: a crash in between hands them back again.
       expect(withdrawn).toEqual(["conv-u:Direct"]);
-      expect(handedBack).toEqual([{ reason: "Review queued deliveries before sending another prompt.", mailbox: "queued" }]);
+      expect(handedBack).toEqual([
+        {
+          reason: "Review queued deliveries before sending another prompt.",
+          mailbox: "queued",
+        },
+      ]);
     });
 
     it("passes a durable hold's own code through to every entry", async () => {
@@ -760,12 +980,19 @@ describe("conversation core for seats", () => {
       const core = newCore({
         holds: {
           async refusal(_conversationId, turn) {
-            return turn === "message" ? null : { code: "debug_mode", message: "Exit debug mode first" };
+            return turn === "message"
+              ? null
+              : { code: "debug_mode", message: "Exit debug mode first" };
           },
         },
       });
-      expect(await core.admission("conv-u", "command")).toEqual({ code: "debug_mode", message: "Exit debug mode first" });
-      expect(await core.runTask({ conversationId: "conv-u", turn: commitTask() })).toMatchObject({
+      expect(await core.admission("conv-u", "command")).toEqual({
+        code: "debug_mode",
+        message: "Exit debug mode first",
+      });
+      expect(
+        await core.runTask({ conversationId: "conv-u", turn: commitTask() }),
+      ).toMatchObject({
         kind: "not_started",
         message: "Exit debug mode first",
       });
@@ -787,12 +1014,20 @@ describe("conversation core for seats", () => {
           },
         },
       });
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" })).toEqual({
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Hello",
+          inputOrigin: "user",
+        }),
+      ).toEqual({
         kind: "refused",
         code: "owned",
         message: "A collaboration owns this conversation",
       });
-      expect(await core.runTask({ conversationId: "conv-u", turn: commitTask() })).toMatchObject({
+      expect(
+        await core.runTask({ conversationId: "conv-u", turn: commitTask() }),
+      ).toMatchObject({
         kind: "not_started",
         message: "A collaboration owns this conversation",
       });
@@ -800,7 +1035,11 @@ describe("conversation core for seats", () => {
       expect(userCalls).toEqual([]);
 
       refusal = null;
-      const sent = await core.sendUserMessage({ conversationId: "conv-u", text: "Now", inputOrigin: "user" });
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Now",
+        inputOrigin: "user",
+      });
       if (sent.kind !== "accepted") throw new Error(sent.message);
       await sent.settled;
       expect(userCalls.map((call) => call.text)).toEqual(["Now"]);
@@ -815,12 +1054,22 @@ describe("conversation core for seats", () => {
         holds: {
           async refusal(_conversationId, turn) {
             reads.push(turn);
-            if (reads.length === 1) return new Promise((resolve) => (release = resolve));
-            return owned ? { code: "owned", message: "A collaboration owns this conversation" } : null;
+            if (reads.length === 1)
+              return new Promise((resolve) => (release = resolve));
+            return owned
+              ? {
+                  code: "owned",
+                  message: "A collaboration owns this conversation",
+                }
+              : null;
           },
         },
       });
-      const sent = core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" });
+      const sent = core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Hello",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       // A collaboration claims the conversation and lets go of the lease while the first read is pending.
       const lease = core.hold("conv-u", { kind: "collaboration_claim" });
@@ -839,15 +1088,33 @@ describe("conversation core for seats", () => {
         holds: {
           async refusal(_conversationId, turn) {
             asked.push(turn);
-            return turn === "claim" ? { code: "busy", message: "A ready checkpoint is delivered by the next ordinary conversation turn" } : null;
+            return turn === "claim"
+              ? {
+                  code: "busy",
+                  message:
+                    "A ready checkpoint is delivered by the next ordinary conversation turn",
+                }
+              : null;
           },
         },
       });
       expect(
-        await core.whileIdle("conv-u", async () => "claimed", { kind: "collaboration_claim" }, { holds: "claim" }),
-      ).toEqual({ kind: "busy", reason: "A ready checkpoint is delivered by the next ordinary conversation turn" });
+        await core.whileIdle(
+          "conv-u",
+          async () => "claimed",
+          { kind: "collaboration_claim" },
+          { holds: "claim" },
+        ),
+      ).toEqual({
+        kind: "busy",
+        reason:
+          "A ready checkpoint is delivered by the next ordinary conversation turn",
+      });
       // Leaving debug mode (or recording) is never held: the hold it would wait on may need debug mode gone.
-      expect(await core.whileIdle("conv-u", async () => "applied")).toEqual({ kind: "ran", value: "applied" });
+      expect(await core.whileIdle("conv-u", async () => "applied")).toEqual({
+        kind: "ran",
+        value: "applied",
+      });
       expect(asked).toEqual(["claim"]);
       await core.conversationIdle("conv-u");
       expect(core.isBusy("conv-u")).toBe(false);
@@ -863,7 +1130,12 @@ describe("conversation core for seats", () => {
         },
       });
       await expect(
-        core.whileIdle("conv-u", async () => "claimed", { kind: "collaboration_claim" }, { holds: "claim" }),
+        core.whileIdle(
+          "conv-u",
+          async () => "claimed",
+          { kind: "collaboration_claim" },
+          { holds: "claim" },
+        ),
       ).rejects.toThrow("database is locked");
       expect(core.isBusy("conv-u")).toBe(false);
     });
@@ -876,18 +1148,33 @@ describe("conversation core for seats", () => {
       const core = newCore({
         holds: {
           async refusal() {
-            return held ? { code: "busy", message: "The applied checkpoint continuation was lost" } : null;
+            return held
+              ? {
+                  code: "busy",
+                  message: "The applied checkpoint continuation was lost",
+                }
+              : null;
           },
         },
       });
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask() });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       // The running turn loses the continuation as it settles.
       held = true;
       finish(ok());
-      expect(await task).toMatchObject({ kind: "not_started", message: "The applied checkpoint continuation was lost" });
+      expect(await task).toMatchObject({
+        kind: "not_started",
+        message: "The applied checkpoint continuation was lost",
+      });
       expect(taskCalls).toEqual([]);
     });
 
@@ -903,11 +1190,18 @@ describe("conversation core for seats", () => {
         },
       });
       const cancel = new AbortController();
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask(), signal: cancel.signal });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+        signal: cancel.signal,
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       cancel.abort();
       answerTurnCheck(null);
-      expect(await task).toMatchObject({ kind: "not_started", reason: "cancelled" });
+      expect(await task).toMatchObject({
+        kind: "not_started",
+        reason: "cancelled",
+      });
       await core.conversationIdle("conv-u");
       expect(taskCalls).toEqual([]);
     });
@@ -921,11 +1215,18 @@ describe("conversation core for seats", () => {
         },
       });
       const cancel = new AbortController();
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask(), signal: cancel.signal });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+        signal: cancel.signal,
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       cancel.abort();
       answerHold(null);
-      expect(await task).toMatchObject({ kind: "not_started", reason: "cancelled" });
+      expect(await task).toMatchObject({
+        kind: "not_started",
+        reason: "cancelled",
+      });
       await core.conversationIdle("conv-u");
       expect(taskCalls).toEqual([]);
     });
@@ -934,7 +1235,11 @@ describe("conversation core for seats", () => {
       enroll();
       const core = newCore();
       expect(core.lastMessageRequest("conv-u")).toBeNull();
-      const image = { attachmentId: "img-1", mediaType: "image/png" as const, base64Data: "aGk=" };
+      const image = {
+        attachmentId: "img-1",
+        mediaType: "image/png" as const,
+        base64Data: "aGk=",
+      };
       for (const message of [
         { text: "First", inputOrigin: "user" as const },
         {
@@ -944,7 +1249,10 @@ describe("conversation core for seats", () => {
           queuedDelivery: { messageIds: ["q-1"], deliveryAttemptId: "att-1" },
         },
       ]) {
-        const sent = await core.sendUserMessage({ conversationId: "conv-u", ...message });
+        const sent = await core.sendUserMessage({
+          conversationId: "conv-u",
+          ...message,
+        });
         if (sent.kind === "accepted") await sent.settled;
         await core.conversationIdle("conv-u");
       }
@@ -961,7 +1269,9 @@ describe("conversation core for seats", () => {
     it("a stop with no turn running withdraws the agent's unanswered question, and lets held work run", async () => {
       enroll();
       const idle: string[] = [];
-      const core = newCore({ onConversationIdle: (conversationId) => idle.push(conversationId) });
+      const core = newCore({
+        onConversationIdle: (conversationId) => idle.push(conversationId),
+      });
       expect(core.stopConversation("conv-u").requested).toBe(false);
 
       questionsPending.add("conv-u");
@@ -978,18 +1288,30 @@ describe("conversation core for seats", () => {
       const events: string[] = [];
       nextUserResult = () =>
         new Promise((resolve) =>
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () => {
-            // The question was asked mid-turn, after the stop was requested.
-            questionsPending.add("conv-u");
-            events.push("turn ended");
-            resolve({ ...ok(), status: "cancelled" });
-          }),
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => {
+              // The question was asked mid-turn, after the stop was requested.
+              questionsPending.add("conv-u");
+              events.push("turn ended");
+              resolve({ ...ok(), status: "cancelled" });
+            },
+          ),
         );
-      const core = newCore({ records: { ...records(), async withdrawQuestion(identity) {
-        events.push("question withdrawn");
-        return records().withdrawQuestion(identity);
-      } } });
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Ask me", inputOrigin: "user" });
+      const core = newCore({
+        records: {
+          ...records(),
+          async withdrawQuestion(identity) {
+            events.push("question withdrawn");
+            return records().withdrawQuestion(identity);
+          },
+        },
+      });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Ask me",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       const stop = core.stopConversation("conv-u");
       expect(stop.requested).toBe(true);
@@ -1008,14 +1330,22 @@ describe("conversation core for seats", () => {
               signal.addEventListener("abort", () =>
                 resolve({
                   result: { ...ok(), status: "cancelled", finalText: null },
-                  outcome: { kind: "not_started", reason: "cancelled", message: "stopped" },
+                  outcome: {
+                    kind: "not_started",
+                    reason: "cancelled",
+                    message: "stopped",
+                  },
                 }),
               ),
             ),
         },
       });
       const cancel = new AbortController();
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask(), signal: cancel.signal });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+        signal: cancel.signal,
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       cancel.abort();
       await task;
@@ -1029,17 +1359,34 @@ describe("conversation core for seats", () => {
       const idle: string[] = [];
       nextUserResult = () =>
         new Promise((resolve) =>
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () => resolve({ ...ok(), status: "cancelled" })),
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => resolve({ ...ok(), status: "cancelled" }),
+          ),
         );
-      const core = newCore({ onConversationIdle: (conversationId) => idle.push(conversationId) });
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Long", inputOrigin: "user" });
+      const core = newCore({
+        onConversationIdle: (conversationId) => idle.push(conversationId),
+      });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Long",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       await core.retireConversation("conv-u");
       expect(idle).toEqual([]);
       // Gone for good: nothing recovers or drains it at the next boot.
-      expect(createConversationCoreRepo(fixture.db).getInteractive("conv-u")).toBeNull();
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Again", inputOrigin: "user" })).toMatchObject({
+      expect(
+        createConversationCoreRepo(fixture.db).getInteractive("conv-u"),
+      ).toBeNull();
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Again",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "refused",
       });
       expect(userCalls.map((call) => call.text)).toEqual(["Long"]);
@@ -1052,7 +1399,9 @@ describe("conversation core for seats", () => {
       const first = await core.sendUserMessage({
         conversationId: "conv-u",
         text: "Queued while busy",
-        images: [{ attachmentId: "img-1", mediaType: "image/png", base64Data: "aGk=" }],
+        images: [
+          { attachmentId: "img-1", mediaType: "image/png", base64Data: "aGk=" },
+        ],
         inputOrigin: "user",
         queuedDelivery: delivery,
       });
@@ -1060,7 +1409,11 @@ describe("conversation core for seats", () => {
       expect(first.cause).toBe("queue:conv-u:att-q");
       await first.settled;
       expect(queuedRequests).toEqual([
-        expect.objectContaining({ text: "Queued while busy", queuedDelivery: delivery, images: [expect.anything()] }),
+        expect.objectContaining({
+          text: "Queued while busy",
+          queuedDelivery: delivery,
+          images: [expect.anything()],
+        }),
       ]);
     });
 
@@ -1077,12 +1430,22 @@ describe("conversation core for seats", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       core.stopConversation("conv-u");
       await core.conversationIdle("conv-u");
-      expect(notStarted).toEqual([{ cause: "queue:conv-u:att-q", reason: "cancelled before admission", endedBy: "person" }]);
+      expect(notStarted).toEqual([
+        {
+          cause: "queue:conv-u:att-q",
+          reason: "cancelled before admission",
+          endedBy: "person",
+        },
+      ]);
 
       const crashed = newCore({
         slots: {
           acquire: (_label, signal) =>
-            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+            new Promise((_resolve, reject) =>
+              signal.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              ),
+            ),
         },
       });
       await crashed.sendUserMessage({
@@ -1099,13 +1462,21 @@ describe("conversation core for seats", () => {
           ...userTurns,
           notStarted(input) {
             heldWhileReturning.push(repo.queuedFor("conv-u").length);
-            notStarted.push({ cause: input.cause, reason: input.reason, endedBy: input.endedBy });
+            notStarted.push({
+              cause: input.cause,
+              reason: input.reason,
+              endedBy: input.endedBy,
+            });
           },
         },
       });
       await restarted.recover();
       // Provably never sent: the queue gets it back to deliver, before the mailbox copy goes.
-      expect(notStarted[1]).toEqual({ cause: "queue:conv-u:att-r", reason: "the server restarted before it started", endedBy: "server" });
+      expect(notStarted[1]).toEqual({
+        cause: "queue:conv-u:att-r",
+        reason: "the server restarted before it started",
+        endedBy: "server",
+      });
       expect(heldWhileReturning).toEqual([1]);
       expect(repo.queuedFor("conv-u")).toEqual([]);
       expect(withdrawn).toEqual([]);
@@ -1114,18 +1485,33 @@ describe("conversation core for seats", () => {
 
     it("leaves a message a server stop caught before it started for the next boot, which hands it back whole", async () => {
       enroll();
-      const image = { attachmentId: "img-1", mediaType: "image/png" as const, base64Data: "aGk=" };
+      const image = {
+        attachmentId: "img-1",
+        mediaType: "image/png" as const,
+        base64Data: "aGk=",
+      };
       const stopping = newCore({
         slots: {
           acquire: (_label, signal) =>
-            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+            new Promise((_resolve, reject) =>
+              signal.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              ),
+            ),
         },
       });
-      await stopping.sendUserMessage({ conversationId: "conv-u", text: "", images: [image], inputOrigin: "user" });
+      await stopping.sendUserMessage({
+        conversationId: "conv-u",
+        text: "",
+        images: [image],
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       await stopping.shutdown();
       // Nothing settled it away: the mailbox keeps the only copy.
-      expect(createConversationCoreRepo(fixture.db).queuedFor("conv-u")).toHaveLength(1);
+      expect(
+        createConversationCoreRepo(fixture.db).queuedFor("conv-u"),
+      ).toHaveLength(1);
       expect(notStarted).toEqual([]);
 
       const restarted = newCore({
@@ -1138,7 +1524,9 @@ describe("conversation core for seats", () => {
       });
       await restarted.recover();
       expect(withdrawn).toEqual([JSON.stringify([image])]);
-      expect(createConversationCoreRepo(fixture.db).queuedFor("conv-u")).toEqual([]);
+      expect(
+        createConversationCoreRepo(fixture.db).queuedFor("conv-u"),
+      ).toEqual([]);
     });
 
     it("answers a task's caller when the conversation goes away or the server stops before the task runs", async () => {
@@ -1147,27 +1535,53 @@ describe("conversation core for seats", () => {
       nextUserResult = () =>
         new Promise((resolve) => {
           finish = resolve;
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () => resolve({ ...ok(), status: "cancelled" }));
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => resolve({ ...ok(), status: "cancelled" }),
+          );
         });
       const core = newCore();
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      const waiting = core.runTask({ conversationId: "conv-u", turn: commitTask() });
+      const waiting = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       await core.retireConversation("conv-u");
-      expect(await waiting).toMatchObject({ kind: "not_started", reason: "cancelled" });
+      expect(await waiting).toMatchObject({
+        kind: "not_started",
+        reason: "cancelled",
+      });
 
       enroll("conv-v");
       nextUserResult = () =>
         new Promise((resolve) =>
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () => resolve({ ...ok(), status: "interrupted" })),
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => resolve({ ...ok(), status: "interrupted" }),
+          ),
         );
-      await core.sendUserMessage({ conversationId: "conv-v", text: "Busy", inputOrigin: "user" });
+      await core.sendUserMessage({
+        conversationId: "conv-v",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      const stopped = core.runTask({ conversationId: "conv-v", turn: commitTask() });
+      const stopped = core.runTask({
+        conversationId: "conv-v",
+        turn: commitTask(),
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       await core.shutdown();
-      expect(await stopped).toMatchObject({ kind: "not_started", interruption: { reason: "shutdown" } });
+      expect(await stopped).toMatchObject({
+        kind: "not_started",
+        interruption: { reason: "shutdown" },
+      });
       expect(taskCalls).toEqual([]);
       finish(ok());
     });
@@ -1188,7 +1602,9 @@ describe("conversation core for seats", () => {
           async notStarted(input) {
             await userTurns.notStarted?.(input);
             await new Promise((resolve) => setTimeout(resolve, 5));
-            order.push(`queue told, mailbox ${repo.getMailbox(input.cause)?.state ?? "empty"}`);
+            order.push(
+              `queue told, mailbox ${repo.getMailbox(input.cause)?.state ?? "empty"}`,
+            );
           },
         },
       });
@@ -1199,10 +1615,19 @@ describe("conversation core for seats", () => {
         queuedDelivery: { messageIds: ["q-5"], deliveryAttemptId: "att-5" },
       });
       if (sent.kind !== "accepted") throw new Error(sent.message);
-      expect(await sent.settled).toMatchObject({ status: "failed", failure: "database is locked" });
+      expect(await sent.settled).toMatchObject({
+        status: "failed",
+        failure: "database is locked",
+      });
       order.push("sender answered");
       await core.conversationIdle("conv-u");
-      expect(notStarted).toEqual([{ cause: "queue:conv-u:att-5", reason: "database is locked", endedBy: "failure" }]);
+      expect(notStarted).toEqual([
+        {
+          cause: "queue:conv-u:att-5",
+          reason: "database is locked",
+          endedBy: "failure",
+        },
+      ]);
       // The queue hears before the mailbox lets go of the batch and before its sender is answered.
       expect(order).toEqual(["queue told, mailbox queued", "sender answered"]);
       expect(repo.queuedFor("conv-u")).toEqual([]);
@@ -1213,10 +1638,17 @@ describe("conversation core for seats", () => {
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const core = newCore();
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask() });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(taskCalls).toEqual([]);
       finish(ok());
@@ -1228,21 +1660,37 @@ describe("conversation core for seats", () => {
       enroll();
       nextUserResult = () =>
         new Promise((resolve) =>
-          userCalls[userCalls.length - 1]?.signal.addEventListener("abort", () => resolve({ ...ok(), status: "cancelled" })),
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () => resolve({ ...ok(), status: "cancelled" }),
+          ),
         );
       const core = newCore();
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       const cancel = new AbortController();
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask(), signal: cancel.signal });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+        signal: cancel.signal,
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       cancel.abort();
-      expect(await task).toMatchObject({ kind: "not_started", reason: "cancelled" });
+      expect(await task).toMatchObject({
+        kind: "not_started",
+        reason: "cancelled",
+      });
 
       core.stopConversation("conv-u");
       await core.conversationIdle("conv-u");
       expect(taskCalls).toEqual([]);
-      expect(await core.runTask({ conversationId: "conv-x", turn: commitTask() })).toMatchObject({
+      expect(
+        await core.runTask({ conversationId: "conv-x", turn: commitTask() }),
+      ).toMatchObject({
         kind: "not_started",
         reason: "configuration",
       });
@@ -1254,13 +1702,24 @@ describe("conversation core for seats", () => {
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const repo = createConversationCoreRepo(fixture.db);
       const core = newCore({ repo: failingDeletes(repo, 1) });
-      await core.sendUserMessage({ conversationId: "conv-u", text: "Busy", inputOrigin: "user" });
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Busy",
+        inputOrigin: "user",
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       const cancel = new AbortController();
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask(), signal: cancel.signal });
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+        signal: cancel.signal,
+      });
       await new Promise((resolve) => setTimeout(resolve, 10));
       cancel.abort();
-      expect(await task).toMatchObject({ kind: "not_started", reason: "cancelled" });
+      expect(await task).toMatchObject({
+        kind: "not_started",
+        reason: "cancelled",
+      });
 
       finish(ok());
       await core.conversationIdle("conv-u");
@@ -1274,20 +1733,28 @@ describe("conversation core for seats", () => {
       const crashed = newCore({
         slots: {
           acquire: (_label, signal) =>
-            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+            new Promise((_resolve, reject) =>
+              signal.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              ),
+            ),
         },
       });
       void crashed.runTask({ conversationId: "conv-u", turn: commitTask() });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const core = newCore({ repo: failingDeletes(createConversationCoreRepo(fixture.db), 1) });
+      const core = newCore({
+        repo: failingDeletes(createConversationCoreRepo(fixture.db), 1),
+      });
       await core.recover();
       const summary = taskTurnRequestSchema.parse({
         kind: "task_run",
         promptText: "Summarize the session",
         executionClass: "nongoverned-task",
       });
-      expect(await core.runTask({ conversationId: "conv-u", turn: summary })).toEqual(taskOutcome("feat: add notices"));
+      expect(
+        await core.runTask({ conversationId: "conv-u", turn: summary }),
+      ).toEqual(taskOutcome("feat: add notices"));
       expect(taskCalls).toEqual(["Summarize the session"]);
       await crashed.shutdown();
     });
@@ -1310,10 +1777,16 @@ describe("conversation core for seats", () => {
       fixture.db.transaction(() => unreadable("user:conv-u:old-shape"))();
       const core = newCore();
 
-      const task = core.runTask({ conversationId: "conv-u", turn: commitTask() });
-      expect(await Promise.race([task, new Promise((resolve) => setTimeout(() => resolve("stuck"), 300))])).toEqual(
-        taskOutcome("feat: add notices"),
-      );
+      const task = core.runTask({
+        conversationId: "conv-u",
+        turn: commitTask(),
+      });
+      expect(
+        await Promise.race([
+          task,
+          new Promise((resolve) => setTimeout(() => resolve("stuck"), 300)),
+        ]),
+      ).toEqual(taskOutcome("feat: add notices"));
 
       await core.conversationIdle("conv-u");
       fixture.db.transaction(() => unreadable("user:conv-u:old-shape-2"))();
@@ -1325,7 +1798,13 @@ describe("conversation core for seats", () => {
       enroll();
       const core = newCore();
       await core.shutdown();
-      expect(await core.sendUserMessage({ conversationId: "conv-u", text: "Hello", inputOrigin: "user" })).toMatchObject({
+      expect(
+        await core.sendUserMessage({
+          conversationId: "conv-u",
+          text: "Hello",
+          inputOrigin: "user",
+        }),
+      ).toMatchObject({
         kind: "refused",
         code: "stopping",
       });
@@ -1351,7 +1830,11 @@ describe("conversation core for seats", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(turnCalls).toEqual([]);
-    const elsewhere = admission.tryAcquire({ worktree, kind: "full_write", holder: "someone-else" });
+    const elsewhere = admission.tryAcquire({
+      worktree,
+      kind: "full_write",
+      holder: "someone-else",
+    });
     expect(elsewhere).not.toBeNull();
     if (elsewhere !== null) admission.release(elsewhere);
     releaseSlot();
@@ -1418,7 +1901,10 @@ describe("conversation core for seats", () => {
   });
 
   it("keeps a seat's workspace grant while its agent's processes cannot be confirmed stopped", async () => {
-    nextResult = async () => ({ ...ok(), runtimeUncollected: "child process cleanup could not be verified" });
+    nextResult = async () => ({
+      ...ok(),
+      runtimeUncollected: "child process cleanup could not be verified",
+    });
     const core = newCore();
     const intent = workIntent();
     await core.submit(intent);
@@ -1426,13 +1912,25 @@ describe("conversation core for seats", () => {
 
     expect(core.outcome(intent.cause)).toMatchObject({
       kind: "settled",
-      outcome: { status: "failed", failure: expect.stringContaining("could not be confirmed stopped") },
+      outcome: {
+        status: "failed",
+        failure: expect.stringContaining("could not be confirmed stopped"),
+      },
     });
-    expect(admission.tryAcquire({ worktree, kind: "full_write", holder: "someone-else" })).toBeNull();
+    expect(
+      admission.tryAcquire({
+        worktree,
+        kind: "full_write",
+        holder: "someone-else",
+      }),
+    ).toBeNull();
   });
 
   it("fails a turn that needs that workspace at once, saying why, rather than waiting on it forever", async () => {
-    nextResult = async () => ({ ...ok(), runtimeUncollected: "child process cleanup could not be verified" });
+    nextResult = async () => ({
+      ...ok(),
+      runtimeUncollected: "child process cleanup could not be verified",
+    });
     const core = newCore();
     await core.submit(workIntent({ message: "First" }));
     await core.idle();
@@ -1443,7 +1941,10 @@ describe("conversation core for seats", () => {
     await core.idle();
     expect(core.outcome(second.cause)).toMatchObject({
       kind: "settled",
-      outcome: { status: "failed", failure: expect.stringContaining("could not be confirmed stopped") },
+      outcome: {
+        status: "failed",
+        failure: expect.stringContaining("could not be confirmed stopped"),
+      },
     });
     expect(turnCalls).toHaveLength(1);
   });
@@ -1487,7 +1988,13 @@ describe("conversation core for seats", () => {
     });
     expect(restarted.outcome(queued.cause)).toEqual({ kind: "queued" });
     // The seat conversation the interrupted turn ran in is idle again, with a notice.
-    expect(interrupted).toEqual([{ projectPath: "/repo", storeSessionName: "session", conversationId: "conv-1" }]);
+    expect(interrupted).toEqual([
+      {
+        projectPath: "/repo",
+        storeSessionName: "session",
+        conversationId: "conv-1",
+      },
+    ]);
   });
 
   it("withdraws a queued item", async () => {

@@ -506,8 +506,12 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
 
   it("starts Collaboration Mode from a /collab prompt on a conversation the shared core runs", async () => {
     vi.mocked(deps.coreConversations.owns).mockReturnValue(true);
-    const startMock = vi.fn().mockResolvedValue({ workflowId: "wf-core", status: "started" });
-    vi.mocked(deps.getCollaborationManager).mockReturnValue(makeMockManager({ start: startMock }));
+    const startMock = vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-core", status: "started" });
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(
+      makeMockManager({ start: startMock }),
+    );
     const response = await handlers.conversationPOST(
       makeRequest({ prompt: "/collab design the cache" }),
       makeConvParams(),
@@ -516,7 +520,10 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(response.status).toBe(202);
     expect(await response.json()).toMatchObject({ workflowId: "wf-core" });
     expect(startMock).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "conv-1", brief: "design the cache" }),
+      expect.objectContaining({
+        conversationId: "conv-1",
+        brief: "design the cache",
+      }),
     );
     expect(deps.coreConversations.prompt).not.toHaveBeenCalled();
   });
@@ -524,10 +531,15 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
   it("holds /collab on a core conversation where the core would hold a claim", async () => {
     vi.mocked(deps.coreConversations.owns).mockReturnValue(true);
     vi.mocked(deps.coreConversations.admitCollaboration).mockResolvedValue(
-      Response.json({ error: "Exit debug mode first", code: "DEBUG_MODE_ACTIVE" }, { status: 409 }),
+      Response.json(
+        { error: "Exit debug mode first", code: "DEBUG_MODE_ACTIVE" },
+        { status: 409 },
+      ),
     );
     const startMock = vi.fn();
-    vi.mocked(deps.getCollaborationManager).mockReturnValue(makeMockManager({ start: startMock }));
+    vi.mocked(deps.getCollaborationManager).mockReturnValue(
+      makeMockManager({ start: startMock }),
+    );
     const response = await handlers.conversationPOST(
       makeRequest({ prompt: "/collab design the cache" }),
       makeConvParams(),

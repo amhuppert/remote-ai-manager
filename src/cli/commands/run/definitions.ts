@@ -1,5 +1,8 @@
 import { bytes, defineGroup } from "cli-for-agents";
-import type { AllowanceKind, HaltDisposition } from "@/lib/execution-context/schemas";
+import type {
+  AllowanceKind,
+  HaltDisposition,
+} from "@/lib/execution-context/schemas";
 import { ccCommands } from "../../framework/family";
 
 /**
@@ -17,11 +20,22 @@ const DISPOSITION_KINDS = [
   "grant",
   "confirm_effect",
 ] as const satisfies readonly HaltDisposition["kind"][];
-const ALLOWANCE_KINDS = ["unfinishedTaskRetries", "validationRetries"] as const satisfies readonly AllowanceKind[];
-const everyDispositionListed: Exclude<HaltDisposition["kind"], (typeof DISPOSITION_KINDS)[number]> extends never
+const ALLOWANCE_KINDS = [
+  "unfinishedTaskRetries",
+  "validationRetries",
+] as const satisfies readonly AllowanceKind[];
+const everyDispositionListed: Exclude<
+  HaltDisposition["kind"],
+  (typeof DISPOSITION_KINDS)[number]
+> extends never
   ? true
   : never = true;
-const everyAllowanceListed: Exclude<AllowanceKind, (typeof ALLOWANCE_KINDS)[number]> extends never ? true : never = true;
+const everyAllowanceListed: Exclude<
+  AllowanceKind,
+  (typeof ALLOWANCE_KINDS)[number]
+> extends never
+  ? true
+  : never = true;
 void everyDispositionListed;
 void everyAllowanceListed;
 
@@ -73,11 +87,13 @@ export const runAmendSpec = {
   args: [runId],
   flags: {
     "based-on": {
-      description: "Definition revision the amendment was made from, as run show reports it",
+      description:
+        "Definition revision the amendment was made from, as run show reports it",
       value: { kind: "integer", min: 1 },
     },
     reason: {
-      description: "Why the definition changes, kept with the charter and document revisions it makes",
+      description:
+        "Why the definition changes, kept with the charter and document revisions it makes",
       value: { kind: "string", minLength: 1 },
     },
   },
@@ -275,10 +291,15 @@ export const runAmendCommand = ccCommands.defineCommand(runAmendSpec, {
   ],
   handler: async () => ({ default: (await handlers()).amendHandler }),
 });
-export const runDefinitionCommand = ccCommands.defineCommand(runDefinitionSpec, {
-  examples: [{ why: "Read the definition to amend it", args: { "run-id": "run-1" } }],
-  handler: async () => ({ default: (await handlers()).definitionHandler }),
-});
+export const runDefinitionCommand = ccCommands.defineCommand(
+  runDefinitionSpec,
+  {
+    examples: [
+      { why: "Read the definition to amend it", args: { "run-id": "run-1" } },
+    ],
+    handler: async () => ({ default: (await handlers()).definitionHandler }),
+  },
+);
 export const runShowCommand = ccCommands.defineCommand(runShowSpec, {
   examples: [{ why: "Read a run you launched", args: { "run-id": "run-1" } }],
   handler: async () => ({ default: (await handlers()).showHandler }),
@@ -318,7 +339,11 @@ export const runCancelCommand = ccCommands.defineCommand(runCancelSpec, {
 });
 export const runRetryCommand = ccCommands.defineCommand(runRetrySpec, {
   examples: [
-    { why: "Publish a lane again after committing session changes", args: { "run-id": "run-1" }, flags: { lane: "api" } },
+    {
+      why: "Publish a lane again after committing session changes",
+      args: { "run-id": "run-1" },
+      flags: { lane: "api" },
+    },
   ],
   handler: async () => ({ default: (await handlers()).retryHandler }),
 });
@@ -360,7 +385,8 @@ export const contextDocPublishSpec = {
   args: [documentFile],
   flags: {
     as: {
-      description: "The document's path among the run's documents, when it is not the file's",
+      description:
+        "The document's path among the run's documents, when it is not the file's",
       value: { kind: "string", minLength: 1 },
     },
     description: {
@@ -373,16 +399,22 @@ export const contextDocPublishSpec = {
     },
   },
 } as const;
-export const contextDocPublishCommand = ccCommands.defineCommand(contextDocPublishSpec, {
-  examples: [
-    {
-      why: "Share the API contract with work that starts later",
-      args: { file: "docs/api-contract.md" },
-      flags: { description: "The API's endpoints and errors", "read-when": "Before you call or document the API" },
-    },
-  ],
-  handler: async () => ({ default: (await handlers()).docPublishHandler }),
-});
+export const contextDocPublishCommand = ccCommands.defineCommand(
+  contextDocPublishSpec,
+  {
+    examples: [
+      {
+        why: "Share the API contract with work that starts later",
+        args: { file: "docs/api-contract.md" },
+        flags: {
+          description: "The API's endpoints and errors",
+          "read-when": "Before you call or document the API",
+        },
+      },
+    ],
+    handler: async () => ({ default: (await handlers()).docPublishHandler }),
+  },
+);
 
 export const runCommands = [
   runLaunchCommand,
@@ -421,6 +453,7 @@ export const runGroups = [
   defineGroup({
     path: "context doc",
     summary: "Share documents with your run's later work",
-    description: "Document commands apply to the run of the context your conversation is working.",
+    description:
+      "Document commands apply to the run of the context your conversation is working.",
   }),
 ] as const;

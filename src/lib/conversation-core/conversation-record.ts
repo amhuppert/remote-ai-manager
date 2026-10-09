@@ -1,9 +1,15 @@
 import { isInTurnQuestionId } from "@/lib/conversations/in-turn-questions";
 import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
-import type { AskQuestionItem, ConversationState } from "@/lib/conversations/schemas";
+import type {
+  AskQuestionItem,
+  ConversationState,
+} from "@/lib/conversations/schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import { toPromptActorResult, type TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
+import {
+  toPromptActorResult,
+  type TurnExecutionOutcome,
+} from "@/lib/conversation-core/turn/turn-result";
 import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import {
   applyDebugCommand,
@@ -43,7 +49,8 @@ export type ConversationRow = Pick<
  * New input waits while an ordinary queued delivery awaits the person's
  * review: whether the earlier work was delivered is still undecided.
  */
-export const QUEUE_REVIEW_REQUIRED_MESSAGE = "Review queued deliveries before sending another prompt.";
+export const QUEUE_REVIEW_REQUIRED_MESSAGE =
+  "Review queued deliveries before sending another prompt.";
 
 /** A batch of questions an agent asks the person mid-turn. */
 export interface QuestionBatch {
@@ -100,9 +107,14 @@ export function settlementOf(outcome: TurnExecutionOutcome): TurnSettlement {
   const result = outcome.result;
   const presented = toPromptActorResult(outcome);
   const debugOutcome: DebugTurnOutcome = {
-    ...(presented.structuredOutput !== undefined ? { structuredOutput: presented.structuredOutput } : {}),
+    ...(presented.structuredOutput !== undefined
+      ? { structuredOutput: presented.structuredOutput }
+      : {}),
     // A stopped turn failed its phase, as the conversation actor records it.
-    error: outcome.interruption !== undefined ? `Aborted: ${outcome.interruption.reason}` : (presented.error ?? null),
+    error:
+      outcome.interruption !== undefined
+        ? `Aborted: ${outcome.interruption.reason}`
+        : (presented.error ?? null),
   };
   if (result === null) {
     return {
@@ -129,7 +141,10 @@ export function settlementOf(outcome: TurnExecutionOutcome): TurnSettlement {
           : { kind: "keep" },
     costUsd: result.usage.costUsd ?? null,
     durationMs: result.usage.durationMs ?? null,
-    numTurns: call.kind === "completed" || call.kind === "failed" ? (call.numTurns ?? null) : null,
+    numTurns:
+      call.kind === "completed" || call.kind === "failed"
+        ? (call.numTurns ?? null)
+        : null,
     contextTokens: result.usage.contextTokens ?? null,
     contextWindowMax: result.usage.contextWindowMax ?? null,
     // The turn engine leaves a notice for a failure nobody stopped.
@@ -146,9 +161,12 @@ export function settlementOf(outcome: TurnExecutionOutcome): TurnSettlement {
  * take it; null outside debug mode. The core mints a session identity on
  * entry, so an active session without one is a corrupt row.
  */
-export function runtimeDebugMode(state: ConversationRow["debugMode"]): RuntimeDebugModeState | null {
+export function runtimeDebugMode(
+  state: ConversationRow["debugMode"],
+): RuntimeDebugModeState | null {
   if (state === null || !state.active) return null;
-  if (state.debugSessionId === undefined) throw new Error("An active debug session has no identity");
+  if (state.debugSessionId === undefined)
+    throw new Error("An active debug session has no identity");
   return { ...state, debugSessionId: state.debugSessionId };
 }
 
@@ -157,7 +175,9 @@ export function runtimeDebugMode(state: ConversationRow["debugMode"]): RuntimeDe
  * continuation (a fork's, before its own first prompt): only that backend can
  * resume it.
  */
-export function backendLocked(row: Pick<ConversationRow, "promptCount" | "backendRef">): boolean {
+export function backendLocked(
+  row: Pick<ConversationRow, "promptCount" | "backendRef">,
+): boolean {
   return row.promptCount > 0 || row.backendRef !== null;
 }
 
@@ -166,11 +186,16 @@ export function resumableRef(
   row: Pick<ConversationRow, "backendRef">,
   backend: ConversationState["agentBackend"],
 ): AgentSessionRef | null {
-  return row.backendRef !== null && row.backendRef.backend === backend ? row.backendRef : null;
+  return row.backendRef !== null && row.backendRef.backend === backend
+    ? row.backendRef
+    : null;
 }
 
 /** Pure over the row draft: the backend is chosen with the first message and fixed from then on. */
-export function applyBackendAdoption(row: ConversationRow, backend: ConversationState["agentBackend"]): void {
+export function applyBackendAdoption(
+  row: ConversationRow,
+  backend: ConversationState["agentBackend"],
+): void {
   if (backendLocked(row)) {
     throw new Error("Cannot change backend after prompts have been sent");
   }
@@ -190,7 +215,9 @@ export function applyTurnClaimed(row: ConversationRow, now: string): void {
 }
 
 /** Pure over the row draft: a claim the turn never took up (no turn began) returns the row to idle. */
-export function applyClaimEnded(row: ConversationRow): "waiting_for_input" | "awaiting" | null {
+export function applyClaimEnded(
+  row: ConversationRow,
+): "waiting_for_input" | "awaiting" | null {
   if (row.status !== "running" || row.activeTurnSource !== null) return null;
   row.status = idleStatus(row);
   return row.status;
@@ -201,7 +228,11 @@ export function applyClaimEnded(row: ConversationRow): "waiting_for_input" | "aw
  * interactive turn (a message, feedback, a run's notice) supersedes a question
  * left unanswered, as the conversation actor's turn claim does.
  */
-export function applyTurnBegin(row: ConversationRow, source: TurnSource, now: string): void {
+export function applyTurnBegin(
+  row: ConversationRow,
+  source: TurnSource,
+  now: string,
+): void {
   row.status = "running";
   row.activeTurnSource = source;
   row.lastActivityAt = now;
@@ -216,7 +247,10 @@ export function applyTurnBegin(row: ConversationRow, source: TurnSource, now: st
 }
 
 /** Pure over the row draft: the agent asks; refused while another batch is pending. */
-export function applyQuestionAsked(row: ConversationRow, batch: QuestionBatch): boolean {
+export function applyQuestionAsked(
+  row: ConversationRow,
+  batch: QuestionBatch,
+): boolean {
   if (row.pendingQuestionId !== null) return false;
   row.status = "waiting_for_input";
   row.pendingQuestionId = batch.questionId;
@@ -225,7 +259,9 @@ export function applyQuestionAsked(row: ConversationRow, batch: QuestionBatch): 
 }
 
 /** With no question pending: running while a turn is, idle otherwise. */
-export function statusWithoutQuestion(row: ConversationRow): "running" | "awaiting" {
+export function statusWithoutQuestion(
+  row: ConversationRow,
+): "running" | "awaiting" {
   return row.activeTurnSource !== null ? "running" : "awaiting";
 }
 
@@ -239,11 +275,16 @@ function idleStatus(row: ConversationRow): "waiting_for_input" | "awaiting" {
  * answer's enqueue may already have consumed the marker; only another
  * question's marker refuses.
  */
-export function applyQuestionCleared(row: ConversationRow, questionId: string): boolean {
-  if (row.pendingQuestionId !== null && row.pendingQuestionId !== questionId) return false;
+export function applyQuestionCleared(
+  row: ConversationRow,
+  questionId: string,
+): boolean {
+  if (row.pendingQuestionId !== null && row.pendingQuestionId !== questionId)
+    return false;
   row.pendingQuestionId = null;
   row.pendingQuestions = null;
-  if (row.status === "waiting_for_input") row.status = statusWithoutQuestion(row);
+  if (row.status === "waiting_for_input")
+    row.status = statusWithoutQuestion(row);
   return true;
 }
 
@@ -262,7 +303,10 @@ export function applyQuestionWithdrawn(row: ConversationRow): boolean {
  * the turn's transport. Null, changing nothing, when the row shows no turn:
  * its turn settled the row before the restart reached its attempt.
  */
-export function applyTurnInterrupted(row: ConversationRow, now: string): "waiting_for_input" | "awaiting" | null {
+export function applyTurnInterrupted(
+  row: ConversationRow,
+  now: string,
+): "waiting_for_input" | "awaiting" | null {
   if (row.activeTurnSource === null && row.status !== "running") return null;
   if (isInTurnQuestionId(row.pendingQuestionId)) {
     row.pendingQuestionId = null;
@@ -289,7 +333,10 @@ export function applyTurnSettlement(
   settlement: TurnSettlement,
   now: string,
   source: TurnSource,
-): { status: "waiting_for_input" | "awaiting"; debug: DebugFinalization | null } {
+): {
+  status: "waiting_for_input" | "awaiting";
+  debug: DebugFinalization | null;
+} {
   const status = idleStatus(row);
   row.status = status;
   row.activeTurnSource = null;
@@ -297,17 +344,26 @@ export function applyTurnSettlement(
   // In debug mode the debug workflow decides what the person's turn meant.
   const debugMode = source === "user" ? runtimeDebugMode(row.debugMode) : null;
   const debug =
-    debugMode === null ? null : resolveDebugFinalization({ debugMode, lastResult: settlement.debugOutcome, lastError: null });
+    debugMode === null
+      ? null
+      : resolveDebugFinalization({
+          debugMode,
+          lastResult: settlement.debugOutcome,
+          lastError: null,
+        });
   if (debug !== null) row.debugMode = debug.debugMode;
   // Control returns to the person, who may not have watched the turn finish;
   // in debug mode only a phase advance asks for them.
-  if (source === "user") row.unread = debug === null || debug.kind === "advance";
-  if (settlement.continuity.kind === "set") row.backendRef = settlement.continuity.ref;
+  if (source === "user")
+    row.unread = debug === null || debug.kind === "advance";
+  if (settlement.continuity.kind === "set")
+    row.backendRef = settlement.continuity.ref;
   if (settlement.continuity.kind === "clear") row.backendRef = null;
   if (!settlement.counted) return { status, debug };
   row.promptCount += 1;
   row.totalCostUsd = (row.totalCostUsd ?? 0) + (settlement.costUsd ?? 0);
-  row.totalDurationMs = (row.totalDurationMs ?? 0) + (settlement.durationMs ?? 0);
+  row.totalDurationMs =
+    (row.totalDurationMs ?? 0) + (settlement.durationMs ?? 0);
   row.totalTurns = (row.totalTurns ?? 0) + (settlement.numTurns ?? 0);
   row.contextTokens = settlement.contextTokens ?? row.contextTokens;
   row.contextWindowMax = settlement.contextWindowMax ?? row.contextWindowMax;
@@ -320,7 +376,11 @@ export function applyDebugCommandToRow(
   command: DebugCommand,
   now: string,
 ): DebugCommandEffect | null {
-  const effect = applyDebugCommand(runtimeDebugMode(row.debugMode), command, now);
+  const effect = applyDebugCommand(
+    runtimeDebugMode(row.debugMode),
+    command,
+    now,
+  );
   if (effect === null) return null;
   row.debugMode = effect.debugMode;
   return effect;
@@ -359,11 +419,19 @@ export interface ConversationRecordPort {
   /** The conversation is running a turn now; published to every client. */
   beginTurn(identity: ConversationIdentity, source: TurnSource): Promise<void>;
   /** Settles the conversation's profile for this turn: locked from now on, bound to what the agent runs as. */
-  admitProfile(identity: ConversationIdentity): Promise<AdmittedConversationProfile>;
+  admitProfile(
+    identity: ConversationIdentity,
+  ): Promise<AdmittedConversationProfile>;
   /** A conversation that has not run yet takes the backend its first message chose. */
-  adoptBackend(identity: ConversationIdentity, backend: ConversationState["agentBackend"]): Promise<void>;
+  adoptBackend(
+    identity: ConversationIdentity,
+    backend: ConversationState["agentBackend"],
+  ): Promise<void>;
   /** The backend announced a continuation mid-turn: a restart must still be able to resume it. */
-  recordContinuity(identity: ConversationIdentity, ref: AgentSessionRef): Promise<void>;
+  recordContinuity(
+    identity: ConversationIdentity,
+    ref: AgentSessionRef,
+  ): Promise<void>;
   /**
    * A person's message will not start (a restart dropped it, or a hold stopped
    * it): the whole message goes back to them for review, to send again or
@@ -381,7 +449,11 @@ export interface ConversationRecordPort {
   /** The person stopped the conversation: its pending question is withdrawn. False when none was pending. */
   withdrawQuestion(identity: ConversationIdentity): Promise<boolean>;
   /** Applies the settlement to the row and publishes the conversation's idle status. */
-  settleTurn(identity: ConversationIdentity, settlement: TurnSettlement, source: TurnSource): Promise<TurnSettled>;
+  settleTurn(
+    identity: ConversationIdentity,
+    settlement: TurnSettlement,
+    source: TurnSource,
+  ): Promise<TurnSettled>;
 }
 
 /** Why the conversation row holds work back. */

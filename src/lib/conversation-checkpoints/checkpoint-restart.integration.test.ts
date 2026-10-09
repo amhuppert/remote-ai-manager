@@ -14,7 +14,10 @@ import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-dr
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 
-import { setPersistenceDeps, validateRestoredSnapshot } from "@/lib/workflows/conversation/persistence";
+import {
+  setPersistenceDeps,
+  validateRestoredSnapshot,
+} from "@/lib/workflows/conversation/persistence";
 import { toPersistedConversationSnapshot } from "@/lib/workflows/conversation/persisted-snapshot-codec";
 import { rehydrateConversationActors } from "@/lib/workflows/conversation/rehydration";
 import {

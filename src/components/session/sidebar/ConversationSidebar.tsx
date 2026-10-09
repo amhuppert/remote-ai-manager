@@ -1069,7 +1069,9 @@ function ConversationSidebar({
                 projectName={projectName}
                 pending={createConvoMutation.isPending}
                 onCreate={handleNewConversation}
-                onCreateCore={(profile) => handleNewConversation(profile, "core")}
+                onCreateCore={(profile) =>
+                  handleNewConversation(profile, "core")
+                }
               />
             )}
             {showNewConversationButton && (

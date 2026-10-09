@@ -7,9 +7,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createConversationSubscriptionsRepo } from "../conversation-subscriptions-repo";
 import { createWriteQueue } from "../write-queue";
-import {
-  CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL,
-} from "../state-db";
+import { CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL } from "../state-db";
 import { enforceCurrentSchemaCompatibility } from "../schema-compatibility";
 import { conversationNoticeInbox } from "./0061-conversation-notice-inbox";
 import { createSubscriptionService } from "@/lib/subscriptions/service";

@@ -64,12 +64,22 @@ describe("run supervision", () => {
       enrolledAt: "2026-10-03T10:00:00.000Z",
     });
     const s = h.compose();
-    h.queued.push({ deliveryAttemptId: "att-1", messageIds: ["q-1"], content: [{ type: "text", text: "First" }], command: null });
+    h.queued.push({
+      deliveryAttemptId: "att-1",
+      messageIds: ["q-1"],
+      content: [{ type: "text", text: "First" }],
+      command: null,
+    });
     await s.drainConversationQueue("chat-1");
     await quiesce(s);
     expect(h.userMessages).toEqual(["First"]);
 
-    h.queued.push({ deliveryAttemptId: "att-2", messageIds: ["q-2"], content: [{ type: "text", text: "Second" }], command: null });
+    h.queued.push({
+      deliveryAttemptId: "att-2",
+      messageIds: ["q-2"],
+      content: [{ type: "text", text: "Second" }],
+      command: null,
+    });
     const restarted = h.compose();
     await restarted.boot();
     await quiesce(restarted);
@@ -101,7 +111,11 @@ describe("run supervision", () => {
       kind: "succeeded",
     });
     expect(h.recorded.map((b) => [b.runId, b.kind, b.detail])).toEqual([
-      ["run-1", "succeeded", { kind: "succeeded", outputs: { agent: { summary: "Done." } } }],
+      [
+        "run-1",
+        "succeeded",
+        { kind: "succeeded", outputs: { agent: { summary: "Done." } } },
+      ],
     ]);
 
     await launch(s, "run-2");
@@ -148,19 +162,31 @@ describe("run supervision", () => {
     const s = h.compose();
     await launch(s, "run-1");
     const halted = s.contexts.describe("run-1.agent");
-    expect(halted?.progress).toMatchObject({ kind: "halted", halt: "workspace_refused" });
+    expect(halted?.progress).toMatchObject({
+      kind: "halted",
+      halt: "workspace_refused",
+    });
 
     await s.runs.resume("run-1", [
-      { contextId: "run-1.agent", occurrence: halted?.occurrence ?? "", disposition: { kind: "continue" } },
+      {
+        contextId: "run-1.agent",
+        occurrence: halted?.occurrence ?? "",
+        disposition: { kind: "continue" },
+      },
     ]);
     await quiesce(s);
-    expect(s.runs.observe("run-1")?.record.progress).toEqual({ kind: "succeeded" });
+    expect(s.runs.observe("run-1")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
   });
 
   it("lets a seat ask its owner only in a turn that can wait for the answer, not while it captures its output", async () => {
     const asks: Array<[string, boolean | undefined]> = [];
     h.script = async (input, self) => {
-      asks.push([input.request.kind, self.seatFor(input.conversationId)?.canAsk]);
+      asks.push([
+        input.request.kind,
+        self.seatFor(input.conversationId)?.canAsk,
+      ]);
       return input.request.kind === "capture_output"
         ? { ...done("Captured."), structuredOutput: { summary: "Done." } }
         : done("Done.");
@@ -179,7 +205,11 @@ describe("run supervision", () => {
           key: "agent",
           dependsOn: [],
           request: agentStartRequest("run-1", {
-            outputSchema: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] },
+            outputSchema: {
+              type: "object",
+              properties: { summary: { type: "string" } },
+              required: ["summary"],
+            },
           }),
         },
       ],
@@ -227,34 +257,58 @@ describe("lane runs across a restart", () => {
         { key: "y", brief: "Y", lane: "b", dependsOn: ["x"] },
       ],
     });
-    const seat = { backend: "claude" as const, modelSelection: { modelId: "sonnet", parameters: {} } };
+    const seat = {
+      backend: "claude" as const,
+      modelSelection: { modelId: "sonnet", parameters: {} },
+    };
     await before.runs.launch(
       compileWorkflow({
         runId: "run-1",
         cause: "launch-run-1",
         projectPath: "/repo",
-        session: { sessionName: "session", worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+        session: {
+          sessionName: "session",
+          worktreePath: "/repo/.worktrees/session",
+          branch: "csm/session",
+        },
         owner: { conversationId: "owner-1", sessionName: "session" },
-        laneTargets: (laneId) => ({ worktreePath: `/repo/.worktrees/session.${laneId}`, branch: `csm/session-${laneId}` }),
+        laneTargets: (laneId) => ({
+          worktreePath: `/repo/.worktrees/session.${laneId}`,
+          branch: `csm/session-${laneId}`,
+        }),
         request,
-        seats: { x: { implementer: seat, reviewers: [] }, y: { implementer: seat, reviewers: [] } },
+        seats: {
+          x: { implementer: seat, reviewers: [] },
+          y: { implementer: seat, reviewers: [] },
+        },
       }),
     );
     // Lane a provisions, x lands, and its publication starts and stays in its merge.
-    for (let tries = 0; tries < 200 && before.workspace.outcome("run-1:publish:a:1").kind !== "running"; tries++)
+    for (
+      let tries = 0;
+      tries < 200 &&
+      before.workspace.outcome("run-1:publish:a:1").kind !== "running";
+      tries++
+    )
       await new Promise((resolve) => setTimeout(resolve, 10));
     expect(before.workspace.outcome("run-1:publish:a:1").kind).toBe("running");
 
     // The last process published lane a and stopped before storing the receipt.
     h.laneGit.state.mergeGate = null;
     h.laneGit.state.heads.set("csm/session", "p1");
-    h.laneGit.state.messages.set("p1", "Publish lane 1-a\n\nCC-Publication: run-1:publish:a:1");
+    h.laneGit.state.messages.set(
+      "p1",
+      "Publish lane 1-a\n\nCC-Publication: run-1:publish:a:1",
+    );
     const after = h.compose();
     await after.boot();
     await quiesce(after, false);
 
     expect(after.runs.observe("run-1")?.record.progress.kind).toBe("paused");
-    expect(after.workspace.outcome("run-1:publish:a:1")).toMatchObject({ kind: "settled", outcome: { kind: "published" } });
+    expect(after.workspace.outcome("run-1:publish:a:1")).toMatchObject({
+      kind: "settled",
+      outcome: { kind: "published" },
+    });
     expect(after.workspace.outcome("run-1:provision:b:1").kind).toBe("unknown");
   });
 });
@@ -278,7 +332,10 @@ describe("workflow runs on the supervision graph", () => {
         await Promise.race([
           together,
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("writers did not overlap")), 2000),
+            setTimeout(
+              () => reject(new Error("writers did not overlap")),
+              2000,
+            ),
           ),
         ]);
       }
@@ -292,18 +349,44 @@ describe("workflow runs on the supervision graph", () => {
     const request = workflowLaunchRequestSchema.parse({
       title: "Two writers and an integration",
       contexts: [
-        { key: "api", title: "Build the API", brief: "API", scope: { mode: "owned", paths: ["src/api"] }, checks: ["typecheck"] },
-        { key: "ui", title: "Build the UI", brief: "UI", scope: { mode: "owned", paths: ["src/ui"] }, checks: ["typecheck"] },
-        { key: "integrate", title: "Check the journey", brief: "Check", dependsOn: ["api", "ui"], scope: { mode: "readOnly" }, checks: ["typecheck"] },
+        {
+          key: "api",
+          title: "Build the API",
+          brief: "API",
+          scope: { mode: "owned", paths: ["src/api"] },
+          checks: ["typecheck"],
+        },
+        {
+          key: "ui",
+          title: "Build the UI",
+          brief: "UI",
+          scope: { mode: "owned", paths: ["src/ui"] },
+          checks: ["typecheck"],
+        },
+        {
+          key: "integrate",
+          title: "Check the journey",
+          brief: "Check",
+          dependsOn: ["api", "ui"],
+          scope: { mode: "readOnly" },
+          checks: ["typecheck"],
+        },
       ],
     });
     const launch = compileWorkflow({
       runId: "run-w",
       cause: "launch-run-w",
       projectPath: "/repo",
-      session: { sessionName: "session", worktreePath: "/repo/.worktrees/session", branch: "csm/session" },
+      session: {
+        sessionName: "session",
+        worktreePath: "/repo/.worktrees/session",
+        branch: "csm/session",
+      },
       owner: { conversationId: "owner-1", sessionName: "session" },
-      laneTargets: (laneId) => ({ worktreePath: `/repo/.worktrees/session.${laneId}`, branch: `csm/session-${laneId}` }),
+      laneTargets: (laneId) => ({
+        worktreePath: `/repo/.worktrees/session.${laneId}`,
+        branch: `csm/session-${laneId}`,
+      }),
       request,
       seats: {
         api: { implementer: seat, reviewers: [] },
@@ -316,8 +399,12 @@ describe("workflow runs on the supervision graph", () => {
     await quiesce(s);
 
     expect(working.size).toBe(2);
-    expect(s.runs.observe("run-w")?.record.progress).toEqual({ kind: "succeeded" });
-    expect(h.checksRun).toEqual([{ bindingId: "run-w.integrate", command: "typecheck" }]);
+    expect(s.runs.observe("run-w")?.record.progress).toEqual({
+      kind: "succeeded",
+    });
+    expect(h.checksRun).toEqual([
+      { bindingId: "run-w.integrate", command: "typecheck" },
+    ]);
   });
 });
 
@@ -328,7 +415,11 @@ describe("a collaboration's claim on a conversation the core runs", () => {
   });
 
   it("runs nothing more in a conversation whose last runtime did not close, telling a task's caller why", async () => {
-    await fixture.seedConversation("/repo", "session", makeConversationState({ id: "chat-stuck" }));
+    await fixture.seedConversation(
+      "/repo",
+      "session",
+      makeConversationState({ id: "chat-stuck" }),
+    );
     createConversationCoreRepo(fixture.db).enrollInteractive({
       conversationId: "chat-stuck",
       projectPath: "/repo",
@@ -338,7 +429,13 @@ describe("a collaboration's claim on a conversation the core runs", () => {
     h.uncollected.set("chat-stuck", "the agent process did not exit");
     const s = h.compose();
 
-    expect(await s.core.sendUserMessage({ conversationId: "chat-stuck", text: "Next", inputOrigin: "user" })).toMatchObject({
+    expect(
+      await s.core.sendUserMessage({
+        conversationId: "chat-stuck",
+        text: "Next",
+        inputOrigin: "user",
+      }),
+    ).toMatchObject({
       kind: "refused",
       code: "busy",
       message: expect.stringContaining("did not close"),
@@ -352,7 +449,10 @@ describe("a collaboration's claim on a conversation the core runs", () => {
           executionClass: "nongoverned-task",
         }),
       }),
-    ).toMatchObject({ kind: "not_started", message: expect.stringContaining("did not close") });
+    ).toMatchObject({
+      kind: "not_started",
+      message: expect.stringContaining("did not close"),
+    });
     expect(h.userMessages).toEqual([]);
   });
 
@@ -360,7 +460,10 @@ describe("a collaboration's claim on a conversation the core runs", () => {
     await fixture.seedConversation(
       "/repo",
       "session",
-      makeConversationState({ id: "chat-collab", owner: { kind: "collaboration", workflowId: "wf-1", attemptEpoch: 1 } }),
+      makeConversationState({
+        id: "chat-collab",
+        owner: { kind: "collaboration", workflowId: "wf-1", attemptEpoch: 1 },
+      }),
     );
     createConversationCoreRepo(fixture.db).enrollInteractive({
       conversationId: "chat-collab",
@@ -372,17 +475,36 @@ describe("a collaboration's claim on a conversation the core runs", () => {
     const s = h.compose();
 
     expect(
-      await s.core.sendUserMessage({ conversationId: "chat-collab", text: "Meanwhile", inputOrigin: "user" }),
+      await s.core.sendUserMessage({
+        conversationId: "chat-collab",
+        text: "Meanwhile",
+        inputOrigin: "user",
+      }),
     ).toMatchObject({ kind: "refused", code: "owned" });
     // The collaboration's own claim (a reclaim) is not held by its owner.
     expect(
-      await s.core.whileIdle("chat-collab", async () => "reclaimed", { kind: "collaboration_claim" }, { holds: "claim" }),
+      await s.core.whileIdle(
+        "chat-collab",
+        async () => "reclaimed",
+        { kind: "collaboration_claim" },
+        { holds: "claim" },
+      ),
     ).toEqual({ kind: "ran", value: "reclaimed" });
 
-    await fixture.store.mutateConversation("/repo", "session", "chat-collab", "test.release", (row) => {
-      row.owner = null;
+    await fixture.store.mutateConversation(
+      "/repo",
+      "session",
+      "chat-collab",
+      "test.release",
+      (row) => {
+        row.owner = null;
+      },
+    );
+    const sent = await s.core.sendUserMessage({
+      conversationId: "chat-collab",
+      text: "Now",
+      inputOrigin: "user",
     });
-    const sent = await s.core.sendUserMessage({ conversationId: "chat-collab", text: "Now", inputOrigin: "user" });
     if (sent.kind !== "accepted") throw new Error(sent.message);
     await sent.settled;
     expect(h.userMessages).toEqual(["Now"]);
@@ -400,11 +522,20 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
   });
   const at = () => new Date().toISOString();
 
-  async function enrolledChat(conversationId: string, overrides: Parameters<typeof makeConversationState>[0] = {}) {
+  async function enrolledChat(
+    conversationId: string,
+    overrides: Parameters<typeof makeConversationState>[0] = {},
+  ) {
     await fixture.seedConversation(
       "/repo",
       "session",
-      makeConversationState({ id: conversationId, promptCount: 2, transcriptPath: `/t/${conversationId}.jsonl`, backendRef: LIVE_REF, ...overrides }),
+      makeConversationState({
+        id: conversationId,
+        promptCount: 2,
+        transcriptPath: `/t/${conversationId}.jsonl`,
+        backendRef: LIVE_REF,
+        ...overrides,
+      }),
     );
     createConversationCoreRepo(fixture.db).enrollInteractive({
       conversationId,
@@ -414,19 +545,40 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
     });
   }
 
-  function unwrap<T>(result: { ok: true; value: T } | { ok: false; refusal: { code: string } }): T {
+  function unwrap<T>(
+    result: { ok: true; value: T } | { ok: false; refusal: { code: string } },
+  ): T {
     if (!result.ok) throw new Error(`refused: ${result.refusal.code}`);
     return result.value;
   }
 
   /** Drives an operation through the real repository to `phase`, as a crashed process left it. */
-  async function operationAt(conversationId: string, phase: "building" | "retiring" | "delivering", binding = {}) {
+  async function operationAt(
+    conversationId: string,
+    phase: "building" | "retiring" | "delivering",
+    binding = {},
+  ) {
     const repo = h.checkpoint.repo;
     const key = keyOf(conversationId);
     const id = `op-${conversationId}`;
-    unwrap(await repo.admitOperation({ key, requestId: id, sourceBasis: BASIS, priorBackendRef: LIVE_REF.ref, requestedAt: at() }));
+    unwrap(
+      await repo.admitOperation({
+        key,
+        requestId: id,
+        sourceBasis: BASIS,
+        priorBackendRef: LIVE_REF.ref,
+        requestedAt: at(),
+      }),
+    );
     if (phase === "building") return id;
-    unwrap(await repo.freezePayload({ key, operationId: id, payload: checkpointPayload(id, BASIS, at()), at: at() }));
+    unwrap(
+      await repo.freezePayload({
+        key,
+        operationId: id,
+        payload: checkpointPayload(id, BASIS, at()),
+        at: at(),
+      }),
+    );
     if (phase === "retiring") return id;
     unwrap(await repo.commitReady({ key, operationId: id, at: at() }));
     unwrap(
@@ -448,7 +600,11 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
   }
 
   function reloadedRepo() {
-    return createConversationCheckpointsRepo(fixture.db, createWriteQueue(), fixture.recreateStore().checkpointContinuation);
+    return createConversationCheckpointsRepo(
+      fixture.db,
+      createWriteQueue(),
+      fixture.recreateStore().checkpointContinuation,
+    );
   }
 
   beforeEach(() => {
@@ -469,14 +625,30 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
     await quiesce(s);
 
     const repo = reloadedRepo();
-    expect(await repo.getOperation(keyOf("chat-a"), building)).toMatchObject({ phase: "failed" });
-    expect(await repo.getOperation(keyOf("chat-b"), retiring)).toMatchObject({ phase: "ready" });
-    expect((await fixture.recreateStore().getConversation("/repo", "session", "chat-b"))?.backendRef).toBeNull();
+    expect(await repo.getOperation(keyOf("chat-a"), building)).toMatchObject({
+      phase: "failed",
+    });
+    expect(await repo.getOperation(keyOf("chat-b"), retiring)).toMatchObject({
+      phase: "ready",
+    });
+    expect(
+      (
+        await fixture
+          .recreateStore()
+          .getConversation("/repo", "session", "chat-b")
+      )?.backendRef,
+    ).toBeNull();
     expect(await repo.getOperation(keyOf("chat-c"), delivering)).toMatchObject({
       phase: "needs_reconciliation",
       lastStablePhase: "delivering",
     });
-    expect(await s.core.sendUserMessage({ conversationId: "chat-c", text: "Hello", inputOrigin: "user" })).toMatchObject({
+    expect(
+      await s.core.sendUserMessage({
+        conversationId: "chat-c",
+        text: "Hello",
+        inputOrigin: "user",
+      }),
+    ).toMatchObject({
       kind: "refused",
       code: "busy",
     });
@@ -485,7 +657,12 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
   it("keeps a queued batch in its queue behind a delivery the restart left unresolved", async () => {
     await enrolledChat("chat-c");
     await operationAt("chat-c", "delivering");
-    h.queued.push({ deliveryAttemptId: "att-1", messageIds: ["q-1"], content: [{ type: "text", text: "Next" }], command: null });
+    h.queued.push({
+      deliveryAttemptId: "att-1",
+      messageIds: ["q-1"],
+      content: [{ type: "text", text: "Next" }],
+      command: null,
+    });
 
     const s = h.compose();
     await s.boot();
@@ -522,12 +699,19 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
       await h.checkpoint.repo.recordAcceptance({
         key: keyOf("chat-q"),
         operationId: id,
-        acceptance: { attemptId: "attempt-crashed", seedHash: `sha256:${id}`, acceptedAt: at() },
+        acceptance: {
+          attemptId: "attempt-crashed",
+          seedHash: `sha256:${id}`,
+          acceptedAt: at(),
+        },
         acceptedBackendRef: "sdk-fresh",
       }),
     );
     // The crash came after the acceptance and the fresh reference, before the queue's own receipt.
-    await enrolledChat("chat-q", { backendRef: { backend: "claude", ref: "sdk-fresh" }, pendingQueue: [row] });
+    await enrolledChat("chat-q", {
+      backendRef: { backend: "claude", ref: "sdk-fresh" },
+      pendingQueue: [row],
+    });
 
     const s = h.compose();
     await s.boot();
@@ -535,6 +719,8 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
 
     expect(h.checkpoint.confirmed).toEqual(["q-1"]);
     expect(h.userMessages).toEqual([]);
-    expect(await reloadedRepo().getOperation(keyOf("chat-q"), id)).toMatchObject({ phase: "applied" });
+    expect(
+      await reloadedRepo().getOperation(keyOf("chat-q"), id),
+    ).toMatchObject({ phase: "applied" });
   });
 });

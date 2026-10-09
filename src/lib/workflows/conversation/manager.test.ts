@@ -48,10 +48,16 @@ const managerFixture: ReturnType<typeof createConversationManagerFixture> =
       },
       async runCoreTask(input) {
         coreTasks.push(`${input.conversationId}:${input.turn.promptText}`);
-        return { kind: "not_started", reason: "configuration", message: "core task ran" };
+        return {
+          kind: "not_started",
+          reason: "configuration",
+          message: "core task ran",
+        };
       },
       async coreQuestionCommand(identity, command) {
-        coreQuestions.push(`${identity.conversationId}:${command.kind}:${command.questionId}`);
+        coreQuestions.push(
+          `${identity.conversationId}:${command.kind}:${command.questionId}`,
+        );
         return true;
       },
       async coreDebugCommand(identity, command) {
@@ -117,7 +123,10 @@ import {
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { conversationMachine } from "./machine";
 import type { PrepareTurnOutput, PrepareTurnInput } from "./types";
-import type { PromptActorResult, ExecutePromptInput } from "@/lib/conversation-core/turn/types";
+import type {
+  PromptActorResult,
+  ExecutePromptInput,
+} from "@/lib/conversation-core/turn/types";
 import { applySyncDerivedFields, deriveActiveTurnSource } from "./manager";
 import { type ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
 import {
@@ -456,7 +465,8 @@ describe("conversation manager", () => {
 
   describe("executeConversationTurn", () => {
     it("refuses a turn for a conversation the supervision core runs, without hosting an actor for it", async () => {
-      coreOwned = (conversationId) => conversationId === DEFAULT_INPUT.target.conversationId;
+      coreOwned = (conversationId) =>
+        conversationId === DEFAULT_INPUT.target.conversationId;
       try {
         const refused = await managerFixture.manager.submitConversationTurn({
           binding: {
@@ -466,7 +476,9 @@ describe("conversation manager", () => {
               target: {
                 scope: "session",
                 projectName: "test-project",
-                sessionName: conversationTargetStoreSessionName(DEFAULT_INPUT.target),
+                sessionName: conversationTargetStoreSessionName(
+                  DEFAULT_INPUT.target,
+                ),
                 conversationId: DEFAULT_INPUT.target.conversationId,
               },
             },
@@ -474,7 +486,10 @@ describe("conversation manager", () => {
           ...DEFAULT_INPUT,
           turn: { promptText: "hello" },
         });
-        expect(refused).toMatchObject({ kind: "refused", code: "binding_mismatch" });
+        expect(refused).toMatchObject({
+          kind: "refused",
+          code: "binding_mismatch",
+        });
         expect(
           getConversationRuntime(
             conversationRuntimeKey(
@@ -687,10 +702,16 @@ describe("conversation manager", () => {
       sessionName: conversationTargetStoreSessionName(DEFAULT_INPUT.target),
       conversationId: DEFAULT_INPUT.target.conversationId,
     });
-    const key = () => conversationRuntimeKey(store().projectPath, store().sessionName, store().conversationId);
+    const key = () =>
+      conversationRuntimeKey(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+      );
 
     beforeEach(() => {
-      coreOwned = (conversationId) => conversationId === DEFAULT_INPUT.target.conversationId;
+      coreOwned = (conversationId) =>
+        conversationId === DEFAULT_INPUT.target.conversationId;
       coreStops = [];
       coreRetires = [];
       coreDrains = [];
@@ -708,7 +729,9 @@ describe("conversation manager", () => {
         return 1;
       };
       try {
-        await expect(managerFixture.manager.restorePersistedConversations()).rejects.toThrow(/shared conversation core/);
+        await expect(
+          managerFixture.manager.restorePersistedConversations(),
+        ).rejects.toThrow(/shared conversation core/);
         expect(getConversationRuntime(key())).toBeUndefined();
       } finally {
         rehydrator = async () => 0;
@@ -717,11 +740,26 @@ describe("conversation manager", () => {
 
     it("hands a workflow's task turn to the core and returns its outcome, hosting no actor", async () => {
       const execution = await managerFixture.manager.executeConversationTurn({
-        binding: { kind: "durable", address: { projectPath: DEFAULT_INPUT.projectPath, target: DEFAULT_INPUT.target } },
-        turn: { kind: "task_run", promptText: "Write a commit message", executionClass: "nongoverned-task" },
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: DEFAULT_INPUT.projectPath,
+            target: DEFAULT_INPUT.target,
+          },
+        },
+        turn: {
+          kind: "task_run",
+          promptText: "Write a commit message",
+          executionClass: "nongoverned-task",
+        },
       });
-      expect(execution).toMatchObject({ kind: "settled", turn: { outcome: { message: "core task ran" } } });
-      expect(coreTasks).toEqual([`${store().conversationId}:Write a commit message`]);
+      expect(execution).toMatchObject({
+        kind: "settled",
+        turn: { outcome: { message: "core task ran" } },
+      });
+      expect(coreTasks).toEqual([
+        `${store().conversationId}:Write a commit message`,
+      ]);
       expect(getConversationRuntime(key())).toBeUndefined();
     });
 
@@ -748,18 +786,27 @@ describe("conversation manager", () => {
 
     it("hands a debug command to the core's debug mode, hosting no actor", async () => {
       const outcome = await managerFixture.manager.executeConversationCommand(
-        { projectPath: DEFAULT_INPUT.projectPath, target: DEFAULT_INPUT.target },
+        {
+          projectPath: DEFAULT_INPUT.projectPath,
+          target: DEFAULT_INPUT.target,
+        },
         { kind: "mark_reproduced" },
       );
       expect(outcome).toEqual({ kind: "applied" });
-      expect(coreDebugCommands).toEqual([`${store().conversationId}:mark_reproduced`]);
+      expect(coreDebugCommands).toEqual([
+        `${store().conversationId}:mark_reproduced`,
+      ]);
       expect(getConversationRuntime(key())).toBeUndefined();
     });
 
     it("hands the conversation's queue to the core to drain, hosting no actor", async () => {
       const claimNextTurnBatch = vi.fn(async () => null);
       setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
-      await managerFixture.manager.ensureConversationActorAndDrain(store().projectPath, store().sessionName, store().conversationId);
+      await managerFixture.manager.ensureConversationActorAndDrain(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+      );
 
       expect(getConversationRuntime(key())).toBeUndefined();
       expect(claimNextTurnBatch).not.toHaveBeenCalled();
@@ -768,11 +815,29 @@ describe("conversation manager", () => {
 
     it("hands every checkpoint operation to the core's checkpoint owner, hosting no actor", async () => {
       const calls: string[] = [];
-      const refusal = { code: "checkpoint_not_found" as const, reason: "from the core", operationId: null, phase: null };
+      const refusal = {
+        code: "checkpoint_not_found" as const,
+        reason: "from the core",
+        operationId: null,
+        phase: null,
+      };
       coreCheckpointOwner = {
         async check(address, options) {
-          calls.push(`check:${address.target.conversationId}:${String(options.recover)}`);
-          return { handoff: { available: false, mode: null, reason: "unavailable", policy: CHECKPOINT_CAPTURE_POLICY }, eligible: false, refusals: [refusal], active: null, hosted: true };
+          calls.push(
+            `check:${address.target.conversationId}:${String(options.recover)}`,
+          );
+          return {
+            handoff: {
+              available: false,
+              mode: null,
+              reason: "unavailable",
+              policy: CHECKPOINT_CAPTURE_POLICY,
+            },
+            eligible: false,
+            refusals: [refusal],
+            active: null,
+            hosted: true,
+          };
         },
         async start(input) {
           calls.push(`start:${input.requestId}:${String(input.recover)}`);
@@ -787,7 +852,9 @@ describe("conversation manager", () => {
           return { kind: "refused", refusal };
         },
         async reconcile(input) {
-          calls.push(`reconcile:${input.operationId}:${String(input.captureExecutionStopped)}`);
+          calls.push(
+            `reconcile:${input.operationId}:${String(input.captureExecutionStopped)}`,
+          );
           return { kind: "refused", refusal };
         },
         acceptsQueuedInput(conversationId) {
@@ -795,17 +862,50 @@ describe("conversation manager", () => {
           return true;
         },
       };
-      const address = { projectPath: DEFAULT_INPUT.projectPath, target: DEFAULT_INPUT.target };
+      const address = {
+        projectPath: DEFAULT_INPUT.projectPath,
+        target: DEFAULT_INPUT.target,
+      };
       const manager = managerFixture.manager;
       try {
-        expect(await manager.checkConversationCheckpoint(address, { recover: "op-0" })).toMatchObject({ refusals: [refusal] });
-        expect(await manager.startConversationCheckpoint({ address, requestId: "op-1", recover: "op-0" })).toEqual({ kind: "refused", refusal });
-        expect(await manager.cancelConversationCheckpoint({ address, operationId: "op-1" })).toEqual({ kind: "refused", refusal });
-        expect(await manager.skipConversationCheckpointHandoff({ address, operationId: "op-1" })).toEqual({ kind: "refused", refusal });
         expect(
-          await manager.reconcileConversationCheckpoint({ address, operationId: "op-1", captureExecutionStopped: true }),
+          await manager.checkConversationCheckpoint(address, {
+            recover: "op-0",
+          }),
+        ).toMatchObject({ refusals: [refusal] });
+        expect(
+          await manager.startConversationCheckpoint({
+            address,
+            requestId: "op-1",
+            recover: "op-0",
+          }),
         ).toEqual({ kind: "refused", refusal });
-        expect(manager.checkpointAcceptsQueuedInput(store().projectPath, store().sessionName, store().conversationId)).toBe(true);
+        expect(
+          await manager.cancelConversationCheckpoint({
+            address,
+            operationId: "op-1",
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          await manager.skipConversationCheckpointHandoff({
+            address,
+            operationId: "op-1",
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          await manager.reconcileConversationCheckpoint({
+            address,
+            operationId: "op-1",
+            captureExecutionStopped: true,
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          manager.checkpointAcceptsQueuedInput(
+            store().projectPath,
+            store().sessionName,
+            store().conversationId,
+          ),
+        ).toBe(true);
       } finally {
         coreCheckpointOwner = undefined;
       }
@@ -823,26 +923,48 @@ describe("conversation manager", () => {
     });
 
     it("refuses a checkpoint on it while run supervision is not running", async () => {
-      const address = { projectPath: DEFAULT_INPUT.projectPath, target: DEFAULT_INPUT.target };
-      expect(await managerFixture.manager.startConversationCheckpoint({ address, requestId: "op-1" })).toMatchObject({
+      const address = {
+        projectPath: DEFAULT_INPUT.projectPath,
+        target: DEFAULT_INPUT.target,
+      };
+      expect(
+        await managerFixture.manager.startConversationCheckpoint({
+          address,
+          requestId: "op-1",
+        }),
+      ).toMatchObject({
         kind: "refused",
         refusal: { code: "conversation_busy" },
       });
-      expect(await managerFixture.manager.checkConversationCheckpoint(address)).toMatchObject({ eligible: false });
       expect(
-        managerFixture.manager.checkpointAcceptsQueuedInput(store().projectPath, store().sessionName, store().conversationId),
+        await managerFixture.manager.checkConversationCheckpoint(address),
+      ).toMatchObject({ eligible: false });
+      expect(
+        managerFixture.manager.checkpointAcceptsQueuedInput(
+          store().projectPath,
+          store().sessionName,
+          store().conversationId,
+        ),
       ).toBe(false);
       expect(getConversationRuntime(key())).toBeUndefined();
     });
 
     it("sends a stop request to the core as a stop, and an actor teardown as a retirement", async () => {
       const stop = managerFixture.manager.requestConversationStop(
-        { projectPath: DEFAULT_INPUT.projectPath, target: DEFAULT_INPUT.target },
+        {
+          projectPath: DEFAULT_INPUT.projectPath,
+          target: DEFAULT_INPUT.target,
+        },
         "user",
       );
       expect(stop.requested).toBe(true);
       await stop.settled;
-      await managerFixture.manager.stopConversationActor(store().projectPath, store().sessionName, store().conversationId, "session_deleted");
+      await managerFixture.manager.stopConversationActor(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+        "session_deleted",
+      );
 
       expect(coreStops).toEqual([store().conversationId]);
       expect(coreRetires).toEqual([store().conversationId]);

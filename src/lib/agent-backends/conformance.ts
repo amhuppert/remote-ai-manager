@@ -37,7 +37,10 @@ import {
 } from "./descriptor";
 import { effortLevelSchema } from "./schemas";
 import { backendNativeMemorySchema } from "./native-memory";
-import { agentFailureClassificationSchema, isInputDeliveryUncertain } from "./errors";
+import {
+  agentFailureClassificationSchema,
+  isInputDeliveryUncertain,
+} from "./errors";
 import type {
   ContinuityContext,
   ContinuityStartInput,
@@ -236,7 +239,8 @@ export async function checkQueueCoherence(
       const result = await turnPromise;
       expect(result.failure).toBeNull();
       expect(result.aborted).toBe(false);
-      if (runtime.liveInput === "running_turn") await checkLateInputRefused(runtime);
+      if (runtime.liveInput === "running_turn")
+        await checkLateInputRefused(runtime);
     } else {
       expect(runtime.queueUserInput).toBeUndefined();
     }
@@ -249,23 +253,35 @@ export async function checkQueueCoherence(
  * `liveInput: "running_turn"` ⇔ input sent once the turn has ended is refused,
  * never kept for the provider to answer later.
  */
-async function checkLateInputRefused(runtime: ConversationBackendRuntime): Promise<void> {
+async function checkLateInputRefused(
+  runtime: ConversationBackendRuntime,
+): Promise<void> {
   if (runtime.queueUserInput === undefined) {
-    throw new Error("liveInput is declared but the runtime has no queueUserInput");
+    throw new Error(
+      "liveInput is declared but the runtime has no queueUserInput",
+    );
   }
   const late = runtime
-    .queueUserInput({ content: [{ type: "text", text: "conformance late input" }] })
+    .queueUserInput({
+      content: [{ type: "text", text: "conformance late input" }],
+    })
     .then(
       () => "accepted" as const,
       (error: unknown) =>
-        isInputDeliveryUncertain(error) ? ("uncertain" as const) : ("refused" as const),
+        isInputDeliveryUncertain(error)
+          ? ("uncertain" as const)
+          : ("refused" as const),
     );
   const outcome = await Promise.race([
     late,
-    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 2_000)),
+    new Promise<"pending">((resolve) =>
+      setTimeout(() => resolve("pending"), 2_000),
+    ),
   ]);
   if (outcome !== "refused") {
-    throw new Error(`liveInput is "running_turn" but input sent after its turn was ${outcome}`);
+    throw new Error(
+      `liveInput is "running_turn" but input sent after its turn was ${outcome}`,
+    );
   }
 }
 

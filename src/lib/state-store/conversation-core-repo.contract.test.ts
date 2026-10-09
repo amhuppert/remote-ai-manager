@@ -62,12 +62,15 @@ describe("conversation core repository", () => {
         createConversationCoreRepo(db).enrollInteractive(value);
         return value;
       },
-      reload: (value) => createConversationCoreRepo(db).getInteractive(value.conversationId),
+      reload: (value) =>
+        createConversationCoreRepo(db).getInteractive(value.conversationId),
     });
     const repo = createConversationCoreRepo(db);
     expect(repo.ownsConversation("conv-9")).toBe(true);
     expect(repo.ownsConversation("conv-unknown")).toBe(false);
-    expect(repo.listInteractive().map((enrollment) => enrollment.conversationId)).toEqual(["conv-9"]);
+    expect(
+      repo.listInteractive().map((enrollment) => enrollment.conversationId),
+    ).toEqual(["conv-9"]);
 
     // A deleted conversation leaves the core's list, so nothing recovers or drains it at boot.
     repo.unenrollInteractive("conv-9");
@@ -115,7 +118,9 @@ describe("conversation core repository", () => {
       updatedAt: later,
     };
     createConversationCoreRepo(fixture.db).insertMailboxIfAbsent(item);
-    expect(createConversationCoreRepo(fixture.db).getMailbox(item.cause)).toEqual(item);
+    expect(
+      createConversationCoreRepo(fixture.db).getMailbox(item.cause),
+    ).toEqual(item);
   });
 
   it("lists a conversation's queued items in arrival order, and refuses a malformed one rather than dropping it", () => {
@@ -136,10 +141,11 @@ describe("conversation core repository", () => {
     repo.insertMailboxIfAbsent(item("second", later));
     repo.insertMailboxIfAbsent(item("first", at));
     repo.insertMailboxIfAbsent(item("first", at));
-    expect(createConversationCoreRepo(persistence.db).queuedFor("conv-9").map((queued) => queued.cause)).toEqual([
-      "first",
-      "second",
-    ]);
+    expect(
+      createConversationCoreRepo(persistence.db)
+        .queuedFor("conv-9")
+        .map((queued) => queued.cause),
+    ).toEqual(["first", "second"]);
 
     // Only a duplicate cause is ignored: a row the table refuses (here, a table
     // still requiring a requester) must not pass as accepted.
@@ -148,7 +154,11 @@ describe("conversation core repository", () => {
         requester_kind TEXT NOT NULL, requester_id TEXT NOT NULL, request_json TEXT NOT NULL,
         permit_controller_id TEXT, permit_generation INTEGER, state TEXT NOT NULL, attempt_id TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`);
-    expect(() => createConversationCoreRepo(persistence.db).insertMailboxIfAbsent(item("third", later))).toThrow(/NOT NULL/);
+    expect(() =>
+      createConversationCoreRepo(persistence.db).insertMailboxIfAbsent(
+        item("third", later),
+      ),
+    ).toThrow(/NOT NULL/);
   });
 
   it("round-trips a settled attempt with its report", async () => {

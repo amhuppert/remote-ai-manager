@@ -24,8 +24,16 @@ import type { ExecutionClass } from "@/lib/agent-backends/execution-schemas";
  */
 
 import { randomUUID } from "node:crypto";
-import type { PrepareTurnInput, PrepareTurnOutput, RunTaskRunInput, FinalizeQueuedDeliveryInput } from "./types";
-import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
+import type {
+  PrepareTurnInput,
+  PrepareTurnOutput,
+  RunTaskRunInput,
+  FinalizeQueuedDeliveryInput,
+} from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import { deriveTaskRunPermissions } from "@/lib/conversation-core/turn/task-run-permissions";
 
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -137,7 +145,11 @@ import { persistTurnImages } from "@/lib/conversation-core/contributions/image-p
 
 import type { CapabilityTurnContext } from "@/lib/conversation-core/contributions/capability-cascade";
 import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
-import { buildCapabilityApplyInput, seedRuntimeCapabilityState, applyCapabilityCascadeAtTurnStart } from "./pre-turn/capability-apply";
+import {
+  buildCapabilityApplyInput,
+  seedRuntimeCapabilityState,
+  applyCapabilityCascadeAtTurnStart,
+} from "./pre-turn/capability-apply";
 import { recordSeenAlignmentVersion } from "@/lib/conversation-core/contributions/alignment-gate";
 import { createBackgroundTasksLostHandler } from "./pre-turn/background-tasks-lost";
 
@@ -1963,7 +1975,10 @@ async function recordTaskRunCost(
     previousCumulativeUsd:
       sessionRef === null
         ? null
-        : ((await deps.transcript.readLineageCumulativeCost?.(input.target.conversationId, sessionRef.ref)) ?? null),
+        : ((await deps.transcript.readLineageCumulativeCost?.(
+            input.target.conversationId,
+            sessionRef.ref,
+          )) ?? null),
   });
   if (cost === null) return null;
   await deps.transcript.safeAppendTranscriptEntryOnce(
@@ -2240,7 +2255,8 @@ async function runTaskRunTurnForMachine(
 
   const charged = await recordTaskRunCost(deps, input, result, broadcastMeta);
   // The conversation's totals add the run's own spend, not a resumed session's whole history.
-  if (charged !== null) result = { ...result, usage: { ...result.usage, costUsd: charged } };
+  if (charged !== null)
+    result = { ...result, usage: { ...result.usage, costUsd: charged } };
 
   const projected = toPromptActorResult(
     { kind: "call_result", result },

@@ -3304,10 +3304,17 @@ describe("collaboration on a conversation the shared core runs", () => {
     const { deps, persistedStarts } = buildScriptedDeps();
     const manager = createCollaborationManager({
       ...deps,
-      claimConversation: async () => ({ kind: "busy", reason: "The conversation is running a turn" }),
+      claimConversation: async () => ({
+        kind: "busy",
+        reason: "The conversation is running a turn",
+      }),
     });
-    await expect(start(manager)).rejects.toBeInstanceOf(CollaborationStartConflictError);
-    await expect(start(manager)).rejects.toThrow("The conversation is running a turn");
+    await expect(start(manager)).rejects.toBeInstanceOf(
+      CollaborationStartConflictError,
+    );
+    await expect(start(manager)).rejects.toThrow(
+      "The conversation is running a turn",
+    );
     expect(persistedStarts).toEqual([]);
   });
 
@@ -3335,7 +3342,11 @@ describe("collaboration on a conversation the shared core runs", () => {
     const started = await start(manager);
     await handed;
     expect(released).toEqual([
-      { conversationId: "conv-1", workflowId: started.workflowId, attemptEpoch: 1 },
+      {
+        conversationId: "conv-1",
+        workflowId: started.workflowId,
+        attemptEpoch: 1,
+      },
       "released:conv-1",
     ]);
   });
@@ -3347,23 +3358,36 @@ describe("collaboration on a conversation the shared core runs", () => {
       buildEnvelope({
         workflowId: "wf-live",
         status: "running",
-        featureSnapshot: { brief: "design X", conversationId: "conv-1", attemptEpoch: 1 },
+        featureSnapshot: {
+          brief: "design X",
+          conversationId: "conv-1",
+          attemptEpoch: 1,
+        },
       }),
     );
     const stopRegistry = createInMemoryCollaborationStopRegistry();
     const sliceSignal = stopRegistry.register("wf-live").signal;
     const released: unknown[] = [];
-    const scripted = buildScriptedDeps({ envelopeStoreOverride: envelopeStore, stopRegistryOverride: stopRegistry });
+    const scripted = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+      stopRegistryOverride: stopRegistry,
+    });
     const manager = createCollaborationManager({
       ...scripted.deps,
       releaseConversationOwner: async (input) => {
         released.push(input.owner);
         return true;
       },
-      conversationReleased: (input) => released.push(`released:${input.conversationId}`),
+      conversationReleased: (input) =>
+        released.push(`released:${input.conversationId}`),
     });
 
-    await manager.stop({ projectPath: "/p", sessionName: "s", workflowId: "wf-live", conversationId: "conv-1" });
+    await manager.stop({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-live",
+      conversationId: "conv-1",
+    });
     // Its agent call may still be running in the conversation's session: nothing else may start there yet.
     expect(sliceSignal.aborted).toBe(true);
     expect(released).toEqual([]);
@@ -3386,7 +3410,10 @@ describe("collaboration on a conversation the shared core runs", () => {
         },
       },
     });
-    const manager = createCollaborationManager({ ...deps, conversationReleased: () => handedBack() });
+    const manager = createCollaborationManager({
+      ...deps,
+      conversationReleased: () => handedBack(),
+    });
     await start(manager);
     await handed;
     expect(released).toEqual(["conv-1"]);
@@ -3400,26 +3427,38 @@ describe("collaboration on a conversation the shared core runs", () => {
         workflowId: "wf-failed",
         status: "failed",
         errorSummary: "Run interrupted by a server restart",
-        featureSnapshot: { brief: "design X", conversationId: "conv-1", attemptEpoch: 2 },
+        featureSnapshot: {
+          brief: "design X",
+          conversationId: "conv-1",
+          attemptEpoch: 2,
+        },
       }),
     );
     const released: unknown[] = [];
-    const scripted = buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const scripted = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
     const manager = createCollaborationManager({
       ...scripted.deps,
       releaseConversationOwner: async (input) => {
         released.push(input.owner);
         return true;
       },
-      conversationReleased: (input) => released.push(`released:${input.conversationId}`),
+      conversationReleased: (input) =>
+        released.push(`released:${input.conversationId}`),
     });
 
-    await manager.stop({ projectPath: "/p", sessionName: "s", workflowId: "wf-failed", conversationId: "conv-1" });
+    await manager.stop({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-failed",
+      conversationId: "conv-1",
+    });
     expect(released).toEqual([
       { kind: "collaboration", workflowId: "wf-failed", attemptEpoch: 2 },
       "released:conv-1",
     ]);
-    expect((await repo.get("wf-failed"))).toMatchObject({
+    expect(await repo.get("wf-failed")).toMatchObject({
       status: "completed",
       // Why it failed stays on record; stopping only gave up the resume.
       errorSummary: "Run interrupted by a server restart",

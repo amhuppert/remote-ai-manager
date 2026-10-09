@@ -78,22 +78,54 @@ describe("buildQueueContent", () => {
 
 describe("queueContentOfTurnInput", () => {
   it("keeps turn input that never ran as content the drain reads back to the same input", () => {
-    const image = { attachmentId: "img-1", mediaType: "image/png" as const, base64Data: "aGk=" };
+    const image = {
+      attachmentId: "img-1",
+      mediaType: "image/png" as const,
+      base64Data: "aGk=",
+    };
     expect(
       queuedBatchToSubmitPrompt(
         queueContentOfTurnInput({ text: "Look at this", images: [image] }),
       ),
-    ).toEqual({ promptText: "Look at this", images: [{ ...image, attachmentId: "queued-0" }] });
+    ).toEqual({
+      promptText: "Look at this",
+      images: [{ ...image, attachmentId: "queued-0" }],
+    });
 
     const documentFeedback = {
-      items: [{ docPath: "docs/plan.md", path: "docs/plan.md", headingLabel: "Rollout", line: 12, quote: "Ship it", note: "Too early" }],
+      items: [
+        {
+          docPath: "docs/plan.md",
+          path: "docs/plan.md",
+          headingLabel: "Rollout",
+          line: 12,
+          quote: "Ship it",
+          note: "Too early",
+        },
+      ],
     };
-    const notepadFeedback = [{ notepadId: "n-1", notepadName: "Plan", notepadRefXml: "<notepad/>", items: [] }];
+    const notepadFeedback = [
+      {
+        notepadId: "n-1",
+        notepadName: "Plan",
+        notepadRefXml: "<notepad/>",
+        items: [],
+      },
+    ];
     expect(
       queuedBatchToSubmitPrompt(
-        queueContentOfTurnInput({ text: "Feedback prose the turn derives again", documentFeedback, notepadFeedback }),
+        queueContentOfTurnInput({
+          text: "Feedback prose the turn derives again",
+          documentFeedback,
+          notepadFeedback,
+        }),
       ),
-    ).toEqual({ promptText: "", images: [], documentFeedback, notepadFeedback });
+    ).toEqual({
+      promptText: "",
+      images: [],
+      documentFeedback,
+      notepadFeedback,
+    });
   });
 });
 

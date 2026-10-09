@@ -58,7 +58,9 @@ export const agentLaunchRequestSchema = z
     /** A limit per backend invocation, not a deadline for the whole run. */
     timeoutMs: z.number().int().positive().optional(),
     /** Documents frozen at launch for the agent to read; see `runDocumentRequestSchema`. */
-    documents: z.array(runDocumentRequestSchema.omit({ appliesTo: true, revision: true })).optional(),
+    documents: z
+      .array(runDocumentRequestSchema.omit({ appliesTo: true, revision: true }))
+      .optional(),
   })
   .strict();
 export type AgentLaunchRequest = z.infer<typeof agentLaunchRequestSchema>;

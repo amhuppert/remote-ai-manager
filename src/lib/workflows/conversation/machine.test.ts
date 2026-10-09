@@ -5,8 +5,17 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { createActor, fromPromise, type AnyActorRef } from "xstate";
 
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
-import type { ConversationContext, ConversationInput, PrepareTurnInput, PrepareTurnOutput, RunTaskRunInput } from "./types";
-import type { ExecutePromptInput, PromptActorResult } from "@/lib/conversation-core/turn/types";
+import type {
+  ConversationContext,
+  ConversationInput,
+  PrepareTurnInput,
+  PrepareTurnOutput,
+  RunTaskRunInput,
+} from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 // ============================================================

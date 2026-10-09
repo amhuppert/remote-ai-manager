@@ -13,7 +13,9 @@ export interface CoreQueueBridgeDeps {
   enrollment(conversationId: string): InteractiveEnrollmentRecord | null;
   /** The conversation runs or holds a turn now; its end drains the queue again. */
   isBusy(conversationId: string): boolean;
-  send(input: Parameters<ConversationCore["sendUserMessage"]>[0]): Promise<UserMessageAdmission>;
+  send(
+    input: Parameters<ConversationCore["sendUserMessage"]>[0],
+  ): Promise<UserMessageAdmission>;
   getProjectDisplayName(projectPath: string): string;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
@@ -30,7 +32,9 @@ export interface CoreQueueBridge {
  * reviews) feeding a conversation the shared core runs. The queue keeps its
  * own claim, release and review rules; the core runs each batch as one turn.
  */
-export function createCoreQueueBridge(deps: CoreQueueBridgeDeps): CoreQueueBridge {
+export function createCoreQueueBridge(
+  deps: CoreQueueBridgeDeps,
+): CoreQueueBridge {
   return {
     async drain(conversationId) {
       const enrollment = deps.enrollment(conversationId);
@@ -43,25 +47,42 @@ export function createCoreQueueBridge(deps: CoreQueueBridgeDeps): CoreQueueBridg
           conversationId,
         ),
       };
-      const submit = async (turn: QueuedTurnInput): Promise<"accepted" | "refused"> => {
+      const submit = async (
+        turn: QueuedTurnInput,
+      ): Promise<"accepted" | "refused"> => {
         const admission = await deps.send({
           conversationId,
           text: turn.promptText,
-          ...(turn.images !== undefined && turn.images.length > 0 ? { images: turn.images } : {}),
-          ...(turn.documentFeedback !== undefined ? { documentFeedback: turn.documentFeedback } : {}),
-          ...(turn.notepadFeedback !== undefined ? { notepadFeedback: turn.notepadFeedback } : {}),
-          ...(turn.modelSelection !== undefined ? { modelSelection: turn.modelSelection } : {}),
+          ...(turn.images !== undefined && turn.images.length > 0
+            ? { images: turn.images }
+            : {}),
+          ...(turn.documentFeedback !== undefined
+            ? { documentFeedback: turn.documentFeedback }
+            : {}),
+          ...(turn.notepadFeedback !== undefined
+            ? { notepadFeedback: turn.notepadFeedback }
+            : {}),
+          ...(turn.modelSelection !== undefined
+            ? { modelSelection: turn.modelSelection }
+            : {}),
           inputOrigin: turn.inputOrigin,
           queuedDelivery: turn.queuedDelivery,
         });
         if (admission.kind === "refused") {
-          deps.log.info("conversation_core.queue_batch_refused", { conversationId, code: admission.code });
+          deps.log.info("conversation_core.queue_batch_refused", {
+            conversationId,
+            code: admission.code,
+          });
         }
         return admission.kind === "accepted" ? "accepted" : "refused";
       };
       // A command the queue ran to completion holds nothing: what was queued behind it runs next.
       for (;;) {
-        const progress = await drainConversationQueueInto(context, deps.queue, submit);
+        const progress = await drainConversationQueueInto(
+          context,
+          deps.queue,
+          submit,
+        );
         if (progress !== "command" || deps.isBusy(conversationId)) return;
       }
     },

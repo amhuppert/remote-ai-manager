@@ -43,7 +43,9 @@ describe("execution contexts repository", () => {
       ],
       checks: ["typecheck"],
       deferredChecks: ["test"],
-      inputs: [{ key: "api", title: "Build the API", output: { endpoint: "/v1/x" } }],
+      inputs: [
+        { key: "api", title: "Build the API", output: { endpoint: "/v1/x" } },
+      ],
       humanApproval: true,
       ownerQuestions: true,
       documentPublishing: true,
@@ -63,9 +65,18 @@ describe("execution contexts repository", () => {
         vocabulary: ["notice: the failure message"],
         testStrategy: "Behaviour tests on SQLite",
         knownAmbiguities: ["Whether retries count"],
-        invariants: [{ id: "no-mocks", statement: "No vi.mock of internal modules" }],
+        invariants: [
+          { id: "no-mocks", statement: "No vi.mock of internal modules" },
+        ],
         sourcesOfTruth: [
-          { rank: 1, id: "spec", label: "Spec", type: "spec", locator: "specs/notice.md", description: "The spec" },
+          {
+            rank: 1,
+            id: "spec",
+            label: "Spec",
+            type: "spec",
+            locator: "specs/notice.md",
+            description: "The spec",
+          },
         ],
         documentPath: ".cc/run-docs/ctx-1/charter.md",
       },
@@ -220,7 +231,10 @@ describe("execution contexts repository", () => {
           {
             occurrence: "halted:effect_uncertain:3",
             halt: "effect_uncertain",
-            disposition: { kind: "confirm_effect", evidence: "The lane holds the landing" },
+            disposition: {
+              kind: "confirm_effect",
+              evidence: "The lane holds the landing",
+            },
             at: "2026-10-05T12:00:00.000Z",
           },
         ],

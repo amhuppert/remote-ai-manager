@@ -18,7 +18,9 @@ const binding = {
 function harness(
   submission: ValidationSubmission,
   result?: ValidationRunResult,
-  target: Parameters<ReturnType<typeof createValidationCheckRunner>>[0]["binding"] = binding,
+  target: Parameters<
+    ReturnType<typeof createValidationCheckRunner>
+  >[0]["binding"] = binding,
 ) {
   const submitted: ValidationSystemSubmitRequest[] = [];
   const run = createValidationCheckRunner({
@@ -42,7 +44,12 @@ function harness(
   });
   return {
     run: (signal: AbortSignal = new AbortController().signal) =>
-      run({ binding: target, bindingId: "ctx-1", command: "typecheck", signal }),
+      run({
+        binding: target,
+        bindingId: "ctx-1",
+        command: "typecheck",
+        signal,
+      }),
     submitted,
   };
 }
@@ -67,7 +74,11 @@ describe("validation check runner", () => {
       branch: "csm/session-1-api",
       scope: { mode: "full" as const },
     };
-    const h = harness(accepted, { kind: "passed", runId: "vrun-1", exitCode: 0, output: "ok" }, lane);
+    const h = harness(
+      accepted,
+      { kind: "passed", runId: "vrun-1", exitCode: 0, output: "ok" },
+      lane,
+    );
     await h.run();
     expect(h.submitted[0]?.target).toMatchObject({
       worktreePath: "/repo/.worktrees/session.1-api",

@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { laneProvisionReportSchema, lanePublicationReportSchema } from "@/lib/workspace/schemas";
+import {
+  laneProvisionReportSchema,
+  lanePublicationReportSchema,
+} from "@/lib/workspace/schemas";
 import {
   contextStartRequestSchema,
   contextProgressSchema,
@@ -10,7 +13,11 @@ import {
 export const runFrozenRevisionsSchema = z
   .object({
     charter: z.number().int().min(1).nullable(),
-    documents: z.array(z.object({ path: z.string().min(1), revision: z.number().int().min(1) }).strict()),
+    documents: z.array(
+      z
+        .object({ path: z.string().min(1), revision: z.number().int().min(1) })
+        .strict(),
+    ),
   })
   .strict();
 
@@ -53,7 +60,10 @@ export const runDefinitionContextSchema = z
     dependsOn: z.array(z.string().min(1)),
     /** Guards on some of those dependencies, by dependency key; the rest are always taken. */
     when: z.record(z.string(), routeGuardSchema).optional(),
-    routing: z.object({ cardinality: routeCardinalitySchema }).strict().optional(),
+    routing: z
+      .object({ cardinality: routeCardinalitySchema })
+      .strict()
+      .optional(),
     /** Dependencies whose accepted output is enough: no code visibility, so no publication to wait for. */
     outputOnly: z.array(z.string().min(1)).optional(),
     /** The isolated lane this context works in; absent for session placement. */
@@ -124,15 +134,23 @@ export const lanePublicationOutcomeSchema = z.discriminatedUnion("kind", [
   withdrawnSchema,
   ...lanePublicationReportSchema.options,
 ]);
-export type LanePublicationOutcome = z.infer<typeof lanePublicationOutcomeSchema>;
+export type LanePublicationOutcome = z.infer<
+  typeof lanePublicationOutcomeSchema
+>;
 
 export const runLaneStateSchema = z
   .object({
     provision: z
-      .object({ attempt: z.number().int().min(1), outcome: laneProvisionOutcomeSchema })
+      .object({
+        attempt: z.number().int().min(1),
+        outcome: laneProvisionOutcomeSchema,
+      })
       .strict(),
     publication: z
-      .object({ attempt: z.number().int().min(1), outcome: lanePublicationOutcomeSchema })
+      .object({
+        attempt: z.number().int().min(1),
+        outcome: lanePublicationOutcomeSchema,
+      })
       .strict()
       .nullable(),
   })
@@ -145,7 +163,9 @@ export function laneStateOf(
   key: string,
 ): RunLaneState | undefined {
   const lanes = facts.lanes;
-  return lanes !== undefined && Object.hasOwn(lanes, key) ? lanes[key] : undefined;
+  return lanes !== undefined && Object.hasOwn(lanes, key)
+    ? lanes[key]
+    : undefined;
 }
 
 /** A document as frozen for a run: its bytes by artifact, and what it is for. */
@@ -234,13 +254,21 @@ export const runCharterSchema = z
         });
       else ranks.set(source.rank, source.id);
       if (sources.has(source.id))
-        ctx.addIssue({ code: "custom", path: ["sourcesOfTruth", index, "id"], message: `Source id "${source.id}" is used twice` });
+        ctx.addIssue({
+          code: "custom",
+          path: ["sourcesOfTruth", index, "id"],
+          message: `Source id "${source.id}" is used twice`,
+        });
       sources.add(source.id);
     });
     const invariants = new Set<string>();
     charter.invariants?.forEach((invariant, index) => {
       if (invariants.has(invariant.id))
-        ctx.addIssue({ code: "custom", path: ["invariants", index, "id"], message: `Invariant id "${invariant.id}" is used twice` });
+        ctx.addIssue({
+          code: "custom",
+          path: ["invariants", index, "id"],
+          message: `Invariant id "${invariant.id}" is used twice`,
+        });
       invariants.add(invariant.id);
     });
   });
@@ -257,7 +285,10 @@ export const runCharterRevisionSchema = z
     charter: runCharterSchema.nullable(),
     /** The rendered bundles as artifacts: one for every context no appliesTo names, one per key one names. */
     bundles: z
-      .object({ default: z.string().min(1), byKey: z.record(z.string(), z.string().min(1)) })
+      .object({
+        default: z.string().min(1),
+        byKey: z.record(z.string(), z.string().min(1)),
+      })
       .strict()
       .nullable(),
   })
@@ -370,8 +401,20 @@ export type RunHaltClearedBy = z.infer<typeof runHaltClearedBySchema>;
 
 /** What a boundary concerns, frozen when it is recorded: everything its notice needs. */
 export const runBoundaryDetailSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("question"), contextId: z.string().min(1), questionId: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("approval"), contextId: z.string().min(1), candidateId: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("question"),
+      contextId: z.string().min(1),
+      questionId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("approval"),
+      contextId: z.string().min(1),
+      candidateId: z.string().min(1),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("context_halt"),
@@ -393,9 +436,19 @@ export const runBoundaryDetailSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
   /** The follow-up: only halts that need an amendment or cancelling remain. */
-  z.object({ kind: z.literal("stalled"), clearedBy: z.enum(["amend", "cancel"]) }).strict(),
+  z
+    .object({
+      kind: z.literal("stalled"),
+      clearedBy: z.enum(["amend", "cancel"]),
+    })
+    .strict(),
   z.object({ kind: z.literal("fault"), error: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("succeeded"), outputs: z.record(z.string(), z.unknown()) }).strict(),
+  z
+    .object({
+      kind: z.literal("succeeded"),
+      outputs: z.record(z.string(), z.unknown()),
+    })
+    .strict(),
   z.object({ kind: z.literal("cancelled") }).strict(),
   z.object({ kind: z.literal("restored_paused") }).strict(),
 ]);
@@ -581,7 +634,11 @@ export const runViewSchema = z
     ),
     /** The charter a context starting now would freeze, by revision; null for a run without one. */
     charter: z
-      .object({ revision: z.number().int().min(1), mission: z.string(), reason: z.string().nullable() })
+      .object({
+        revision: z.number().int().min(1),
+        mission: z.string(),
+        reason: z.string().nullable(),
+      })
       .strict()
       .nullable(),
   })

@@ -1,4 +1,7 @@
-import type { ConversationBackendEvent, ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendEvent,
+  ConversationBackendRuntime,
+} from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
 import { seededCapabilityRuntimeState } from "@/lib/agent-capabilities/runtime-seed";
@@ -6,7 +9,10 @@ import type {
   AgentCapabilitiesUpdatedEvent,
   AgentCapabilityRuntimeApplicationState,
 } from "@/lib/agent-capabilities/schemas";
-import { conversationTargetStoreSessionName, type ConversationTarget } from "@/lib/conversations/conversation-target";
+import {
+  conversationTargetStoreSessionName,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import type { Logger } from "@/lib/logging";
 import {
   createMcpRuntimeApplicationStore,
@@ -66,13 +72,17 @@ export interface RuntimeApplicationStateDeps {
  * backend's acceptance settles it. There is no turn-start apply: a change
  * saved while a core turn runs applies to the runtime its next turn creates.
  */
-export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps): RuntimeApplicationState {
+export function createRuntimeApplicationState(
+  deps: RuntimeApplicationStateDeps,
+): RuntimeApplicationState {
   const mcp = createMcpRuntimeApplicationStore(deps.conversations);
 
   function updateCapabilities(
     conversation: ApplicationTarget,
     label: string,
-    updater: (current: AgentCapabilityRuntimeApplicationState | undefined) => AgentCapabilityRuntimeApplicationState,
+    updater: (
+      current: AgentCapabilityRuntimeApplicationState | undefined,
+    ) => AgentCapabilityRuntimeApplicationState,
   ): Promise<void> {
     return deps.conversations.mutateConversation(
       conversation.projectPath,
@@ -87,7 +97,10 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
 
   return {
     async beginSeed(conversation) {
-      const identity = { projectPath: conversation.projectPath, target: conversation.target };
+      const identity = {
+        projectPath: conversation.projectPath,
+        target: conversation.target,
+      };
       const row = await deps.conversations.getConversation(
         conversation.projectPath,
         conversationTargetStoreSessionName(conversation.target),
@@ -101,17 +114,28 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
         async commit(composed, runtime) {
           const { portableMcp } = composed.overrides;
           if (portableMcp !== undefined)
-            await seedMcpRuntimeState(mcp, identity, portableMcp, runtime.mcpConfigDelivery, before);
+            await seedMcpRuntimeState(
+              mcp,
+              identity,
+              portableMcp,
+              runtime.mcpConfigDelivery,
+              before,
+            );
           const { capabilityState } = composed;
           if (capabilityState !== undefined) {
-            await updateCapabilities(conversation, "conversation_core.seedCapabilityRuntime", (current) =>
-              seededCapabilityRuntimeState({
-                seeded: capabilityState,
-                delivered:
-                  runtime.capabilityConfigDelivery === "input-accepted" ? undefined : runtime.capabilitiesAtCreation,
-                current,
-                before: before.capabilities,
-              }),
+            await updateCapabilities(
+              conversation,
+              "conversation_core.seedCapabilityRuntime",
+              (current) =>
+                seededCapabilityRuntimeState({
+                  seeded: capabilityState,
+                  delivered:
+                    runtime.capabilityConfigDelivery === "input-accepted"
+                      ? undefined
+                      : runtime.capabilitiesAtCreation,
+                  current,
+                  before: before.capabilities,
+                }),
             );
           }
           deps.log.info("conversation_core.runtime_application_seeded", {
@@ -124,7 +148,10 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
     },
 
     async recordAccepted(conversation, event) {
-      const identity = { projectPath: conversation.projectPath, target: conversation.target };
+      const identity = {
+        projectPath: conversation.projectPath,
+        target: conversation.target,
+      };
       if (event.mcpConfigHash !== undefined) {
         await recordMcpConfigReceipt(mcp, identity, event.mcpConfigHash, {
           error: event.mcpConfigError,
@@ -135,7 +162,12 @@ export function createRuntimeApplicationState(deps: RuntimeApplicationStateDeps)
         await recordCapabilityConfigReceipt(
           conversation.target,
           event.capabilities,
-          (updater) => updateCapabilities(conversation, "conversation_core.capabilityReceipt", updater),
+          (updater) =>
+            updateCapabilities(
+              conversation,
+              "conversation_core.capabilityReceipt",
+              updater,
+            ),
           deps.publish,
         );
       }

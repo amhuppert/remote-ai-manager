@@ -325,7 +325,9 @@ export default function ConversationList({
                   <NewConversationProfileButton
                     projectName={projectName}
                     onCreate={handleNewConversation}
-                    onCreateCore={(profile) => handleNewConversation(profile, "core")}
+                    onCreateCore={(profile) =>
+                      handleNewConversation(profile, "core")
+                    }
                     pending={createConvoMutation.isPending}
                   />
                 </div>

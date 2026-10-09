@@ -382,29 +382,58 @@ describe("execution context host", () => {
   it("describes a context by its state rather than its records: activity, halt dispositions and the accepted result", async () => {
     const host = newHost();
     const work = await startContext(host);
-    expect(host.describe("ctx-1")).toMatchObject({ active: false, accepted: null, title: "Fix the notice" });
+    expect(host.describe("ctx-1")).toMatchObject({
+      active: false,
+      accepted: null,
+      title: "Fix the notice",
+    });
 
     conversation.admit(work.cause);
-    expect(host.describe("ctx-1")).toMatchObject({ active: true, progress: { kind: "running" } });
+    expect(host.describe("ctx-1")).toMatchObject({
+      active: true,
+      progress: { kind: "running" },
+    });
 
-    conversation.settle(work.cause, workReport({ status: "failed", failure: "provider error" }));
+    conversation.settle(
+      work.cause,
+      workReport({ status: "failed", failure: "provider error" }),
+    );
     await host.reconcile("ctx-1");
     const halted = host.describe("ctx-1");
-    expect(halted).toMatchObject({ active: false, progress: { kind: "halted", halt: "turn_failed" } });
+    expect(halted).toMatchObject({
+      active: false,
+      progress: { kind: "halted", halt: "turn_failed" },
+    });
     expect(halted?.dispositions).toContain("continue");
-    expect(halted?.tasks).toEqual([{ id: "t1", title: "Fix it", status: "open" }]);
+    expect(halted?.tasks).toEqual([
+      { id: "t1", title: "Fix it", status: "open" },
+    ]);
 
-    host.resume("ctx-1", halted?.revision ?? 0, { occurrence: halted?.occurrence ?? "", disposition: { kind: "continue" } });
+    host.resume("ctx-1", halted?.revision ?? 0, {
+      occurrence: halted?.occurrence ?? "",
+      disposition: { kind: "continue" },
+    });
     await host.reconcile("ctx-1");
     const retry = conversation.submitted().find((i) => i.cause !== work.cause);
     if (retry === undefined) throw new Error("no continued work");
-    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
     conversation.settle(retry.cause, workReport({ finalText: "Fixed." }));
     await host.reconcile("ctx-1");
     for (const kind of ["freeze", "accept"]) {
-      const op = workspace.submitted().find((i) => (i.request as { kind: string }).kind === kind);
+      const op = workspace
+        .submitted()
+        .find((i) => (i.request as { kind: string }).kind === kind);
       if (op === undefined) throw new Error(`no ${kind}`);
-      workspace.settle(op.cause, kind === "freeze" ? { kind: "frozen", evidence: "git:a:a" } : { kind: "accepted", receipt: "snapshot:git:a:a" });
+      workspace.settle(
+        op.cause,
+        kind === "freeze"
+          ? { kind: "frozen", evidence: "git:a:a" }
+          : { kind: "accepted", receipt: "snapshot:git:a:a" },
+      );
       await host.reconcile("ctx-1");
     }
     expect(host.describe("ctx-1")).toMatchObject({
@@ -440,7 +469,10 @@ describe("execution context host", () => {
       ],
     });
     const request = startIntent.request as Record<string, unknown>;
-    await host.submit({ ...startIntent, request: { ...request, contract: reviewed } });
+    await host.submit({
+      ...startIntent,
+      request: { ...request, contract: reviewed },
+    });
     await host.reconcile("ctx-1");
     const [bind] = workspace.submitted();
     if (bind === undefined) throw new Error("no bind");
@@ -448,21 +480,36 @@ describe("execution context host", () => {
     await host.reconcile("ctx-1");
     const [work] = conversation.submitted();
     if (work === undefined) throw new Error("no work order");
-    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
     conversation.settle(work.cause, workReport());
     await host.reconcile("ctx-1");
-    const freeze = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "freeze");
+    const freeze = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "freeze");
     if (freeze === undefined) throw new Error("no freeze");
     workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:a:a" });
     await host.reconcile("ctx-1");
-    const reviewA = conversation.submitted().find(
-      (i) => (i.request as { kind: string; seat?: { assignmentId: string } }).seat?.assignmentId === "reviewer-a",
-    );
+    const reviewA = conversation
+      .submitted()
+      .find(
+        (i) =>
+          (i.request as { kind: string; seat?: { assignmentId: string } }).seat
+            ?.assignmentId === "reviewer-a",
+      );
     if (reviewA === undefined) throw new Error("no review by reviewer-a");
     const occurrence = host.describe("ctx-1")?.occurrence;
 
     touchedRuns.length = 0;
-    conversation.settle(reviewA.cause, workReport({ structuredOutput: { verdict: "pass", findings: [], advisories: [] } }));
+    conversation.settle(
+      reviewA.cause,
+      workReport({
+        structuredOutput: { verdict: "pass", findings: [], advisories: [] },
+      }),
+    );
     await host.reconcile("ctx-1");
 
     expect(host.describe("ctx-1")?.occurrence).toBe(occurrence);
@@ -476,7 +523,10 @@ describe("execution context host", () => {
       reviewers: [{ id: "reviewer-a", authority: "blocking", ...seat }],
     });
     const request = startIntent.request as Record<string, unknown>;
-    await host.submit({ ...startIntent, request: { ...request, contract: reviewed } });
+    await host.submit({
+      ...startIntent,
+      request: { ...request, contract: reviewed },
+    });
     await host.reconcile("ctx-1");
     const [bind] = workspace.submitted();
     if (bind === undefined) throw new Error("no bind");
@@ -520,7 +570,10 @@ describe("execution context host", () => {
       ],
     });
     const request = startIntent.request as Record<string, unknown>;
-    await host.submit({ ...startIntent, request: { ...request, contract: reviewed } });
+    await host.submit({
+      ...startIntent,
+      request: { ...request, contract: reviewed },
+    });
     await host.reconcile("ctx-1");
     const [bind] = workspace.submitted();
     if (bind === undefined) throw new Error("no bind");
@@ -528,20 +581,31 @@ describe("execution context host", () => {
     await host.reconcile("ctx-1");
     const [work] = conversation.submitted();
     if (work === undefined) throw new Error("no work order");
-    host.applyTaskCommand("ctx-1", { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 }, { kind: "complete", taskId: "t1" });
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
     conversation.settle(work.cause, workReport());
     await host.reconcile("ctx-1");
-    const freeze = workspace.submitted().find((i) => (i.request as { kind: string }).kind === "freeze");
+    const freeze = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "freeze");
     if (freeze === undefined) throw new Error("no freeze");
     workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:a:a" });
     await host.reconcile("ctx-1");
     const reviewsBy = (id: string) =>
-      conversation.submitted().filter(
-        (i) => (i.request as { seat?: { assignmentId: string } }).seat?.assignmentId === id,
-      );
+      conversation
+        .submitted()
+        .filter(
+          (i) =>
+            (i.request as { seat?: { assignmentId: string } }).seat
+              ?.assignmentId === id,
+        );
     const [reviewA] = reviewsBy("reviewer-a");
     const [reviewB] = reviewsBy("reviewer-b");
-    if (reviewA === undefined || reviewB === undefined) throw new Error("no reviews");
+    if (reviewA === undefined || reviewB === undefined)
+      throw new Error("no reviews");
     const pass = { verdict: "pass", findings: [], advisories: [] };
 
     conversation.settle(reviewA.cause, workReport({ openQuestionId: "q-a" }));
@@ -549,21 +613,35 @@ describe("execution context host", () => {
     const [answer] = requests.submitted();
     expect(answer?.request).toEqual({ kind: "answer", questionId: "q-a" });
 
-    requests.settle(answer?.cause ?? "", { kind: "answered", question: "Which file?", answer: "notice.ts" });
+    requests.settle(answer?.cause ?? "", {
+      kind: "answered",
+      question: "Which file?",
+      answer: "notice.ts",
+    });
     await host.reconcile("ctx-1");
     const continuation = reviewsBy("reviewer-a")[1];
-    expect(continuation?.request).toMatchObject({ kind: "review", questionId: "q-a" });
+    expect(continuation?.request).toMatchObject({
+      kind: "review",
+      questionId: "q-a",
+    });
 
     conversation.settle(reviewB.cause, workReport({ structuredOutput: pass }));
     await host.reconcile("ctx-1");
     expect(reviewsBy("reviewer-a")).toHaveLength(2);
     expect(reviewsBy("reviewer-b")).toHaveLength(1);
     expect(requests.submitted()).toHaveLength(1);
-    expect(intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.cause)).toEqual([continuation?.cause]);
+    expect(
+      intents.pending({ kind: "context", id: "ctx-1" }).map((i) => i.cause),
+    ).toEqual([continuation?.cause]);
 
-    conversation.settle(continuation?.cause ?? "", workReport({ structuredOutput: pass }));
+    conversation.settle(
+      continuation?.cause ?? "",
+      workReport({ structuredOutput: pass }),
+    );
     await host.reconcile("ctx-1");
-    expect(host.observe("ctx-1")?.record.progress).toMatchObject({ obligation: { kind: "accept" } });
+    expect(host.observe("ctx-1")?.record.progress).toMatchObject({
+      obligation: { kind: "accept" },
+    });
   });
 
   it("requires a disposition naming the current occurrence to resume a halted context", async () => {

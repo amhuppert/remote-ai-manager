@@ -12,7 +12,10 @@ import type { SeatTurnPort } from "@/lib/conversation-core/executor";
 import { createNativeSeatTurns } from "@/lib/conversation-core/native-seat-turns";
 import type { TaskLane } from "@/lib/conversation-core/task-turns";
 import { getArtifactStore } from "@/lib/artifacts/production";
-import { CC_ARTIFACTS_IGNORE_PATTERN, ensureCcArtifactsExcluded } from "@/lib/git/worktree";
+import {
+  CC_ARTIFACTS_IGNORE_PATTERN,
+  ensureCcArtifactsExcluded,
+} from "@/lib/git/worktree";
 import {
   createProductionTurnRuntime,
   type CoreTurnRuntime,
@@ -32,7 +35,11 @@ import {
   setGlobalValue,
 } from "@/lib/shared/global-singleton";
 import { acquireQuerySlot } from "@/lib/shared/query-semaphore";
-import { getConversation, getProjectConversation, getSession } from "@/lib/state-store";
+import {
+  getConversation,
+  getProjectConversation,
+  getSession,
+} from "@/lib/state-store";
 import { getStateDb } from "@/lib/state-store/store";
 import { getValidationService } from "@/lib/validation/singleton";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
@@ -40,13 +47,21 @@ import { createWorkspaceEvidence } from "@/lib/workspace/evidence";
 import { createLaneGit } from "@/lib/workspace/lane-git";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { createLaneConflictActors, createSmartMergeIntegrator } from "@/lib/workspace/smart-merge-integrator";
+import {
+  createLaneConflictActors,
+  createSmartMergeIntegrator,
+} from "@/lib/workspace/smart-merge-integrator";
 import { mergeMachine } from "@/lib/workflows/merge/machine";
 import { defaultGitClient } from "@/lib/git/client";
 import { acquireSessionLock, isSessionBusy } from "@/lib/prompt/single-flight";
 import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
-import { composedSupervision, CORE_TURN_RUNTIME_KEY, loadedCoreTurnRuntime, SUPERVISION_KEY } from "./handles";
+import {
+  composedSupervision,
+  CORE_TURN_RUNTIME_KEY,
+  loadedCoreTurnRuntime,
+  SUPERVISION_KEY,
+} from "./handles";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import { getSubscriptionService } from "@/lib/subscriptions/service-factory";
 import { requestSubscriptionWakePass } from "@/lib/subscriptions/active-wait-production";
@@ -63,14 +78,16 @@ export function getSupervision(): Supervision {
   return getGlobalSingleton(SUPERVISION_KEY, composeProductionSupervision);
 }
 
-
 /** The core's turn engine, loaded once on first use; a failed load is retried on the next turn. */
 function coreTurnRuntime(): Promise<CoreTurnRuntime> {
-  const cached = getGlobalValue<Promise<CoreTurnRuntime>>(CORE_TURN_RUNTIME_KEY);
+  const cached = getGlobalValue<Promise<CoreTurnRuntime>>(
+    CORE_TURN_RUNTIME_KEY,
+  );
   if (cached !== undefined) return cached;
   const created = createProductionTurnRuntime({
     // Resolved when a cleanup turn ends: by then the supervision that owns debug mode is composed.
-    startDebugVerification: (input) => composedSupervision()?.debug.startVerification(input),
+    startDebugVerification: (input) =>
+      composedSupervision()?.debug.startVerification(input),
   }).catch((error: unknown) => {
     deleteGlobalValue(CORE_TURN_RUNTIME_KEY);
     throw error;
@@ -91,9 +108,13 @@ async function nativeSeatTurns(): Promise<SeatTurnPort> {
     async materializeDocuments(worktreePath, documents) {
       if (documents.length === 0) return;
       // The copies live under .cc/, which no commit or lane merge may carry.
-      const outside = documents.find((document) => !document.path.startsWith(CC_ARTIFACTS_IGNORE_PATTERN));
+      const outside = documents.find(
+        (document) => !document.path.startsWith(CC_ARTIFACTS_IGNORE_PATTERN),
+      );
       if (outside !== undefined)
-        throw new Error(`A document copy must be under ${CC_ARTIFACTS_IGNORE_PATTERN}, not at "${outside.path}"`);
+        throw new Error(
+          `A document copy must be under ${CC_ARTIFACTS_IGNORE_PATTERN}, not at "${outside.path}"`,
+        );
       await ensureCcArtifactsExcluded(worktreePath);
       await getArtifactStore().materialize(worktreePath, documents);
     },
@@ -114,14 +135,20 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
       const scope = scopeRefFromStoreSessionName(identity.sessionName);
       return scope.scope === "project"
         ? getProjectConversation(identity.projectPath, identity.conversationId)
-        : getConversation(identity.projectPath, scope.sessionName, identity.conversationId);
+        : getConversation(
+            identity.projectPath,
+            scope.sessionName,
+            identity.conversationId,
+          );
     },
     async readEntries(transcriptPath) {
-      const { readTranscriptEntriesWithSeq } = await import("@/lib/prompt/transcript");
+      const { readTranscriptEntriesWithSeq } =
+        await import("@/lib/prompt/transcript");
       return readTranscriptEntriesWithSeq(transcriptPath);
     },
     async findArtifact(conversationId) {
-      const { getContextArtifactsRepo } = await import("@/lib/context-artifacts/repo-production");
+      const { getContextArtifactsRepo } =
+        await import("@/lib/context-artifacts/repo-production");
       return (
         getContextArtifactsRepo()
           .findByConversation(conversationId)
@@ -129,12 +156,16 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
       );
     },
     async resolveConfig(projectPath) {
-      const [{ readConfig }, { resolveCompactionConfig }, { readRepoConfig }] = await Promise.all([
-        import("@/lib/config/loader"),
-        import("@/lib/config/cascade"),
-        import("@/lib/projects/repo-config"),
-      ]);
-      return resolveCompactionConfig(await readConfig(), await readRepoConfig(projectPath));
+      const [{ readConfig }, { resolveCompactionConfig }, { readRepoConfig }] =
+        await Promise.all([
+          import("@/lib/config/loader"),
+          import("@/lib/config/cascade"),
+          import("@/lib/projects/repo-config"),
+        ]);
+      return resolveCompactionConfig(
+        await readConfig(),
+        await readRepoConfig(projectPath),
+      );
     },
     taskLane() {
       let lane: Promise<TaskLane> | undefined;
@@ -145,7 +176,10 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
     },
     generate: (input, deps) => generateCheckpoint(input, deps),
     async resolveCaptureModel({ agentBackend, transcriptPath }) {
-      const [{ loadConversationTurnDependencies }, { resolveTurnModelSelection }] = await Promise.all([
+      const [
+        { loadConversationTurnDependencies },
+        { resolveTurnModelSelection },
+      ] = await Promise.all([
         import("@/lib/conversation-core/production-turn-dependencies"),
         import("@/lib/conversation-core/contributions/resolve-model-effort"),
       ]);
@@ -154,26 +188,37 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
         deps.execution.readConfig(),
         deps.transcript.readConversationMessages(transcriptPath),
       ]);
-      return resolveTurnModelSelection({ backend: agentBackend, config, priorMessages, explicitModelSelection: null });
+      return resolveTurnModelSelection({
+        backend: agentBackend,
+        config,
+        priorMessages,
+        explicitModelSelection: null,
+      });
     },
-    backendSupportsCheckpoint: (backend) => conversationCapabilitiesForBackend(backend).checkpoint,
+    backendSupportsCheckpoint: (backend) =>
+      conversationCapabilitiesForBackend(backend).checkpoint,
     background: {
-      activity: (conversationId) => getBackgroundActivityChannel().get(conversationId),
-      epoch: (conversationId) => getBackgroundActivityChannel().epoch(conversationId),
+      activity: (conversationId) =>
+        getBackgroundActivityChannel().get(conversationId),
+      epoch: (conversationId) =>
+        getBackgroundActivityChannel().epoch(conversationId),
     },
     async confirmQueuedDelivery(input) {
-      const { messageQueueService } = await import("@/lib/conversations/message-queue-service");
+      const { messageQueueService } =
+        await import("@/lib/conversations/message-queue-service");
       return messageQueueService.confirmDelivery(input);
     },
     async appendUserEntryOnce(conversationId, entry) {
-      const { appendTranscriptEntryOnce } = await import("@/lib/prompt/transcript");
+      const { appendTranscriptEntryOnce } =
+        await import("@/lib/prompt/transcript");
       await appendTranscriptEntryOnce(conversationId, entry);
     },
     async worktreeOf(identity) {
       const scope = scopeRefFromStoreSessionName(identity.sessionName);
       if (scope.scope === "project") return identity.projectPath;
       const session = await getSession(identity.projectPath, scope.sessionName);
-      if (session === null) throw new Error(`Session ${scope.sessionName} no longer exists`);
+      if (session === null)
+        throw new Error(`Session ${scope.sessionName} no longer exists`);
       return session.worktreePath;
     },
     runtime: {
@@ -184,12 +229,15 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
         await (await loadedRuntimeHost())?.retryRelease(conversationId);
       },
       async closeFailure(conversationId) {
-        return (await loadedRuntimeHost())?.closeFailure(conversationId) ?? null;
+        return (
+          (await loadedRuntimeHost())?.closeFailure(conversationId) ?? null
+        );
       },
     },
     async settleTurnReceipts(conversationId) {
       const runtime = loadedCoreTurnRuntime();
-      if (runtime !== undefined) await (await runtime).interactiveTurns.settleRetained(conversationId);
+      if (runtime !== undefined)
+        await (await runtime).interactiveTurns.settleRetained(conversationId);
     },
     now: () => new Date().toISOString(),
   };
@@ -214,16 +262,26 @@ function composeProductionSupervision(): Supervision {
     records: createProductionConversationRecords(),
     queue: {
       // The core holds a debug session's queue; the conversation actor holds its own by state.
-      claimNextTurnBatch: (input) => getConversationQueueDeps().claimNextTurnBatch({ ...input, debugHold: true }),
+      claimNextTurnBatch: (input) =>
+        getConversationQueueDeps().claimNextTurnBatch({
+          ...input,
+          debugHold: true,
+        }),
       markPending: (input) => getConversationQueueDeps().markPending(input),
       markDelivered: (input) => getConversationQueueDeps().markDelivered(input),
       markFailed: (input) => getConversationQueueDeps().markFailed(input),
-      recoverAbandonedDeliveries: (input) => getConversationQueueDeps().recoverAbandonedDeliveries(input),
-      runConversationCommand: (input) => getConversationQueueDeps().runConversationCommand(input),
+      recoverAbandonedDeliveries: (input) =>
+        getConversationQueueDeps().recoverAbandonedDeliveries(input),
+      runConversationCommand: (input) =>
+        getConversationQueueDeps().runConversationCommand(input),
     },
     getProjectDisplayName,
     readConversation: (enrollment) =>
-      getConversation(enrollment.projectPath, enrollment.sessionName, enrollment.conversationId),
+      getConversation(
+        enrollment.projectPath,
+        enrollment.sessionName,
+        enrollment.conversationId,
+      ),
     debug: {
       records: createProductionDebugRecords(),
       verify: (request) => runDebugCleanupVerification(request),
@@ -256,7 +314,10 @@ function composeProductionSupervision(): Supervision {
     async interactiveWorktree(enrollment) {
       const scope = scopeRefFromStoreSessionName(enrollment.sessionName);
       if (scope.scope === "project") return enrollment.projectPath;
-      return (await getSession(enrollment.projectPath, scope.sessionName))?.worktreePath ?? null;
+      return (
+        (await getSession(enrollment.projectPath, scope.sessionName))
+          ?.worktreePath ?? null
+      );
     },
     lanes: laneGit,
     integrator: createSmartMergeIntegrator({
@@ -277,14 +338,20 @@ function composeProductionSupervision(): Supervision {
     }),
     async followOwner(run) {
       const follow = await getSubscriptionService().autoFollow({
-        recipient: { projectPath: run.projectPath, conversationId: run.ownerConversationId },
+        recipient: {
+          projectPath: run.projectPath,
+          conversationId: run.ownerConversationId,
+        },
         source: { kind: "run", id: run.runId },
         reason: "Run launched by this conversation",
         initialCursor: "0",
         wakes: true,
       });
       if (follow === null)
-        logger.warn("runs.owner_not_followable", { runId: run.runId, conversationId: run.ownerConversationId });
+        logger.warn("runs.owner_not_followable", {
+          runId: run.runId,
+          conversationId: run.ownerConversationId,
+        });
     },
     boundariesRecorded() {
       requestSubscriptionWakePass();
@@ -311,6 +378,8 @@ export async function bootSupervision(): Promise<{
 export async function shutdownSupervision(): Promise<void> {
   const supervision = getGlobalValue<Supervision>(SUPERVISION_KEY);
   if (supervision !== undefined) await supervision.core.shutdown();
-  const runtime = getGlobalValue<Promise<CoreTurnRuntime>>(CORE_TURN_RUNTIME_KEY);
+  const runtime = getGlobalValue<Promise<CoreTurnRuntime>>(
+    CORE_TURN_RUNTIME_KEY,
+  );
   if (runtime !== undefined) await (await runtime).host.releaseAll();
 }

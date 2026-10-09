@@ -3,18 +3,34 @@
  * worktree and a lane worktree beside it, as provisioning leaves them.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultGitClient } from "@/lib/git/client";
-import { createLaneGit, publicationMarker, landingMarker, type LaneGit } from "./lane-git";
+import {
+  createLaneGit,
+  publicationMarker,
+  landingMarker,
+  type LaneGit,
+} from "./lane-git";
 
 async function git(cwd: string, args: string[]): Promise<string> {
   return (await defaultGitClient.git(args, cwd)).stdout.trim();
 }
 
-async function write(root: string, relative: string, content: string): Promise<void> {
+async function write(
+  root: string,
+  relative: string,
+  content: string,
+): Promise<void> {
   const target = path.join(root, relative);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, content, "utf-8");
@@ -48,11 +64,23 @@ beforeEach(async () => {
       async provisionLaneAt(input, { worktreePath, branchName }) {
         // Like the real provisioning: a worktree already on its branch is adopted.
         if (!existsSync(worktreePath))
-          await git(input.projectPath, ["worktree", "add", "-b", branchName, worktreePath, input.sessionBranch]);
+          await git(input.projectPath, [
+            "worktree",
+            "add",
+            "-b",
+            branchName,
+            worktreePath,
+            input.sessionBranch,
+          ]);
         return { worktreePath, branchName };
       },
       async disposeLane(input) {
-        await git(input.projectPath, ["worktree", "remove", "--force", input.worktreePath]);
+        await git(input.projectPath, [
+          "worktree",
+          "remove",
+          "--force",
+          input.worktreePath,
+        ]);
         await git(input.projectPath, ["branch", "-D", input.branchName]);
         return { status: "removed" };
       },
@@ -77,7 +105,11 @@ afterEach(async () => {
 
 /** What integration leaves before publication: the lane merged with the session head. */
 async function mergeLaneHead(head: string): Promise<void> {
-  await lanes.mergeInto({ worktreePath: lane, commit: head, message: "merge head" });
+  await lanes.mergeInto({
+    worktreePath: lane,
+    commit: head,
+    message: "merge head",
+  });
 }
 
 describe("lane git", () => {
@@ -87,16 +119,38 @@ describe("lane git", () => {
     await write(lane, "src/shared.ts", "export const shared = 2;\n");
     const marker = landingMarker("ctx-a:accept:1");
 
-    const landed = await lanes.land({ worktreePath: lane, paths: ["src/api"], message: `Accept ctx-a\n\n${marker}` });
+    const landed = await lanes.land({
+      worktreePath: lane,
+      paths: ["src/api"],
+      message: `Accept ctx-a\n\n${marker}`,
+    });
     expect(landed.kind).toBe("committed");
-    expect(await git(lane, ["show", "--name-only", "--format=", "HEAD"])).toBe("src/api/new.ts\nsrc/api/route.ts");
-    expect(await lanes.dirtyPaths(lane)).toEqual(["src/shared.ts"]);
-    expect(await lanes.findMarked({ projectPath: project, branch: laneBranch, marker })).toBe(
-      landed.kind === "committed" ? landed.commit : null,
+    expect(await git(lane, ["show", "--name-only", "--format=", "HEAD"])).toBe(
+      "src/api/new.ts\nsrc/api/route.ts",
     );
-    expect(await lanes.findMarked({ projectPath: project, branch: laneBranch, marker: landingMarker("other") })).toBeNull();
+    expect(await lanes.dirtyPaths(lane)).toEqual(["src/shared.ts"]);
+    expect(
+      await lanes.findMarked({
+        projectPath: project,
+        branch: laneBranch,
+        marker,
+      }),
+    ).toBe(landed.kind === "committed" ? landed.commit : null);
+    expect(
+      await lanes.findMarked({
+        projectPath: project,
+        branch: laneBranch,
+        marker: landingMarker("other"),
+      }),
+    ).toBeNull();
 
-    expect(await lanes.land({ worktreePath: lane, paths: ["src/api"], message: "again" })).toEqual({
+    expect(
+      await lanes.land({
+        worktreePath: lane,
+        paths: ["src/api"],
+        message: "again",
+      }),
+    ).toEqual({
       kind: "unchanged",
       head: await git(lane, ["rev-parse", "HEAD"]),
     });
@@ -105,8 +159,14 @@ describe("lane git", () => {
   it("lands everything for a full scope, new files included and ignored files left out", async () => {
     await write(lane, "docs/notes.md", "notes\n");
     await write(lane, "debug.log", "noise\n");
-    await lanes.land({ worktreePath: lane, paths: null, message: "Accept full" });
-    expect(await git(lane, ["show", "--name-only", "--format=", "HEAD"])).toBe("docs/notes.md");
+    await lanes.land({
+      worktreePath: lane,
+      paths: null,
+      message: "Accept full",
+    });
+    expect(await git(lane, ["show", "--name-only", "--format=", "HEAD"])).toBe(
+      "docs/notes.md",
+    );
     expect(await lanes.dirtyPaths(lane)).toEqual([]);
   });
 
@@ -117,7 +177,13 @@ describe("lane git", () => {
     await git(session, ["commit", "-am", "session edit"]);
     const head = await lanes.head(project, sessionBranch);
 
-    expect(await lanes.mergeInto({ worktreePath: lane, commit: head, message: "merge" })).toEqual({
+    expect(
+      await lanes.mergeInto({
+        worktreePath: lane,
+        commit: head,
+        message: "merge",
+      }),
+    ).toEqual({
       kind: "conflicts",
       files: ["src/shared.ts"],
     });
@@ -126,7 +192,11 @@ describe("lane git", () => {
     await write(session, "src/shared.ts", "export const shared = 'lane';\n");
     await git(session, ["commit", "-am", "agree"]);
     expect(
-      await lanes.mergeInto({ worktreePath: lane, commit: await lanes.head(project, sessionBranch), message: "merge" }),
+      await lanes.mergeInto({
+        worktreePath: lane,
+        commit: await lanes.head(project, sessionBranch),
+        message: "merge",
+      }),
     ).toEqual({ kind: "merged" });
   });
 
@@ -166,9 +236,17 @@ describe("lane git", () => {
     const commit = published.kind === "published" ? published.commit : "";
     expect(await lanes.head(project, sessionBranch)).toBe(commit);
     expect(await git(project, ["rev-parse", `${commit}^`])).toBe(head);
-    expect(await readFile(path.join(session, "src/api/route.ts"), "utf-8")).toBe("export const route = 3;\n");
+    expect(
+      await readFile(path.join(session, "src/api/route.ts"), "utf-8"),
+    ).toBe("export const route = 3;\n");
     expect(await lanes.dirtyPaths(session)).toEqual([]);
-    expect(await lanes.findMarked({ projectPath: project, branch: sessionBranch, marker })).toBe(commit);
+    expect(
+      await lanes.findMarked({
+        projectPath: project,
+        branch: sessionBranch,
+        marker,
+      }),
+    ).toBe(commit);
 
     // The squash is not in the lane's history, so the lane cannot publish onto it again.
     expect(
@@ -204,23 +282,44 @@ describe("lane git", () => {
       message: "Publish",
       jobId: "run-1-publish-api-3",
     });
-    expect(result).toEqual({ kind: "stale", head: await lanes.head(project, sessionBranch) });
+    expect(result).toEqual({
+      kind: "stale",
+      head: await lanes.head(project, sessionBranch),
+    });
   });
 
   it("removes a published lane, but keeps one holding work beyond its publication", async () => {
     await write(lane, "src/api/route.ts", "export const route = 5;\n");
     await lanes.land({ worktreePath: lane, paths: null, message: "lane work" });
-    const published = await lanes.publish(publishInput(await lanes.head(project, sessionBranch), "run-1-publish-api-5"));
+    const published = await lanes.publish(
+      publishInput(
+        await lanes.head(project, sessionBranch),
+        "run-1-publish-api-5",
+      ),
+    );
     const commit = published.kind === "published" ? published.commit : "";
-    const removal = { projectPath: project, worktreePath: lane, branch: laneBranch, published: commit };
+    const removal = {
+      projectPath: project,
+      worktreePath: lane,
+      branch: laneBranch,
+      published: commit,
+    };
 
     await write(lane, "notes.md", "written after the publication\n");
-    expect(await lanes.remove(removal)).toEqual({ kind: "kept", detail: expect.stringContaining("notes.md") });
+    expect(await lanes.remove(removal)).toEqual({
+      kind: "kept",
+      detail: expect.stringContaining("notes.md"),
+    });
     await rm(path.join(lane, "notes.md"));
     await write(lane, "src/api/route.ts", "export const route = 6;\n");
     await git(lane, ["commit", "-qam", "follow-up"]);
-    expect(await lanes.remove(removal)).toEqual({ kind: "kept", detail: expect.stringContaining(commit) });
-    expect(await readFile(path.join(lane, "src/api/route.ts"), "utf-8")).toBe("export const route = 6;\n");
+    expect(await lanes.remove(removal)).toEqual({
+      kind: "kept",
+      detail: expect.stringContaining(commit),
+    });
+    expect(await readFile(path.join(lane, "src/api/route.ts"), "utf-8")).toBe(
+      "export const route = 6;\n",
+    );
 
     await git(lane, ["reset", "-q", "--hard", "HEAD~1"]);
     expect(await lanes.remove(removal)).toEqual({ kind: "removed" });
@@ -250,7 +349,10 @@ describe("lane git", () => {
     const experiment = await git(session, ["rev-parse", "HEAD"]);
 
     const result = await lanes.publish(publishInput(head, "job-branch"));
-    expect(result).toEqual({ kind: "blocked", detail: expect.stringContaining("experiment") });
+    expect(result).toEqual({
+      kind: "blocked",
+      detail: expect.stringContaining("experiment"),
+    });
     expect(await git(session, ["rev-parse", "HEAD"])).toBe(experiment);
     expect(await lanes.head(project, sessionBranch)).toBe(head);
   });
@@ -281,22 +383,48 @@ describe("lane git", () => {
     await git(session, ["reset", "-q", "--hard", head]);
     await git(session, ["update-ref", `refs/heads/${sessionBranch}`, commit]);
 
-    expect(await lanes.completePublication({ targetWorktreePath: session, from: head, to: commit })).toBe("refreshed");
-    expect(await readFile(path.join(session, "src/api/route.ts"), "utf-8")).toBe("export const route = 7;\n");
-    expect(await lanes.completePublication({ targetWorktreePath: session, from: head, to: commit })).toBe("complete");
+    expect(
+      await lanes.completePublication({
+        targetWorktreePath: session,
+        from: head,
+        to: commit,
+      }),
+    ).toBe("refreshed");
+    expect(
+      await readFile(path.join(session, "src/api/route.ts"), "utf-8"),
+    ).toBe("export const route = 7;\n");
+    expect(
+      await lanes.completePublication({
+        targetWorktreePath: session,
+        from: head,
+        to: commit,
+      }),
+    ).toBe("complete");
 
     await git(session, ["reset", "-q", "--hard", head]);
     await git(session, ["update-ref", `refs/heads/${sessionBranch}`, commit]);
     await write(session, "after-crash.md", "new work\n");
-    expect(await lanes.completePublication({ targetWorktreePath: session, from: head, to: commit })).toBe("diverged");
-    expect(await readFile(path.join(session, "after-crash.md"), "utf-8")).toBe("new work\n");
+    expect(
+      await lanes.completePublication({
+        targetWorktreePath: session,
+        from: head,
+        to: commit,
+      }),
+    ).toBe("diverged");
+    expect(await readFile(path.join(session, "after-crash.md"), "utf-8")).toBe(
+      "new work\n",
+    );
   });
 
   it("refuses to publish over an ignored session file at a path the lane starts tracking, in publication and in recovery", async () => {
     await write(session, "local.log", "the owner's own settings\n");
     await write(lane, ".gitignore", "");
     await write(lane, "local.log", "defaults\n");
-    await lanes.land({ worktreePath: lane, paths: null, message: "track local.log" });
+    await lanes.land({
+      worktreePath: lane,
+      paths: null,
+      message: "track local.log",
+    });
     const head = await lanes.head(project, sessionBranch);
 
     expect(await lanes.publish(publishInput(head, "job-ignored"))).toEqual({
@@ -304,7 +432,9 @@ describe("lane git", () => {
       detail: expect.stringContaining("local.log"),
     });
     expect(await lanes.head(project, sessionBranch)).toBe(head);
-    expect(await readFile(path.join(session, "local.log"), "utf-8")).toBe("the owner's own settings\n");
+    expect(await readFile(path.join(session, "local.log"), "utf-8")).toBe(
+      "the owner's own settings\n",
+    );
 
     // As a crash between the branch move and the refresh would leave it, had the file appeared meanwhile.
     await rm(path.join(session, "local.log"));
@@ -313,15 +443,31 @@ describe("lane git", () => {
     await git(session, ["reset", "-q", "--hard", head]);
     await git(session, ["update-ref", `refs/heads/${sessionBranch}`, commit]);
     await write(session, "local.log", "the owner's own settings\n");
-    expect(await lanes.completePublication({ targetWorktreePath: session, from: head, to: commit })).toBe("diverged");
-    expect(await readFile(path.join(session, "local.log"), "utf-8")).toBe("the owner's own settings\n");
+    expect(
+      await lanes.completePublication({
+        targetWorktreePath: session,
+        from: head,
+        to: commit,
+      }),
+    ).toBe("diverged");
+    expect(await readFile(path.join(session, "local.log"), "utf-8")).toBe(
+      "the owner's own settings\n",
+    );
   });
 
   it("reads a lane's unlanded changes without its index, and resyncs a stale index for landed paths", async () => {
     await write(lane, "src/api/route.ts", "export const route = 8;\n");
-    await lanes.land({ worktreePath: lane, paths: ["src/api"], message: "landed" });
+    await lanes.land({
+      worktreePath: lane,
+      paths: ["src/api"],
+      message: "landed",
+    });
     // As a crash between the branch move and the index resync leaves it.
-    await git(lane, ["update-index", "--cacheinfo", `100644,${await git(lane, ["rev-parse", "HEAD~1:src/api/route.ts"])},src/api/route.ts`]);
+    await git(lane, [
+      "update-index",
+      "--cacheinfo",
+      `100644,${await git(lane, ["rev-parse", "HEAD~1:src/api/route.ts"])},src/api/route.ts`,
+    ]);
     expect(await lanes.dirtyPaths(lane)).toEqual(["src/api/route.ts"]);
     expect(await lanes.unlandedPaths(lane)).toEqual([]);
     await lanes.resyncIndex({ worktreePath: lane, paths: ["src/api"] });
@@ -329,7 +475,11 @@ describe("lane git", () => {
 
     // A landed new file the index never learned of is landed all the same; a stray one is not.
     await write(lane, "src/api/new.ts", "export const added = 2;\n");
-    await lanes.land({ worktreePath: lane, paths: ["src/api"], message: "landed new" });
+    await lanes.land({
+      worktreePath: lane,
+      paths: ["src/api"],
+      message: "landed new",
+    });
     await git(lane, ["rm", "-q", "--cached", "src/api/new.ts"]);
     await write(lane, "stray.md", "not landed\n");
     expect(await lanes.unlandedPaths(lane)).toEqual(["stray.md"]);
@@ -358,7 +508,9 @@ describe("lane git", () => {
     await git(lane, ["add", "src/shared.ts"]);
     expect(await lanes.abortUnresolvedMerge(lane)).toBe("kept");
     expect(await lanes.mergeInProgress(lane)).toBe(true);
-    expect(await readFile(path.join(lane, "src/shared.ts"), "utf-8")).toBe("export const shared = 'both';\n");
+    expect(await readFile(path.join(lane, "src/shared.ts"), "utf-8")).toBe(
+      "export const shared = 'both';\n",
+    );
   });
 
   it("adopts a provisioned lane again, and refuses one whose setup never finished", async () => {
@@ -375,7 +527,15 @@ describe("lane git", () => {
 
     // As a server stopping during the init script leaves it: the worktree exists, its setup does not.
     const half = path.join(project, ".worktrees", "session.1-ui");
-    await git(project, ["worktree", "add", "-q", "-b", "session-1-ui", half, sessionBranch]);
+    await git(project, [
+      "worktree",
+      "add",
+      "-q",
+      "-b",
+      "session-1-ui",
+      half,
+      sessionBranch,
+    ]);
     await expect(
       lanes.provision({
         projectPath: project,

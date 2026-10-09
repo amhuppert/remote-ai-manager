@@ -374,7 +374,10 @@ export function createActiveWaitService(
       body += `${body ? "\n" : ""}${line}`;
     }
     const follows: SubscriptionDelivery[] = [];
-    for (const { delivery, subscription } of await deps.subscriptions.listWakeDeliveries(recipient, at)) {
+    for (const {
+      delivery,
+      subscription,
+    } of await deps.subscriptions.listWakeDeliveries(recipient, at)) {
       if (chosen.length + follows.length === 6) break;
       const details =
         deps.deliveryGetCommand?.(delivery) ??
@@ -622,7 +625,8 @@ export function createActiveWaitService(
     listRecipients: () => deps.repo.listRecipients(now()),
     async releaseUnsentBatch(batchId) {
       const before = await deps.repo.getBatch(batchId);
-      if (!(await deps.repo.releaseUnsent(batchId, now())) || before === null) return;
+      if (!(await deps.repo.releaseUnsent(batchId, now())) || before === null)
+        return;
       deps.onChange?.(before.recipient);
       logger.info("subscription.wake.batch_released", {
         conversationId: before.recipient.conversationId,
