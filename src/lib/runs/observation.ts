@@ -132,7 +132,7 @@ export function describeRun(
 }
 
 /** Where a lane stands for its owner: its step, the attempt, and why it stopped. */
-function laneView(
+export function laneView(
   state: RunLaneState | undefined,
   skipped: boolean,
 ): Pick<RunView["lanes"][number], "state" | "attempt" | "detail" | "commit"> {

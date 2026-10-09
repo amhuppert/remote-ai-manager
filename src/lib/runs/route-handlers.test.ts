@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { NextResponse } from "next/server";
 import {
   createPersistenceFixture,
@@ -6,7 +7,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createRunRouteHandlers, type RunRouteDeps } from "./route-handlers";
 import { currentDocuments } from "./documents";
-import { runViewSchema } from "./schemas";
+import { runPageSchema, runSummarySchema, runViewSchema } from "./schemas";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   agentStartRequest,
@@ -28,6 +29,10 @@ let codexWithdrawn: boolean;
 let branchPrefix: string;
 /** Conversations the inbox cannot wake: owned, archived or not an ordinary conversation. */
 let unwakeable: Set<string>;
+/** Every candidate whose changes the page asked Workspace for. */
+let diffed: Array<{ worktreePath: string; evidence: string }>;
+/** Seat conversations deleted from the session since they ran. */
+let deleted: Set<string>;
 
 function identity(conversationId: string): Record<string, string> {
   return {
@@ -117,6 +122,8 @@ beforeEach(() => {
   codexWithdrawn = false;
   branchPrefix = "csm";
   unwakeable = new Set();
+  diffed = [];
+  deleted = new Set();
   snapshots = [];
   seatFiles = {};
   seatReads = [];
@@ -261,6 +268,47 @@ beforeEach(() => {
             named.map((key) => [key, `sha256:${charter.mission}-${key}`]),
           ),
         },
+      };
+    },
+    // The owner reads as "Owner one"; each seat's conversation cost 0.25 over two turns.
+    async sessionConversations() {
+      return new Map([
+        [
+          "owner-1",
+          {
+            title: "Owner one",
+            backend: "claude" as const,
+            working: false,
+            costUsd: 1,
+            turns: 4,
+          },
+        ],
+        ...Object.values(supervisionSeats())
+          .filter((id) => !deleted.has(id))
+          .map(
+          (id) =>
+            [
+              id,
+              {
+                title: id,
+                backend: "claude" as const,
+                working: false,
+                costUsd: 0.25,
+                turns: 2,
+              },
+            ] as const,
+        ),
+      ]);
+    },
+    // A frozen document's text is what its fake artifact id names.
+    async readText(artifactId) {
+      return artifactId.replace(/^sha256:/, "");
+    },
+    async candidateChanges({ worktreePath, evidence }) {
+      diffed.push({ worktreePath, evidence });
+      return {
+        ok: true,
+        diff: { files: [], totalAdditions: 3, totalDeletions: 1 },
       };
     },
     // Freezes a seat's file as its contents.
@@ -548,6 +596,18 @@ describe("run routes", () => {
     expect(supervision.requests.question(questionId ?? "")?.state).toBe(
       "withdrawn",
     );
+    // The page names the cancel once: who asked for it, not also that it finished.
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    expect(
+      page.activity
+        .filter((event) => event.kind === "cancelled")
+        .map((event) => event.summary),
+    ).toEqual(["Cancelled by the owner"]);
+    expect(page.finishedAt).not.toBeNull();
   });
 
   it("pauses, resumes and cancels a run for its owner, refusing another conversation", async () => {
@@ -894,6 +954,104 @@ describe("run routes", () => {
       }),
       expect.objectContaining({ key: "design", started: true, skipped: false }),
     ]);
+
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    expect(page.edges).toEqual([
+      {
+        from: "triage",
+        to: "fix",
+        guard: {
+          label: '{"type":"object","properties":{"kind":{"const":"bug"}}}',
+          state: "not_taken",
+        },
+        outputOnly: false,
+      },
+      {
+        from: "triage",
+        to: "design",
+        guard: { label: "else", state: "taken" },
+        outputOnly: false,
+      },
+    ]);
+    const fix = page.contexts.find((context) => context.key === "fix");
+    expect(fix?.state).toEqual({
+      kind: "skipped",
+      reason: "Its route was not taken",
+    });
+    expect(fix?.stages.every((stage) => stage.state === "skipped")).toBe(true);
+    // A branch not taken is neither done nor left to do.
+    const [summary] = z
+      .array(runSummarySchema)
+      .parse(await json(await routes.list(request(null, {}, "GET"), params())));
+    expect(summary?.contexts).toEqual({ done: 2, total: 2 });
+  });
+
+  it("shows the page for a dependency keyed like a built-in property, with no guard on it", async () => {
+    h.script = async () => ({
+      ...done("Triaged."),
+      structuredOutput: { kind: "feature" },
+    });
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Keys",
+          contexts: [
+            { key: "constructor", brief: "Prepare it" },
+            {
+              key: "triage",
+              brief: "Triage it",
+              dependsOn: ["constructor"],
+              scope: { mode: "readOnly" },
+              outputSchema: {
+                type: "object",
+                properties: { kind: { type: "string" } },
+                required: ["kind"],
+              },
+            },
+            {
+              key: "join",
+              brief: "Join them",
+              dependsOn: [
+                "constructor",
+                {
+                  key: "triage",
+                  when: {
+                    schema: {
+                      type: "object",
+                      properties: { kind: { const: "feature" } },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    const shown = await routes.page(
+      request(null, {}, "GET"),
+      params({ runId: "run-1" }),
+    );
+    expect(shown.status).toBe(200);
+    const page = runPageSchema.parse(await json(shown));
+    expect(
+      page.edges.find(
+        (edge) => edge.from === "constructor" && edge.to === "join",
+      ),
+    ).toEqual({
+      from: "constructor",
+      to: "join",
+      guard: null,
+      outputOnly: false,
+    });
   });
 
   it("shows a loop's current pass and why the run halted when the loop ran out of passes", async () => {
@@ -973,6 +1131,60 @@ describe("run routes", () => {
     expect(view.halts).toEqual([
       'loop "polish": "review" did not meet the exit condition in 2 passes',
     ]);
+
+    // The run page keeps each earlier pass's evidence beside the current one.
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    const [implement] = page.contexts;
+    expect(implement?.invocationId).toBe("run-1.implement.pass2");
+    expect(implement?.loop).toEqual({ key: "polish", pass: 2, maxPasses: 2 });
+    expect(
+      implement?.previousInvocations.map((pass) => [
+        pass.invocationId,
+        pass.loop?.pass,
+        pass.state.kind,
+      ]),
+    ).toEqual([["run-1.implement", 1, "succeeded"]]);
+    expect(page.loops).toEqual([
+      expect.objectContaining({
+        key: "polish",
+        body: ["implement", "review"],
+        pass: 2,
+        state: "exhausted",
+      }),
+    ]);
+    expect(page.attention).toEqual([
+      expect.objectContaining({
+        kind: "run_halt",
+        halt: "loop_exhausted",
+        clearedBy: "amend",
+      }),
+    ]);
+    expect(
+      page.activity.filter((event) => event.kind === "started"),
+    ).toHaveLength(4);
+
+    // Once cancelled, the halt is history: nothing is left for anyone to act on.
+    await routes.control(
+      request({ action: "cancel" }, {}),
+      params({ runId: "run-1" }),
+    );
+    await quiesce(supervision);
+    const cancelled = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    expect(cancelled.status).toEqual({ kind: "cancelled" });
+    expect(cancelled.attention).toEqual([]);
+    expect(cancelled.loops[0]?.state).toBe("exhausted");
+    const [summary] = z
+      .array(runSummarySchema)
+      .parse(await json(await routes.list(request(null, {}, "GET"), params())));
+    expect(summary?.attention).toBe(0);
   });
 
   it("shows a loop whose entry route was not taken as skipped", async () => {
@@ -1190,6 +1402,21 @@ describe("run routes", () => {
     expect(supervision.runs.observe("run-1")?.record.progress.kind).toBe(
       "paused",
     );
+    // Its context's turn finishes under the pause; nothing after it starts.
+    const paused = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    expect(paused.contexts[0]?.state).toEqual({
+      kind: "paused",
+      next: { kind: "work", reason: "initial" },
+      draining: true,
+    });
+    // The seat's first conversation is its current one, before any turn settles.
+    expect(
+      paused.contexts[0]?.agents.map((agent) => [agent.assignment, agent.status]),
+    ).toEqual([["implementer", "idle"]]);
     // An agent credential never stands for a person: another conversation is still refused.
     const byOther = await routes.control(
       request(
@@ -1239,6 +1466,201 @@ describe("run routes", () => {
       params({ runId: "run-1" }),
     );
     expect(definition.status).toBe(200);
+
+    await quiesce(supervision, false);
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    expect(
+      page.activity
+        .filter((event) => event.kind !== "started" && event.kind !== "launched")
+        .map((event) => [event.kind, event.summary]),
+    ).toEqual([
+      ["paused", "Paused by Alex"],
+      ["resumed", "Resumed by the owner"],
+      ["cancelled", "Cancelled by Alex"],
+    ]);
+  });
+
+  it("says a run's cost is incomplete once a seat's conversation is gone, rather than counting it as nothing", async () => {
+    await launch({ brief: "First" });
+    deleted.add("conv-1");
+
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    const [context] = page.contexts;
+    expect(context?.agents).toEqual([
+      expect.objectContaining({
+        conversationId: "conv-1",
+        turns: null,
+        costUsd: null,
+      }),
+    ]);
+    expect([context?.costUsd, context?.costComplete]).toEqual([0, false]);
+    expect([page.costUsd, page.costComplete]).toEqual([0, false]);
+    const [summary] = z
+      .array(runSummarySchema)
+      .parse(await json(await routes.list(request(null, {}, "GET"), params())));
+    expect(summary?.costComplete).toBe(false);
+  });
+
+  it("lists the session's runs for a person, newest first, with their progress, attention and cost", async () => {
+    await launch({ brief: "First" });
+    await launch({ brief: "Second" });
+
+    const listed = await routes.list(request(null, {}, "GET"), params());
+    expect(listed.status).toBe(200);
+    const runs = z.array(runSummarySchema).parse(await json(listed));
+    expect(
+      runs.map((run) => [
+        run.runId,
+        run.status.kind,
+        run.contexts,
+        run.attention,
+        run.costUsd,
+      ]),
+    ).toEqual([
+      ["run-2", "succeeded", { done: 1, total: 1 }, 0, 0.25],
+      ["run-1", "succeeded", { done: 1, total: 1 }, 0, 0.25],
+    ]);
+    expect(runs[0]?.owner).toEqual({
+      conversationId: "owner-1",
+      title: "Owner one",
+      backend: "claude",
+    });
+    expect(runs[0]?.finishedAt).not.toBeNull();
+  });
+
+  it("shows a person the run page: each context's state and stages, edges, documents with their text, charter and activity", async () => {
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Plan then build",
+          contexts: [
+            { key: "plan", brief: "Plan it" },
+            { key: "build", brief: "Build it", dependsOn: ["plan"] },
+          ],
+          documents: [
+            { path: "notes.md", contents: "Notes", description: "Notes" },
+          ],
+          charter: { mission: "Ship" },
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    await quiesce(supervision);
+
+    const shown = await routes.page(
+      request(null, {}, "GET"),
+      params({ runId: "run-1" }),
+    );
+    expect(shown.status).toBe(200);
+    const page = runPageSchema.parse(await json(shown));
+    expect(page.status).toEqual({ kind: "succeeded" });
+    expect(page.owner.title).toBe("Owner one");
+    expect(
+      page.contexts.map((c) => [c.key, c.state.kind, c.invocationId]),
+    ).toEqual([
+      ["plan", "succeeded", "run-1.plan"],
+      ["build", "succeeded", "run-1.build"],
+    ]);
+    expect(page.contexts[1]?.stages.map((s) => s.state)).toEqual([
+      "done",
+      "done",
+      "done",
+      "skipped",
+      "done",
+    ]);
+    expect(page.contexts[1]?.agents).toEqual([
+      expect.objectContaining({
+        assignment: "implementer",
+        status: "finished",
+        costUsd: 0.25,
+      }),
+    ]);
+    expect(page.costUsd).toBe(0.5);
+    expect(page.edges).toEqual([
+      { from: "plan", to: "build", guard: null, outputOnly: false },
+    ]);
+    expect(page.documents).toEqual([
+      expect.objectContaining({
+        path: "notes.md",
+        revision: 1,
+        contents: "Notes",
+      }),
+    ]);
+    expect(page.charter).toMatchObject({ revision: 1, mission: "Ship" });
+    expect(
+      page.activity.map((event) => [event.kind, event.contextKey ?? null]),
+    ).toEqual([
+      ["launched", null],
+      ["started", "plan"],
+      ["succeeded", "plan"],
+      ["started", "build"],
+      ["succeeded", "build"],
+      ["succeeded", null],
+    ]);
+    // Each event keeps an identity from the fact it comes from, whatever lands before it later.
+    expect(page.activity.map((event) => event.id)).toEqual([
+      "launch",
+      "start:run-1.plan",
+      "done:run-1.plan",
+      "start:run-1.build",
+      "done:run-1.build",
+      expect.stringMatching(/^boundary:\d+$/),
+    ]);
+    expect(page.definition).toMatchObject({ title: "Plan then build" });
+  });
+
+  it("shows a result awaiting approval with what its candidate changed, as something a person must decide", async () => {
+    await supervision.runs.launch({
+      runId: "run-9",
+      cause: "launch-run-9",
+      kind: "agent",
+      title: "Needs approval",
+      projectPath: "/repo",
+      sessionName: "session",
+      owner: { conversationId: "owner-1", sessionName: "session" },
+      contexts: [
+        {
+          key: "agent",
+          dependsOn: [],
+          request: agentStartRequest("run-9", { humanApproval: true }),
+        },
+      ],
+    });
+    await quiesce(supervision);
+
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-9" })),
+      ),
+    );
+
+    const [context] = page.contexts;
+    expect(context?.state.kind).toBe("awaiting_approval");
+    expect(context?.candidate).toEqual({
+      status: "ready",
+      scope: "whole_tree",
+      ownedPaths: [],
+      diff: { files: [], totalAdditions: 3, totalDeletions: 1 },
+    });
+    expect(diffed).toEqual([
+      {
+        worktreePath: "/repo/.worktrees/session",
+        evidence: expect.stringMatching(/^git:/),
+      },
+    ]);
+    expect(page.attention).toEqual([
+      expect.objectContaining({ kind: "approval", contextKey: "agent" }),
+    ]);
+    expect(page.status).toEqual({ kind: "needs_input" });
   });
 
   it("lets only a person, never an agent, decide a result awaiting human approval", async () => {

@@ -45,6 +45,8 @@ export type ContextInput =
       cause: string;
       request: ContextEffectRequest;
       state: OutcomeState;
+      /** When the Context consumed it. */
+      at: string;
     }
   | { kind: "withdrawn"; cause: string; request: ContextEffectRequest }
   | { kind: "pause" }
@@ -95,8 +97,15 @@ export function advanceContext(
             kind: "effect_uncertain",
             detail: input.state.evidence,
             ...seatOf(input.request),
+            effect: input.request.kind,
           })
-        : applyOutcome(facts, input.cause, input.request, input.state.outcome);
+        : applyOutcome(
+            facts,
+            input.cause,
+            input.request,
+            input.state.outcome,
+            input.at,
+          );
     case "withdrawn":
       return releaseAllowance(facts, input.cause);
     case "pause":
@@ -140,6 +149,7 @@ function applyOutcome(
   cause: string,
   request: ContextEffectRequest,
   outcome: unknown,
+  at: string,
 ): ContextFacts {
   switch (request.kind) {
     case "work":
@@ -159,7 +169,7 @@ function applyOutcome(
     case "check":
     case "verify":
     case "accept":
-      return applyWorkspaceReport(facts, request, outcome);
+      return applyWorkspaceReport(facts, request, outcome, at);
     case "answer":
       return applyAnswer(facts, request.questionId, outcome);
   }
@@ -209,6 +219,7 @@ function unexpectedEnd(
   facts: ContextFacts,
   report: ConversationReport,
   seat: string,
+  effect: "work" | "capture_output" | "advise",
 ): ContextFacts | null {
   if (report.status === "succeeded") return null;
   if (report.status === "cancelled" && facts.control.cancelled) return facts;
@@ -217,6 +228,7 @@ function unexpectedEnd(
       kind: "interrupted",
       detail: report.failure ?? "The turn was interrupted before it settled",
       seat,
+      effect,
     });
   }
   return halt(facts, {
@@ -227,6 +239,7 @@ function unexpectedEnd(
         ? "The turn was cancelled outside this context"
         : "The turn failed"),
     seat,
+    effect,
   });
 }
 
@@ -262,7 +275,12 @@ function applyWorkReport(
       },
     };
   }
-  const ended = unexpectedEnd(facts, report, request.seat.assignmentId);
+  const ended = unexpectedEnd(
+    facts,
+    report,
+    request.seat.assignmentId,
+    "work",
+  );
   if (ended !== null) return ended;
   facts = {
     ...facts,
@@ -281,7 +299,7 @@ function applyCaptureReport(
 ): ContextFacts {
   // A capture turn is read-only: an interruption simply plans it again.
   if (report.status === "interrupted") return facts;
-  const ended = unexpectedEnd(facts, report, "implementer");
+  const ended = unexpectedEnd(facts, report, "implementer", "capture_output");
   if (ended !== null) return ended;
   if (
     report.outputIssue === null &&
@@ -363,7 +381,7 @@ function applyAdviceReport(
   request: Extract<ContextEffectRequest, { kind: "advise" }>,
   report: ConversationReport,
 ): ContextFacts {
-  const ended = unexpectedEnd(facts, report, "implementer");
+  const ended = unexpectedEnd(facts, report, "implementer", "advise");
   if (ended !== null) return ended;
   const recorded = recordAdviceResponse(facts, {
     items: request.items,
@@ -387,10 +405,15 @@ function applyWorkspaceReport(
     { kind: "bind" | "freeze" | "check" | "verify" | "accept" }
   >,
   outcome: unknown,
+  at: string,
 ): ContextFacts {
   const report = workspaceReportSchema.parse(outcome);
   if (report.kind === "refused") {
-    return halt(facts, { kind: "workspace_refused", detail: report.detail });
+    return halt(facts, {
+      kind: "workspace_refused",
+      detail: report.detail,
+      effect: request.kind,
+    });
   }
   switch (request.kind) {
     case "bind":
@@ -434,7 +457,11 @@ function applyWorkspaceReport(
           acceptance: {
             receipts: [
               ...facts.acceptance.receipts,
-              { candidateId: request.candidateId, receipt: report.receipt },
+              {
+                candidateId: request.candidateId,
+                receipt: report.receipt,
+                at,
+              },
             ],
           },
         };

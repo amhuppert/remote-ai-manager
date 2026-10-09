@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { seatAssignmentSchema } from "@/lib/conversation-core/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
-import { workspaceBindingRequestSchema } from "@/lib/workspace/schemas";
+import {
+  workspaceBindingRequestSchema,
+  workspaceScopeSchema,
+} from "@/lib/workspace/schemas";
 
 // ---------------------------------------------------------------------------
 // Contract: frozen at launch by Run's resolver; changed only by amendment.
@@ -286,6 +290,8 @@ export const reviewRoundSchema = z
     seats: z.array(seatVerdictSchema),
     /** A rereview disposition retires a round without deleting its evidence. */
     retired: z.boolean(),
+    /** When the round opened; absent for a round opened before rounds recorded it. */
+    openedAt: z.string().min(1).optional(),
   })
   .strict();
 export type ReviewRound = z.infer<typeof reviewRoundSchema>;
@@ -340,7 +346,12 @@ export const acceptanceFactsSchema = z
   .object({
     receipts: z.array(
       z
-        .object({ candidateId: z.string().min(1), receipt: z.string().min(1) })
+        .object({
+          candidateId: z.string().min(1),
+          receipt: z.string().min(1),
+          /** When it was accepted; absent for one accepted before receipts recorded it. */
+          at: z.string().min(1).optional(),
+        })
         .strict(),
     ),
   })
@@ -382,11 +393,28 @@ export const recordedHaltKindSchema = z.enum([
 ]);
 export type RecordedHaltKind = z.infer<typeof recordedHaltKindSchema>;
 
+/** What a Context asks of its executors, by kind. */
+export const contextEffectKindSchema = z.enum([
+  "bind",
+  "work",
+  "capture_output",
+  "freeze",
+  "check",
+  "review",
+  "advise",
+  "verify",
+  "accept",
+  "answer",
+]);
+export type ContextEffectKind = z.infer<typeof contextEffectKindSchema>;
+
 export const recordedHaltSchema = z
   .object({
     kind: recordedHaltKindSchema,
     detail: z.string(),
     seat: z.string().optional(),
+    /** The effect that halted; absent for a halt no effect caused, or one recorded before halts named it. */
+    effect: contextEffectKindSchema.optional(),
   })
   .strict();
 export type RecordedHalt = z.infer<typeof recordedHaltSchema>;
@@ -633,3 +661,271 @@ export const contextStartRequestSchema = z
   })
   .strict();
 export type ContextStartRequest = z.infer<typeof contextStartRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Observation: what a Context shows a person (design §9), the part of the run
+// page the Context owns. The Run composes it with what only the Run knows.
+// ---------------------------------------------------------------------------
+
+/** One seat as the page names it. */
+export const seatSummarySchema = z
+  .object({
+    /** The contract's assignment id: which seat this is. */
+    assignment: z.string().min(1),
+    role: z.enum(["implementer", "reviewer"]),
+    backend: agentBackendSchema,
+    model: z.string().min(1),
+    /** The selection's effort or reasoning level, when it names one. */
+    effort: z.string().min(1).nullable(),
+    profile: z.string().min(1).optional(),
+    authority: reviewerAuthoritySchema.optional(),
+    focus: z.string().min(1).optional(),
+  })
+  .strict();
+export type SeatSummary = z.infer<typeof seatSummarySchema>;
+
+/** The lifecycle step a Context is on, from its obligation. */
+export const contextStepSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("workspace") }).strict(),
+  z
+    .object({
+      kind: z.literal("work"),
+      reason: z.enum([
+        "initial",
+        "retry",
+        "steer",
+        "remediate",
+        "rework",
+        "continue",
+      ]),
+    })
+    .strict(),
+  z.object({ kind: z.literal("output") }).strict(),
+  z
+    .object({
+      kind: z.literal("review"),
+      round: z.number().int().min(1),
+      roundKind: roundKindSchema,
+      reviewersDone: z.number().int().min(0),
+      reviewersTotal: z.number().int().min(0),
+    })
+    .strict(),
+  z.object({ kind: z.literal("advice") }).strict(),
+  z.object({ kind: z.literal("verify") }).strict(),
+  z.object({ kind: z.literal("accept") }).strict(),
+]);
+export type ContextStep = z.infer<typeof contextStepSchema>;
+
+/** A disposition the halt accepts, as the page offers it; a grant names its allowance. */
+export const remedySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("continue") }).strict(),
+  z.object({ kind: z.literal("retry") }).strict(),
+  z.object({ kind: z.literal("replace_seat") }).strict(),
+  z.object({ kind: z.literal("retry_capture") }).strict(),
+  z.object({ kind: z.literal("retry_advice") }).strict(),
+  z.object({ kind: z.literal("rereview") }).strict(),
+  z.object({ kind: z.literal("confirm_effect") }).strict(),
+  z
+    .object({
+      kind: z.literal("grant"),
+      allowance: allowanceKindSchema,
+      used: z.number().int().min(0),
+      limit: z.number().int().min(0),
+    })
+    .strict(),
+]);
+export type Remedy = z.infer<typeof remedySchema>;
+
+export const contextHaltViewSchema = z
+  .object({
+    kind: haltKindSchema,
+    detail: z.string(),
+    /** The progress occurrence a disposition must name. */
+    occurrence: z.string().min(1),
+    at: z.string().min(1),
+    remedies: z.array(remedySchema),
+    seat: z.string().min(1).optional(),
+  })
+  .strict();
+export type ContextHaltView = z.infer<typeof contextHaltViewSchema>;
+
+/** Where a context key stands; `waiting` and `skipped` are the Run's, for work not started. */
+export const contextStateSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("waiting"),
+      dependencies: z.array(z.string()),
+      provisionLanes: z.array(z.string()),
+      publicationLanes: z.array(z.string()),
+    })
+    .strict(),
+  z.object({ kind: z.literal("skipped"), reason: z.string() }).strict(),
+  z.object({ kind: z.literal("running"), step: contextStepSchema }).strict(),
+  z.object({ kind: z.literal("awaiting_answer") }).strict(),
+  z
+    .object({
+      kind: z.literal("awaiting_approval"),
+      requestedAt: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal("halted"), halt: contextHaltViewSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("paused"),
+      next: contextStepSchema.nullable(),
+      draining: z.boolean(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("stopping") }).strict(),
+  z.object({ kind: z.literal("succeeded"), at: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("cancelled") }).strict(),
+]);
+export type ContextState = z.infer<typeof contextStateSchema>;
+
+/** One stage of the lifecycle, for the stage track. */
+export const contextStageSchema = z
+  .object({
+    key: z.enum(["workspace", "work", "output", "review", "approval", "accept"]),
+    label: z.string().min(1),
+    state: z.enum(["done", "current", "waiting", "halted", "pending", "skipped"]),
+    note: z.string().min(1).optional(),
+  })
+  .strict();
+export type ContextStage = z.infer<typeof contextStageSchema>;
+
+export const advisoryViewSchema = findingSchema
+  .extend({
+    disposition: adviceDispositionSchema.nullable(),
+    dispositionNote: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const seatVerdictViewSchema = z
+  .object({
+    assignment: z.string().min(1),
+    /** Null when an amendment since removed the seat from the contract. */
+    seat: seatSummarySchema.nullable(),
+    status: z.enum(["pending", "pass", "fail", "defect", "unavailable"]),
+    findings: z.array(findingSchema),
+    advisories: z.array(advisoryViewSchema),
+  })
+  .strict();
+
+export const checkResultViewSchema = z
+  .object({
+    command: z.string().min(1),
+    /** `skipped`: the round ended before the check ran. */
+    status: z.enum(["running", "passed", "failed", "unavailable", "skipped"]),
+    durationMs: z.number().int().min(0).nullable(),
+    detail: z.string().optional(),
+  })
+  .strict();
+
+export const reviewRoundViewSchema = z
+  .object({
+    number: z.number().int().min(1),
+    kind: roundKindSchema,
+    outcome: z.enum(["running", "passed", "failed", "retired"]),
+    checks: z.array(checkResultViewSchema),
+    seats: z.array(seatVerdictViewSchema),
+    /** When the round opened; null for one opened before rounds recorded it. */
+    at: z.string().min(1).nullable(),
+  })
+  .strict();
+export type ReviewRoundView = z.infer<typeof reviewRoundViewSchema>;
+
+/** The execution policy and workspace grant this invocation holds. */
+export const contextConfigurationSchema = z
+  .object({
+    checks: z.array(z.string()),
+    deferredChecks: z.array(z.string()),
+    ownerQuestions: z.boolean(),
+    allowTaskAddition: z.boolean(),
+    documentPublishing: z.boolean(),
+    scope: workspaceScopeSchema,
+    worktreePath: z.string().min(1),
+    /** A lane's branch; null in the session worktree, whose branch the session names. */
+    branch: z.string().min(1).nullable(),
+    outputSchema: z.record(z.string(), z.unknown()).nullable(),
+    policy: z
+      .object({
+        unfinishedTaskRetries: z
+          .object({ used: z.number().int(), limit: z.number().int() })
+          .strict(),
+        validationRetries: z
+          .object({ used: z.number().int(), limit: z.number().int() })
+          .strict(),
+        captureRepairLimit: z.number().int(),
+        instabilityLimit: z.number().int(),
+        adviceCorrectionLimit: z.number().int(),
+        invocationTimeoutMs: z.number().int().nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ContextConfiguration = z.infer<typeof contextConfigurationSchema>;
+
+export const contextViewSchema = z
+  .object({
+    contextId: z.string().min(1),
+    title: z.string().min(1),
+    brief: z.string().min(1),
+    state: contextStateSchema,
+    stages: z.array(contextStageSchema),
+    tasks: z
+      .object({ done: z.number().int(), total: z.number().int() })
+      .strict(),
+    taskList: z.array(
+      z
+        .object({ id: z.string(), title: z.string(), done: z.boolean() })
+        .strict(),
+    ),
+    criteria: z.array(acceptanceCriterionSchema),
+    implementer: seatSummarySchema,
+    reviewers: z.array(seatSummarySchema),
+    humanApproval: z.boolean(),
+    startedAt: z.string().min(1),
+    questions: z.array(
+      z
+        .object({
+          questionId: z.string().min(1),
+          seat: z.string().min(1),
+          question: z.string(),
+          askedAt: z.string().min(1),
+        })
+        .strict(),
+    ),
+    reviews: z.array(reviewRoundViewSchema),
+    output: z
+      .object({
+        status: z.enum(["accepted", "candidate"]),
+        value: z.unknown(),
+      })
+      .strict()
+      .nullable(),
+    inputs: z.array(contractInputSchema),
+    approval: z
+      .object({
+        candidateId: z.string().min(1),
+        requestedAt: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+    lastSummary: z.string().nullable(),
+    /** A person's approval decisions, in order. */
+    decisions: z.array(
+      z
+        .object({
+          candidateId: z.string().min(1),
+          decision: z.enum(["approved", "rejected"]),
+          notes: z.string().optional(),
+          decidedAt: z.string().min(1),
+        })
+        .strict(),
+    ),
+    configuration: contextConfigurationSchema,
+    /** assignment id → its current incarnation (0 until a seat is replaced), for the Run to tell replaced conversations. */
+    incarnations: z.record(z.string(), z.number().int().min(0)),
+  })
+  .strict();
+export type ContextView = z.infer<typeof contextViewSchema>;

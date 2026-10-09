@@ -6,8 +6,13 @@ import {
 import {
   contextStartRequestSchema,
   contextProgressSchema,
+  contextViewSchema,
   haltDispositionSchema,
+  haltKindSchema,
+  seatSummarySchema,
 } from "@/lib/execution-context/schemas";
+import { sessionDiffSchema } from "@/lib/git/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 
 /** The charter revision and each document's revision a context froze when it started. */
 export const runFrozenRevisionsSchema = z
@@ -385,6 +390,18 @@ export const runFactsSchema = z
       .strict(),
     /** Every control act the run applied, in order. */
     acts: z.array(runControlActSchema).default([]),
+    /** Each definition revision an amendment made: when, and why if the owner said. */
+    amendments: z
+      .array(
+        z
+          .object({
+            revision: z.number().int().min(2),
+            at: z.string().min(1),
+            reason: z.string().min(1).nullable(),
+          })
+          .strict(),
+      )
+      .default([]),
   })
   .strict();
 export type RunFacts = z.infer<typeof runFactsSchema>;
@@ -540,6 +557,33 @@ export const runLaunchedResponseSchema = z
   .strict();
 export type RunLaunchedResponse = z.infer<typeof runLaunchedResponseSchema>;
 
+/** Where a lane stands for its owner. */
+export const runLaneStatusSchema = z.enum([
+  "waiting",
+  "skipped",
+  "cancelled",
+  "provisioning",
+  "provision_failed",
+  "working",
+  "publishing",
+  "published",
+  "blocked",
+  "stale",
+  "failed",
+  "uncertain",
+]);
+
+/** Where a loop stands for its owner. */
+export const runLoopStatusSchema = z.enum([
+  "unstarted",
+  "skipped",
+  "running",
+  "next",
+  "succeeded",
+  "exhausted",
+  "unevaluable",
+]);
+
 /** One Run as its owner reads it: progress, each Context's state, and the boundary ledger. */
 export const runViewSchema = z
   .object({
@@ -624,20 +668,7 @@ export const runViewSchema = z
           key: z.string(),
           worktreePath: z.string(),
           branch: z.string(),
-          state: z.enum([
-            "waiting",
-            "skipped",
-            "cancelled",
-            "provisioning",
-            "provision_failed",
-            "working",
-            "publishing",
-            "published",
-            "blocked",
-            "stale",
-            "failed",
-            "uncertain",
-          ]),
+          state: runLaneStatusSchema,
           /** The current provisioning or publication attempt, from 1. */
           attempt: z.number().int().nullable(),
           /** Why it stopped, or where the session head moved. */
@@ -654,15 +685,7 @@ export const runViewSchema = z
           /** The current pass, from 1; 0 before the loop starts. */
           pass: z.number().int().min(0),
           maxPasses: z.number().int(),
-          state: z.enum([
-            "unstarted",
-            "skipped",
-            "running",
-            "next",
-            "succeeded",
-            "exhausted",
-            "unevaluable",
-          ]),
+          state: runLoopStatusSchema,
         })
         .strict(),
     ),
@@ -733,3 +756,360 @@ export const runDocumentPublishedResponseSchema = z
 export const runControlResponseSchema = z
   .object({ ok: z.literal(true), progress: runProgressSchema.nullable() })
   .strict();
+
+// ---------------------------------------------------------------------------
+// Run page: the run as the person reads it in Command Center (design §9,
+// amendment 17); src/features/runs renders these.
+// ---------------------------------------------------------------------------
+
+/** A run's progress, as shown. */
+export const runStatusSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("running") }).strict(),
+  z.object({ kind: z.literal("needs_input") }).strict(),
+  z.object({ kind: z.literal("paused"), draining: z.boolean() }).strict(),
+  z.object({ kind: z.literal("stopping") }).strict(),
+  z.object({ kind: z.literal("succeeded") }).strict(),
+  z.object({ kind: z.literal("cancelled") }).strict(),
+]);
+export type RunStatus = z.infer<typeof runStatusSchema>;
+
+export const runOwnerSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    /** Its name or summary; null when it has neither, or is gone from the session. */
+    title: z.string().nullable(),
+    /** Null once the owner conversation is gone from the session. */
+    backend: agentBackendSchema.nullable(),
+  })
+  .strict();
+
+/** A row in the session's run list. */
+export const runSummarySchema = z
+  .object({
+    runId: z.string().min(1),
+    title: z.string(),
+    kind: z.enum(["agent", "workflow"]),
+    status: runStatusSchema,
+    /** Approvals, halts and lane stops a person can act on. */
+    attention: z.number().int().min(0),
+    contexts: z
+      .object({ done: z.number().int(), total: z.number().int() })
+      .strict(),
+    costUsd: z.number(),
+    /** False when a seat's conversation is gone, so costUsd counts only the rest. */
+    costComplete: z.boolean(),
+    startedAt: z.string().min(1),
+    finishedAt: z.string().min(1).nullable(),
+    owner: runOwnerSchema,
+  })
+  .strict();
+export type RunSummary = z.infer<typeof runSummarySchema>;
+
+/** One conversation a context's seat held, replaced incarnations included. */
+export const seatConversationSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    assignment: z.string().min(1),
+    seat: seatSummarySchema.nullable(),
+    status: z.enum(["active", "idle", "replaced", "finished"]),
+    /** Null once the conversation is gone from the session: what it spent is no longer known. */
+    turns: z.number().int().min(0).nullable(),
+    costUsd: z.number().nullable(),
+  })
+  .strict();
+
+export const frozenDocumentSchema = z
+  .object({
+    path: z.string().min(1),
+    revision: z.number().int().min(1),
+    /** How the run's current declaration differs from what this invocation froze. */
+    later: z.enum(["superseded", "removed"]).nullable(),
+  })
+  .strict();
+
+/** One context key's invocation: what its Context shows, with what only the Run knows. */
+export const contextInvocationSchema = contextViewSchema
+  .pick({
+    title: true,
+    brief: true,
+    state: true,
+    stages: true,
+    tasks: true,
+    taskList: true,
+    criteria: true,
+    implementer: true,
+    reviewers: true,
+    humanApproval: true,
+    questions: true,
+    reviews: true,
+    output: true,
+    inputs: true,
+    approval: true,
+    decisions: true,
+    lastSummary: true,
+    configuration: true,
+  })
+  .extend({
+    key: z.string().min(1),
+    placement: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("session") }).strict(),
+      z.object({ kind: z.literal("lane"), lane: z.string().min(1) }).strict(),
+    ]),
+    loop: z
+      .object({
+        key: z.string().min(1),
+        pass: z.number().int().min(1),
+        maxPasses: z.number().int().min(1),
+      })
+      .strict()
+      .nullable(),
+    dependsOn: z.array(z.string()),
+    /** What its seats' conversations cost; null before it started. */
+    costUsd: z.number().nullable(),
+    /** False when a seat's conversation is gone, so costUsd counts only the rest. */
+    costComplete: z.boolean(),
+    startedAt: z.string().min(1).nullable(),
+    /** The started Context's id; null before it started. */
+    invocationId: z.string().min(1).nullable(),
+    agents: z.array(seatConversationSchema),
+    froze: z
+      .object({
+        charter: z.number().int().min(1).nullable(),
+        documents: z.array(frozenDocumentSchema),
+      })
+      .strict()
+      .nullable(),
+    /** What the candidate awaiting approval changed, or why that cannot be shown; null when nothing awaits. */
+    candidate: z
+      .discriminatedUnion("status", [
+        z
+          .object({
+            status: z.literal("ready"),
+            scope: z.enum(["whole_tree", "owned"]),
+            ownedPaths: z.array(z.string()),
+            diff: sessionDiffSchema,
+          })
+          .strict(),
+        z
+          .object({ status: z.literal("unavailable"), reason: z.string() })
+          .strict(),
+      ])
+      .nullable(),
+  })
+  .strict();
+export type ContextInvocation = z.infer<typeof contextInvocationSchema>;
+
+export const contextDetailSchema = contextInvocationSchema
+  .extend({
+    /** Earlier loop passes of this key, oldest first. */
+    previousInvocations: z.array(contextInvocationSchema),
+  })
+  .strict();
+export type ContextDetail = z.infer<typeof contextDetailSchema>;
+
+export const runEdgeSchema = z
+  .object({
+    from: z.string().min(1),
+    to: z.string().min(1),
+    guard: z
+      .object({
+        label: z.string(),
+        state: z.enum(["taken", "not_taken", "undecided"]),
+      })
+      .strict()
+      .nullable(),
+    outputOnly: z.boolean(),
+  })
+  .strict();
+
+export const runPageLaneSchema = z
+  .object({
+    key: z.string().min(1),
+    branch: z.string(),
+    worktreePath: z.string(),
+    state: runLaneStatusSchema,
+    attempt: z.number().int().nullable(),
+    detail: z.string().nullable(),
+    commit: z.string().nullable(),
+    checks: z.array(z.string()),
+  })
+  .strict();
+
+export const runPageLoopSchema = z
+  .object({
+    key: z.string().min(1),
+    body: z.array(z.string()),
+    pass: z.number().int().min(0),
+    maxPasses: z.number().int(),
+    state: runLoopStatusSchema,
+    /** The exit condition, as its schema reads. */
+    until: z.string(),
+  })
+  .strict();
+
+export const runPageDocumentSchema = z
+  .object({
+    path: z.string().min(1),
+    revision: z.number().int().min(1),
+    source: z.enum(["launch", "amend", "publish"]),
+    by: z.string().optional(),
+    reason: z.string().optional(),
+    description: z.string(),
+    readWhen: z.string().optional(),
+    appliesTo: z.array(z.string()).optional(),
+    bytes: z.number().int().min(0),
+    at: z.string().min(1),
+    contents: z.string(),
+  })
+  .strict();
+
+export const runPageCharterSchema = z
+  .object({
+    revision: z.number().int().min(1),
+    source: z.enum(["launch", "amend"]),
+    at: z.string().min(1),
+    reason: z.string().nullable(),
+    mission: z.string(),
+    conventions: z.array(z.string()),
+    vocabulary: z.array(z.string()),
+    testStrategy: z.string().nullable(),
+    knownAmbiguities: z.array(z.string()),
+    invariants: z.array(
+      z
+        .object({
+          id: z.string(),
+          statement: z.string(),
+          appliesTo: z.array(z.string()).optional(),
+        })
+        .strict(),
+    ),
+    /** Sources of truth, highest authority (rank 1) first. */
+    sources: z.array(
+      z
+        .object({
+          rank: z.number().int(),
+          label: z.string(),
+          locator: z.string(),
+          description: z.string(),
+          appliesTo: z.array(z.string()).optional(),
+        })
+        .strict(),
+    ),
+    nonGoals: z.array(z.string()),
+  })
+  .strict();
+
+export const activityEventSchema = z
+  .object({
+    /** Which fact the event comes from; stable while that fact stands. */
+    id: z.string().min(1),
+    /** Its position in the run's activity, oldest first, from 1; not an identity. */
+    seq: z.number().int().min(1),
+    at: z.string().min(1),
+    kind: z.enum([
+      "launched",
+      "started",
+      "question",
+      "answered",
+      "halted",
+      "resolved",
+      "approval",
+      "decided",
+      "published",
+      "amended",
+      "succeeded",
+      "paused",
+      "resumed",
+      "retried",
+      "cancelled",
+    ]),
+    summary: z.string(),
+    contextKey: z.string().optional(),
+  })
+  .strict();
+
+/** What needs a person, or the owner, now. */
+export const attentionItemSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("approval"),
+      contextKey: z.string(),
+      contextTitle: z.string(),
+      requestedAt: z.string(),
+      reviewersPassed: z.number().int().min(0),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("halt"),
+      contextKey: z.string(),
+      contextTitle: z.string(),
+      halt: haltKindSchema,
+      detail: z.string(),
+      at: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("run_halt"),
+      occurrence: z.string(),
+      halt: z.enum([
+        ...runHaltKindSchema.options,
+        "reconcile_failed",
+      ]),
+      detail: z.string(),
+      clearedBy: z.enum(["amend", "retry_lane", "cancel", "resume"]),
+      lane: z.string().optional(),
+      at: z.string(),
+    })
+    .strict(),
+  /** A settled effect nothing consumed; a resume reconciles it (design r2 §3.4). */
+  z
+    .object({
+      kind: z.literal("stalled"),
+      contextKey: z.string().optional(),
+      contextTitle: z.string().optional(),
+      causes: z.array(z.string()).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("question"),
+      questionId: z.string(),
+      contextKey: z.string(),
+      contextTitle: z.string(),
+      seat: z.string(),
+      question: z.string(),
+      askedAt: z.string(),
+    })
+    .strict(),
+]);
+
+export const runPageSchema = z
+  .object({
+    runId: z.string().min(1),
+    title: z.string(),
+    kind: z.enum(["agent", "workflow"]),
+    status: runStatusSchema,
+    owner: runOwnerSchema,
+    definitionRevision: z.number().int().min(1),
+    startedAt: z.string().min(1),
+    finishedAt: z.string().min(1).nullable(),
+    costUsd: z.number(),
+    /** False when a seat's conversation is gone, so costUsd counts only the rest. */
+    costComplete: z.boolean(),
+    attention: z.array(attentionItemSchema),
+    contexts: z.array(contextDetailSchema),
+    edges: z.array(runEdgeSchema),
+    lanes: z.array(runPageLaneSchema),
+    loops: z.array(runPageLoopSchema),
+    documents: z.array(runPageDocumentSchema),
+    documentHistory: z.array(runPageDocumentSchema),
+    charter: runPageCharterSchema.nullable(),
+    charterHistory: z.array(runPageCharterSchema),
+    activity: z.array(activityEventSchema),
+    /** The workflow as its owner wrote it, with the current documents; null for an agent run. */
+    definition: z.record(z.string(), z.unknown()).nullable(),
+  })
+  .strict();
+export type RunPage = z.infer<typeof runPageSchema>;

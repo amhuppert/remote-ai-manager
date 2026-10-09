@@ -1,9 +1,11 @@
 /**
  * Agent-facing Run endpoints for the shared supervision path.
  *
+ * - GET  /api/projects/[name]/sessions/[session]/runs                → the session's runs, newest first
  * - POST /api/projects/[name]/sessions/[session]/runs                → launch an agent run
  * - POST /api/projects/[name]/sessions/[session]/runs/workflow       → launch a workflow run
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]        → the run view
+ * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]/page  → the run as the run page shows it
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]/definition → the workflow as written
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/answer → answer a seat's question
  * - POST /api/projects/[name]/sessions/[session]/runs/[runId]/control → pause | resume | cancel | retry (a lane) (owner or person)
@@ -59,6 +61,12 @@ import {
   type RunDocumentRequest,
 } from "./documents";
 import type { FrozenCharter } from "./charter";
+import {
+  runPage,
+  runSummary,
+  type ConversationFacts,
+  type RunPageSources,
+} from "./page";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
@@ -126,6 +134,15 @@ export interface RunRouteDeps {
   >;
   /** Renders and freezes the charter's bundles. */
   freezeCharter(charter: RunCharter): Promise<FrozenCharter>;
+  /** The session's conversations by id, as the run page names them: the owners and every seat. */
+  sessionConversations(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<ReadonlyMap<string, ConversationFacts>>;
+  /** A frozen document's text. */
+  readText(artifactId: string): Promise<string>;
+  /** What a candidate changed, from its Workspace evidence; null when that cannot be read now. */
+  candidateChanges: RunPageSources["candidateChanges"];
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -196,6 +213,13 @@ const taskCommandSchema = z.discriminatedUnion("kind", [
 /** Refusals the Run or a Context reports without changing anything; anything else is a fault. */
 function isRefusal(error: unknown): error is Error {
   return isRunRefusal(error) || isContextRefusal(error);
+}
+
+/** The project and session a request reads, with the session's branch. */
+interface Place {
+  projectPath: string;
+  sessionName: string;
+  branch: string;
 }
 
 interface Caller {
@@ -275,7 +299,9 @@ export function createRunRouteHandlers(
   | "amend"
   | "decide"
   | "tasks"
-  | "publishDocument",
+  | "publishDocument"
+  | "list"
+  | "page",
   Handler
 > {
   /** Token, session and a verified calling conversation of that session. */
@@ -460,18 +486,63 @@ export function createRunRouteHandlers(
     return owned.ok ? { ok: true, run: owned.run, by: "owner" } : owned;
   }
 
+  /** The session, for a reader: a person, or any of the session's conversations. */
+  async function resolveSessionReader(
+    request: Request,
+    context: RouteContext,
+  ): Promise<{ ok: true; place: Place } | { ok: false; response: Response }> {
+    const sent = await senderOf(request);
+    if (!sent.ok) return sent;
+    if (sent.sender === "agent") {
+      const resolved = await resolveCaller(request, context);
+      if (!resolved.ok) return resolved;
+      const { projectPath, sessionName, branch } = resolved.caller;
+      return { ok: true, place: { projectPath, sessionName, branch } };
+    }
+    const { name, session } = await context.params;
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      name ?? "",
+      session ?? "",
+    );
+    if (!resolved.ok) return resolved;
+    return {
+      ok: true,
+      place: {
+        projectPath: resolved.value.projectPath,
+        sessionName: resolved.value.session.sessionName,
+        branch: resolved.value.session.branchName,
+      },
+    };
+  }
+
   /** A run of this session, read by any of its conversations or by a person. */
   async function resolveReadRun(
     request: Request,
     context: RouteContext,
-  ): Promise<{ ok: true; run: RunRecord } | { ok: false; response: Response }> {
-    const sent = await senderOf(request);
-    if (!sent.ok) return sent;
-    if (sent.sender === "person") return sessionRun(context);
-    const resolved = await resolveCaller(request, context);
-    if (!resolved.ok) return resolved;
+  ): Promise<
+    | { ok: true; run: RunRecord; place: Place }
+    | { ok: false; response: Response }
+  > {
+    const reader = await resolveSessionReader(request, context);
+    if (!reader.ok) return reader;
     const { runId } = await context.params;
-    return runInSession(runId, resolved.caller);
+    const found = runInSession(runId, reader.place);
+    return found.ok ? { ...found, place: reader.place } : found;
+  }
+
+  /** What the run page reads, for one session. */
+  async function pageSources(place: Place): Promise<RunPageSources> {
+    return {
+      supervision: deps.supervision(),
+      conversations: await deps.sessionConversations(
+        place.projectPath,
+        place.sessionName,
+      ),
+      sessionBranch: place.branch,
+      readText: (artifactId) => deps.readText(artifactId),
+      candidateChanges: (input) => deps.candidateChanges(input),
+    };
   }
 
   function refuseWorkflow(
@@ -805,6 +876,28 @@ export function createRunRouteHandlers(
         // A document a seat published while the owner wrote the amendment may be among them; say so.
         removedDocuments,
       });
+    },
+
+    async list(request, context) {
+      const reader = await resolveSessionReader(request, context);
+      if (!reader.ok) return reader.response;
+      const { projectPath, sessionName } = reader.place;
+      const sources = await pageSources(reader.place);
+      return NextResponse.json(
+        deps
+          .supervision()
+          .runs.listSession(projectPath, sessionName)
+          .map((record) => runSummary(sources, record)),
+      );
+    },
+
+    async page(request, context) {
+      const found = await resolveReadRun(request, context);
+      if (!found.ok) return found.response;
+      const { runId } = found.run;
+      const page = await runPage(await pageSources(found.place), runId);
+      if (page === null) return notFound(`Run "${runId}" not found`);
+      return NextResponse.json(page);
     },
 
     async show(request, context) {

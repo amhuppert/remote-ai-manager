@@ -11,7 +11,7 @@ import {
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
 import { createWorkspaceAdmission, type WorkspaceAdmission } from "./admission";
-import type { WorkspaceEvidence } from "./evidence";
+import type { ContentEvidence } from "./evidence";
 import {
   createWorkspaceExecutor,
   type WorkspaceExecutor,
@@ -57,7 +57,7 @@ let failingCheck: string | null;
 let checkGate: Promise<void> | null;
 let fake: ReturnType<typeof fakeGit>;
 
-const evidence: WorkspaceEvidence = {
+const evidence: ContentEvidence = {
   async capture() {
     return content;
   },

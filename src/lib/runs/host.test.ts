@@ -32,6 +32,7 @@ import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo
 import { createRunsRepo, type RunsRepo } from "@/lib/state-store/runs-repo";
 import { createRunSourceReader } from "@/lib/subscriptions/run-source";
 import { createRunHost, type RunHost, type RunLaunchInput } from "./host";
+import { runPage } from "./page";
 import type { RouteGuard, RunBoundary, RunDocument } from "./schemas";
 import type { FrozenCharter } from "./charter";
 
@@ -639,11 +640,15 @@ describe("amendments", () => {
         authored: authored("Routed again", rerouted),
       },
       basedOn: 1,
+      reason: "Ship only what triage approved",
     });
     await scheduler.idle();
     const record = runs.observe("run-1")?.record;
     expect(record?.facts.definition.revision).toBe(2);
     expect(record?.facts.title).toBe("Routed again");
+    expect(record?.facts.amendments).toEqual([
+      { revision: 2, at: now, reason: "Ship only what triage approved" },
+    ]);
     expect(runs.inspect("run-1")?.plan.halts).toEqual([]);
     expect(contexts.observe("run-1.fix")).not.toBeNull();
     expect(contexts.observe("run-1.ship")).toBeNull();
@@ -1789,6 +1794,40 @@ describe("run host", () => {
     const after = await read(ownerFollow, { id: "run-1" }, "0");
     expect(after.withdrawnOccurrenceIds).toEqual([halted?.occurrence]);
     expect(after.facts).toEqual([]);
+  });
+
+  it("shows a completion no one consumed on the run page, for a resume to reconcile", async () => {
+    await launch();
+    // The bind settled, but nothing told the Context: its completion stalls.
+    const bind = workspace.submitted()[0];
+    if (bind === undefined) throw new Error("no bind");
+    workspace.admit(bind.cause);
+    workspace.settle(bind.cause, { kind: "bound" });
+
+    const page = await runPage(
+      {
+        supervision: {
+          runs,
+          contexts,
+          requests: { question: () => null },
+          core: { seatBindingsOf: () => [] },
+        },
+        conversations: new Map(),
+        sessionBranch: "csm/session",
+        readText: async () => "",
+        candidateChanges: async () => ({ ok: false, reason: "unused" }),
+      },
+      "run-1",
+    );
+
+    expect(page?.attention).toEqual([
+      {
+        kind: "stalled",
+        contextKey: "agent",
+        contextTitle: "Fix the notice",
+        causes: [bind.cause],
+      },
+    ]);
   });
 
   it("asks the owner for a human decision and accepts the approved candidate", async () => {

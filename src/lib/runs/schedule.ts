@@ -582,7 +582,7 @@ function publicationHaltReason(
 }
 
 /** A dependency's own guard; a key such as `constructor` must not read an inherited property. */
-function guardOf(
+export function guardOf(
   target: RunDefinitionContext,
   source: string,
 ): RouteGuard | undefined {

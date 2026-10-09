@@ -192,6 +192,8 @@ export interface RunHost {
   recordReconcileFailure(runId: string, error: unknown): void;
   /** The record and ledger only; it reads no Context, so ownership checks never depend on one. */
   observe(runId: string): RunObservation | null;
+  /** A session's runs, newest first. */
+  listSession(projectPath: string, sessionName: string): RunRecord[];
   /** Reads every started Context and pending start. */
   inspect(runId: string): RunInspection | null;
   /** Each control act names who asked for it: the run's owner or a person. */
@@ -873,6 +875,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           invocations: [],
           control: { paused: false, cancelled: false, fault: null },
           acts: [],
+          amendments: [],
         };
         const created: RunRecord = {
           runId: input.runId,
@@ -964,6 +967,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       const record = deps.runs.get(runId);
       if (record === null) return null;
       return { record, boundaries: deps.runs.boundaries(runId) };
+    },
+
+    listSession(projectPath, sessionName) {
+      return deps.runs.listBySession(projectPath, sessionName);
     },
 
     inspect(runId) {
@@ -1246,6 +1253,14 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             at: deps.now(),
             reason: reason ?? null,
           }),
+          amendments: [
+            ...facts.amendments,
+            {
+              revision: amended.definition.revision,
+              at: deps.now(),
+              reason: reason ?? null,
+            },
+          ],
         };
         project(record, startEligible(record, next));
         const remaining = new Set(

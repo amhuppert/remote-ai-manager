@@ -1,194 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { advanceContext, type ContextInput } from "./advance";
-import {
-  contextEffectRequestSchema,
-  planEffects,
-  waitsOnPerson,
-  type PlannedEffect,
-} from "./effects";
+import { advanceContext } from "./advance";
+import { contextEffectRequestSchema, type PlannedEffect } from "./effects";
 import { initialContextFacts } from "./facts";
-import { applyTaskCommand, type TaskCommand } from "./ledger";
-import { deriveProgress } from "./progress";
-import type { ConversationReport, WorkspaceReport } from "./reports";
+import { applyTaskCommand } from "./ledger";
+import { DEFAULT_CONTEXT_POLICY } from "./schemas";
 import {
-  DEFAULT_CONTEXT_POLICY,
-  contextContractSchema,
-  type ContextContract,
-  type ContextFacts,
-  type ContextPolicy,
-  type ReviewerAssignment,
-} from "./schemas";
-
-const seat = {
-  profile: { tier: "builtin" as const, id: "general-reviewer" },
-  backend: "claude" as const,
-  modelSelection: { modelId: "sonnet", parameters: {} },
-};
-
-function contract(overrides: Partial<ContextContract> = {}): ContextContract {
-  return contextContractSchema.parse({
-    title: "Fix the duplicate notice",
-    brief: "Make the failure notice appear once.",
-    tasks: [{ id: "t1", title: "Fix it" }],
-    acceptanceCriteria: [{ id: "ac-1", text: "One notice per failure" }],
-    outputSchema: null,
-    allowTaskAddition: false,
-    implementer: { id: "implementer", ...seat },
-    reviewers: [],
-    checks: [],
-    humanApproval: false,
-    ownerQuestions: true,
-    documents: [],
-    ...overrides,
-  });
-}
-
-function reviewer(
-  id: string,
-  authority: "blocking" | "advisory",
-): ReviewerAssignment {
-  return { id, authority, ...seat };
-}
-
-function workReport(
-  overrides: Partial<ConversationReport> = {},
-): ConversationReport {
-  return {
-    status: "succeeded",
-    conversationId: "conv-impl",
-    finalText: "Done.",
-    structuredOutput: null,
-    outputIssue: null,
-    openQuestionId: null,
-    failure: null,
-    ...overrides,
-  };
-}
-
-function verdictReport(
-  verdict: "pass" | "fail" | "plan_defect",
-  extra: {
-    findings?: unknown[];
-    advisories?: unknown[];
-    conversationId?: string;
-  } = {},
-): ConversationReport {
-  return workReport({
-    conversationId: extra.conversationId ?? "conv-review",
-    structuredOutput: {
-      verdict,
-      findings: extra.findings ?? [],
-      advisories: extra.advisories ?? [],
-    },
-  });
-}
-
-const binding = {
-  kind: "session" as const,
-  projectPath: "/repo",
-  sessionName: "session",
-  worktreePath: "/repo/.worktrees/session",
-  scope: { mode: "full" as const },
-};
-
-/** A context whose workspace binding was admitted. */
-function harness(
-  c: ContextContract,
-  policy: ContextPolicy = DEFAULT_CONTEXT_POLICY,
-) {
-  const h = unboundHarness(c, policy);
-  expect(h.step().map((e) => e.request.kind)).toEqual(["bind"]);
-  h.settle("bind", { kind: "bound" });
-  return h;
-}
-
-function unboundHarness(
-  c: ContextContract,
-  policy: ContextPolicy = DEFAULT_CONTEXT_POLICY,
-) {
-  let facts: ContextFacts = initialContextFacts({
-    contextId: "ctx",
-    workspace: binding,
-    contract: c,
-    policy,
-  });
-  let pending: PlannedEffect[] = [];
-  return {
-    get facts() {
-      return facts;
-    },
-    get pending() {
-      return pending;
-    },
-    step(): PlannedEffect[] {
-      if (pending.length > 0) return [];
-      const planned = planEffects({ facts, othersPending: false });
-      facts = planned.facts;
-      pending = planned.effects;
-      return planned.effects;
-    },
-    settle(
-      kind: PlannedEffect["request"]["kind"],
-      outcome: unknown,
-      index = 0,
-    ): void {
-      const effect = pending.filter((e) => e.request.kind === kind)[index];
-      if (effect === undefined) throw new Error(`No pending ${kind} effect`);
-      facts = advanceContext(facts, {
-        kind: "outcome",
-        cause: effect.cause,
-        request: effect.request,
-        state: { kind: "settled", outcome },
-      });
-      pending = pending.filter((e) => e !== effect);
-    },
-    settleUncertain(kind: PlannedEffect["request"]["kind"]): void {
-      const effect = pending.find((e) => e.request.kind === kind);
-      if (effect === undefined) throw new Error(`No pending ${kind} effect`);
-      facts = advanceContext(facts, {
-        kind: "outcome",
-        cause: effect.cause,
-        request: effect.request,
-        state: { kind: "uncertain", evidence: "process exited mid-turn" },
-      });
-      pending = pending.filter((e) => e !== effect);
-    },
-    input(input: ContextInput): void {
-      facts = advanceContext(facts, input);
-    },
-    task(command: TaskCommand): void {
-      const result = applyTaskCommand(facts, command);
-      if (result.kind === "refused") throw new Error(result.reason);
-      facts = result.facts;
-    },
-    progress(admitted = true) {
-      return deriveProgress(
-        facts,
-        pending.map((e) => ({
-          cause: e.cause,
-          admitted,
-          waitsOnPerson: waitsOnPerson(e.request),
-        })),
-      );
-    },
-  };
-}
-
-const frozen = (evidence: string): WorkspaceReport => ({
-  kind: "frozen",
-  evidence,
-});
-
-/** Runs one work turn that completes every task, then freezes the result. */
-function workAndFreeze(h: ReturnType<typeof harness>, evidence = "ev-1"): void {
-  expect(h.step().map((e) => e.request.kind)).toEqual(["work"]);
-  for (const task of h.facts.ledger.tasks) {
-    if (task.status === "open") h.task({ kind: "complete", taskId: task.id });
-  }
-  h.settle("work", workReport());
-  expect(h.step().map((e) => e.request.kind)).toEqual(["freeze"]);
-  h.settle("freeze", frozen(evidence));
-}
+  binding,
+  contract,
+  frozen,
+  harness,
+  reviewer,
+  unboundHarness,
+  verdictReport,
+  workAndFreeze,
+  workReport,
+} from "./testing/context-harness";
 
 describe("execution context acceptance chain", () => {
   it("binds its workspace before any work and gives seats only the access they need", () => {
@@ -460,6 +286,31 @@ describe("execution context acceptance chain", () => {
       kind: "review",
       roundId: "ctx:round:2",
     });
+  });
+
+  it("records when each review round opened", () => {
+    const h = harness(
+      contract({ reviewers: [reviewer("reviewer-a", "blocking")] }),
+    );
+    workAndFreeze(h);
+    h.setNow("2026-10-03T10:05:00.000Z");
+    h.step();
+    h.settle(
+      "review",
+      verdictReport("fail", {
+        findings: [{ title: "Two notices", description: "Still duplicated" }],
+      }),
+    );
+    h.step();
+    h.settle("work", workReport());
+    h.step();
+    h.settle("freeze", frozen("ev-2"));
+    h.setNow("2026-10-03T10:09:00.000Z");
+    h.step();
+
+    expect(
+      h.facts.certification.rounds.map((round) => round.openedAt),
+    ).toEqual(["2026-10-03T10:05:00.000Z", "2026-10-03T10:09:00.000Z"]);
   });
 
   it("halts on a plan defect and reviews again after a rereview disposition", () => {
@@ -800,6 +651,7 @@ describe("execution context acceptance chain", () => {
       cause: review.cause,
       request: review.request,
       state: { kind: "settled", outcome: verdictReport("pass") },
+      at: "2026-10-03T10:00:00.000Z",
     });
 
     expect(late.certification).toEqual(before);

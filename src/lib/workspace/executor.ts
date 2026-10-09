@@ -10,7 +10,7 @@ import {
   type GrantRequest,
   type WorkspaceAdmission,
 } from "./admission";
-import type { WorkspaceEvidence } from "./evidence";
+import type { ContentEvidence } from "./evidence";
 import { landingMarker, publicationMarker, type LaneGit } from "./lane-git";
 import type { LaneIntegrator } from "./lane-integrator";
 import {
@@ -34,7 +34,7 @@ export interface WorkspaceExecutorDeps {
   repo: WorkspaceRepo;
   permits: ControlPermits;
   admission: WorkspaceAdmission;
-  evidence: WorkspaceEvidence;
+  evidence: ContentEvidence;
   /** The Git effects of isolated lanes: provisioning, landing and publication. */
   lanes: LaneGit;
   /** Merges the session head into a lane and gets its publication checks passing there. */

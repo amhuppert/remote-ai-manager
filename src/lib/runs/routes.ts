@@ -20,6 +20,8 @@ import { snapshotDocumentFile, snapshotRunDocuments } from "./documents";
 import { freezeCharter } from "./charter";
 import { getArtifactStore } from "@/lib/artifacts/production";
 import { getSupervision } from "@/lib/supervision/production";
+import { createWorkspaceEvidence } from "@/lib/workspace/evidence";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   createRunRouteHandlers,
   newRunId,
@@ -27,6 +29,7 @@ import {
 } from "./route-handlers";
 
 const log = createLogger("runs");
+const workspaceEvidence = createWorkspaceEvidence();
 
 type SeatResolution =
   | { ok: true; seat: ResolvedSeat }
@@ -150,12 +153,47 @@ const handlers = createRunRouteHandlers({
     snapshotDocumentFile({ worktreePath, file, store: getArtifactStore() }),
   freezeCharter: (charter) =>
     freezeCharter({ charter, store: getArtifactStore() }),
+  async sessionConversations(projectPath, sessionName) {
+    const session = await getSession(projectPath, sessionName);
+    return new Map(
+      (session?.conversations ?? []).map((conversation) => [
+        conversation.id,
+        {
+          title: conversation.name ?? conversation.summary,
+          backend: conversation.agentBackend,
+          working: conversation.status === "running",
+          costUsd: conversation.totalCostUsd ?? 0,
+          turns: conversation.totalTurns ?? 0,
+        },
+      ]),
+    );
+  },
+  async readText(artifactId) {
+    return (await getArtifactStore().read(artifactId)).toString("utf8");
+  },
+  async candidateChanges({ worktreePath, scope, evidence }) {
+    try {
+      return {
+        ok: true,
+        diff: await workspaceEvidence.changes(worktreePath, scope, evidence),
+      };
+    } catch (error) {
+      // A candidate's tree can be pruned or its worktree gone; the page shows the rest.
+      log.warn("runs.candidate_changes_unavailable", {
+        worktreePath,
+        error: getErrorMessage(error),
+      });
+      return { ok: false, reason: getErrorMessage(error) };
+    }
+  },
   log,
 });
 
 export const launchRunPOST = withTracing(handlers.launch);
 export const launchWorkflowRunPOST = withTracing(handlers.launchWorkflow);
 export const showRunGET = withTracing(handlers.show);
+export const listRunsGET = withTracing(handlers.list);
+export const runPageGET = withTracing(handlers.page);
 export const runDefinitionGET = withTracing(handlers.definition);
 export const answerRunPOST = withTracing(handlers.answer);
 export const controlRunPOST = withTracing(handlers.control);

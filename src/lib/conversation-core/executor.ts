@@ -309,6 +309,8 @@ export interface ConversationCore extends Executor {
   /** Resolves once no turn is running or waiting to start. */
   idle(): Promise<void>;
   seatBinding(conversationId: string): SeatBindingRecord | null;
+  /** Every seat a context's assignments held, replaced incarnations included. */
+  seatBindingsOf(contextId: string): SeatBindingRecord[];
   /**
    * A person's message to an enrolled interactive conversation. While a turn
    * runs the message is refused as busy: input sent meanwhile belongs on the
@@ -1549,6 +1551,9 @@ export function createConversationCore(
     },
     seatBinding(conversationId) {
       return deps.repo.getSeat(conversationId);
+    },
+    seatBindingsOf(contextId) {
+      return deps.repo.seatsOfContext(contextId);
     },
     hold,
     async whileIdle(

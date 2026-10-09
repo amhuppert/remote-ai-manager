@@ -46,6 +46,39 @@ describe("conversation core repository", () => {
     });
   });
 
+  it("lists every seat a context's assignments held, replaced incarnations included, in order", () => {
+    fixture = createPersistenceFixture();
+    const repo = createConversationCoreRepo(fixture.db);
+    const seat = (
+      conversationId: string,
+      contextId: string,
+      assignmentId: string,
+      replacement: number,
+    ) => ({
+      conversationId,
+      contextId,
+      assignmentId,
+      replacement,
+      role:
+        assignmentId === "implementer"
+          ? ("implementer" as const)
+          : ("reviewer" as const),
+      projectPath: "/repo",
+      sessionName: "session",
+      backend: "claude" as const,
+      createdAt: at,
+      updatedAt: later,
+    });
+    repo.insertSeat(seat("conv-r", "ctx-1", "reviewer-a", 0));
+    repo.insertSeat(seat("conv-i2", "ctx-1", "implementer", 1));
+    repo.insertSeat(seat("conv-other", "ctx-2", "implementer", 0));
+    repo.insertSeat(seat("conv-i1", "ctx-1", "implementer", 0));
+
+    expect(
+      repo.seatsOfContext("ctx-1").map((s) => s.conversationId),
+    ).toEqual(["conv-i1", "conv-i2", "conv-r"]);
+  });
+
   it("round-trips an interactive conversation's enrollment and reports the core owns it", async () => {
     fixture = createPersistenceFixture();
     const db = fixture.db;

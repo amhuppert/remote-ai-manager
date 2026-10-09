@@ -88,6 +88,7 @@ function facts(
     })),
     control,
     acts: [],
+    amendments: [],
   };
 }
 
@@ -380,6 +381,7 @@ function workflow(
     })),
     control: { paused: false, cancelled: false, fault: null },
     acts: [],
+    amendments: [],
   };
 }
 

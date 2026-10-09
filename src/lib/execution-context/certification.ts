@@ -139,7 +139,7 @@ function checkFinding(check: CheckResult): Finding {
 
 export function openRound(
   facts: ContextFacts,
-  input: { contextId: string; candidate: Candidate },
+  input: { contextId: string; candidate: Candidate; at: string },
 ): ContextFacts {
   const contract = facts.contract.current;
   const kind = requiredRoundKind(input.candidate);
@@ -157,6 +157,7 @@ export function openRound(
       advisories: [],
     })),
     retired: false,
+    openedAt: input.at,
   };
   return {
     ...facts,

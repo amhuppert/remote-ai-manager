@@ -31,12 +31,14 @@ import {
   type TaskCommandResult,
 } from "./ledger";
 import { deriveProgress, type EffectView } from "./progress";
+import { contextView, type ContextViewLookups } from "./view";
 import {
   contextStartRequestSchema,
   type ContextContract,
   type ContextFacts,
   type ContextProgress,
   type ContextRecord,
+  type ContextView,
   type HaltDisposition,
 } from "./schemas";
 
@@ -161,6 +163,10 @@ export interface ContextHost extends Executor<ContextProgressReport> {
   /** The stored record, for diagnostics and tests; consumers read `describe`. */
   observe(contextId: string): ContextObservation | null;
   describe(contextId: string): ContextSummary | null;
+  /** What the Context shows a person (design §9); null when there is no such Context. */
+  view(contextId: string, lookups: ContextViewLookups): ContextView | null;
+  /** The Workspace evidence a candidate froze, to show what it changed; null for an unknown one. */
+  candidateEvidence(contextId: string, candidateId: string): string | null;
   /**
    * Where this context's current implementer works, for a command it sends
    * about its work; a refusal when `caller` is not that seat or the context
@@ -454,6 +460,7 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
               state.kind === "settled"
                 ? { kind: "settled", outcome: state.outcome }
                 : { kind: "uncertain", evidence: state.evidence },
+            at: deps.now(),
           });
           deps.intents.close(intent.id);
           consumed = true;
@@ -462,7 +469,11 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         if (deps.permits.admits(permit)) {
           const othersPending =
             deps.intents.pending(owner(contextId)).length > 0;
-          const planned = planEffects({ facts, othersPending });
+          const planned = planEffects({
+            facts,
+            othersPending,
+            now: deps.now(),
+          });
           facts = planned.facts;
           for (const effect of planned.effects) {
             deps.intents.record({
@@ -539,6 +550,26 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         lastSummary: facts.ledger.lastSummary,
         stalled,
       };
+    },
+
+    view(contextId, lookups) {
+      const record = deps.contexts.get(contextId);
+      if (record === null) return null;
+      return contextView(record, {
+        ...lookups,
+        active: effectViews(deps.intents.pending(owner(contextId))).some(
+          (effect) => effect.admitted && !effect.waitsOnPerson,
+        ),
+      });
+    },
+
+    candidateEvidence(contextId, candidateId) {
+      const record = deps.contexts.get(contextId);
+      return (
+        record?.facts.candidates.items.find(
+          (candidate) => candidate.id === candidateId,
+        )?.evidence ?? null
+      );
     },
 
     implementerWorkplace(contextId, caller) {

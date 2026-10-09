@@ -312,6 +312,8 @@ function parksOneSeat(facts: ContextFacts, obligation: Obligation): boolean {
 export function planEffects(input: {
   facts: ContextFacts;
   othersPending: boolean;
+  /** When the plan is made: a review round it opens records it. */
+  now: string;
 }): {
   facts: ContextFacts;
   effects: PlannedEffect[];
@@ -395,7 +397,7 @@ export function planEffects(input: {
       if (candidate === null) return { facts, effects: [] };
       let round = activeRound(facts, candidate);
       if (round === null) {
-        facts = openRound(facts, { contextId, candidate });
+        facts = openRound(facts, { contextId, candidate, at: input.now });
         round = activeRound(facts, candidate);
       }
       if (round === null) return { facts, effects: [] };

@@ -180,6 +180,7 @@ describe("execution contexts repository", () => {
               },
             ],
             retired: true,
+            openedAt: "2026-10-03T10:02:00.000Z",
           },
         ],
       },
@@ -206,7 +207,11 @@ describe("execution contexts repository", () => {
       },
       acceptance: {
         receipts: [
-          { candidateId: "ctx-1:candidate:1", receipt: "snapshot:tree:abc" },
+          {
+            candidateId: "ctx-1:candidate:1",
+            receipt: "snapshot:tree:abc",
+            at: "2026-10-03T10:06:00.000Z",
+          },
         ],
       },
       allowances: {
@@ -226,6 +231,7 @@ describe("execution contexts repository", () => {
           kind: "turn_failed",
           detail: "provider error",
           seat: "implementer",
+          effect: "work" as const,
         },
         dispositions: [
           {

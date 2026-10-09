@@ -163,6 +163,7 @@ function facts(
     })),
     control: { paused: false, cancelled: false, fault: null },
     acts: [],
+    amendments: [],
   };
 }
 

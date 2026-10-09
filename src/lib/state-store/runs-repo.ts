@@ -80,6 +80,8 @@ export interface RunsRepo {
   getByLaunchCause(cause: string): RunRecord | null;
   listActive(): RunRecord[];
   listByOwner(projectPath: string, ownerConversationId: string): RunRecord[];
+  /** A session's runs, newest first. */
+  listBySession(projectPath: string, sessionName: string): RunRecord[];
   update(
     runId: string,
     expectedRevision: number,
@@ -103,6 +105,9 @@ export function createRunsRepo(db: Db): RunsRepo {
     ),
     byOwner: db.prepare(
       `SELECT ${RUN} FROM runs WHERE project_path = ? AND owner_conversation_id = ? ORDER BY created_at DESC, rowid DESC`,
+    ),
+    bySession: db.prepare(
+      `SELECT ${RUN} FROM runs WHERE project_path = ? AND session_name = ? ORDER BY created_at DESC, rowid DESC`,
     ),
     update: db.prepare(
       `UPDATE runs SET facts_json = @factsJson, revision = revision + 1, progress_json = @progressJson, updated_at = @updatedAt WHERE run_id = @runId AND revision = @expectedRevision`,
@@ -147,6 +152,9 @@ export function createRunsRepo(db: Db): RunsRepo {
     },
     listByOwner(projectPath, ownerConversationId) {
       return st.byOwner.all(projectPath, ownerConversationId).map(runFromRow);
+    },
+    listBySession(projectPath, sessionName) {
+      return st.bySession.all(projectPath, sessionName).map(runFromRow);
     },
     update(runId, expectedRevision, change) {
       const result = st.update.run({

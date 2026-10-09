@@ -11,7 +11,7 @@ import {
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
 import { createWorkspaceAdmission, type WorkspaceAdmission } from "./admission";
-import type { WorkspaceEvidence } from "./evidence";
+import type { ContentEvidence } from "./evidence";
 import {
   createWorkspaceExecutor,
   type CheckRunResult,
@@ -48,7 +48,7 @@ let checkHangs: boolean;
 let captureGate: Promise<void> | null;
 let captures: number;
 
-const evidence: WorkspaceEvidence = {
+const evidence: ContentEvidence = {
   async capture() {
     captures += 1;
     if (captureGate !== null) await captureGate;

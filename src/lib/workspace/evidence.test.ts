@@ -54,6 +54,23 @@ describe("workspace evidence", () => {
     ).toEqual(["src/api/new.ts", "src/api/routes.ts"]);
   });
 
+  it("shows what a capture changed from the committed head, within its scope, whatever changed after it", async () => {
+    write("src/api/routes.ts", "export const a = 2;\n");
+    write("src/ui/view.ts", "export const v = 2;\n");
+    const owned = { mode: "owned" as const, paths: ["src/api"] };
+    const captured = await evidence.capture(repo, owned);
+    write("src/api/routes.ts", "export const a = 3;\n");
+
+    const diff = await evidence.changes(repo, owned, captured);
+
+    expect(diff.files.map((file) => file.filePath)).toEqual([
+      "src/api/routes.ts",
+    ]);
+    expect(diff.totalAdditions).toBe(1);
+    expect(diff.totalDeletions).toBe(1);
+    expect(JSON.stringify(diff)).toContain("export const a = 2;");
+  });
+
   it("ignores ignored files and survives an owner's commit of unchanged content", async () => {
     const before = await evidence.capture(repo, { mode: "full" });
     write("ignored/cache.bin", "noise");
@@ -95,6 +112,46 @@ describe("workspace evidence", () => {
     expect(evidence.sameContent(before, outside)).toBe(true);
     expect(evidence.sameContent(outside, inside)).toBe(false);
     expect(await evidence.changedPaths(repo, scope, before, inside)).toEqual([
+      "src/api/routes.ts",
+    ]);
+  });
+
+  it("reads owned paths literally: a path with pattern characters owns only itself", async () => {
+    write("src/app/[id]/page.tsx", "export const p = 1;\n");
+    write("src/app/i/page.tsx", "export const q = 1;\n");
+    git("add", "-A");
+    git("commit", "-qm", "pages");
+    const scope = {
+      mode: "owned" as const,
+      paths: ["src/app/[id]/page.tsx"],
+    };
+    const before = await evidence.capture(repo, scope);
+    write("src/app/i/page.tsx", "export const q = 2;\n");
+    const sibling = await evidence.capture(repo, scope);
+    write("src/app/[id]/page.tsx", "export const p = 2;\n");
+    const owned = await evidence.capture(repo, scope);
+
+    expect(evidence.sameContent(before, sibling)).toBe(true);
+    expect(await evidence.changedPaths(repo, scope, before, owned)).toEqual([
+      "src/app/[id]/page.tsx",
+    ]);
+    const diff = await evidence.changes(repo, scope, owned);
+    expect(diff.files.map((file) => file.filePath)).toEqual([
+      "src/app/[id]/page.tsx",
+    ]);
+  });
+
+  it("shows a candidate's changes from the head it was captured on, after the branch moves", async () => {
+    write("src/api/routes.ts", "export const a = 2;\n");
+    const captured = await evidence.capture(repo, { mode: "full" });
+    // Someone commits the candidate's file, and another, while it awaits approval.
+    write("src/ui/view.ts", "export const v = 2;\n");
+    git("add", "-A");
+    git("commit", "-qm", "moved on");
+
+    const diff = await evidence.changes(repo, { mode: "full" }, captured);
+
+    expect(diff.files.map((file) => file.filePath)).toEqual([
       "src/api/routes.ts",
     ]);
   });

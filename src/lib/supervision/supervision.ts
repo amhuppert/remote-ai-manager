@@ -49,7 +49,7 @@ import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import { createWorkspaceRepo } from "@/lib/state-store/workspace-repo";
 import { createWorkspaceAdmission } from "@/lib/workspace/admission";
-import type { WorkspaceEvidence } from "@/lib/workspace/evidence";
+import type { ContentEvidence } from "@/lib/workspace/evidence";
 import type { LaneGit } from "@/lib/workspace/lane-git";
 import type { LaneIntegrator } from "@/lib/workspace/lane-integrator";
 import {
@@ -105,7 +105,7 @@ export interface SupervisionPorts {
   conversationHold: HoldSource;
   createSeatConversation: ConversationCoreDeps["createSeatConversation"];
   slots: ConversationCoreDeps["slots"];
-  evidence: WorkspaceEvidence;
+  evidence: ContentEvidence;
   /** The Git effects of isolated lanes. */
   lanes: LaneGit;
   /** Brings a lane up to date with the session head before it publishes. */

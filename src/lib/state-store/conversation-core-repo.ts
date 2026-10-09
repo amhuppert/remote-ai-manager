@@ -152,6 +152,8 @@ export interface ConversationCoreRepo {
   ownsConversation(conversationId: string): boolean;
   insertSeat(record: SeatBindingRecord): void;
   getSeat(conversationId: string): SeatBindingRecord | null;
+  /** Every seat a context's assignments held, by assignment and incarnation. */
+  seatsOfContext(contextId: string): SeatBindingRecord[];
   findSeat(
     contextId: string,
     assignmentId: string,
@@ -238,6 +240,9 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     ),
     getSeat: db.prepare(
       `SELECT ${SEAT} FROM core_seat_bindings WHERE conversation_id = ?`,
+    ),
+    seatsOfContext: db.prepare(
+      `SELECT ${SEAT} FROM core_seat_bindings WHERE context_id = ? ORDER BY assignment_id, replacement`,
     ),
     findSeat: db.prepare(
       `SELECT ${SEAT} FROM core_seat_bindings WHERE context_id = ? AND assignment_id = ? AND replacement = ?`,
@@ -345,6 +350,10 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     getSeat(conversationId) {
       const raw: unknown = st.getSeat.get(conversationId);
       return raw === undefined ? null : seatFromRow(raw);
+    },
+    seatsOfContext(contextId) {
+      const rows: unknown[] = st.seatsOfContext.all(contextId);
+      return rows.map(seatFromRow);
     },
     findSeat(contextId, assignmentId, replacement) {
       const raw: unknown = st.findSeat.get(

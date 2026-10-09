@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { contextContractSchema } from "@/lib/execution-context/schemas";
 import {
   runBoundarySchema,
@@ -295,6 +295,13 @@ describe("runs repository", () => {
               lane: "api",
             },
           ],
+          amendments: [
+            {
+              revision: 2,
+              at: "2026-10-03T10:02:30.000Z",
+              reason: "Ship only what triage approved",
+            },
+          ],
         },
         revision: 4,
         progress: {
@@ -310,6 +317,48 @@ describe("runs repository", () => {
       },
       reload: (value) => createRunsRepo(db).get(value.runId),
     });
+  });
+
+  it("lists a session's runs, newest first", () => {
+    fixture = createPersistenceFixture();
+    const repo = createRunsRepo(fixture.db);
+    const run = (runId: string, sessionName: string, createdAt: string) =>
+      runRecordSchema.parse({
+        runId,
+        projectPath: "/repo",
+        sessionName,
+        ownerConversationId: "owner-1",
+        ownerSessionName: sessionName,
+        launchCause: `launch-${runId}`,
+        facts: {
+          runId,
+          kind: "agent",
+          title: runId,
+          definition: {
+            revision: 1,
+            contexts: [
+              {
+                key: "agent",
+                dependsOn: [],
+                request: request(`${runId}.agent`),
+              },
+            ],
+          },
+          invocations: [],
+          control: { paused: false, cancelled: false },
+        },
+        revision: 1,
+        progress: { kind: "running" },
+        createdAt,
+        updatedAt: createdAt,
+      });
+    repo.insertIfAbsent(run("run-a", "session", "2026-10-03T10:00:00.000Z"));
+    repo.insertIfAbsent(run("run-b", "other", "2026-10-03T10:01:00.000Z"));
+    repo.insertIfAbsent(run("run-c", "session", "2026-10-03T10:02:00.000Z"));
+
+    expect(
+      repo.listBySession("/repo", "session").map((r) => r.runId),
+    ).toEqual(["run-c", "run-a"]);
   });
 
   it("round-trips a boundary with its detail and notification", async () => {

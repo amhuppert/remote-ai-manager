@@ -444,6 +444,34 @@ describe("execution context host", () => {
     });
   });
 
+  it("shows a person its view, and the evidence its candidate froze", async () => {
+    const host = newHost();
+    const work = await startContext(host);
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
+    conversation.admit(work.cause);
+    conversation.settle(work.cause, workReport({ finalText: "Fixed." }));
+    await host.reconcile("ctx-1");
+    const freeze = workspace
+      .submitted()
+      .find((i) => (i.request as { kind: string }).kind === "freeze");
+    if (freeze === undefined) throw new Error("no freeze");
+    workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:t1:d1" });
+    await host.reconcile("ctx-1");
+
+    const view = host.view("ctx-1", { question: () => null, since: null, held: false });
+    expect(view?.state).toEqual({ kind: "running", step: { kind: "accept" } });
+    expect(view?.title).toBe("Fix the notice");
+    expect(host.candidateEvidence("ctx-1", "ctx-1:candidate:1")).toBe(
+      "git:t1:d1",
+    );
+    expect(host.candidateEvidence("ctx-1", "ctx-1:candidate:9")).toBeNull();
+    expect(host.view("ctx-9", { question: () => null, since: null, held: false })).toBeNull();
+  });
+
   it("does not count a question waiting on its owner as admitted activity", async () => {
     const host = newHost();
     const work = await startContext(host);
