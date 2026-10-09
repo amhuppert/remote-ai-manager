@@ -22,6 +22,7 @@ class FakeProcess implements AppServerProcess {
   readonly written: unknown[] = [];
   autoExit = true;
   alive = true;
+  childrenAlive = false;
   ticks: string | null = "start-1";
   signalExit: NodeJS.Signals | null = "SIGTERM";
   private exitListeners = new Set<
@@ -76,8 +77,8 @@ function fixture(
   const host: AppServerProcessHost = {
     spawn,
     processGroupId: () => child.pid,
-    startTicks: async () => child.ticks,
-    isGroupAlive: () => child.alive,
+    startTicks: async () => (child.alive ? child.ticks : null),
+    isGroupAlive: () => child.alive || child.childrenAlive,
     observeChildren: async () => async () => [],
     signalGroup: (_pgid, signal) => {
       signals.push(signal);
@@ -356,6 +357,122 @@ describe("Codex app-server client", () => {
     await vi.advanceTimersByTimeAsync(50);
     await closed;
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it.each([false, true])(
+    "waits for children to exit after a clean leader exit (capture=%s)",
+    async (captureCleanup) => {
+      vi.useFakeTimers();
+      const { client, child, signals, failures } = fixture({ captureCleanup });
+      const graceMs = captureCleanup ? 1000 : 10;
+      child.childrenAlive = true;
+      setTimeout(() => {
+        child.childrenAlive = false;
+      }, graceMs * 0.8);
+      let settled = false;
+      const verdict = client.close().then(
+        () => {
+          settled = true;
+          return null;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(graceMs / 2);
+      expect(child.alive).toBe(false);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(graceMs * (captureCleanup ? 0.4 : 0.5));
+      expect(settled).toBe(true);
+      expect(await verdict).toBeNull();
+      expect(signals).toEqual([]);
+      expect(failures).toEqual([]);
+    },
+  );
+
+  it.each([false, true])(
+    "refuses cleanup after the grace deadline when children outlive their leader (capture=%s)",
+    async (captureCleanup) => {
+      vi.useFakeTimers();
+      const { client, child, signals } = fixture({ captureCleanup });
+      const graceMs = captureCleanup ? 1000 : 10;
+      child.childrenAlive = true;
+      let settled = false;
+      const verdict = client.close().then(
+        () => {
+          settled = true;
+          return null;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(graceMs / 2);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(graceMs / 2);
+      expect(await verdict).toMatchObject({
+        code: "cleanup_unverified",
+        evidence: { stage: "leader_identity_lost" },
+      });
+      expect(signals).toEqual([]);
+    },
+  );
+
+  it.each([false, true])(
+    "counts leader shutdown against the group's grace deadline (capture=%s)",
+    async (captureCleanup) => {
+      vi.useFakeTimers();
+      const { client, child, signals } = fixture({ captureCleanup });
+      const graceMs = captureCleanup ? 1000 : 10;
+      child.autoExit = false;
+      child.childrenAlive = true;
+      setTimeout(() => child.exit(0, null), graceMs * 0.8);
+      let settled = false;
+      const verdict = client.close().then(
+        () => {
+          settled = true;
+          return null;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(graceMs - 1);
+      expect(child.alive).toBe(false);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      expect(await verdict).toMatchObject({ code: "cleanup_unverified" });
+      expect(signals).toEqual([]);
+    },
+  );
+
+  it("allows children to exit within the TERM grace period", async () => {
+    vi.useFakeTimers();
+    const { client, child, signals, failures } = fixture();
+    child.autoExit = false;
+    child.childrenAlive = true;
+    setTimeout(() => {
+      child.childrenAlive = false;
+    }, 15);
+    const verdict = client.close().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(child.alive).toBe(false);
+    expect(signals).toEqual(["SIGTERM"]);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await verdict).toBeNull();
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(failures).toEqual([]);
   });
 
   it("refuses signalling a recycled process identity", async () => {

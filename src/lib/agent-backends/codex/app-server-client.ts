@@ -98,6 +98,7 @@ const turnSchema = z.object({
   }),
 });
 const MAX_PENDING_REQUESTS = 128;
+const GROUP_EXIT_POLL_MS = 50;
 interface PendingRequest {
   method: string;
   written: boolean;
@@ -495,10 +496,19 @@ export function createCodexAppServerClient(
   child.stderr.on("error", onStreamError);
 
   async function waitForExit(timeout: number): Promise<boolean> {
+    const deadline = Date.now() + timeout;
     await bounded(exitPromise, timeout, undefined);
-    return (
-      exited && (groupId === child.pid ? !host.isGroupAlive(groupId) : true)
-    );
+    if (!exited) return false;
+    if (groupId !== child.pid) return true;
+    // A clean EOF can exit the leader before its Git helpers finish shutting down.
+    while (host.isGroupAlive(groupId)) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return false;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, Math.min(GROUP_EXIT_POLL_MS, remainingMs));
+      });
+    }
+    return true;
   }
   async function teardown(): Promise<void> {
     const cleanupStarted = Date.now();
