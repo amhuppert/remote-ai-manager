@@ -11,11 +11,12 @@ import { cn } from "@/lib/ui/cn";
 import { ApprovalIcon, QuestionIcon } from "../icons";
 import type { AttentionItem, RunOwner } from "../model";
 import { haltTitle, runHaltTitle } from "../present";
+import { Refusal, useAwaitedAction } from "./parts";
 
 export interface AttentionActions {
   onSelectContext(key: string): void;
-  onRetryLane(lane: string): void;
-  onResume(): void;
+  onRetryLane(lane: string): void | Promise<void>;
+  onResume(): void | Promise<void>;
   onOpenConversation(conversationId: string): void;
 }
 
@@ -26,13 +27,16 @@ function Item({
   detail,
   at,
   action,
+  refusal,
 }: {
   icon: React.ReactNode;
   tone: "red" | "amber" | "neutral";
   title: React.ReactNode;
   detail: string;
-  at: string;
+  /** Absent when nothing recorded when it began. */
+  at?: string;
   action: React.ReactNode;
+  refusal?: string | null;
 }) {
   return (
     <li className="flex items-center gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-lg py-[10px] last:border-b-0 max-640:items-start max-640:px-md">
@@ -55,13 +59,18 @@ function Item({
         <span className="min-w-0 font-mono text-[0.72rem] leading-relaxed break-words text-text-secondary">
           {detail}
         </span>
+        {refusal !== undefined && refusal !== null ? (
+          <Refusal message={refusal} />
+        ) : null}
       </div>
-      <time
-        dateTime={at}
-        className="shrink-0 font-mono text-[0.7rem] text-text-tertiary max-640:hidden"
-      >
-        {formatLocalTime(at)}
-      </time>
+      {at !== undefined ? (
+        <time
+          dateTime={at}
+          className="shrink-0 font-mono text-[0.7rem] text-text-tertiary max-640:hidden"
+        >
+          {formatLocalTime(at)}
+        </time>
+      ) : null}
       <div className="shrink-0">{action}</div>
     </li>
   );
@@ -81,6 +90,10 @@ export function AttentionPanel({
   owner: RunOwner;
   actions: AttentionActions;
 }) {
+  const { pending, refusal, act } = useAwaitedAction<string>();
+  const refusalFor = (key: string) =>
+    refusal?.key === key ? refusal.message : null;
+  const ownerName = owner.title ?? "The owner";
   const yours = items.filter((item) => item.kind !== "question");
   const owners = items.filter(
     (item): item is Extract<AttentionItem, { kind: "question" }> =>
@@ -172,9 +185,10 @@ export function AttentionPanel({
                       icon={<AlertTriangleIcon size={15} />}
                       tone="red"
                       title={runHaltTitle(item.halt)}
+                      refusal={refusalFor(`run-${item.occurrence}`)}
                       detail={
                         item.clearedBy === "amend"
-                          ? `${item.detail} · ${owner.title} can amend the definition, or you can cancel the run.`
+                          ? `${item.detail} · ${ownerName} can amend the definition, or you can cancel the run.`
                           : item.clearedBy === "cancel"
                             ? `${item.detail} · Only cancelling the run clears this.`
                             : item.detail
@@ -182,7 +196,18 @@ export function AttentionPanel({
                       at={item.at}
                       action={
                         item.clearedBy === "resume" ? (
-                          <Button touch size="sm" onClick={actions.onResume}>
+                          <Button
+                            touch
+                            size="sm"
+                            loading={pending === `run-${item.occurrence}`}
+                            disabled={pending !== null}
+                            onClick={() =>
+                              void act(
+                                `run-${item.occurrence}`,
+                                actions.onResume,
+                              )
+                            }
+                          >
                             <RefreshIcon size={13} />
                             Resume
                           </Button>
@@ -192,7 +217,13 @@ export function AttentionPanel({
                             touch
                             size="sm"
                             variant="default"
-                            onClick={() => actions.onRetryLane(item.lane ?? "")}
+                            loading={pending === `run-${item.occurrence}`}
+                            disabled={pending !== null}
+                            onClick={() =>
+                              void act(`run-${item.occurrence}`, () =>
+                                actions.onRetryLane(item.lane ?? ""),
+                              )
+                            }
                           >
                             <RefreshIcon size={13} />
                             Retry lane
@@ -213,6 +244,40 @@ export function AttentionPanel({
                       }
                     />
                   );
+                case "stalled": {
+                  const key = `stalled-${item.contextKey ?? "run"}`;
+                  return (
+                    <Item
+                      key={key}
+                      icon={<AlertTriangleIcon size={15} />}
+                      tone="amber"
+                      title={
+                        <>
+                          {item.contextKey !== undefined ? (
+                            <span className="text-text-tertiary">
+                              {item.contextKey} ·{" "}
+                            </span>
+                          ) : null}
+                          Finished work was not picked up
+                        </>
+                      }
+                      detail="A step finished, but nothing went on from it. Resuming the run picks it up."
+                      refusal={refusalFor(key)}
+                      action={
+                        <Button
+                          touch
+                          size="sm"
+                          loading={pending === key}
+                          disabled={pending !== null}
+                          onClick={() => void act(key, actions.onResume)}
+                        >
+                          <RefreshIcon size={13} />
+                          Resume
+                        </Button>
+                      }
+                    />
+                  );
+                }
               }
             })}
           </ul>
@@ -225,7 +290,7 @@ export function AttentionPanel({
         >
           <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-base px-lg py-[8px]">
             <span className="font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">
-              With {owner.title}
+              With {ownerName}
             </span>
             <span className="font-mono text-[0.7rem] text-text-tertiary">
               {owners.length}

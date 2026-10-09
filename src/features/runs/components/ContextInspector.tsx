@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ApprovalGatePanel, {
   ScopedChangesSection,
+  type ApprovalScopedChanges,
 } from "@/components/ApprovalGatePanel";
 import {
   ArrowUpRightIcon,
@@ -34,6 +35,7 @@ import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import { LoopIcon, QuestionIcon, WaitingIcon } from "../icons";
 import type {
+  CandidateChanges,
   ContextDetail,
   ContextInvocation,
   RunOwner,
@@ -41,7 +43,14 @@ import type {
 } from "../model";
 import { contextState, formatUsd } from "../present";
 import { HaltCard, type RemedyChoice } from "./HaltCard";
-import { KeyLabel, PanelHeading, SeatMark } from "./parts";
+import {
+  Cost,
+  KeyLabel,
+  PanelHeading,
+  Refusal,
+  SeatMark,
+  useAwaitedAction,
+} from "./parts";
 import { ReviewRounds } from "./ReviewRounds";
 import { StageTrack } from "./StageTrack";
 
@@ -126,35 +135,13 @@ function StateAction({
   now?: number;
 }) {
   const { state } = context;
-  const [pending, setPending] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
-  const inFlight = useRef(false);
-  const submit = async (action: () => void | Promise<void>) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setPending(true);
-    setRefusal(null);
-    try {
-      await action();
-    } catch (error) {
-      setRefusal(
-        error instanceof Error
-          ? error.message
-          : "The decision could not be applied. Refresh the run and try again.",
-      );
-    } finally {
-      inFlight.current = false;
-      setPending(false);
-    }
-  };
+  const awaited = useAwaitedAction<"decision">();
+  const pending = awaited.pending !== null;
+  const submit = (action: () => void | Promise<void>) =>
+    awaited.act("decision", action);
   const refusalMessage =
-    refusal !== null ? (
-      <p
-        role="alert"
-        className="m-0 rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.75rem] leading-relaxed text-red-text"
-      >
-        {refusal}
-      </p>
+    awaited.refusal !== null ? (
+      <Refusal message={awaited.refusal.message} />
     ) : null;
   switch (state.kind) {
     case "halted":
@@ -184,17 +171,8 @@ function StateAction({
             isSubmitting={pending}
             conversationBusy={false}
             executionSuspended={runSuspended}
-            scopedChanges={
-              context.candidate === null
-                ? {
-                    status: "unavailable",
-                    reason: "The candidate's changes are not loaded.",
-                  }
-                : {
-                    status: "ready",
-                    candidate: context.candidate,
-                  }
-            }
+            scopedChanges={scopedChangesOf(context.candidate)}
+            changesDetail="What the candidate changed, from the commit it was captured on."
             onApprove={() => {
               void submit(() =>
                 actions.onApprove(context.key, approval.candidateId),
@@ -369,7 +347,7 @@ function ResultTab({ context }: { context: ContextInvocation }) {
           </div>
         )}
       </section>
-      {context.candidate !== null ? (
+      {context.candidate?.status === "ready" ? (
         <section className="flex flex-col gap-sm">
           <PanelHeading>Candidate changes</PanelHeading>
           <ScopedChangesSection
@@ -434,11 +412,13 @@ function AgentsTab({
           <div className="flex min-w-0 flex-1 flex-col gap-[4px]">
             <div className="flex min-w-0 items-center gap-sm">
               <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
-                {agent.seat.role === "implementer"
-                  ? "Implementer"
-                  : (agent.seat.focus ?? "Reviewer")}
+                {agent.seat === null
+                  ? agent.assignment
+                  : agent.seat.role === "implementer"
+                    ? "Implementer"
+                    : (agent.seat.focus ?? "Reviewer")}
               </span>
-              {agent.seat.authority !== undefined ? (
+              {agent.seat?.authority !== undefined ? (
                 <span className="font-mono text-[0.7rem] text-text-tertiary">
                   {agent.seat.authority}
                 </span>
@@ -451,27 +431,31 @@ function AgentsTab({
               </StatusChip>
             </div>
             <div className="flex min-w-0 items-center gap-md">
-              <SeatMark seat={agent.seat} />
-              <span className="shrink-0 font-mono text-[0.7rem] text-text-tertiary">
-                {agent.turns} {agent.turns === 1 ? "turn" : "turns"} ·{" "}
-                {formatUsd(agent.costUsd)}
+              {agent.seat !== null ? <SeatMark seat={agent.seat} /> : null}
+              <span
+                className={cn(
+                  "font-mono text-[0.7rem] text-text-tertiary",
+                  agent.turns !== null && "shrink-0",
+                )}
+              >
+                {agent.turns === null
+                  ? "Its conversation is gone; what it spent is not known"
+                  : `${agent.turns} ${agent.turns === 1 ? "turn" : "turns"} · ${formatUsd(agent.costUsd)}`}
               </span>
             </div>
-            {agent.replacedBecause !== undefined ? (
-              <span className="font-mono text-[0.7rem] text-amber">
-                {agent.replacedBecause}
-              </span>
-            ) : null}
           </div>
-          <WithTooltip label="Open transcript">
-            <IconButton
-              variant="ghost"
-              aria-label={`Open the ${agent.assignment} transcript`}
-              onClick={() => actions.onOpenConversation(agent.conversationId)}
-            >
-              <ArrowUpRightIcon />
-            </IconButton>
-          </WithTooltip>
+          {/* A gone conversation has no transcript to open. */}
+          {agent.turns === null ? null : (
+            <WithTooltip label="Open transcript">
+              <IconButton
+                variant="ghost"
+                aria-label={`Open the ${agent.assignment} transcript`}
+                onClick={() => actions.onOpenConversation(agent.conversationId)}
+              >
+                <ArrowUpRightIcon />
+              </IconButton>
+            </WithTooltip>
+          )}
         </li>
       ))}
     </ul>
@@ -820,7 +804,9 @@ export function ContextInspector({
             {context.startedAt !== null ? (
               <span>started {formatLocalTime(context.startedAt)}</span>
             ) : null}
-            <span>{formatUsd(context.costUsd)}</span>
+            <span>
+              <Cost usd={context.costUsd} complete={context.costComplete} />
+            </span>
           </div>
         </header>
       )}
@@ -845,8 +831,8 @@ export function ContextInspector({
               </SelectItem>
               {currentContext.previousInvocations.map((previous) => (
                 <SelectItem
-                  key={previous.invocationId}
-                  value={previous.invocationId}
+                  key={previous.invocationId ?? `pass-${previous.loop?.pass}`}
+                  value={previous.invocationId ?? `pass-${previous.loop?.pass}`}
                 >
                   Pass {previous.loop?.pass ?? 1} ·{" "}
                   {contextState(previous.state).label.toLowerCase()}
@@ -907,7 +893,7 @@ export function ContextInspector({
           key={question.questionId}
           tone="amber"
           icon={<QuestionIcon size={16} />}
-          title={`${question.seat} asked ${owner.title}`}
+          title={`${question.seat} asked ${owner.title ?? "the owner"}`}
         >
           <p className="m-0 text-text-primary">{question.question}</p>
           <p className="m-0 mt-xs">
@@ -975,4 +961,28 @@ export function ContextInspector({
       </TabsRoot>
     </div>
   );
+}
+
+/** What the approval panel shows of the candidate: its changes, or why they cannot be shown. */
+function scopedChangesOf(
+  candidate: CandidateChanges | null,
+): ApprovalScopedChanges {
+  if (candidate === null)
+    return {
+      status: "unavailable",
+      reason: "The candidate's changes are not loaded.",
+    };
+  if (candidate.status === "unavailable")
+    return { status: "unavailable", reason: candidate.reason };
+  return {
+    status: "ready",
+    candidate:
+      candidate.scope === "owned"
+        ? {
+            scope: "owned",
+            ownedPaths: candidate.ownedPaths,
+            diff: candidate.diff,
+          }
+        : { scope: "whole_tree", diff: candidate.diff },
+  };
 }

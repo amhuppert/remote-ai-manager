@@ -1610,6 +1610,15 @@ describe("run routes", () => {
       ["succeeded", "build"],
       ["succeeded", null],
     ]);
+    // A context's events name it by key; the run's own are worded for the person, not the owner.
+    expect(page.activity.map((event) => event.summary)).toEqual([
+      "Launched",
+      "started",
+      "finished",
+      "started",
+      "finished",
+      "Finished",
+    ]);
     // Each event keeps an identity from the fact it comes from, whatever lands before it later.
     expect(page.activity.map((event) => event.id)).toEqual([
       "launch",

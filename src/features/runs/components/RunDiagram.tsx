@@ -29,14 +29,8 @@ import {
   type PlacedLoop,
 } from "../diagram-layout";
 import type { RunContext, RunEdge, RunLane, RunLoop } from "../model";
-import {
-  contextState,
-  formatUsd,
-  isSettled,
-  laneState,
-  loopState,
-} from "../present";
-import { ContextGlyph, SeatMark } from "./parts";
+import { contextState, isSettled, laneState, loopState } from "../present";
+import { ContextGlyph, Cost, SeatMark } from "./parts";
 
 type ContextNodeData = {
   context: RunContext;
@@ -124,7 +118,7 @@ function ContextNode({ data }: NodeProps<Node<ContextNodeData>>) {
           ) : null}
           {template ? null : (
             <span className="ml-auto shrink-0 font-mono text-[0.7rem] text-text-tertiary">
-              {formatUsd(context.costUsd)}
+              <Cost usd={context.costUsd} complete={context.costComplete} />
             </span>
           )}
         </span>

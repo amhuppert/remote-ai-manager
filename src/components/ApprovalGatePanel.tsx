@@ -65,6 +65,8 @@ interface ApprovalGatePanelProps {
   conversationBusy: boolean;
   executionSuspended: boolean;
   scopedChanges?: ApprovalScopedChanges | null;
+  /** What a ready candidate's changes are measured from; the graph engine's meaning when absent. */
+  changesDetail?: string;
   voiceProjectName?: string;
   onApprove(): void;
   onReject(message: string): void;
@@ -92,8 +94,10 @@ function diffSummary(ownedPaths: string[] | null, diff: SessionDiff): string {
  */
 function CandidateState({
   scopedChanges,
+  changesDetail,
 }: {
   scopedChanges: ApprovalScopedChanges;
+  changesDetail: string;
 }) {
   const { tone, icon, label, aside, detail } = ((): {
     tone: string;
@@ -122,7 +126,7 @@ function CandidateState({
               : null,
             scopedChanges.candidate.diff,
           ),
-          detail: "Changes since this context began, including committed work.",
+          detail: changesDetail,
         };
       case "drifted":
         return {
@@ -266,6 +270,7 @@ export default function ApprovalGatePanel({
   conversationBusy,
   executionSuspended,
   scopedChanges = null,
+  changesDetail = "Changes since this context began, including committed work.",
   voiceProjectName,
   onApprove,
   onReject,
@@ -339,7 +344,10 @@ export default function ApprovalGatePanel({
 
         <div className="flex flex-col gap-[10px] px-3 py-[11px]">
           {scopedChanges !== null && (
-            <CandidateState scopedChanges={scopedChanges} />
+            <CandidateState
+              scopedChanges={scopedChanges}
+              changesDetail={changesDetail}
+            />
           )}
 
           <p className={NOTE_CLASS}>

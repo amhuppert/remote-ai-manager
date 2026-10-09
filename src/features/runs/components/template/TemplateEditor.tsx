@@ -857,13 +857,16 @@ function asRunContext(context: TemplateContext): RunContext {
     tasks: { done: 0, total: context.tasks.length },
     questions: [],
     costUsd: null,
+    costComplete: true,
     implementer: {
+      assignment: "implementer",
       role: "implementer",
       backend: implementer.backend,
       model: implementer.model,
       effort: implementer.effort,
     },
-    reviewers: context.config.reviewers.value.map((reviewer) => ({
+    reviewers: context.config.reviewers.value.map((reviewer, index) => ({
+      assignment: `reviewer-${index + 1}`,
       role: "reviewer",
       backend: reviewer.backend,
       model: reviewer.model,

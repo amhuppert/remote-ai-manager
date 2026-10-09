@@ -217,3 +217,106 @@ it("explains missing frozen bytes instead of opening the latest revision or doin
     screen.queryByRole("heading", { name: "Checkout v2 rollout plan" }),
   ).not.toBeInTheDocument();
 });
+
+it("lists activity newest first, whatever order the page sends it in", () => {
+  const oldestFirst: RunDetail = {
+    ...checkoutRun,
+    activity: [...checkoutRun.activity].sort((a, b) => a.seq - b.seq),
+  };
+  render(<RunPage runs={sessionRuns} run={oldestFirst} actions={actions} />);
+
+  const tab = screen.getByRole("tab", { name: "Activity" });
+  const panel = document.getElementById(
+    tab.getAttribute("aria-controls") ?? "",
+  );
+  if (panel === null) throw new Error("no activity panel");
+  const times = [...panel.querySelectorAll("time")]
+    .map((time) => time.getAttribute("datetime"))
+    .filter((at): at is string => at !== null);
+  expect(times.length).toBeGreaterThan(1);
+  expect(times).toEqual([...times].sort().reverse());
+});
+
+it("shows a control as working until the server answers, and its refusal at the control", async () => {
+  let refuse: (error: Error) => void = () => {};
+  const user = userEvent.setup();
+  render(
+    <RunPage
+      runs={sessionRuns}
+      run={checkoutRun}
+      actions={{
+        ...actions,
+        onPause: () =>
+          new Promise<void>((_resolve, reject) => {
+            refuse = reject;
+          }),
+      }}
+    />,
+  );
+
+  const pause = screen.getByRole("button", { name: "Pause" });
+  await user.click(pause);
+  expect(pause).toHaveAttribute("aria-busy", "true");
+  // Another control would wait behind it; it says so rather than doing nothing.
+  expect(screen.getByRole("button", { name: "Cancel run" })).toBeDisabled();
+  refuse(new Error("Run run-1 was cancelled"));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Run run-1 was cancelled",
+  );
+  expect(pause).not.toHaveAttribute("aria-busy", "true");
+});
+
+it("shows a lane retry as working, and its refusal beside it", async () => {
+  const blocked: RunDetail = {
+    ...checkoutRun,
+    attention: [
+      {
+        kind: "run_halt",
+        occurrence: "lane-ui-publication-1",
+        halt: "lane_publication",
+        detail: "The session worktree has uncommitted changes.",
+        clearedBy: "retry_lane",
+        lane: "ui",
+        at: "2026-10-08T19:55:00.000Z",
+      },
+    ],
+  };
+  let refuse: (error: Error) => void = () => {};
+  const user = userEvent.setup();
+  render(
+    <RunPage
+      runs={sessionRuns}
+      run={blocked}
+      actions={{
+        ...actions,
+        onRetryLane: () =>
+          new Promise<void>((_resolve, reject) => {
+            refuse = reject;
+          }),
+      }}
+    />,
+  );
+
+  const [retry] = screen.getAllByRole("button", { name: "Retry lane" });
+  if (retry === undefined) throw new Error("no retry button");
+  await user.click(retry);
+  expect(retry).toHaveAttribute("aria-busy", "true");
+  refuse(new Error('Lane "ui" of run run-1 has nothing to retry'));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "has nothing to retry",
+  );
+});
+
+it("says a run's cost is at least what is known once a seat's conversation is gone", () => {
+  render(
+    <RunPage
+      runs={sessionRuns}
+      run={{ ...checkoutRun, costUsd: 2.5, costComplete: false }}
+      actions={actions}
+    />,
+  );
+
+  expect(screen.getByLabelText("at least $2.50")).toHaveTextContent("$2.50+");
+});

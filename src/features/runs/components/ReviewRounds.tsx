@@ -1,6 +1,11 @@
 "use client";
 
-import { CheckIcon, ChevronDownIcon, CloseIcon } from "@/components/icons";
+import {
+  AlertTriangleIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CloseIcon,
+} from "@/components/icons";
 import {
   Collapsible,
   CollapsibleContent,
@@ -11,7 +16,7 @@ import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import type { Advisory, CheckResult, ReviewRound, SeatVerdict } from "../model";
-import { formatDuration, formatUsd } from "../present";
+import { formatDuration } from "../present";
 import { SeatMark } from "./parts";
 
 const roundOutcome: Record<
@@ -53,6 +58,8 @@ function Check({ check }: { check: CheckResult }) {
           check.status === "passed" && "text-green",
           check.status === "failed" && "text-red",
           check.status === "running" && "text-cyan",
+          check.status === "unavailable" && "text-amber",
+          check.status === "skipped" && "text-text-tertiary",
         )}
       >
         {check.status === "passed" ? <CheckIcon size={12} /> : null}
@@ -60,10 +67,24 @@ function Check({ check }: { check: CheckResult }) {
         {check.status === "running" ? (
           <Spinner size="sm" tone="inherit" />
         ) : null}
+        {check.status === "unavailable" ? (
+          <AlertTriangleIcon size={12} />
+        ) : null}
       </span>
-      <span className="text-text-primary">{check.command}</span>
+      <span
+        className={cn(
+          "text-text-primary",
+          check.status === "skipped" && "text-text-tertiary line-through",
+        )}
+      >
+        {check.command}
+      </span>
       <span className="text-text-tertiary">
-        {formatDuration(check.durationMs)}
+        {check.status === "unavailable"
+          ? "could not run"
+          : check.status === "skipped"
+            ? "not run"
+            : formatDuration(check.durationMs)}
       </span>
       {check.detail !== undefined ? (
         <span className="truncate text-red-text">{check.detail}</span>
@@ -117,19 +138,25 @@ function Seat({ seat }: { seat: SeatVerdict }) {
   return (
     <li className="flex flex-col gap-sm">
       <div className="flex min-w-0 items-center gap-sm">
-        <SeatMark seat={seat.seat} showEffort={false} />
-        {seat.seat.focus !== undefined ? (
+        {seat.seat !== null ? (
+          <>
+            <SeatMark seat={seat.seat} showEffort={false} />
+            {seat.seat.focus !== undefined ? (
+              <span className="truncate font-mono text-[0.72rem] text-text-secondary">
+                {seat.seat.focus}
+              </span>
+            ) : null}
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
+              {seat.seat.authority}
+            </span>
+          </>
+        ) : (
+          // An amendment since removed this seat from the contract.
           <span className="truncate font-mono text-[0.72rem] text-text-secondary">
-            {seat.seat.focus}
+            {seat.assignment}
           </span>
-        ) : null}
-        <span className="font-mono text-[0.7rem] text-text-tertiary">
-          {seat.seat.authority}
-        </span>
+        )}
         <span className="ml-auto flex shrink-0 items-center gap-sm">
-          <span className="font-mono text-[0.7rem] text-text-tertiary">
-            {formatUsd(seat.costUsd)}
-          </span>
           <StatusChip
             tone={presented.tone}
             icon={
@@ -199,9 +226,11 @@ function Round({
               {round.kind === "full" ? "Full review" : "Blocking re-review"}
             </span>
             <span className="ml-auto flex items-center gap-sm">
-              <span className="font-mono text-[0.7rem] text-text-tertiary">
-                {formatLocalTime(round.at)}
-              </span>
+              {round.at !== null ? (
+                <span className="font-mono text-[0.7rem] text-text-tertiary">
+                  {formatLocalTime(round.at)}
+                </span>
+              ) : null}
               <StatusChip
                 tone={outcome.tone}
                 icon={

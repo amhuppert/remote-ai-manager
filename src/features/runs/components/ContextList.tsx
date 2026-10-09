@@ -6,8 +6,14 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
 import { LoopIcon } from "../icons";
 import type { RunContext, RunLane, RunLoop } from "../model";
-import { contextState, formatUsd, laneState, loopState } from "../present";
-import { ContextGlyph, SeatMark } from "./parts";
+import { contextState, laneState, loopState } from "../present";
+import {
+  ContextGlyph,
+  Cost,
+  Refusal,
+  SeatMark,
+  useAwaitedAction,
+} from "./parts";
 
 const stateText: Record<ReturnType<typeof contextState>["tone"], string> = {
   neutral: "text-text-secondary",
@@ -114,7 +120,7 @@ function Row({
               </span>
             )}
             <span className="w-[44px] text-right">
-              {formatUsd(context.costUsd)}
+              <Cost usd={context.costUsd} complete={context.costComplete} />
             </span>
           </span>
         </span>
@@ -131,9 +137,10 @@ function LaneHeader({
   onRetry,
 }: {
   lane: RunLane;
-  onRetry(key: string): void;
+  onRetry(key: string): void | Promise<void>;
 }) {
   const state = laneState(lane.state);
+  const { pending, refusal, act } = useAwaitedAction<"retry">();
   return (
     <div className="flex min-h-[40px] flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-base px-lg py-[6px]">
       <span className="text-text-tertiary">
@@ -157,7 +164,8 @@ function LaneHeader({
           size="sm"
           variant="default"
           layoutClassName="ml-auto shrink-0"
-          onClick={() => onRetry(lane.key)}
+          loading={pending === "retry"}
+          onClick={() => void act("retry", () => onRetry(lane.key))}
         >
           <RefreshIcon size={13} />
           Retry lane
@@ -167,6 +175,11 @@ function LaneHeader({
         <span className="basis-full font-mono text-[0.72rem] leading-relaxed text-amber">
           {lane.detail}
         </span>
+      ) : null}
+      {refusal !== null ? (
+        <div className="basis-full">
+          <Refusal message={refusal.message} />
+        </div>
       ) : null}
       <details className="basis-full font-mono text-[0.7rem] text-text-secondary">
         <summary className="cursor-pointer rounded-sm py-xs focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2">
@@ -214,7 +227,7 @@ export function ContextList({
   loops: RunLoop[];
   selectedKey: string | null;
   onSelect(key: string): void;
-  onRetryLane(key: string): void;
+  onRetryLane(key: string): void | Promise<void>;
 }) {
   const session = contexts.filter(
     (context) => context.placement.kind === "session",

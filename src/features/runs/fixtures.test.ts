@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { runPageSchema, runSummarySchema } from "@/lib/runs/schemas";
 import {
   compileWorkflow,
   workflowLaunchRequestSchema,
@@ -8,6 +10,9 @@ import {
   checkoutHaltedRun,
   checkoutLoopRun,
   checkoutSucceededRun,
+  noticeRun,
+  noticeRunAwaitingApproval,
+  sessionRuns,
 } from "./fixtures";
 
 describe("run prototype evidence", () => {
@@ -129,5 +134,25 @@ describe("run prototype evidence", () => {
         }
       }
     }
+  });
+});
+
+describe("fixtures as the server sends them", () => {
+  it("are run pages and summaries the server's schemas accept", () => {
+    for (const run of [
+      checkoutRun,
+      checkoutHaltedRun,
+      checkoutLoopRun,
+      checkoutSucceededRun,
+      noticeRun,
+      noticeRunAwaitingApproval,
+    ]) {
+      const parsed = runPageSchema.safeParse(run);
+      expect(
+        parsed.success ? [] : parsed.error.issues.map((issue) => issue.path),
+        run.runId,
+      ).toEqual([]);
+    }
+    expect(z.array(runSummarySchema).safeParse(sessionRuns).success).toBe(true);
   });
 });

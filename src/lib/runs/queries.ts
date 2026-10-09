@@ -36,10 +36,14 @@ export function useSessionRunsQuery(projectName: string, sessionName: string) {
   return useQuery(runQueries.list(projectName, sessionName));
 }
 
+/** A run's page; nothing is read while no run is selected. */
 export function useRunPageQuery(
   projectName: string,
   sessionName: string,
-  runId: string,
+  runId: string | null,
 ) {
-  return useQuery(runQueries.page(projectName, sessionName, runId));
+  return useQuery({
+    ...runQueries.page(projectName, sessionName, runId ?? ""),
+    enabled: runId !== null,
+  });
 }

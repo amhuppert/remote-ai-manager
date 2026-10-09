@@ -154,7 +154,7 @@ describe("ContextInspector evidence", () => {
     expect(screen.getByText("Keep the old enum value?")).toBeInTheDocument();
   });
 
-  it("retains the candidate diff after acceptance", async () => {
+  it("shows the candidate's changes beside its result when the page has them", async () => {
     const { user } = setup({ ...context("plan"), candidate: uiCandidate });
     await user.click(screen.getByRole("tab", { name: "Result" }));
     expect(

@@ -31,7 +31,7 @@ import { RunsRail } from "./RunsRail";
 export type RunPageActions = RunControls &
   Omit<ContextActions, "onOpenDocument" | "onOpenCharter"> & {
     onSelectRun(runId: string): void;
-    onRetryLane(lane: string): void;
+    onRetryLane(lane: string): void | Promise<void>;
     onBrowseTemplates?(): void;
   };
 
@@ -457,17 +457,40 @@ export function RunPage(props: {
   runs: RunSummary[];
   run: RunDetail | null;
   actions: RunPageActions;
+  /** The run the address names, while its page is not shown yet. */
+  selectedRunId?: string | null;
   initialContext?: string | null;
   initialView?: View;
   now?: number;
   loading?: boolean;
   error?: string | null;
   onRetry?(): void;
+  /** A retry asked for is reading again. */
+  retrying?: boolean;
 }) {
   if (props.run !== null)
     return <RunContent key={props.run.runId} {...props} run={props.run} />;
+  const notice = <NoRun {...props} />;
+  // The session's runs stay beside a run that is loading or could not be read, to choose another.
+  if (props.runs.length === 0) return notice;
   return (
-    <main className="flex h-full min-h-[420px] items-center justify-center bg-bg-void px-xl py-3xl">
+    <div className="flex h-full min-h-0 w-full bg-bg-void">
+      <aside className="w-[256px] shrink-0 overflow-y-auto border-y-0 border-r border-l-0 border-solid border-border-dim bg-bg-base px-sm py-xl max-768:hidden">
+        <RunsRail
+          runs={props.runs}
+          selectedId={props.selectedRunId ?? ""}
+          onSelect={props.actions.onSelectRun}
+        />
+      </aside>
+      <div className="flex min-w-0 flex-1">{notice}</div>
+    </div>
+  );
+}
+
+function NoRun(props: Parameters<typeof RunPage>[0]) {
+  const forRun = props.runs.length > 0;
+  return (
+    <main className="flex h-full min-h-[420px] w-full items-center justify-center bg-bg-void px-xl py-3xl">
       <section
         aria-busy={props.loading || undefined}
         className="flex w-full max-w-[560px] flex-col items-start gap-lg rounded-lg border border-solid border-border-subtle bg-bg-surface p-2xl max-640:p-xl"
@@ -481,10 +504,16 @@ export function RunPage(props: {
           </span>
           <h1 className="m-0 font-display text-[1.5rem] font-bold text-text-primary">
             {props.loading
-              ? "Loading runs"
+              ? forRun
+                ? "Loading the run"
+                : "Loading runs"
               : props.error
-                ? "Runs could not be loaded"
-                : "A place for delegated work"}
+                ? forRun
+                  ? "This run could not be loaded"
+                  : "Runs could not be loaded"
+                : forRun
+                  ? "Choose a run"
+                  : "A place for delegated work"}
           </h1>
           <p
             role={props.error ? "alert" : "status"}
@@ -493,15 +522,17 @@ export function RunPage(props: {
             {props.loading
               ? "Getting the latest progress and decisions."
               : (props.error ??
-                "Launch a saved workflow, or ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here.")}
+                (forRun
+                  ? "Pick one of this session's runs to follow its progress and decisions."
+                  : "Launch a saved workflow, or ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."))}
           </p>
         </div>
         {props.error && props.onRetry ? (
-          <Button touch onClick={props.onRetry}>
+          <Button touch loading={props.retrying} onClick={props.onRetry}>
             <RefreshIcon size={14} />
             Try again
           </Button>
-        ) : !props.loading && props.actions.onBrowseTemplates ? (
+        ) : !props.loading && !forRun && props.actions.onBrowseTemplates ? (
           <Button
             touch
             variant="primary"

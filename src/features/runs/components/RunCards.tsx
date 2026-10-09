@@ -8,7 +8,8 @@ import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import { ApprovalIcon } from "../icons";
 import type { AttentionItem, RunSummary } from "../model";
-import { formatUsd, haltTitle, runHaltTitle, runStatus } from "../present";
+import { haltTitle, runHaltTitle, runStatus } from "../present";
+import { Cost } from "./parts";
 
 function attentionLine(item: Exclude<AttentionItem, { kind: "question" }>): {
   icon: React.ReactNode;
@@ -52,6 +53,20 @@ function attentionLine(item: Exclude<AttentionItem, { kind: "question" }>): {
             : item.clearedBy === "resume"
               ? "Resume"
               : "Open",
+      };
+    case "stalled":
+      return {
+        icon: <AlertTriangleIcon size={13} />,
+        tone: "text-amber",
+        text: (
+          <>
+            {item.contextKey !== undefined ? (
+              <span className="text-text-tertiary">{item.contextKey}</span>
+            ) : null}{" "}
+            finished a step nothing picked up
+          </>
+        ),
+        action: "Resume",
       };
   }
 }
@@ -114,7 +129,7 @@ export function OwnerRunCard({
             {run.kind === "workflow"
               ? `${run.contexts.done} of ${run.contexts.total} contexts · `
               : ""}
-            {formatUsd(run.costUsd)}
+            <Cost usd={run.costUsd} complete={run.costComplete} />
             {finished
               ? ` · finished ${formatLocalTime(run.finishedAt ?? run.startedAt)}`
               : ` · started ${formatLocalTime(run.startedAt)}`}
@@ -223,7 +238,7 @@ export function SessionRunsCard({
                       {run.kind === "workflow"
                         ? `${run.contexts.done}/${run.contexts.total}`
                         : "agent"}{" "}
-                      · {formatUsd(run.costUsd)}
+                      · <Cost usd={run.costUsd} complete={run.costComplete} />
                     </span>
                   </span>
                 </button>

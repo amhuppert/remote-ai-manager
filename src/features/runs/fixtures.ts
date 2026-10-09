@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { checkoutTemplate } from "./template-fixtures";
-import type { ApprovalCandidate } from "@/components/ApprovalGatePanel";
 import type {
+  CandidateChanges,
   ContextDetail,
   ContextConfiguration,
   ContextInvocation,
@@ -65,7 +65,11 @@ export const owner: RunOwner = {
   backend: "claude",
 };
 
+/** A reviewer's assignment, named after its focus. */
+const assignmentOf = (focus: string): string =>
+  focus.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 const opus: SeatSummary = {
+  assignment: "implementer",
   role: "implementer",
   backend: "claude",
   model: "Opus 5.5",
@@ -75,6 +79,7 @@ const sol = (
   focus: string,
   authority: "blocking" | "advisory" = "blocking",
 ): SeatSummary => ({
+  assignment: assignmentOf(focus),
   role: "reviewer",
   backend: "codex",
   model: "GPT-6 Sol",
@@ -86,6 +91,7 @@ const sonnetReviewer = (
   focus: string,
   authority: "blocking" | "advisory" = "advisory",
 ): SeatSummary => ({
+  assignment: assignmentOf(focus),
   role: "reviewer",
   backend: "claude",
   model: "Sonnet 5.5",
@@ -128,7 +134,8 @@ const allDone = (approval = false): ContextStage[] =>
     approval,
   );
 
-export const uiCandidate: ApprovalCandidate = {
+export const uiCandidate: CandidateChanges = {
+  status: "ready",
   scope: "owned",
   ownedPaths: ["src/checkout/ui", "src/checkout/copy.ts"],
   diff: {
@@ -204,6 +211,8 @@ export const uiCandidate: ApprovalCandidate = {
 };
 
 const plan: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({ scope: { mode: "readOnly" } }),
   previousInvocations: [],
   invocationId: "checkout-plan-1",
@@ -250,7 +259,6 @@ const plan: ContextDetail = {
           status: "pass",
           findings: [],
           advisories: [],
-          costUsd: 0.31,
         },
       ],
     },
@@ -294,6 +302,8 @@ const plan: ContextDetail = {
 };
 
 const api: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({
     scope: { mode: "owned", paths: ["src/api", "src/orders"] },
     worktreePath: "/repo/.worktrees/checkout-v2.1-api",
@@ -348,7 +358,6 @@ const api: ContextDetail = {
           status: "pass",
           findings: [],
           advisories: [],
-          costUsd: 0.92,
         },
         {
           assignment: "reviewer-2",
@@ -365,7 +374,6 @@ const api: ContextDetail = {
                 "The spec asks for the first order back so retries are safe.",
             },
           ],
-          costUsd: 0.44,
         },
       ],
     },
@@ -424,6 +432,8 @@ const api: ContextDetail = {
 };
 
 const migrate: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({
     scope: { mode: "owned", paths: ["db"] },
     checks: ["typecheck", "test"],
@@ -456,6 +466,7 @@ const migrate: ContextDetail = {
   tasks: { done: 1, total: 3 },
   costUsd: 2.03,
   implementer: {
+    assignment: "implementer",
     role: "implementer",
     backend: "codex",
     model: "GPT-6 Sol",
@@ -496,6 +507,7 @@ const migrate: ContextDetail = {
       conversationId: "c-2c3d4e5f-mig-impl",
       assignment: "implementer",
       seat: {
+        assignment: "implementer",
         role: "implementer",
         backend: "codex",
         model: "GPT-6 Sol",
@@ -515,6 +527,8 @@ const migrate: ContextDetail = {
 };
 
 const ui: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({
     scope: {
       mode: "owned",
@@ -578,7 +592,6 @@ const ui: ContextDetail = {
           status: "pass",
           findings: [],
           advisories: [],
-          costUsd: 0.71,
         },
       ],
     },
@@ -610,7 +623,6 @@ const ui: ContextDetail = {
             },
           ],
           advisories: [],
-          costUsd: 0.88,
         },
         {
           assignment: "reviewer-2",
@@ -632,7 +644,6 @@ const ui: ContextDetail = {
                 "Belongs to the design-system pass in the polish loop.",
             },
           ],
-          costUsd: 0.52,
         },
       ],
     },
@@ -699,6 +710,8 @@ const ui: ContextDetail = {
 };
 
 const polish: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({
     checks: ["lint"],
     scope: { mode: "owned", paths: ["src/checkout/copy.ts"] },
@@ -728,6 +741,7 @@ const polish: ContextDetail = {
   tasks: { done: 2, total: 2 },
   costUsd: 1.94,
   implementer: {
+    assignment: "implementer",
     role: "implementer",
     backend: "claude",
     model: "Sonnet 5.5",
@@ -769,7 +783,6 @@ const polish: ContextDetail = {
           status: "pending",
           findings: [],
           advisories: [],
-          costUsd: null,
         },
         {
           assignment: "reviewer-2",
@@ -777,7 +790,6 @@ const polish: ContextDetail = {
           status: "pass",
           findings: [],
           advisories: [],
-          costUsd: 0.21,
         },
       ],
     },
@@ -795,6 +807,7 @@ const polish: ContextDetail = {
       conversationId: "c-4b5c6d7e-pol-impl",
       assignment: "implementer",
       seat: {
+        assignment: "implementer",
         role: "implementer",
         backend: "claude",
         model: "Sonnet 5.5",
@@ -833,12 +846,14 @@ const polish: ContextDetail = {
 };
 
 const integrate: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({
     scope: { mode: "readOnly" },
     checks: ["typecheck", "lint", "test"],
   }),
   previousInvocations: [],
-  invocationId: "checkout-integrate-1",
+  invocationId: null,
   questions: [],
   candidate: null,
   key: "integrate",
@@ -881,9 +896,11 @@ const integrate: ContextDetail = {
 };
 
 const docs: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({ scope: { mode: "owned", paths: ["docs"] } }),
   previousInvocations: [],
-  invocationId: "checkout-docs-1",
+  invocationId: null,
   questions: [],
   candidate: null,
   key: "docs",
@@ -895,6 +912,7 @@ const docs: ContextDetail = {
   tasks: { done: 0, total: 1 },
   costUsd: null,
   implementer: {
+    assignment: "implementer",
     role: "implementer",
     backend: "claude",
     model: "Sonnet 5.5",
@@ -916,8 +934,9 @@ const docs: ContextDetail = {
   lastSummary: null,
 };
 
+const { previousInvocations: _polishPasses, ...polishInvocation } = polish;
 const polishFirstPass: ContextInvocation = {
-  ...polish,
+  ...polishInvocation,
   invocationId: "checkout-polish-1",
   loop: { key: "polish", pass: 1, maxPasses: 3 },
   state: { kind: "succeeded", at: day("20:38") },
@@ -938,7 +957,6 @@ const polishFirstPass: ContextInvocation = {
           status: "pass",
           findings: [],
           advisories: [],
-          costUsd: 0.31,
         },
       ],
     },
@@ -980,14 +998,14 @@ function waiting(
 ): ContextDetail {
   return {
     ...context,
-    invocationId: `${context.key}-not-started`,
+    invocationId: null,
     state: {
       kind: "waiting",
       dependencies,
       provisionLanes: [],
       publicationLanes,
     },
-    loop: context.loop === null ? null : { ...context.loop, pass: 0 },
+    loop: context.loop,
     tasks: { done: 0, total: context.taskList.length },
     taskList: context.taskList.map((task) => ({ ...task, done: false })),
     costUsd: null,
@@ -1020,6 +1038,8 @@ const checkoutContexts = [
 
 const launchCharter: RunCharter = {
   revision: 1,
+  source: "launch",
+  at: day("18:10"),
   reason: null,
   mission:
     "Ship checkout v2 behind the checkout-v2 flag without changing the v1 API.",
@@ -1075,6 +1095,7 @@ export const checkoutRun: RunDetail = {
   kind: "workflow",
   status: { kind: "needs_input" },
   owner,
+  costComplete: true,
   definitionRevision: 2,
   startedAt: day("18:14"),
   finishedAt: null,
@@ -1140,6 +1161,7 @@ export const checkoutRun: RunDetail = {
       path: "plan.md",
       revision: 1,
       source: "launch",
+      at: day("18:10"),
       description: "Initial rollout outline",
       bytes: 145,
       contents:
@@ -1152,6 +1174,7 @@ export const checkoutRun: RunDetail = {
       path: "plan.md",
       revision: 2,
       source: "amend",
+      at: day("19:20"),
       reason:
         "The owner retained the accepted rollout plan for later contexts.",
       description:
@@ -1165,6 +1188,7 @@ export const checkoutRun: RunDetail = {
       path: "api-contract.md",
       revision: 1,
       source: "publish",
+      at: day("18:58"),
       by: "api",
       description: "Request and response shapes of the v2 orders endpoints",
       readWhen: "Before you call the v2 API",
@@ -1177,6 +1201,7 @@ export const checkoutRun: RunDetail = {
       path: "glossary.md",
       revision: 1,
       source: "launch",
+      at: day("18:10"),
       description: "Checkout terms as the product uses them",
       bytes: 1_204,
       contents:
@@ -1186,6 +1211,8 @@ export const checkoutRun: RunDetail = {
   charter: {
     ...launchCharter,
     revision: 2,
+    source: "amend",
+    at: day("19:20"),
     reason: "Clarify the final assembled-journey check for integration.",
     mission:
       "Ship checkout v2 behind the checkout-v2 flag without changing the v1 API.",
@@ -1235,6 +1262,7 @@ export const checkoutRun: RunDetail = {
   },
   activity: [
     {
+      id: "event-7",
       seq: 7,
       at: day("19:48"),
       kind: "approval",
@@ -1242,12 +1270,14 @@ export const checkoutRun: RunDetail = {
       contextKey: "ui",
     },
     {
+      id: "event-6",
       seq: 6,
       at: day("19:24"),
       kind: "published",
       summary: "lane api published a41c9e0 to the session branch",
     },
     {
+      id: "event-5",
       seq: 5,
       at: day("19:22"),
       kind: "succeeded",
@@ -1255,6 +1285,7 @@ export const checkoutRun: RunDetail = {
       contextKey: "api",
     },
     {
+      id: "event-4",
       seq: 4,
       at: day("18:32"),
       kind: "amended",
@@ -1262,6 +1293,7 @@ export const checkoutRun: RunDetail = {
         "The owner retained the accepted rollout plan as plan.md revision 2",
     },
     {
+      id: "event-3",
       seq: 3,
       at: day("18:31"),
       kind: "succeeded",
@@ -1269,6 +1301,7 @@ export const checkoutRun: RunDetail = {
       contextKey: "plan",
     },
     {
+      id: "event-2",
       seq: 2,
       at: day("18:14"),
       kind: "launched",
@@ -1323,9 +1356,16 @@ export const checkoutRun: RunDetail = {
   },
 };
 
+/** An earlier pass keeps its evidence, without passes of its own. */
+function passOf(context: ContextDetail): ContextInvocation {
+  const { previousInvocations: _passes, ...pass } = context;
+  return pass;
+}
+
 function completed(context: ContextDetail, at: string): ContextDetail {
   return {
     ...context,
+    invocationId: context.invocationId ?? `checkout-${context.key}-1`,
     state: { kind: "succeeded", at },
     tasks: { done: context.taskList.length, total: context.taskList.length },
     taskList: context.taskList.map((task) => ({ ...task, done: true })),
@@ -1398,6 +1438,7 @@ export const checkoutHaltedRun: RunDetail = {
   ],
   activity: [
     {
+      id: "event-10",
       seq: 10,
       at: day("20:06"),
       kind: "halted",
@@ -1405,6 +1446,7 @@ export const checkoutHaltedRun: RunDetail = {
       contextKey: "migrate",
     },
     {
+      id: "event-9",
       seq: 9,
       at: day("19:54"),
       kind: "started",
@@ -1412,6 +1454,7 @@ export const checkoutHaltedRun: RunDetail = {
       contextKey: "migrate",
     },
     {
+      id: "event-8",
       seq: 8,
       at: day("19:53"),
       kind: "published",
@@ -1454,6 +1497,7 @@ export const checkoutLoopRun: RunDetail = {
   })),
   activity: [
     {
+      id: "event-14",
       seq: 14,
       at: day("20:52"),
       kind: "started",
@@ -1461,6 +1505,7 @@ export const checkoutLoopRun: RunDetail = {
       contextKey: "polish",
     },
     {
+      id: "event-13",
       seq: 13,
       at: day("20:39"),
       kind: "started",
@@ -1468,6 +1513,7 @@ export const checkoutLoopRun: RunDetail = {
       contextKey: "polish",
     },
     {
+      id: "event-12",
       seq: 12,
       at: day("20:38"),
       kind: "succeeded",
@@ -1475,6 +1521,7 @@ export const checkoutLoopRun: RunDetail = {
       contextKey: "polish",
     },
     {
+      id: "event-11",
       seq: 11,
       at: day("20:15"),
       kind: "succeeded",
@@ -1506,7 +1553,7 @@ export const checkoutSucceededRun: RunDetail = {
             ? {
                 invocationId: "checkout-polish-3",
                 previousInvocations: [
-                  completed(context, day("20:58")),
+                  passOf(completed(context, day("20:58"))),
                   ...context.previousInvocations,
                 ],
                 output: {
@@ -1524,6 +1571,7 @@ export const checkoutSucceededRun: RunDetail = {
   })),
   activity: [
     {
+      id: "event-15",
       seq: 15,
       at: day("21:12"),
       kind: "succeeded",
@@ -1534,6 +1582,7 @@ export const checkoutSucceededRun: RunDetail = {
 };
 
 const noticeImplementer: SeatSummary = {
+  assignment: "implementer",
   role: "implementer",
   backend: "claude",
   model: "Opus 5.5",
@@ -1541,6 +1590,8 @@ const noticeImplementer: SeatSummary = {
 };
 
 const noticeContext: ContextDetail = {
+  decisions: [],
+  costComplete: true,
   configuration: configuration({
     documentPublishing: false,
     scope: { mode: "owned", paths: ["src/lib/runs", "src/features/runs"] },
@@ -1599,6 +1650,7 @@ export const noticeRun: RunDetail = {
   kind: "agent",
   status: { kind: "running" },
   owner,
+  costComplete: true,
   definitionRevision: 1,
   startedAt: day("19:44"),
   finishedAt: null,
@@ -1614,6 +1666,7 @@ export const noticeRun: RunDetail = {
   charterHistory: [],
   activity: [
     {
+      id: "event-2",
       seq: 2,
       at: day("19:44"),
       kind: "started",
@@ -1621,6 +1674,7 @@ export const noticeRun: RunDetail = {
       contextKey: "agent",
     },
     {
+      id: "event-1",
       seq: 1,
       at: day("19:44"),
       kind: "launched",
@@ -1676,7 +1730,6 @@ export const noticeRunAwaitingApproval: RunDetail = {
               status: "pass",
               findings: [],
               advisories: [],
-              costUsd: 0.58,
             },
           ],
         },
@@ -1711,7 +1764,9 @@ export const noticeRunAwaitingApproval: RunDetail = {
         requestedAt: day("20:02"),
       },
       candidate: {
+        status: "ready",
         scope: "whole_tree",
+        ownedPaths: [],
         diff: {
           totalAdditions: 14,
           totalDeletions: 4,
@@ -1767,6 +1822,7 @@ export const sessionRuns: RunSummary[] = [
     attention: checkoutRun.attention.length,
     contexts: { done: 2, total: 6 },
     costUsd: checkoutRun.costUsd,
+    costComplete: true,
     startedAt: checkoutRun.startedAt,
     finishedAt: null,
     owner,
@@ -1779,6 +1835,7 @@ export const sessionRuns: RunSummary[] = [
     attention: 0,
     contexts: { done: 0, total: 1 },
     costUsd: noticeRun.costUsd,
+    costComplete: true,
     startedAt: noticeRun.startedAt,
     finishedAt: null,
     owner,
@@ -1791,6 +1848,7 @@ export const sessionRuns: RunSummary[] = [
     attention: 0,
     contexts: { done: 1, total: 1 },
     costUsd: 0.92,
+    costComplete: true,
     startedAt: day("16:02"),
     finishedAt: day("16:19"),
     owner,
@@ -1803,6 +1861,7 @@ export const sessionRuns: RunSummary[] = [
     attention: 0,
     contexts: { done: 1, total: 4 },
     costUsd: 3.37,
+    costComplete: true,
     startedAt: day("14:40"),
     finishedAt: day("15:12"),
     owner: {

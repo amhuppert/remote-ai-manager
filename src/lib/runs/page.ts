@@ -627,6 +627,41 @@ function attentionOf(
 const WHO = { owner: "the owner", person: "Alex" } as const;
 const WHO_FIRST = { owner: "The owner", person: "Alex" } as const;
 
+const words = (name: string) => name.replaceAll("_", " ");
+
+/**
+ * A boundary as the person's activity reads it. Boundaries are the owner's
+ * notices; the page words them for the person, beside the context they name.
+ * An agent run's finish is its one context's, already listed.
+ */
+function boundaryActivity(
+  detail: RunBoundary["detail"],
+  kind: RunRecord["facts"]["kind"],
+): string | null {
+  switch (detail.kind) {
+    case "question":
+      return "asked the owner a question";
+    case "approval":
+      return "awaits your approval";
+    case "context_halt":
+      return `halted (${words(detail.halt)})`;
+    case "run_halt":
+      return detail.lane === undefined
+        ? `Halted: ${words(detail.halt)}`
+        : `Lane ${detail.lane} halted: ${words(detail.halt)}`;
+    case "stalled":
+      return "Only halted routes or loops remain";
+    case "fault":
+      return `Could not be reconciled: ${detail.error}`;
+    case "succeeded":
+      return kind === "agent" ? null : "Finished";
+    case "cancelled":
+      return "Cancelled";
+    case "restored_paused":
+      return "Paused by a server restart";
+  }
+}
+
 /**
  * What happened, in order: derived from the run's facts, its Contexts' and
  * its boundaries, never recorded twice.
@@ -715,8 +750,8 @@ function activityOf(
         kind: "started",
         summary:
           invocation.loop === null
-            ? `${invocation.title} started`
-            : `${invocation.title} started, pass ${invocation.loop.pass}`,
+            ? "started"
+            : `started pass ${invocation.loop.pass}`,
         contextKey: invocation.key,
       });
       if (invocation.state.kind === "succeeded")
@@ -724,7 +759,7 @@ function activityOf(
           id: `done:${invocationId}`,
           at: invocation.state.at,
           kind: "succeeded",
-          summary: `${invocation.title} finished`,
+          summary: "finished",
           contextKey: invocation.key,
         });
       for (const decision of invocation.decisions)
@@ -756,12 +791,13 @@ function activityOf(
     const contextId =
       "contextId" in boundary.detail ? boundary.detail.contextId : undefined;
     const key = contextId === undefined ? undefined : keyOf.get(contextId);
-    if (!(boundary.kind === "cancelled" && cancelActed))
+    const summary = boundaryActivity(boundary.detail, facts.kind);
+    if (!(boundary.kind === "cancelled" && cancelActed) && summary !== null)
       events.push({
         id: `boundary:${boundary.seq}`,
         at: boundary.recordedAt,
         kind: boundary.kind === "restored_paused" ? "paused" : boundary.kind,
-        summary: boundary.summary,
+        summary,
         ...(key !== undefined ? { contextKey: key } : {}),
       });
     if (boundary.detail.kind === "question") {
@@ -874,6 +910,8 @@ export function runSummary(
   let skipped = 0;
   let attention = live ? (inspection?.plan.halts.length ?? 0) : 0;
   if (live && record.facts.control.fault !== null) attention += 1;
+  // A completion no one consumed is attention too, as the page lists it.
+  if (live && (inspection?.stalled.length ?? 0) > 0) attention += 1;
   for (const defined of keys) {
     const state = inspection?.plan.keys.get(defined.key);
     if (state?.kind === "skipped") {
@@ -881,7 +919,9 @@ export function runSummary(
       continue;
     }
     if (state?.kind !== "started") continue;
-    const progress = inspection?.contexts.get(state.contextId)?.progress;
+    const summary = inspection?.contexts.get(state.contextId);
+    if (live && (summary?.stalled.length ?? 0) > 0) attention += 1;
+    const progress = summary?.progress;
     if (progress?.kind === "succeeded") done += 1;
     if (
       live &&

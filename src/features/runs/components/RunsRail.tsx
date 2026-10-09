@@ -14,7 +14,8 @@ import { PauseIcon } from "../icons";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import type { RunSummary } from "../model";
-import { formatUsd, runStatus } from "../present";
+import { runStatus } from "../present";
+import { Cost } from "./parts";
 
 function RailItem({
   run,
@@ -63,7 +64,7 @@ function RailItem({
             {run.kind === "workflow"
               ? `${run.contexts.done}/${run.contexts.total} · `
               : ""}
-            {formatUsd(run.costUsd)}
+            <Cost usd={run.costUsd} complete={run.costComplete} />
           </span>
           {run.attention > 0 ? (
             <span

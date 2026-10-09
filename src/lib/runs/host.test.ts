@@ -32,7 +32,7 @@ import { createPendingIntentsRepo } from "@/lib/state-store/pending-intents-repo
 import { createRunsRepo, type RunsRepo } from "@/lib/state-store/runs-repo";
 import { createRunSourceReader } from "@/lib/subscriptions/run-source";
 import { createRunHost, type RunHost, type RunLaunchInput } from "./host";
-import { runPage } from "./page";
+import { runPage, runSummary } from "./page";
 import type { RouteGuard, RunBoundary, RunDocument } from "./schemas";
 import type { FrozenCharter } from "./charter";
 
@@ -1823,21 +1823,23 @@ describe("run host", () => {
     workspace.admit(bind.cause);
     workspace.settle(bind.cause, { kind: "bound" });
 
-    const page = await runPage(
-      {
-        supervision: {
-          runs,
-          contexts,
-          requests: { question: () => null },
-          core: { seatBindingsOf: () => [] },
-        },
-        conversations: new Map(),
-        sessionBranch: "csm/session",
-        readText: async () => "",
-        candidateChanges: async () => ({ ok: false, reason: "unused" }),
+    const sources = {
+      supervision: {
+        runs,
+        contexts,
+        requests: { question: () => null },
+        core: { seatBindingsOf: () => [] },
       },
-      "run-1",
-    );
+      conversations: new Map(),
+      sessionBranch: "csm/session",
+      readText: async () => "",
+      candidateChanges: async () => ({ ok: false, reason: "unused" }) as const,
+    };
+    const page = await runPage(sources, "run-1");
+    const record = runs.observe("run-1")?.record;
+    if (record === undefined) throw new Error("no run");
+    // The list counts it as needing someone too.
+    expect(runSummary(sources, record).attention).toBe(1);
 
     expect(page?.attention).toEqual([
       {

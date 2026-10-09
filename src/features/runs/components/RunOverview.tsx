@@ -43,6 +43,7 @@ const activityTone: Record<ActivityKind, string> = {
   succeeded: "bg-green",
   paused: "bg-text-secondary",
   resumed: "bg-cyan",
+  retried: "bg-cyan",
   cancelled: "bg-text-tertiary",
 };
 
@@ -59,44 +60,44 @@ function Activity({
         aria-hidden="true"
         className="absolute top-[14px] bottom-[14px] left-[62px] w-px bg-border-subtle"
       />
-      {events.map((event) => (
-        <li
-          key={event.seq}
-          className="relative flex items-start gap-md py-[7px]"
-        >
-          <time
-            dateTime={event.at}
-            className="w-[46px] shrink-0 pt-[1px] text-right font-mono text-[0.7rem] text-text-tertiary"
+      {[...events]
+        .sort((a, b) => b.seq - a.seq)
+        .map((event) => (
+          <li
+            key={event.id}
+            className="relative flex items-start gap-md py-[7px]"
           >
-            {formatLocalTime(event.at)}
-          </time>
-          <span
-            aria-hidden="true"
-            className="relative z-raised mt-[5px] flex size-[9px] shrink-0 items-center justify-center rounded-full bg-bg-surface"
-          >
+            <time
+              dateTime={event.at}
+              className="w-[46px] shrink-0 pt-[1px] text-right font-mono text-[0.7rem] text-text-tertiary"
+            >
+              {formatLocalTime(event.at)}
+            </time>
             <span
-              className={cn(
-                "size-[7px] rounded-full",
-                activityTone[event.kind],
-              )}
-            />
-          </span>
-          <span className="min-w-0 font-mono text-[0.75rem] leading-[1.5] text-text-primary">
-            {event.contextKey !== undefined ? (
-              <button
-                type="button"
-                onClick={() => onSelectContext(event.contextKey ?? "")}
-                className="mr-[6px] cursor-pointer rounded-sm border-0 bg-transparent p-0 font-mono text-[0.75rem] font-semibold text-cyan underline-offset-2 hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-              >
-                {event.contextKey}
-              </button>
-            ) : null}
-            {event.contextKey !== undefined
-              ? event.summary.replace(new RegExp(`^${event.contextKey}\\s`), "")
-              : event.summary}
-          </span>
-        </li>
-      ))}
+              aria-hidden="true"
+              className="relative z-raised mt-[5px] flex size-[9px] shrink-0 items-center justify-center rounded-full bg-bg-surface"
+            >
+              <span
+                className={cn(
+                  "size-[7px] rounded-full",
+                  activityTone[event.kind],
+                )}
+              />
+            </span>
+            <span className="min-w-0 font-mono text-[0.75rem] leading-[1.5] text-text-primary">
+              {event.contextKey !== undefined ? (
+                <button
+                  type="button"
+                  onClick={() => onSelectContext(event.contextKey ?? "")}
+                  className="mr-[6px] cursor-pointer rounded-sm border-0 bg-transparent p-0 font-mono text-[0.75rem] font-semibold text-cyan underline-offset-2 hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                >
+                  {event.contextKey}
+                </button>
+              ) : null}
+              {event.summary}
+            </span>
+          </li>
+        ))}
     </ol>
   );
 }

@@ -9,15 +9,18 @@ import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import { PauseIcon, PlayIcon } from "../icons";
 import type { RunDetail } from "../model";
-import { formatUsd, runStatus, shortId } from "../present";
-import { BackendDiamond } from "./parts";
+import { runStatus, shortId } from "../present";
+import { BackendDiamond, Cost, Refusal, useAwaitedAction } from "./parts";
 
 export interface RunControls {
-  onPause(): void;
-  onResume(): void;
-  onCancel(): void;
+  /** Each settles once the server answered; a rejection carries its refusal. */
+  onPause(): void | Promise<void>;
+  onResume(): void | Promise<void>;
+  onCancel(): void | Promise<void>;
   onOpenConversation(conversationId: string): void;
 }
+
+type Control = "pause" | "resume" | "cancel";
 
 function Stat({
   value,
@@ -79,6 +82,7 @@ export function RunHeader({
   leading?: React.ReactNode;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const { pending, refusal, act } = useAwaitedAction<Control>();
   // The clock is read once; the live page ticks it from its own timer.
   const [mountedAt] = useState(() => Date.now());
   const status = runStatus(run.status);
@@ -130,10 +134,17 @@ export function RunHeader({
                 }
                 className="inline-flex cursor-pointer items-center gap-[6px] rounded-sm border-0 bg-transparent p-0 font-mono text-[0.72rem] text-text-secondary transition-colors duration-150 hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
               >
-                <BackendDiamond backend={run.owner.backend} />
+                {run.owner.backend !== null ? (
+                  <BackendDiamond backend={run.owner.backend} />
+                ) : null}
                 <span>
                   Owned by{" "}
-                  <span className="text-text-primary">{run.owner.title}</span>
+                  <span className="text-text-primary">
+                    {run.owner.title ??
+                      (run.owner.backend === null
+                        ? "a removed conversation"
+                        : "an untitled conversation")}
+                  </span>
                 </span>
                 <ArrowUpRightIcon size={11} />
               </button>
@@ -150,7 +161,9 @@ export function RunHeader({
                   touch
                   variant="default"
                   size="sm"
-                  onClick={controls.onResume}
+                  loading={pending === "resume"}
+                  disabled={pending !== null}
+                  onClick={() => void act("resume", controls.onResume)}
                 >
                   <PlayIcon size={13} />
                   Resume
@@ -160,8 +173,9 @@ export function RunHeader({
                   touch
                   variant="default"
                   size="sm"
-                  onClick={controls.onPause}
-                  disabled={run.status.kind === "stopping"}
+                  loading={pending === "pause"}
+                  onClick={() => void act("pause", controls.onPause)}
+                  disabled={pending !== null || run.status.kind === "stopping"}
                 >
                   <PauseIcon size={13} />
                   Pause
@@ -171,8 +185,9 @@ export function RunHeader({
                 touch
                 variant="danger"
                 size="sm"
+                loading={pending === "cancel"}
                 onClick={() => setConfirming(true)}
-                disabled={run.status.kind === "stopping"}
+                disabled={pending !== null || run.status.kind === "stopping"}
               >
                 <StopIcon size={11} />
                 Cancel run
@@ -181,6 +196,7 @@ export function RunHeader({
           )}
         </div>
       </div>
+      {refusal !== null ? <Refusal message={refusal.message} /> : null}
       <div className="grid grid-cols-5 gap-lg border-x-0 border-y border-solid border-border-dim py-lg max-768:grid-cols-3 max-768:gap-y-lg">
         {run.kind === "workflow" ? (
           <>
@@ -208,7 +224,10 @@ export function RunHeader({
           label="Needs you"
           tone={needsYou > 0 ? "amber" : undefined}
         />
-        <Stat value={formatUsd(run.costUsd)} label="Cost" />
+        <Stat
+          value={<Cost usd={run.costUsd} complete={run.costComplete} />}
+          label="Cost"
+        />
         <Stat
           value={elapsed(run.startedAt, run.finishedAt, now ?? mountedAt)}
           label={finished ? "Duration" : "Elapsed"}
@@ -223,7 +242,7 @@ export function RunHeader({
         danger
         onConfirm={() => {
           setConfirming(false);
-          controls.onCancel();
+          void act("cancel", controls.onCancel);
         }}
         onCancel={() => setConfirming(false)}
       />

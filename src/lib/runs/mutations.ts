@@ -20,37 +20,39 @@ function runUrl(projectName: string, sessionName: string, runId: string) {
   return `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/runs/${encodeURIComponent(runId)}`;
 }
 
-function useRefreshRun(
-  projectName: string,
-  sessionName: string,
-  runId: string,
-) {
-  const queryClient = useQueryClient();
-  return () => refreshRun(queryClient, { projectName, sessionName, runId });
-}
-
 const json = (body: unknown): RequestInit => ({
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
 
-/** Pause, resume (with halt dispositions), cancel or retry a lane, as a person. */
+/**
+ * Pause, resume (with halt dispositions), cancel or retry a lane, as a
+ * person. The run travels with each request, so one sent for a run stays
+ * that run's however the page's selection moves before it settles.
+ */
 export function useRunControlMutation(
   projectName: string,
   sessionName: string,
-  runId: string,
 ) {
-  const refresh = useRefreshRun(projectName, sessionName, runId);
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (control: RunControlRequest) =>
+    mutationKey: ["runs", projectName, sessionName, "control"],
+    mutationFn: ({
+      runId,
+      control,
+    }: {
+      runId: string;
+      control: RunControlRequest;
+    }) =>
       mutationFetch(
         `${runUrl(projectName, sessionName, runId)}/control`,
         "runs.control",
         json(control),
         runControlResponseSchema,
       ),
-    onSettled: refresh,
+    onSettled: (_data, _error, { runId }) =>
+      refreshRun(queryClient, { projectName, sessionName, runId }),
   });
 }
 
@@ -58,17 +60,24 @@ export function useRunControlMutation(
 export function useRunDecisionMutation(
   projectName: string,
   sessionName: string,
-  runId: string,
 ) {
-  const refresh = useRefreshRun(projectName, sessionName, runId);
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (decision: RunDecisionRequest) =>
+    mutationKey: ["runs", projectName, sessionName, "decide"],
+    mutationFn: ({
+      runId,
+      decision,
+    }: {
+      runId: string;
+      decision: RunDecisionRequest;
+    }) =>
       mutationFetch(
         `${runUrl(projectName, sessionName, runId)}/decide`,
         "runs.decide",
         json(decision),
         runDecisionResponseSchema,
       ),
-    onSettled: refresh,
+    onSettled: (_data, _error, { runId }) =>
+      refreshRun(queryClient, { projectName, sessionName, runId }),
   });
 }
