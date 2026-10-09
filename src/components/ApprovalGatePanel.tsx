@@ -65,20 +65,46 @@ interface ApprovalGatePanelProps {
   conversationBusy: boolean;
   executionSuspended: boolean;
   scopedChanges?: ApprovalScopedChanges | null;
-  /** What a ready candidate's changes are measured from; the graph engine's meaning when absent. */
-  changesDetail?: string;
+  /** How the decision reads for the host's engine; the graph engine's meanings when absent. */
+  wording?: ApprovalWording;
   voiceProjectName?: string;
   onApprove(): void;
   onReject(message: string): void;
 }
 
-function diffSummary(ownedPaths: string[] | null, diff: SessionDiff): string {
+export interface ApprovalWording {
+  /** What a ready candidate's changes are measured from. */
+  changes: string;
+  /** A candidate that may change the whole worktree it works in. */
+  wholeTree: string;
+  /** What approving does, and does not, do. */
+  approving: string;
+  /** What follows a rejection. */
+  afterReject: string;
+  /** What the decision leaves running meanwhile. */
+  meanwhile: string;
+}
+
+const GRAPH_WORDING: ApprovalWording = {
+  changes: "Changes since this context began, including committed work.",
+  wholeTree: "whole lane worktree",
+  approving:
+    "Approving lets orchestration continue; it does not land the lane or publish it.",
+  afterReject: "rejection reruns validators",
+  meanwhile: "Sibling contexts keep running — nothing here pauses the run.",
+};
+
+function diffSummary(
+  ownedPaths: string[] | null,
+  diff: SessionDiff,
+  wholeTree: string,
+): string {
   const fileCount = diff.files.length;
   const files = `${fileCount} ${fileCount === 1 ? "file" : "files"}`;
   const lines = `+${diff.totalAdditions} −${diff.totalDeletions}`;
   const scope =
     ownedPaths === null
-      ? "whole lane worktree"
+      ? wholeTree
       : ownedPaths.length > 0
         ? `scoped to ${ownedPaths.join(", ")}`
         : "owns no writable path";
@@ -94,10 +120,10 @@ function diffSummary(ownedPaths: string[] | null, diff: SessionDiff): string {
  */
 function CandidateState({
   scopedChanges,
-  changesDetail,
+  wording,
 }: {
   scopedChanges: ApprovalScopedChanges;
-  changesDetail: string;
+  wording: ApprovalWording;
 }) {
   const { tone, icon, label, aside, detail } = ((): {
     tone: string;
@@ -125,8 +151,9 @@ function CandidateState({
               ? scopedChanges.candidate.ownedPaths
               : null,
             scopedChanges.candidate.diff,
+            wording.wholeTree,
           ),
-          detail: changesDetail,
+          detail: wording.changes,
         };
       case "drifted":
         return {
@@ -270,7 +297,7 @@ export default function ApprovalGatePanel({
   conversationBusy,
   executionSuspended,
   scopedChanges = null,
-  changesDetail = "Changes since this context began, including committed work.",
+  wording = GRAPH_WORDING,
   voiceProjectName,
   onApprove,
   onReject,
@@ -344,17 +371,13 @@ export default function ApprovalGatePanel({
 
         <div className="flex flex-col gap-[10px] px-3 py-[11px]">
           {scopedChanges !== null && (
-            <CandidateState
-              scopedChanges={scopedChanges}
-              changesDetail={changesDetail}
-            />
+            <CandidateState scopedChanges={scopedChanges} wording={wording} />
           )}
 
           <p className={NOTE_CLASS}>
             You are reviewing the candidate{" "}
-            <span className="text-text-primary">frozen for this gate</span>.
-            Approving lets orchestration continue; it does not land the lane or
-            publish it.
+            <span className="text-text-primary">frozen for this gate</span>.{" "}
+            {wording.approving}
           </p>
 
           {scopedChanges?.status === "ready" && (
@@ -418,13 +441,13 @@ export default function ApprovalGatePanel({
               {needsFeedback ? "Reject — needs feedback" : "Reject"}
             </button>
             <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
-              rejection reruns validators
+              {wording.afterReject}
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-sm">
             <span className="font-mono text-[0.7rem] text-text-tertiary">
-              Sibling contexts keep running — nothing here pauses the run.
+              {wording.meanwhile}
             </span>
             <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
               ⌘↵ reject · esc clear

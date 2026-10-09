@@ -11,7 +11,7 @@ import type {
   RunOwner,
   RunSummary,
   SeatSummary,
-} from "./model";
+} from "@/components/runs/model";
 
 /**
  * Engine-possible snapshots of one workflow: approval before publication,

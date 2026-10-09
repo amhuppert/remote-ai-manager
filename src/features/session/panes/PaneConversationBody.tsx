@@ -22,6 +22,7 @@ import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { createPaneForkHandler } from "./pane-fork-handler";
+import { OwnerRunCards } from "@/features/session/conversation/OwnerRunCards";
 import { useWorkflowReceiptTranscriptExtensions } from "@/features/session/conversation/WorkflowReceiptCard";
 
 export interface PaneConversationBodyProps {
@@ -213,6 +214,11 @@ export default function PaneConversationBody({
         }}
         extensions={workflowReceiptExtensions}
         showInFlightBanners
+      />
+      <OwnerRunCards
+        projectName={projectName}
+        sessionName={sessionName}
+        conversationId={conversationId}
       />
     </div>
   );

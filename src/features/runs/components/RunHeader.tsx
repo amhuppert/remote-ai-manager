@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
-import { PauseIcon, PlayIcon } from "../icons";
-import type { RunDetail } from "../model";
-import { runStatus, shortId } from "../present";
-import { BackendDiamond, Cost, Refusal, useAwaitedAction } from "./parts";
+import { PauseIcon, PlayIcon } from "@/components/runs/icons";
+import type { RunDetail } from "@/components/runs/model";
+import { runStatus, shortId } from "@/components/runs/present";
+import { Cost } from "@/components/runs/Cost";
+import { Refusal, useAwaitedAction } from "@/components/runs/awaited-action";
+import { BackendDiamond } from "./parts";
 
 export interface RunControls {
   /** Each settles once the server answered; a rejection carries its refusal. */

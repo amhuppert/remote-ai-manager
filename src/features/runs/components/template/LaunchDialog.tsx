@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { PlayIcon } from "../../icons";
+import { PlayIcon } from "@/components/runs/icons";
 import { Button } from "@/components/ui/Button";
 import {
   Dialog,

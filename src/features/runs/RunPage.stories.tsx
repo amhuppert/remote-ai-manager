@@ -10,7 +10,7 @@ import {
   noticeRunAwaitingApproval,
   sessionRuns,
 } from "./fixtures";
-import type { ContextDetail, RunDetail } from "./model";
+import type { ContextDetail, RunDetail } from "@/components/runs/model";
 
 const actions: RunPageActions = {
   onSelectRun: fn(),

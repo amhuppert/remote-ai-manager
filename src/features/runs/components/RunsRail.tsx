@@ -10,12 +10,12 @@ import { IconButton } from "@/components/ui/IconButton";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { WithTooltip } from "@/components/ui/WithTooltip";
-import { PauseIcon } from "../icons";
+import { PauseIcon } from "@/components/runs/icons";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
-import type { RunSummary } from "../model";
-import { runStatus } from "../present";
-import { Cost } from "./parts";
+import type { RunSummary } from "@/components/runs/model";
+import { runStatus } from "@/components/runs/present";
+import { Cost } from "@/components/runs/Cost";
 
 function RailItem({
   run,

@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import type { ReactNode } from "react";
 import AskQuestionPanel from "./AskQuestionPanel";
+import { QUESTION_BANNER_CLEARANCE } from "@/components/conversation/ConversationPanel";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 
 const SAMPLE_QUESTIONS: AskQuestionItem[] = [
@@ -229,6 +230,7 @@ function DockedConversationLayout({ children }: { children: ReactNode }) {
                   </p>
                 ))}
               </div>
+              <div aria-hidden="true" className={QUESTION_BANNER_CLEARANCE} />
             </div>
           </div>
         </div>

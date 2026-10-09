@@ -1,6 +1,6 @@
 import type { HaltDisposition } from "@/lib/execution-context/schemas";
 import type { RemedyChoice } from "./components/HaltCard";
-import type { RunDetail } from "./model";
+import type { RunDetail } from "@/components/runs/model";
 
 /**
  * The disposition a chosen remedy asks the run to apply. A grant, a rereview

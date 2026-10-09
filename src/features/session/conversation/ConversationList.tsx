@@ -52,6 +52,7 @@ import WorkRailMain from "@/components/WorkRailMain";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SessionTicketIndicator from "@/components/SessionTicketIndicator";
 import GraphWorkflowCard from "./GraphWorkflowCard";
+import { SessionRuns } from "./SessionRuns";
 import SessionPromotionCandidateCount from "./SessionPromotionCandidateCount";
 import SessionOverview, { SessionOverviewPending } from "./SessionOverview";
 import SessionWorkspaceTools from "./SessionWorkspaceTools";
@@ -413,6 +414,12 @@ export default function ConversationList({
                     execution={graphWorkflowExecutionQuery.data ?? null}
                   />
                 )
+              }
+              runs={
+                <SessionRuns
+                  projectName={projectName}
+                  sessionName={sessionName}
+                />
               }
               workspaceTools={
                 <SessionWorkspaceTools

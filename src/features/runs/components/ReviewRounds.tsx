@@ -15,8 +15,13 @@ import { Spinner } from "@/components/ui/Spinner";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
-import type { Advisory, CheckResult, ReviewRound, SeatVerdict } from "../model";
-import { formatDuration } from "../present";
+import type {
+  Advisory,
+  CheckResult,
+  ReviewRound,
+  SeatVerdict,
+} from "@/components/runs/model";
+import { formatDuration } from "@/components/runs/present";
 import { SeatMark } from "./parts";
 
 const roundOutcome: Record<

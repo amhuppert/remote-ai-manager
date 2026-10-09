@@ -20,7 +20,7 @@ import CanvasControls from "@/components/workflow-graph/CanvasControls";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { BranchIcon } from "@/components/icons";
 import { cn } from "@/lib/ui/cn";
-import { LoopIcon } from "../icons";
+import { LoopIcon } from "@/components/runs/icons";
 import {
   layoutDiagram,
   NODE_HEIGHT,
@@ -28,9 +28,20 @@ import {
   type PlacedBand,
   type PlacedLoop,
 } from "../diagram-layout";
-import type { RunContext, RunEdge, RunLane, RunLoop } from "../model";
-import { contextState, isSettled, laneState, loopState } from "../present";
-import { ContextGlyph, Cost, SeatMark } from "./parts";
+import type {
+  RunContext,
+  RunEdge,
+  RunLane,
+  RunLoop,
+} from "@/components/runs/model";
+import {
+  contextState,
+  isSettled,
+  laneState,
+  loopState,
+} from "@/components/runs/present";
+import { Cost } from "@/components/runs/Cost";
+import { ContextGlyph, SeatMark } from "./parts";
 
 type ContextNodeData = {
   context: RunContext;

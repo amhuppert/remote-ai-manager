@@ -9,7 +9,7 @@ import {
   noticeRunAwaitingApproval,
   sessionRuns,
 } from "../fixtures";
-import type { RunDetail } from "../model";
+import type { RunDetail } from "@/components/runs/model";
 import { RunPage, type RunPageActions } from "./RunPage";
 
 afterEach(() => {

@@ -4,16 +4,12 @@ import { BranchIcon, ChevronRightIcon, RefreshIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
-import { LoopIcon } from "../icons";
-import type { RunContext, RunLane, RunLoop } from "../model";
-import { contextState, laneState, loopState } from "../present";
-import {
-  ContextGlyph,
-  Cost,
-  Refusal,
-  SeatMark,
-  useAwaitedAction,
-} from "./parts";
+import { LoopIcon } from "@/components/runs/icons";
+import type { RunContext, RunLane, RunLoop } from "@/components/runs/model";
+import { contextState, laneState, loopState } from "@/components/runs/present";
+import { Cost } from "@/components/runs/Cost";
+import { Refusal, useAwaitedAction } from "@/components/runs/awaited-action";
+import { ContextGlyph, SeatMark } from "./parts";
 
 const stateText: Record<ReturnType<typeof contextState>["tone"], string> = {
   neutral: "text-text-secondary",

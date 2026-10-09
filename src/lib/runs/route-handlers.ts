@@ -519,16 +519,6 @@ export function createRunRouteHandlers(
     };
   }
 
-  function refuseWorkflow(
-    caller: Caller,
-    definition: WorkflowLaunchRequest,
-  ): Response | null {
-    return refuseLaunch(
-      caller,
-      definition.contexts.some((c) => c.humanApproval === true),
-    );
-  }
-
   /**
    * Each context's own seats, or the refusal naming the context whose seat
    * cannot be resolved. A context kept as it started (`kept`) keeps the seats
@@ -580,20 +570,8 @@ export function createRunRouteHandlers(
     return { ok: true, seats };
   }
 
-  /** Refusals that apply to every launch or amendment, whatever it starts. */
-  function refuseLaunch(
-    caller: Caller,
-    humanApproval: boolean,
-  ): Response | null {
-    if (humanApproval) {
-      return jsonError(
-        "Human approval is not available for agent runs yet: no Command Center surface lets Alex make the decision",
-        400,
-        "human_approval_unavailable",
-        undefined,
-        "Launch without humanApproval and review the result yourself, or ask Alex.",
-      );
-    }
+  /** Refusals that apply to every launch, whatever it starts. */
+  function refuseLaunch(caller: Caller): Response | null {
     // A seat's child would bind the workspace the seat's own context holds and
     // wait for it, while the seat waits for the child.
     if (deps.supervision().core.seatBinding(caller.conversationId) !== null) {
@@ -705,8 +683,7 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const { caller } = resolved;
       const refused =
-        refuseLaunch(caller, body.value.humanApproval === true) ??
-        (await refuseUnwakeableOwner(caller));
+        refuseLaunch(caller) ?? (await refuseUnwakeableOwner(caller));
       if (refused !== null) return refused;
       const seats = await deps.resolveSeats({
         projectPath: caller.projectPath,
@@ -742,8 +719,7 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const { caller } = resolved;
       const refused =
-        refuseWorkflow(caller, body.value) ??
-        (await refuseUnwakeableOwner(caller));
+        refuseLaunch(caller) ?? (await refuseUnwakeableOwner(caller));
       if (refused !== null) return refused;
       const seats = await workflowSeats(caller, body.value);
       if (!seats.ok) return seats.response;
@@ -774,8 +750,6 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const { caller, run } = owned;
       const proposed = body.value.definition;
-      const refused = refuseWorkflow(caller, proposed);
-      if (refused !== null) return refused;
       // Started work is compiled as its owner first wrote it, with the seats it started with; the
       // amendment then compares the proposal as written and names every change started work forbids.
       const frozen = frozenKeys(run.facts);

@@ -352,6 +352,11 @@ const UTILITY_FIRST_PATHS = [
   // Runs and template surfaces are authored utility-first, without legacy CSS.
   // Keep the formatter and lint scopes in sync with this surface registration.
   `${path.sep}features${path.sep}runs${path.sep}`,
+  // The run presentation the run page shares with the session's run cards, and
+  // the session containers that mount those cards.
+  `${path.sep}components${path.sep}runs${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}OwnerRunCards.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionRuns.tsx`,
 ];
 
 function srcFiles(ext: string): string[] {

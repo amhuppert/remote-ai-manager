@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import Topbar from "@/components/Topbar";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { runsPageHref } from "@/lib/runs/hrefs";
 import {
@@ -11,7 +12,7 @@ import {
 import { useRunPageQuery, useSessionRunsQuery } from "@/lib/runs/queries";
 import { dispositionOf, invocationIdOf } from "./actions";
 import { RunPage, type RunPageActions } from "./components/RunPage";
-import type { RunSummary } from "./model";
+import type { RunSummary } from "@/components/runs/model";
 
 /** The run a page opens without one named: the newest still running, else the newest. */
 function defaultRun(runs: readonly RunSummary[]): string | null {
@@ -112,27 +113,43 @@ function RunsPageContent() {
       router.push(
         conversationsPageHref({ conversationId, projectName, sessionName }),
       ),
-    onBrowseTemplates: () =>
-      router.push(
-        `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/templates`,
-      ),
   };
 
+  const sessionHref = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}`;
   return (
-    <RunPage
-      runs={runs.data ?? []}
-      run={shown}
-      selectedRunId={runId}
-      actions={actions}
-      now={now}
-      loading={runs.isPending || (runId !== null && page.isPending)}
-      error={errorText(runs.error ?? page.error)}
-      retrying={runs.isFetching || page.isFetching}
-      onRetry={() => {
-        void runs.refetch();
-        if (runId !== null) void page.refetch();
-      }}
-    />
+    <div className="app" data-page="runs">
+      <Topbar
+        page="detail"
+        breadcrumbs={[
+          { label: "projects", href: "/projects" },
+          {
+            label: projectName,
+            href: `/projects/${encodeURIComponent(projectName)}`,
+            isProject: true,
+          },
+          { label: sessionName, href: sessionHref, isSession: true },
+          { label: "Runs", href: runsPageHref(projectName, sessionName) },
+        ]}
+      />
+      {/* The run page brings its own rail of runs; the conversation rail would crowd its inspector. */}
+      <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+        <RunPage
+          runs={runs.data ?? []}
+          run={shown}
+          selectedRunId={runId}
+          initialContext={search.get("context")}
+          actions={actions}
+          now={now}
+          loading={runs.isPending || (runId !== null && page.isPending)}
+          error={errorText(runs.error ?? page.error)}
+          retrying={runs.isFetching || page.isFetching}
+          onRetry={() => {
+            void runs.refetch();
+            if (runId !== null) void page.refetch();
+          }}
+        />
+      </main>
+    </div>
   );
 }
 

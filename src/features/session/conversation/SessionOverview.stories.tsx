@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/Switch";
 import { PlusIcon } from "@/components/icons";
 import SessionOverview, { SessionOverviewPending } from "./SessionOverview";
 import { GraphWorkflowLauncher } from "./GraphWorkflowCard";
+import { SessionRunsCard } from "@/components/runs/RunCards";
 
 const conversations = [
   publicConversationStateSchema.parse({
@@ -130,6 +131,7 @@ const meta = {
       </Button>
     ),
     workspaceTools: <WorkspaceTools />,
+    runs: <SessionRunsCard runs={[]} hrefOf={() => "#"} />,
     workflow: (
       <GraphWorkflowLauncher
         projectName="active-recall"

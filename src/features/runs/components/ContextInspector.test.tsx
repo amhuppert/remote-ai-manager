@@ -10,7 +10,7 @@ import {
   owner,
   uiCandidate,
 } from "../fixtures";
-import type { ContextDetail } from "../model";
+import type { ContextDetail } from "@/components/runs/model";
 import { ContextInspector, type ContextActions } from "./ContextInspector";
 
 function context(key: string): ContextDetail {

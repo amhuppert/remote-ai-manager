@@ -20,6 +20,7 @@ import type { useSessionPageLocalState } from "@/features/session/hooks/use-sess
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { OwnerRunCards } from "./OwnerRunCards";
 import { useWorkflowReceiptTranscriptExtensions } from "./WorkflowReceiptCard";
 
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
@@ -196,6 +197,13 @@ export default function ConversationPanelContainer({
       panelBodyRef={panelBodyRef}
       selectedBackend={selectedBackend}
       transcript={transcript}
+      ownedRunsSlot={
+        <OwnerRunCards
+          projectName={projectName}
+          sessionName={sessionName}
+          conversationId={conversationId}
+        />
+      }
       alignmentGateSlot={
         <AlignmentGate
           projectName={projectName}

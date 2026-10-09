@@ -6,12 +6,12 @@ import { AlertTriangleIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
-import type { ContextHalt, Remedy } from "../model";
+import type { ContextHalt, Remedy } from "@/components/runs/model";
 import {
   haltExplanation,
   haltTitle,
   remedy as presentRemedy,
-} from "../present";
+} from "@/components/runs/present";
 
 export interface RemedyChoice {
   occurrence: string;

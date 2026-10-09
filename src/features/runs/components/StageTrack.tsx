@@ -1,6 +1,6 @@
 import { AlertTriangleIcon, CheckIcon } from "@/components/icons";
 import { cn } from "@/lib/ui/cn";
-import type { ContextStage } from "../model";
+import type { ContextStage } from "@/components/runs/model";
 
 /**
  * Where a context is in its lifecycle: workspace, work, result, review,

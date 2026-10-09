@@ -33,6 +33,8 @@ export interface ConversationPanelProps {
   transcript: ReactNode;
 
   alignmentGateSlot: ReactNode;
+  /** The runs this conversation owns, between its transcript and the composer. */
+  ownedRunsSlot?: ReactNode;
 
   canStop: boolean;
   onStop: () => void;
@@ -41,6 +43,10 @@ export interface ConversationPanelProps {
   promptInputSlot: ReactNode;
   headerActionsSlot?: ReactNode;
 }
+
+/** Room at the stage's bottom for the minimized question banner, while one is shown. */
+export const QUESTION_BANNER_CLEARANCE =
+  "hidden h-[58px] shrink-0 group-has-[.ask-question-overlay]/stage:block group-has-[.ask-question-overlay[data-compact=true]]/stage:h-[66px] [.conversation-docked-stage:has(.ask-question-overlay)_&]:block [.conversation-docked-stage:has(.ask-question-overlay[data-compact=true])_&]:h-[66px]";
 
 export default function ConversationPanel({
   conversations,
@@ -58,6 +64,7 @@ export default function ConversationPanel({
   selectedBackend,
   transcript,
   alignmentGateSlot,
+  ownedRunsSlot,
   canStop,
   onStop,
   buildMarkdown,
@@ -160,7 +167,7 @@ export default function ConversationPanel({
       )}
       <div className="group/stage relative flex min-h-0 flex-1 flex-col">
         <div
-          className="panel-body flex min-h-0 flex-1 flex-col overflow-hidden p-lg group-has-[.ask-question-overlay]/stage:pb-[58px] group-has-[.ask-question-overlay[data-compact=true]]/stage:pb-[66px] max-768:p-sm"
+          className="panel-body flex min-h-0 flex-1 flex-col overflow-hidden p-lg max-768:p-sm"
           ref={panelBodyRef}
           {...(activeConversation?.debugMode?.active
             ? { "data-debug-mode": "" }
@@ -169,7 +176,14 @@ export default function ConversationPanel({
           {transcript}
         </div>
 
+        {ownedRunsSlot}
+
         {alignmentGateSlot}
+
+        {/* The minimized question banner floats over the bottom of the stage
+            (this panel's, or the session's docked stage); this keeps the last
+            in-flow content, the transcript or the owned runs, clear of it. */}
+        <div aria-hidden="true" className={QUESTION_BANNER_CLEARANCE} />
 
         {promptInputSlot}
       </div>

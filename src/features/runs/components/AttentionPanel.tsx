@@ -8,10 +8,10 @@ import {
 import { Button } from "@/components/ui/Button";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
-import { ApprovalIcon, QuestionIcon } from "../icons";
-import type { AttentionItem, RunOwner } from "../model";
-import { haltTitle, runHaltTitle } from "../present";
-import { Refusal, useAwaitedAction } from "./parts";
+import { ApprovalIcon, QuestionIcon } from "@/components/runs/icons";
+import type { AttentionItem, RunOwner } from "@/components/runs/model";
+import { haltTitle, runHaltTitle } from "@/components/runs/present";
+import { Refusal, useAwaitedAction } from "@/components/runs/awaited-action";
 
 export interface AttentionActions {
   onSelectContext(key: string): void;

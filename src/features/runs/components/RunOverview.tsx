@@ -26,7 +26,7 @@ import type {
   RunCharter,
   RunDocument,
   RunOwner,
-} from "../model";
+} from "@/components/runs/model";
 import { PanelHeading } from "./parts";
 
 const activityTone: Record<ActivityKind, string> = {

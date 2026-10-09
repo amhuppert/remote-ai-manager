@@ -17,9 +17,9 @@ import {
 import { Button } from "@/components/ui/Button";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 import { useMediaQueryMatch } from "@/hooks/use-media-query";
-import { DiagramIcon, ListIcon } from "../icons";
-import type { RunDetail, RunSummary } from "../model";
-import { runStatus } from "../present";
+import { DiagramIcon, ListIcon } from "@/components/runs/icons";
+import type { RunDetail, RunSummary } from "@/components/runs/model";
+import { runStatus } from "@/components/runs/present";
 import { AttentionPanel } from "./AttentionPanel";
 import { ContextInspector, type ContextActions } from "./ContextInspector";
 import { ContextList } from "./ContextList";
@@ -123,7 +123,10 @@ function RunContent({
   onRetry?(): void;
 }) {
   const [selected, setSelected] = useState<string | null>(initialContext);
-  const [actionSelection, setActionSelection] = useState(0);
+  // A link to a context brings the person to its decision, as the attention panel's Review does.
+  const [actionSelection, setActionSelection] = useState(
+    initialContext !== null ? 1 : 0,
+  );
   const [view, setView] = useState<View>(initialView);
   // The diagram wants the width; the rail folds while it shows and returns with the list.
   const [railCollapsed, setRailCollapsed] = useState(initialView === "diagram");
@@ -269,7 +272,7 @@ function RunContent({
           />
         </aside>
       )}
-      <main className="flex min-w-0 flex-1 flex-col gap-xl overflow-y-auto px-2xl py-xl max-768:px-lg max-768:py-lg">
+      <div className="flex min-w-0 flex-1 flex-col gap-xl overflow-y-auto px-2xl py-xl max-768:px-lg max-768:py-lg">
         {loading || error ? (
           <div
             role={error ? "alert" : "status"}
@@ -378,7 +381,7 @@ function RunContent({
         {isAgent && narrow ? (
           <div className="flex flex-col gap-lg">{overview}</div>
         ) : null}
-      </main>
+      </div>
       {narrow || overviewInDialog ? null : (
         <aside className="w-[460px] shrink-0 overflow-y-auto border-y-0 border-r-0 border-l border-solid border-border-dim bg-bg-base px-xl py-xl">
           {inspector}
@@ -490,7 +493,7 @@ export function RunPage(props: {
 function NoRun(props: Parameters<typeof RunPage>[0]) {
   const forRun = props.runs.length > 0;
   return (
-    <main className="flex h-full min-h-[420px] w-full items-center justify-center bg-bg-void px-xl py-3xl">
+    <div className="flex h-full min-h-[420px] w-full items-center justify-center bg-bg-void px-xl py-3xl">
       <section
         aria-busy={props.loading || undefined}
         className="flex w-full max-w-[560px] flex-col items-start gap-lg rounded-lg border border-solid border-border-subtle bg-bg-surface p-2xl max-640:p-xl"
@@ -524,7 +527,9 @@ function NoRun(props: Parameters<typeof RunPage>[0]) {
               : (props.error ??
                 (forRun
                   ? "Pick one of this session's runs to follow its progress and decisions."
-                  : "Launch a saved workflow, or ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."))}
+                  : props.actions.onBrowseTemplates !== undefined
+                    ? "Launch a saved workflow, or ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."
+                    : "Ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."))}
           </p>
         </div>
         {props.error && props.onRetry ? (
@@ -543,6 +548,6 @@ function NoRun(props: Parameters<typeof RunPage>[0]) {
           </Button>
         ) : null}
       </section>
-    </main>
+    </div>
   );
 }

@@ -34,6 +34,7 @@ function useFakeSearchParams(): URLSearchParams {
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ name: "plc", session: "fx" }),
+  usePathname: () => window.location.pathname,
   useRouter: () => ({
     push: routerPush,
     replace: (href: string) => {
@@ -43,6 +44,11 @@ vi.mock("next/navigation", () => ({
   }),
   useSearchParams: () => useFakeSearchParams(),
 }));
+
+vi.mock(
+  "next/link",
+  async () => (await import("@/test/component-mocks")).nextLinkMock,
+);
 
 const base = "/api/projects/plc/sessions/fx/runs";
 const posted: Array<{ url: string; body: unknown }> = [];
@@ -127,6 +133,22 @@ describe("runs page", () => {
           },
         },
       ]),
+    );
+  });
+
+  it("opens on the context a link names, with the decision it waits for", async () => {
+    navigateInPlace(
+      `/projects/plc/fx/runs?run=${encodeURIComponent(checkoutRun.runId)}&context=ui`,
+    );
+    renderPage();
+
+    expect(
+      await screen.findByRole("button", { name: "Approve" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Current context action" }),
+      ).toHaveFocus(),
     );
   });
 

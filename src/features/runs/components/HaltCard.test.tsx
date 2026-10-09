@@ -2,7 +2,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ContextHalt } from "../model";
+import type { ContextHalt } from "@/components/runs/model";
 import { HaltCard } from "./HaltCard";
 
 const halt: ContextHalt = {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import ApprovalGatePanel, {
   ScopedChangesSection,
   type ApprovalScopedChanges,
+  type ApprovalWording,
 } from "@/components/ApprovalGatePanel";
 import {
   ArrowUpRightIcon,
@@ -33,24 +34,19 @@ import {
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
-import { LoopIcon, QuestionIcon, WaitingIcon } from "../icons";
+import { LoopIcon, QuestionIcon, WaitingIcon } from "@/components/runs/icons";
 import type {
   CandidateChanges,
   ContextDetail,
   ContextInvocation,
   RunOwner,
   SeatConversation,
-} from "../model";
-import { contextState, formatUsd } from "../present";
+} from "@/components/runs/model";
+import { contextState, formatUsd } from "@/components/runs/present";
 import { HaltCard, type RemedyChoice } from "./HaltCard";
-import {
-  Cost,
-  KeyLabel,
-  PanelHeading,
-  Refusal,
-  SeatMark,
-  useAwaitedAction,
-} from "./parts";
+import { Cost } from "@/components/runs/Cost";
+import { Refusal, useAwaitedAction } from "@/components/runs/awaited-action";
+import { KeyLabel, PanelHeading, SeatMark } from "./parts";
 import { ReviewRounds } from "./ReviewRounds";
 import { StageTrack } from "./StageTrack";
 
@@ -172,7 +168,7 @@ function StateAction({
             conversationBusy={false}
             executionSuspended={runSuspended}
             scopedChanges={scopedChangesOf(context.candidate)}
-            changesDetail="What the candidate changed, from the commit it was captured on."
+            wording={RUN_APPROVAL_WORDING}
             onApprove={() => {
               void submit(() =>
                 actions.onApprove(context.key, approval.candidateId),
@@ -962,6 +958,18 @@ export function ContextInspector({
     </div>
   );
 }
+
+/**
+ * A run's approval: a rejection returns the work to its implementer with the
+ * feedback, and the rework is checked, reviewed and brought back for approval.
+ */
+const RUN_APPROVAL_WORDING: ApprovalWording = {
+  changes: "What the candidate changed, from the commit it was captured on.",
+  wholeTree: "whole worktree",
+  approving: "Approving accepts this result, and the run goes on from it.",
+  afterReject: "rejection returns it to the implementer",
+  meanwhile: "Nothing here pauses the run.",
+};
 
 /** What the approval panel shows of the candidate: its changes, or why they cannot be shown. */
 function scopedChangesOf(

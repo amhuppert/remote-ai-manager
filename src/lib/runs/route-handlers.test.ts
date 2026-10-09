@@ -1361,31 +1361,40 @@ describe("run routes", () => {
       issues: [{ path: "contexts.1.dependsOn.0" }],
     });
     expect(supervision.runs.observe("run-1")).toBeNull();
+  });
 
-    const seat = await routes.launchWorkflow(
+  it("launches an agent whose result waits for a person's approval on the run page", async () => {
+    const { response } = await launch({ brief: "x", humanApproval: true });
+    expect(response.status).toBe(202);
+
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
+    );
+    expect(page.contexts[0]?.state.kind).toBe("awaiting_approval");
+  });
+
+  it("launches a workflow whose context's result waits for a person's approval", async () => {
+    const response = await routes.launchWorkflow(
       request(
         {
-          title: "Nested",
+          title: "Reviewed",
           contexts: [{ key: "a", brief: "A", humanApproval: true }],
         },
         identity("owner-1"),
       ),
       params(),
     );
-    expect(await json(seat)).toMatchObject({
-      code: "human_approval_unavailable",
-    });
-  });
+    expect(response.status).toBe(202);
+    await quiesce(supervision);
 
-  it("refuses human approval at agent launch until a person can decide it", async () => {
-    const response = await routes.launch(
-      request({ brief: "x", humanApproval: true }, identity("owner-1")),
-      params(),
+    const page = runPageSchema.parse(
+      await json(
+        await routes.page(request(null, {}, "GET"), params({ runId: "run-1" })),
+      ),
     );
-    expect(response.status).toBe(400);
-    expect(await json(response)).toMatchObject({
-      code: "human_approval_unavailable",
-    });
+    expect(page.contexts[0]?.state.kind).toBe("awaiting_approval");
   });
 
   it("lets a person read and steer a run beside its owner, and records who acted", async () => {

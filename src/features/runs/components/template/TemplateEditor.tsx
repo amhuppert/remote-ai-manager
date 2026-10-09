@@ -26,8 +26,13 @@ import { Switch } from "@/components/ui/Switch";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
 import { cn } from "@/lib/ui/cn";
-import { DiagramIcon, ListIcon, LoopIcon, PlayIcon } from "../../icons";
-import type { RunContext, RunEdge } from "../../model";
+import {
+  DiagramIcon,
+  ListIcon,
+  LoopIcon,
+  PlayIcon,
+} from "@/components/runs/icons";
+import type { RunContext, RunEdge } from "@/components/runs/model";
 import type {
   CatalogOption,
   ConfigBlock,

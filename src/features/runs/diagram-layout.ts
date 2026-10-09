@@ -1,4 +1,4 @@
-import type { RunContext, RunLane, RunLoop } from "./model";
+import type { RunContext, RunLane, RunLoop } from "@/components/runs/model";
 
 /**
  * Where the read-only diagram draws each context: a column per dependency

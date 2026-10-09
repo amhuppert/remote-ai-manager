@@ -15,7 +15,7 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
-import { DiagramIcon, PlayIcon } from "../../icons";
+import { DiagramIcon, PlayIcon } from "@/components/runs/icons";
 import type { TemplateSummary } from "../../template-model";
 
 export interface TemplateLibraryProps {
