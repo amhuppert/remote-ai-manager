@@ -402,9 +402,7 @@ function RunContent({
             contentClassName="absolute top-0 right-0 bottom-0 flex w-[min(480px,100vw)] flex-col overflow-y-auto border-y-0 border-r-0 border-l border-solid border-border-default bg-bg-base px-xl py-xl shadow-[var(--cc-shadow-popover)] max-768:w-full max-768:px-lg"
           >
             <DialogTitle asChild>
-              <h2 className="sr-only">
-                {selectedContext?.title ?? run.title}
-              </h2>
+              <h2 className="sr-only">{selectedContext?.title ?? run.title}</h2>
             </DialogTitle>
             <div className="mb-lg flex items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
               <span className="font-mono text-[0.7rem] tracking-[0.1em] text-text-secondary uppercase">
