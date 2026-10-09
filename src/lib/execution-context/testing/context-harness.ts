@@ -24,7 +24,9 @@ export const seat = {
   modelSelection: { modelId: "sonnet", parameters: {} },
 };
 
-export function contract(overrides: Partial<ContextContract> = {}): ContextContract {
+export function contract(
+  overrides: Partial<ContextContract> = {},
+): ContextContract {
   return contextContractSchema.parse({
     title: "Fix the duplicate notice",
     brief: "Make the failure notice appear once.",
@@ -186,7 +188,10 @@ export const frozen = (evidence: string): WorkspaceReport => ({
 });
 
 /** Runs one work turn that completes every task, then freezes the result. */
-export function workAndFreeze(h: ReturnType<typeof harness>, evidence = "ev-1"): void {
+export function workAndFreeze(
+  h: ReturnType<typeof harness>,
+  evidence = "ev-1",
+): void {
   expectKinds(h.step(), ["work"]);
   for (const task of h.facts.ledger.tasks) {
     if (task.status === "open") h.task({ kind: "complete", taskId: task.id });
@@ -199,5 +204,7 @@ export function workAndFreeze(h: ReturnType<typeof harness>, evidence = "ev-1"):
 function expectKinds(effects: PlannedEffect[], kinds: string[]): void {
   const planned = effects.map((e) => e.request.kind);
   if (planned.join(",") !== kinds.join(","))
-    throw new Error(`Planned ${planned.join(", ") || "nothing"}, not ${kinds.join(", ")}`);
+    throw new Error(
+      `Planned ${planned.join(", ") || "nothing"}, not ${kinds.join(", ")}`,
+    );
 }

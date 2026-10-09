@@ -59,6 +59,12 @@ export interface ContextHostDeps {
   executors: Record<Exclude<ExecutorKind, "context">, Executor>;
   /** Hints the Run that started a Context whenever its progress changes. */
   touchRun(runId: string): void;
+  /** Something a person sees of the Context changed; called inside the committing transaction. */
+  changed(context: {
+    runId: string;
+    projectPath: string;
+    sessionName: string;
+  }): void;
   /** Ends the Context's workspace binding; idempotent, joins the caller's transaction. */
   releaseBinding(bindingId: string): void;
   now(): string;
@@ -284,6 +290,7 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       progressOccurrence: occurrence,
       updatedAt,
     });
+    deps.changed(record);
     return {
       ...record,
       facts,
@@ -298,14 +305,17 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
     return deps.permits.current(contextControllerId(contextId));
   }
 
-  async function submitAdmissible(contextId: string): Promise<void> {
+  /** Submits every pending effect the permit admits; whether there were any. */
+  async function submitAdmissible(contextId: string): Promise<boolean> {
     const permit = permitOf(contextId);
-    if (!deps.permits.admits(permit)) return;
-    for (const intent of deps.intents.pending(owner(contextId))) {
+    if (!deps.permits.admits(permit)) return false;
+    const pending = deps.intents.pending(owner(contextId));
+    for (const intent of pending) {
       // Idempotent by cause; carrying the current permit refreshes an operation
       // queued under an older generation, so a resumed obligation is admitted.
       await executorFor(intent).submit({ ...intent, permit });
     }
+    return pending.length > 0;
   }
 
   /** Withdraws pending effects that were not admitted and releases their allowances. */
@@ -489,7 +499,9 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
         return persist(record, facts, deps.intents.pending(owner(contextId)));
       });
       if (before !== null) afterCommit(before, after, consumed);
-      await submitAdmissible(contextId);
+      // A seat's conversation is created as its turn is submitted, after the
+      // commit that planned it, so the run's page hears of it once more.
+      if (await submitAdmissible(contextId)) deps.changed(after);
     },
 
     recordReconcileFailure(contextId, error) {

@@ -215,6 +215,7 @@ describe("NotificationListener", () => {
         "spec-changed",
         "spec-approval-changed",
         "ticket-changed",
+        "run-changed",
         "context_artifact_status",
         "error",
         "open",

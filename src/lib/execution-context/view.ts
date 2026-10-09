@@ -165,9 +165,7 @@ const STAGE_OF_STEP: Record<ContextStep["kind"], StageKey> = {
 };
 
 /** The obligation a progress stands at, through a pause. */
-function obligationOf(
-  progress: ContextRecord["progress"],
-): Obligation | null {
+function obligationOf(progress: ContextRecord["progress"]): Obligation | null {
   const settled: SettledProgress | null =
     progress.kind === "paused" ? progress.next : progress;
   return settled !== null &&
@@ -189,10 +187,7 @@ function unfinishedStage(facts: ContextFacts): StageKey {
       : "output";
   }
   const certification = certificationStanding(facts, candidate);
-  if (
-    certification.kind !== "cleared" &&
-    certification.kind !== "not_required"
-  )
+  if (certification.kind !== "cleared" && certification.kind !== "not_required")
     return "review";
   return approvalStanding(facts, candidate).kind === "pending"
     ? "approval"
@@ -255,9 +250,9 @@ function stagesOf(record: ContextRecord, state: ContextState): ContextStage[] {
     (stage) => stage.key !== "approval" || contract.humanApproval,
   );
   const succeeded = progress.kind === "succeeded";
-  const at = succeeded ? stages.length : stages.findIndex(
-    (stage) => stage.key === currentStage(record),
-  );
+  const at = succeeded
+    ? stages.length
+    : stages.findIndex((stage) => stage.key === currentStage(record));
   const obligation = obligationOf(progress);
   return stages.map((stage, index) => {
     if (stage.key === "review" && !reviewed(contract))
@@ -324,7 +319,8 @@ function stateOf(
     case "running":
     case "waiting": {
       const { obligation } = progress;
-      if (obligation.kind === "await_answer") return { kind: "awaiting_answer" };
+      if (obligation.kind === "await_answer")
+        return { kind: "awaiting_answer" };
       if (obligation.kind === "await_approval")
         return { kind: "awaiting_approval", requestedAt: since };
       const step = stepOf(facts, obligation);
@@ -382,9 +378,7 @@ function roundLive(record: ContextRecord, round: ReviewRound): boolean {
   )
     return false;
   const candidate = currentCandidate(facts);
-  return (
-    candidate !== null && activeRound(facts, candidate)?.id === round.id
-  );
+  return candidate !== null && activeRound(facts, candidate)?.id === round.id;
 }
 
 /** A round's verdict: the certification standing while it is live, its recorded results once it is not. */
@@ -575,7 +569,8 @@ export function plannedContextView(
       (stage) => stage.key !== "approval" || contract.humanApproval,
     ).map((stage) => ({
       ...stage,
-      state: stage.key === "review" && !reviewed(contract) ? "skipped" : "pending",
+      state:
+        stage.key === "review" && !reviewed(contract) ? "skipped" : "pending",
     })),
     tasks: { done: 0, total: contract.tasks.length },
     taskList: contract.tasks.map((task) => ({

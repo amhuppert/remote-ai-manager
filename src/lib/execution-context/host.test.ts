@@ -3,6 +3,7 @@ import {
   createControlPermits,
   type ControlPermits,
 } from "@/lib/control/permits";
+import type { Executor } from "@/lib/intents/executor";
 import { createIntentLedger, type IntentLedger } from "@/lib/intents/ledger";
 import type { PendingIntent } from "@/lib/intents/schemas";
 import {
@@ -89,16 +90,23 @@ let conversation: FakeExecutor;
 let workspace: FakeExecutor;
 let requests: FakeExecutor;
 let touchedRuns: string[];
+/** Runs the host said changed, in order. */
+let changedRuns: string[];
 let released: string[];
 
-function newHost(): ContextHost {
+function newHost(executors: { conversation?: Executor } = {}): ContextHost {
   return createContextHost({
     transaction: (fn) => fixture.db.transaction(fn)(),
     contexts: createExecutionContextsRepo(fixture.db),
     intents,
     permits,
-    executors: { conversation, workspace, requests },
+    executors: {
+      conversation: executors.conversation ?? conversation,
+      workspace,
+      requests,
+    },
     touchRun: (runId) => touchedRuns.push(runId),
+    changed: (context) => changedRuns.push(context.runId),
     releaseBinding: (bindingId) => released.push(bindingId),
     now: () => "2026-10-03T10:00:00.000Z",
     log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -113,6 +121,7 @@ beforeEach(() => {
   workspace = createFakeExecutor(permits);
   requests = createFakeExecutor(permits);
   touchedRuns = [];
+  changedRuns = [];
   released = [];
   permits.issue({
     controllerId: RUN_PERMIT,
@@ -200,6 +209,39 @@ describe("execution context host", () => {
         { kind: "complete", taskId: "t1" },
       ),
     ).toMatchObject({ kind: "applied" });
+  });
+
+  it("tells clients its run changed whenever it commits, a task command included", async () => {
+    const host = newHost();
+    const work = await startContext(host);
+    conversation.admit(work.cause);
+    changedRuns = [];
+
+    host.applyTaskCommand(
+      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "implementer", replacement: 0 },
+      { kind: "complete", taskId: "t1" },
+    );
+
+    expect(changedRuns).toEqual(["run-1"]);
+  });
+
+  it("tells clients its run changed again once a turn is submitted, when its seat's conversation exists", async () => {
+    const order: string[] = [];
+    const host = newHost({
+      conversation: {
+        ...conversation,
+        async submit(intent) {
+          // The seat's conversation is created during submission, after the commit that planned it.
+          await conversation.submit(intent);
+          order.push(`submitted:${changedRuns.length}`);
+        },
+      },
+    });
+    await startContext(host);
+
+    // One notice for the commit that planned the turn, and one once its seat exists.
+    expect(order).toEqual([`submitted:${changedRuns.length - 1}`]);
   });
 
   it("refuses task commands from a replaced seat and once the context has finished", async () => {
@@ -462,14 +504,20 @@ describe("execution context host", () => {
     workspace.settle(freeze.cause, { kind: "frozen", evidence: "git:t1:d1" });
     await host.reconcile("ctx-1");
 
-    const view = host.view("ctx-1", { question: () => null, since: null, held: false });
+    const view = host.view("ctx-1", {
+      question: () => null,
+      since: null,
+      held: false,
+    });
     expect(view?.state).toEqual({ kind: "running", step: { kind: "accept" } });
     expect(view?.title).toBe("Fix the notice");
     expect(host.candidateEvidence("ctx-1", "ctx-1:candidate:1")).toBe(
       "git:t1:d1",
     );
     expect(host.candidateEvidence("ctx-1", "ctx-1:candidate:9")).toBeNull();
-    expect(host.view("ctx-9", { question: () => null, since: null, held: false })).toBeNull();
+    expect(
+      host.view("ctx-9", { question: () => null, since: null, held: false }),
+    ).toBeNull();
   });
 
   it("does not count a question waiting on its owner as admitted activity", async () => {

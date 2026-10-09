@@ -308,9 +308,9 @@ describe("execution context acceptance chain", () => {
     h.setNow("2026-10-03T10:09:00.000Z");
     h.step();
 
-    expect(
-      h.facts.certification.rounds.map((round) => round.openedAt),
-    ).toEqual(["2026-10-03T10:05:00.000Z", "2026-10-03T10:09:00.000Z"]);
+    expect(h.facts.certification.rounds.map((round) => round.openedAt)).toEqual(
+      ["2026-10-03T10:05:00.000Z", "2026-10-03T10:09:00.000Z"],
+    );
   });
 
   it("halts on a plan defect and reviews again after a rereview disposition", () => {

@@ -106,27 +106,25 @@ function agentsOf(
   );
   const finished =
     view.state.kind === "succeeded" || view.state.kind === "cancelled";
-  return sources.supervision.core
-    .seatBindingsOf(contextId)
-    .map((binding) => {
-      const conversation = sources.conversations.get(binding.conversationId);
-      const replaced =
-        binding.replacement < (view.incarnations[binding.assignmentId] ?? 0);
-      return {
-        conversationId: binding.conversationId,
-        assignment: binding.assignmentId,
-        seat: seats.get(binding.assignmentId) ?? null,
-        status: replaced
-          ? "replaced"
-          : finished
-            ? "finished"
-            : conversation?.working === true
-              ? "active"
-              : "idle",
-        turns: conversation?.turns ?? null,
-        costUsd: conversation?.costUsd ?? null,
-      };
-    });
+  return sources.supervision.core.seatBindingsOf(contextId).map((binding) => {
+    const conversation = sources.conversations.get(binding.conversationId);
+    const replaced =
+      binding.replacement < (view.incarnations[binding.assignmentId] ?? 0);
+    return {
+      conversationId: binding.conversationId,
+      assignment: binding.assignmentId,
+      seat: seats.get(binding.assignmentId) ?? null,
+      status: replaced
+        ? "replaced"
+        : finished
+          ? "finished"
+          : conversation?.working === true
+            ? "active"
+            : "idle",
+      turns: conversation?.turns ?? null,
+      costUsd: conversation?.costUsd ?? null,
+    };
+  });
 }
 
 /** What a frozen revision is now: the latest, superseded by a later one, or removed. */
@@ -183,8 +181,9 @@ async function startedInvocation(
     since:
       summary === null
         ? null
-        : (times.get(contextBoundaryOccurrence(contextId, summary.occurrence)) ??
-          null),
+        : (times.get(
+            contextBoundaryOccurrence(contextId, summary.occurrence),
+          ) ?? null),
     held: record.facts.control.paused && !record.facts.control.cancelled,
   });
   if (view === null) return null;
@@ -198,7 +197,10 @@ async function startedInvocation(
     const { scope, worktreePath } = view.configuration;
     const changes =
       evidence === null
-        ? ({ ok: false, reason: "The candidate is no longer recorded" } as const)
+        ? ({
+            ok: false,
+            reason: "The candidate is no longer recorded",
+          } as const)
         : await sources.candidateChanges({ worktreePath, scope, evidence });
     candidate = changes.ok
       ? {
@@ -219,8 +221,7 @@ async function startedInvocation(
     ...shown,
     key: key.defined.key,
     placement: key.placement,
-    loop:
-      key.loop === null ? null : { ...key.loop, pass: invocation.pass + 1 },
+    loop: key.loop === null ? null : { ...key.loop, pass: invocation.pass + 1 },
     dependsOn: key.defined.dependsOn,
     costUsd: agents.reduce((sum, agent) => sum + (agent.costUsd ?? 0), 0),
     costComplete: agents.every((agent) => agent.costUsd !== null),
@@ -538,7 +539,9 @@ function charterOf(
  * history, kept in its activity, lanes and loops.
  */
 function actionable(record: RunRecord): boolean {
-  return !record.facts.control.cancelled && record.progress.kind !== "succeeded";
+  return (
+    !record.facts.control.cancelled && record.progress.kind !== "succeeded"
+  );
 }
 
 function attentionOf(
@@ -643,13 +646,23 @@ function activityOf(
   );
   type Event = Omit<RunPage["activity"][number], "seq">;
   const events: Event[] = [
-    { id: "launch", at: record.createdAt, kind: "launched", summary: "Launched" },
+    {
+      id: "launch",
+      at: record.createdAt,
+      kind: "launched",
+      summary: "Launched",
+    },
   ];
   facts.acts.forEach((act, index) => {
     const id = `act:${index}`;
     const who = WHO[act.by];
     if (act.action === "pause")
-      events.push({ id, at: act.at, kind: "paused", summary: `Paused by ${who}` });
+      events.push({
+        id,
+        at: act.at,
+        kind: "paused",
+        summary: `Paused by ${who}`,
+      });
     if (act.action === "cancel")
       events.push({
         id,

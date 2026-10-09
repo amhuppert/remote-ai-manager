@@ -10,11 +10,7 @@ import {
   workAndFreeze,
   workReport,
 } from "./testing/context-harness";
-import {
-  contextView,
-  plannedContextView,
-  type ContextViewInput,
-} from "./view";
+import { contextView, plannedContextView, type ContextViewInput } from "./view";
 
 const startedAt = "2026-10-03T10:00:00.000Z";
 const lastChange = "2026-10-03T10:30:00.000Z";
@@ -208,9 +204,7 @@ describe("context view", () => {
         ],
       },
     });
-    expect(
-      view.stages.map((stage) => [stage.key, stage.state]),
-    ).toEqual([
+    expect(view.stages.map((stage) => [stage.key, stage.state])).toEqual([
       ["workspace", "done"],
       ["work", "halted"],
       ["output", "pending"],
@@ -252,10 +246,11 @@ describe("context view", () => {
       candidateId: "ctx:candidate:1",
       requestedAt: since,
     });
-    expect(awaiting.output).toEqual({ status: "candidate", value: { files: 2 } });
-    expect(
-      awaiting.stages.map((stage) => [stage.key, stage.state]),
-    ).toEqual([
+    expect(awaiting.output).toEqual({
+      status: "candidate",
+      value: { files: 2 },
+    });
+    expect(awaiting.stages.map((stage) => [stage.key, stage.state])).toEqual([
       ["workspace", "done"],
       ["work", "done"],
       ["output", "done"],
@@ -394,9 +389,7 @@ describe("context view", () => {
         policy: { unfinishedTaskRetries: { used: 0, limit: 2 } },
       },
     });
-    expect(
-      planned.stages.map((stage) => [stage.key, stage.state]),
-    ).toEqual([
+    expect(planned.stages.map((stage) => [stage.key, stage.state])).toEqual([
       ["workspace", "pending"],
       ["work", "pending"],
       ["output", "pending"],
@@ -554,7 +547,10 @@ describe("context view", () => {
     // One blocking reviewer failed while another still reviews: no verdict yet.
     const reviewed = harness(
       contract({
-        reviewers: [reviewer("first", "blocking"), reviewer("second", "blocking")],
+        reviewers: [
+          reviewer("first", "blocking"),
+          reviewer("second", "blocking"),
+        ],
       }),
     );
     workAndFreeze(reviewed);

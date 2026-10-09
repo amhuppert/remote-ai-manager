@@ -66,6 +66,18 @@ import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verif
 import { getSubscriptionService } from "@/lib/subscriptions/service-factory";
 import { requestSubscriptionWakePass } from "@/lib/subscriptions/active-wait-production";
 import { composeSupervision, type Supervision } from "./supervision";
+import { publishEvent } from "@/lib/events/publication";
+import { createRunChangePublisher } from "@/lib/runs/events";
+
+/** A burst of commits within this window reaches clients as one change. */
+const RUN_CHANGE_COALESCE_MS = 200;
+const runChanges = createRunChangePublisher({
+  publish: publishEvent,
+  logger: createLogger("runs"),
+  defer: (flush) => {
+    setTimeout(flush, RUN_CHANGE_COALESCE_MS);
+  },
+});
 
 const logger = createLogger("runs");
 
@@ -356,6 +368,7 @@ function composeProductionSupervision(): Supervision {
     boundariesRecorded() {
       requestSubscriptionWakePass();
     },
+    runChanged: runChanges.changed,
     now: () => new Date().toISOString(),
     logger: (name) => createLogger(name),
   });

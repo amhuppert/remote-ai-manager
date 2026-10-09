@@ -36,6 +36,7 @@ import {
   type RunPlan,
 } from "./schedule";
 import { contextBoundaryOccurrence } from "./notices";
+import type { RunChangePublisher } from "./events";
 import {
   laneStateOf,
   type RunBoundary,
@@ -167,6 +168,8 @@ export interface RunHostDeps {
   followOwner(run: RunRecord): Promise<void>;
   /** New boundaries were recorded and committed: deliver them now, not at the next delivery pass. */
   boundariesRecorded(runId: string): void;
+  /** Something a person sees of the run changed; called inside the committing transaction. */
+  changed: RunChangePublisher["changed"];
   now(): string;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
@@ -735,6 +738,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
       progress,
       updatedAt,
     });
+    deps.changed(record);
     return { ...record, facts, progress, revision, updatedAt };
   }
 
@@ -959,6 +963,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           updatedAt,
         });
         recordBoundary(record, faultBoundary(facts, fault));
+        deps.changed(record);
       });
       announce(runId);
     },
@@ -1038,7 +1043,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
             (d) => d.contextId === invocation.contextId,
           );
           const context = deps.contexts.describe(invocation.contextId);
-          if (context === null || (disposition === undefined && !context.paused))
+          if (
+            context === null ||
+            (disposition === undefined && !context.paused)
+          )
             continue;
           const resumption = deps.contexts.resume(
             invocation.contextId,

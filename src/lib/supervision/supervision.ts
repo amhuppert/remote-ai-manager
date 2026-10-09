@@ -115,6 +115,8 @@ export interface SupervisionPorts {
   runCheck: WorkspaceExecutorDeps["runCheck"];
   followOwner: RunHostDeps["followOwner"];
   boundariesRecorded: RunHostDeps["boundariesRecorded"];
+  /** A run, or one of its Contexts, committed something a person sees. */
+  runChanged: RunHostDeps["changed"];
   now(): string;
   logger(name: string): Logger;
 }
@@ -262,6 +264,7 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
     permits,
     executors: { conversation: core, workspace, requests },
     touchRun: (runId) => scheduler.touch({ kind: "run", id: runId }),
+    changed: ports.runChanged,
     releaseBinding: (bindingId) => workspace.releaseBinding(bindingId),
     now: ports.now,
     log: ports.logger("execution-context"),
@@ -277,6 +280,7 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
       scheduler.touch({ kind: "context", id: contextId }),
     followOwner: ports.followOwner,
     boundariesRecorded: ports.boundariesRecorded,
+    changed: ports.runChanged,
     now: ports.now,
     log: ports.logger("runs"),
   });

@@ -275,12 +275,7 @@ function applyWorkReport(
       },
     };
   }
-  const ended = unexpectedEnd(
-    facts,
-    report,
-    request.seat.assignmentId,
-    "work",
-  );
+  const ended = unexpectedEnd(facts, report, request.seat.assignmentId, "work");
   if (ended !== null) return ended;
   facts = {
     ...facts,

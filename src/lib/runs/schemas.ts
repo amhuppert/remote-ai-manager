@@ -1053,10 +1053,7 @@ export const attentionItemSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("run_halt"),
       occurrence: z.string(),
-      halt: z.enum([
-        ...runHaltKindSchema.options,
-        "reconcile_failed",
-      ]),
+      halt: z.enum([...runHaltKindSchema.options, "reconcile_failed"]),
       detail: z.string(),
       clearedBy: z.enum(["amend", "retry_lane", "cancel", "resume"]),
       lane: z.string().optional(),
@@ -1113,3 +1110,42 @@ export const runPageSchema = z
   })
   .strict();
 export type RunPage = z.infer<typeof runPageSchema>;
+
+/** A pause, resume (with the halt dispositions it passes on), cancel or lane retry, as sent by the owner or a person. */
+export const runControlRequestSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("pause") }).strict(),
+  z
+    .object({
+      action: z.literal("resume"),
+      dispositions: z
+        .array(
+          z
+            .object({
+              contextId: z.string().min(1),
+              occurrence: z.string().min(1),
+              disposition: haltDispositionSchema,
+            })
+            .strict(),
+        )
+        .optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal("cancel") }).strict(),
+  z.object({ action: z.literal("retry"), lane: z.string().min(1) }).strict(),
+]);
+export type RunControlRequest = z.infer<typeof runControlRequestSchema>;
+
+/** A person's decision on a result awaiting human approval. */
+export const runDecisionRequestSchema = z
+  .object({
+    contextId: z.string().min(1),
+    candidateId: z.string().min(1),
+    decision: z.enum(["approved", "rejected"]),
+    notes: z.string().min(1).optional(),
+  })
+  .strict();
+export type RunDecisionRequest = z.infer<typeof runDecisionRequestSchema>;
+
+export const runDecisionResponseSchema = z
+  .object({ ok: z.literal(true) })
+  .strict();

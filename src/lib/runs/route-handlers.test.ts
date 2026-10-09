@@ -286,18 +286,18 @@ beforeEach(() => {
         ...Object.values(supervisionSeats())
           .filter((id) => !deleted.has(id))
           .map(
-          (id) =>
-            [
-              id,
-              {
-                title: id,
-                backend: "claude" as const,
-                working: false,
-                costUsd: 0.25,
-                turns: 2,
-              },
-            ] as const,
-        ),
+            (id) =>
+              [
+                id,
+                {
+                  title: id,
+                  backend: "claude" as const,
+                  working: false,
+                  costUsd: 0.25,
+                  turns: 2,
+                },
+              ] as const,
+          ),
       ]);
     },
     // A frozen document's text is what its fake artifact id names.
@@ -1415,7 +1415,10 @@ describe("run routes", () => {
     });
     // The seat's first conversation is its current one, before any turn settles.
     expect(
-      paused.contexts[0]?.agents.map((agent) => [agent.assignment, agent.status]),
+      paused.contexts[0]?.agents.map((agent) => [
+        agent.assignment,
+        agent.status,
+      ]),
     ).toEqual([["implementer", "idle"]]);
     // An agent credential never stands for a person: another conversation is still refused.
     const byOther = await routes.control(
@@ -1440,10 +1443,9 @@ describe("run routes", () => {
     expect(byOwner.status).toBe(200);
     expect((await asPerson({ action: "cancel" })).status).toBe(200);
     expect(
-      supervision.runs.observe("run-1")?.record.facts.acts.map((act) => [
-        act.action,
-        act.by,
-      ]),
+      supervision.runs
+        .observe("run-1")
+        ?.record.facts.acts.map((act) => [act.action, act.by]),
     ).toEqual([
       ["pause", "person"],
       ["resume", "owner"],
@@ -1475,7 +1477,9 @@ describe("run routes", () => {
     );
     expect(
       page.activity
-        .filter((event) => event.kind !== "started" && event.kind !== "launched")
+        .filter(
+          (event) => event.kind !== "started" && event.kind !== "launched",
+        )
         .map((event) => [event.kind, event.summary]),
     ).toEqual([
       ["paused", "Paused by Alex"],

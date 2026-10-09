@@ -785,9 +785,23 @@ export type ContextState = z.infer<typeof contextStateSchema>;
 /** One stage of the lifecycle, for the stage track. */
 export const contextStageSchema = z
   .object({
-    key: z.enum(["workspace", "work", "output", "review", "approval", "accept"]),
+    key: z.enum([
+      "workspace",
+      "work",
+      "output",
+      "review",
+      "approval",
+      "accept",
+    ]),
     label: z.string().min(1),
-    state: z.enum(["done", "current", "waiting", "halted", "pending", "skipped"]),
+    state: z.enum([
+      "done",
+      "current",
+      "waiting",
+      "halted",
+      "pending",
+      "skipped",
+    ]),
     note: z.string().min(1).optional(),
   })
   .strict();

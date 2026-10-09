@@ -30,7 +30,6 @@ import {
 import { LANE_IDENTITY_HEADER } from "@/lib/agent-gateway/lane-identity";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { isContextRefusal } from "@/lib/execution-context/advance";
-import { haltDispositionSchema } from "@/lib/execution-context/schemas";
 import type { Logger } from "@/lib/logging";
 import {
   jsonError,
@@ -47,12 +46,14 @@ import {
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
 import { frozenKeys, writtenEntry } from "./amendment";
-import type {
-  RunCharter,
-  RunDefinitionContext,
-  RunDocumentRevision,
-  RunPrincipal,
-  RunRecord,
+import {
+  runControlRequestSchema,
+  runDecisionRequestSchema,
+  type RunCharter,
+  type RunDefinitionContext,
+  type RunDocumentRevision,
+  type RunPrincipal,
+  type RunRecord,
 } from "./schemas";
 import {
   withCurrentDocuments,
@@ -148,35 +149,6 @@ export interface RunRouteDeps {
 
 const answerSchema = z
   .object({ questionId: z.string().min(1), text: z.string().min(1) })
-  .strict();
-const controlSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("pause") }).strict(),
-  z
-    .object({
-      action: z.literal("resume"),
-      dispositions: z
-        .array(
-          z
-            .object({
-              contextId: z.string().min(1),
-              occurrence: z.string().min(1),
-              disposition: haltDispositionSchema,
-            })
-            .strict(),
-        )
-        .optional(),
-    })
-    .strict(),
-  z.object({ action: z.literal("cancel") }).strict(),
-  z.object({ action: z.literal("retry"), lane: z.string().min(1) }).strict(),
-]);
-const decideSchema = z
-  .object({
-    contextId: z.string().min(1),
-    candidateId: z.string().min(1),
-    decision: z.enum(["approved", "rejected"]),
-    notes: z.string().min(1).optional(),
-  })
   .strict();
 const amendSchema = z
   .object({
@@ -417,7 +389,9 @@ export function createRunRouteHandlers(
    */
   async function senderOf(
     request: Request,
-  ): Promise<{ ok: true; sender: "agent" | "person" } | { ok: false; response: Response }> {
+  ): Promise<
+    { ok: true; sender: "agent" | "person" } | { ok: false; response: Response }
+  > {
     const transport = await deps.auth.validateOptionalToken(request);
     if (transport.kind === "invalid")
       return { ok: false, response: jsonError("Invalid token", 401) };
@@ -964,7 +938,11 @@ export function createRunRouteHandlers(
     async control(request, context) {
       const steered = await resolveSteeredRun(request, context);
       if (!steered.ok) return steered.response;
-      const body = await readBody(request, controlSchema, "run control");
+      const body = await readBody(
+        request,
+        runControlRequestSchema,
+        "run control",
+      );
       if (!body.ok) return body.response;
       const runs = deps.supervision().runs;
       const { run, by } = steered;
@@ -1009,7 +987,11 @@ export function createRunRouteHandlers(
       );
       if (!person.ok) return person.response;
       const { run } = person;
-      const body = await readBody(request, decideSchema, "approval decision");
+      const body = await readBody(
+        request,
+        runDecisionRequestSchema,
+        "approval decision",
+      );
       if (!body.ok) return body.response;
       const { contextId, ...decision } = body.value;
       try {

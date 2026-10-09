@@ -373,6 +373,7 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           harness.follows.push(run.runId);
         },
         boundariesRecorded() {},
+        runChanged() {},
         now: () => new Date().toISOString(),
         logger: () => silent,
       });

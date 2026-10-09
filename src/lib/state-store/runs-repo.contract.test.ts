@@ -356,9 +356,10 @@ describe("runs repository", () => {
     repo.insertIfAbsent(run("run-b", "other", "2026-10-03T10:01:00.000Z"));
     repo.insertIfAbsent(run("run-c", "session", "2026-10-03T10:02:00.000Z"));
 
-    expect(
-      repo.listBySession("/repo", "session").map((r) => r.runId),
-    ).toEqual(["run-c", "run-a"]);
+    expect(repo.listBySession("/repo", "session").map((r) => r.runId)).toEqual([
+      "run-c",
+      "run-a",
+    ]);
   });
 
   it("round-trips a boundary with its detail and notification", async () => {

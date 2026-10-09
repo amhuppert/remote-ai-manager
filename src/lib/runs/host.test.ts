@@ -55,6 +55,8 @@ let follows: string[];
 let followFails: boolean;
 /** Runs the host announced new boundaries for. */
 let announced: string[];
+/** Runs the host said changed, in order. */
+let changed: string[];
 /** Drops Context submissions, as a crash between recording a start and submitting it would. */
 let dropContextSubmits: boolean;
 /** Runs as each Context submission begins. */
@@ -127,6 +129,7 @@ beforeEach(() => {
   follows = [];
   followFails = false;
   announced = [];
+  changed = [];
   dropContextSubmits = false;
   beforeContextSubmit = () => {};
   contextsUnreadable = false;
@@ -137,6 +140,7 @@ beforeEach(() => {
     permits,
     executors: { conversation, workspace, requests },
     touchRun: (runId) => scheduler.touch({ kind: "run", id: runId }),
+    changed: () => {},
     releaseBinding: () => {},
     now: () => now,
     log: silent,
@@ -174,6 +178,9 @@ beforeEach(() => {
     },
     boundariesRecorded(runId) {
       announced.push(runId);
+    },
+    changed(run) {
+      changed.push(run.runId);
     },
     now: () => now,
     log: silent,
@@ -1553,10 +1560,13 @@ describe("run host", () => {
   it("records a run's fault even when its contexts cannot be read", async () => {
     await launch();
     contextsUnreadable = true;
+    changed = [];
     runs.recordReconcileFailure(
       "run-1",
       new Error("Context run-1.agent could not be read"),
     );
+    // A person's page and list show the fault: they must hear of it.
+    expect(changed).toEqual(["run-1"]);
 
     const record = runs.observe("run-1")?.record;
     expect(record?.facts.control.fault?.detail).toBe(
@@ -1647,6 +1657,15 @@ describe("run host", () => {
     expect(contexts.observe("run-1.agent")?.record.progress.kind).toBe(
       "running",
     );
+  });
+
+  it("tells clients the run changed with every projection, a person's pause included", async () => {
+    await launch();
+    changed = [];
+
+    await runs.pause("run-1", "person");
+
+    expect(changed).toEqual(["run-1"]);
   });
 
   it("records each control act with who asked for it, and tells the owner when a person cancelled its run", async () => {
@@ -1934,8 +1953,12 @@ describe("run host", () => {
       receipt: "snapshot:git:a:a",
     });
 
-    await expect(runs.cancel("run-1", "owner")).rejects.toThrow(/already finished/);
-    await expect(runs.pause("run-1", "owner")).rejects.toThrow(/already finished/);
+    await expect(runs.cancel("run-1", "owner")).rejects.toThrow(
+      /already finished/,
+    );
+    await expect(runs.pause("run-1", "owner")).rejects.toThrow(
+      /already finished/,
+    );
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "succeeded",
     });

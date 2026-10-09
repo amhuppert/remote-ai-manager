@@ -74,9 +74,11 @@ describe("conversation core repository", () => {
     repo.insertSeat(seat("conv-other", "ctx-2", "implementer", 0));
     repo.insertSeat(seat("conv-i1", "ctx-1", "implementer", 0));
 
-    expect(
-      repo.seatsOfContext("ctx-1").map((s) => s.conversationId),
-    ).toEqual(["conv-i1", "conv-i2", "conv-r"]);
+    expect(repo.seatsOfContext("ctx-1").map((s) => s.conversationId)).toEqual([
+      "conv-i1",
+      "conv-i2",
+      "conv-r",
+    ]);
   });
 
   it("round-trips an interactive conversation's enrollment and reports the core owns it", async () => {

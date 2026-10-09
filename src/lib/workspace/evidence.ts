@@ -78,7 +78,9 @@ export function createWorkspaceEvidence(
   /** The commit the worktree stands on; null before its first commit. */
   async function headOf(worktreePath: string): Promise<string | null> {
     try {
-      return (await git(worktreePath, ["rev-parse", "--verify", "HEAD"])).trim();
+      return (
+        await git(worktreePath, ["rev-parse", "--verify", "HEAD"])
+      ).trim();
     } catch {
       return null;
     }
