@@ -160,6 +160,9 @@ beforeEach(() => {
         branch: `${branchPrefix}/lane-${laneId}`,
       });
     },
+    async validationCommands() {
+      return ["typecheck", "test"];
+    },
     async getSession(_projectPath, sessionName) {
       if (deletedSessions.has(sessionName)) return null;
       if (sessionName === "session-2") {
@@ -380,6 +383,19 @@ describe("run routes", () => {
         },
       ],
     });
+  });
+
+  it("freezes the project's registered validation commands for the implementer it launches", async () => {
+    const { response } = await launch({ brief: "Fix the duplicate notice" });
+
+    expect(response.status).toBe(202);
+    const contextId =
+      supervision.runs.observe("run-1")?.record.facts.invocations[0]
+        ?.contextId ?? "";
+    expect(
+      supervision.contexts.observe(contextId)?.record.facts.contract.current
+        .implementer.validationAccess,
+    ).toEqual(["typecheck", "test"]);
   });
 
   it("freezes an agent launch's documents from the session worktree; its context reads them under the run's documents path", async () => {

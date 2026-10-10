@@ -30,6 +30,8 @@ import {
 import { LANE_IDENTITY_HEADER } from "@/lib/agent-gateway/lane-identity";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { isContextRefusal } from "@/lib/execution-context/advance";
+import type { SeatWorkplace } from "@/lib/execution-context/host";
+import type { SeatBindingRecord } from "@/lib/conversation-core/schemas";
 import type { Logger } from "@/lib/logging";
 import {
   jsonError,
@@ -101,6 +103,8 @@ export interface RunRouteDeps {
     projectPath: string;
     sessionWorktreePath: string;
   }): Promise<LaunchPlacement["laneTargets"]>;
+  /** The project's registered validation commands, which a launch or amendment freezes for the implementers it adds. */
+  validationCommands(projectPath: string): Promise<string[]>;
   supervision(): Supervision;
   /** Whether the subscription inbox can wake this conversation, which is how a run's owner hears from it. */
   ownerWakeable(projectPath: string, conversationId: string): Promise<boolean>;
@@ -261,6 +265,20 @@ async function freezeDocuments(
       { status: 400 },
     ),
   };
+}
+
+/** Where a seat works, when it is its context's current implementer. */
+function implementerWorkplace(
+  supervision: Supervision,
+  seat: SeatBindingRecord,
+): SeatWorkplace {
+  const workplace = supervision.contexts.seatWorkplace(seat.contextId, seat);
+  if (workplace.kind === "current" && workplace.role !== "implementer")
+    return {
+      kind: "refused",
+      reason: "Only this context's current implementer may do this",
+    };
+  return workplace;
 }
 
 export function createRunRouteHandlers(
@@ -674,6 +692,7 @@ export function createRunRouteHandlers(
       projectPath: caller.projectPath,
       sessionWorktreePath: caller.worktreePath,
     }),
+    validationCommands: await deps.validationCommands(caller.projectPath),
   });
 
   return {
@@ -1073,10 +1092,7 @@ export function createRunRouteHandlers(
           403,
           "not_a_seat",
         );
-      const workplace = supervision.contexts.implementerWorkplace(
-        seat.contextId,
-        seat,
-      );
+      const workplace = implementerWorkplace(supervision, seat);
       if (workplace.kind === "refused")
         return jsonError(workplace.reason, 409, "document_publish_refused");
       const frozen = await deps.snapshotFile(
@@ -1085,10 +1101,7 @@ export function createRunRouteHandlers(
       );
       if (!frozen.ok) return jsonError(frozen.message, 400, "invalid_document");
       // The seat may have been replaced, or its context finished, while the file was read; nothing awaits from here.
-      const still = supervision.contexts.implementerWorkplace(
-        seat.contextId,
-        seat,
-      );
+      const still = implementerWorkplace(supervision, seat);
       if (still.kind === "refused")
         return jsonError(still.reason, 409, "document_publish_refused");
       const documentPath = body.value.as ?? frozen.path;

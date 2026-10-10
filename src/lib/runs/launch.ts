@@ -92,6 +92,8 @@ export interface LaunchPlacement {
   owner: { conversationId: string; sessionName: string | null };
   /** Where a lane of this session lives, by lane id; owned by the lane worktree naming. */
   laneTargets(laneId: string): { worktreePath: string; branch: string };
+  /** The project's registered validation commands now, frozen for the implementers this placement adds. */
+  validationCommands: readonly string[];
 }
 
 /**
@@ -137,13 +139,16 @@ export function resolveContextStart(input: {
       id: "implementer",
       profile: request.profile ?? STANDARD_AGENT,
       ...seats.implementer,
+      validationAccess: [...placement.validationCommands],
     },
+    // A reviewer judges a result whose context checks passed, and is shown them; it runs no suites of its own.
     reviewers: reviewerRequests.map((reviewer, index) => ({
       id: `reviewer-${index + 1}`,
       authority: reviewer.authority,
       ...(reviewer.focus !== undefined ? { focus: reviewer.focus } : {}),
       profile: reviewer.profile ?? GENERAL_REVIEWER,
       ...seats.reviewers[index],
+      validationAccess: [],
     })),
     checks: selected.filter((command) => !deferred.has(command)),
     deferredChecks: selected.filter((command) => deferred.has(command)),

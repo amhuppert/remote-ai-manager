@@ -30,6 +30,7 @@ function resolve(
       worktreePath: `/repo/.worktrees/session.${laneId}`,
       branch: `csm/session-${laneId}`,
     }),
+    validationCommands: ["typecheck", "test"],
     seats: { implementer: sonnet, reviewers },
   });
 }
@@ -110,6 +111,7 @@ describe("agent launch resolver", () => {
         focus: "Correctness",
         profile: { tier: "builtin", id: "general-reviewer" },
         ...gpt,
+        validationAccess: [],
       },
     ]);
     expect(request?.contract).toMatchObject({
@@ -118,6 +120,20 @@ describe("agent launch resolver", () => {
       humanApproval: true,
     });
     expect(request?.policy.invocationTimeoutMs).toBe(600000);
+  });
+
+  it("lets the implementer run every command registered at launch, and a reviewer none", () => {
+    const launch = resolve(
+      { brief: "Add the endpoint", reviewers: [{ authority: "blocking" }] },
+      [gpt],
+    );
+    const contract = launch.contexts[0]?.request.contract;
+
+    expect(contract?.implementer.validationAccess).toEqual([
+      "typecheck",
+      "test",
+    ]);
+    expect(contract?.reviewers.map((r) => r.validationAccess)).toEqual([[]]);
   });
 
   it("refuses unknown launch options rather than launching something weaker", () => {

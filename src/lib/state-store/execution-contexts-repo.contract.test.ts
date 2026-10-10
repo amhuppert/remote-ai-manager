@@ -32,13 +32,19 @@ describe("execution contexts repository", () => {
       acceptanceCriteria: [{ id: "ac-1", text: "One notice" }],
       outputSchema: { type: "object" },
       allowTaskAddition: true,
-      implementer: { id: "implementer", focus: "Backend", ...seat },
+      implementer: {
+        id: "implementer",
+        focus: "Backend",
+        ...seat,
+        validationAccess: ["typecheck", "test"],
+      },
       reviewers: [
         {
           id: "reviewer-a",
           authority: "blocking",
           focus: "Correctness",
           ...seat,
+          validationAccess: ["typecheck"],
         },
       ],
       checks: ["typecheck"],

@@ -186,6 +186,24 @@ function laneCaller(
   };
 }
 
+function seatCaller(
+  overrides: Partial<
+    Extract<ResolvedValidationCaller, { kind: "run_seat" }>
+  > = {},
+): ResolvedValidationCaller {
+  return {
+    kind: "run_seat",
+    worktreePath: "/projects/app/.worktrees/s1.api",
+    sessionName: "s1",
+    branchName: "csm/s1-api",
+    targetBranch: "csm/s1",
+    contextId: "run-1.api",
+    role: "reviewer",
+    allowedCommands: [],
+    ...overrides,
+  };
+}
+
 let fixture: PersistenceFixture;
 let repo: ValidationRunsRepo;
 let runner: ReturnType<typeof createFakeRunner>;
@@ -432,6 +450,48 @@ describe("policy gate before admission", () => {
     expect(row?.workflowExecutionId).toBe("exec-1");
     expect(row?.workflowContextId).toBe("api");
     expect(row?.workflowRole).toBe("implementer");
+  });
+});
+
+describe("run seat access", () => {
+  it("skips a command the seat was not given at launch, without admitting it", async () => {
+    resolved = seatCaller({ role: "reviewer", allowedCommands: [] });
+
+    const submission = await service.submit(request({ commandName: "test" }));
+
+    expect(submission.kind).toBe("not_started");
+    if (submission.kind !== "not_started") return;
+    expect(submission.result).toEqual({
+      kind: "skipped_by_policy",
+      message:
+        'Skipped "test": this reviewer seat of context "run-1.api" may not run it; its validation commands were frozen when its context was launched or added by an amendment. Do not run it by other means.',
+    });
+    expect(runner.spawns).toHaveLength(0);
+    expect(phases()).toEqual(["requested", "policy_skipped"]);
+  });
+
+  it("runs a command the seat was given in the seat's own worktree, and lists only those as enabled", async () => {
+    resolved = seatCaller({ role: "implementer", allowedCommands: ["test"] });
+
+    const submission = await service.submit(request({ commandName: "test" }));
+
+    expect(submission.kind).toBe("accepted");
+    expect(runner.spawns[0]).toMatchObject({
+      worktreePath: "/projects/app/.worktrees/s1.api",
+      branchName: "csm/s1-api",
+      targetBranch: "csm/s1",
+      contextId: "run-1.api",
+    });
+    const listed = await service.list(request().caller);
+    expect(listed.kind).toBe("ok");
+    if (listed.kind !== "ok") return;
+    expect(
+      listed.commands.map((command) => [command.name, command.enabled]),
+    ).toEqual([
+      ["test", true],
+      ["typecheck", false],
+      ["format", false],
+    ]);
   });
 });
 

@@ -34,6 +34,7 @@ import {
 import {
   createContextHost,
   type ContextHost,
+  type SeatWorkplace,
 } from "@/lib/execution-context/host";
 import { createIntentLedger, type IntentLedger } from "@/lib/intents/ledger";
 import {
@@ -137,6 +138,8 @@ export interface Supervision {
     attemptId: string | null;
     openQuestionId: string | null;
   } | null;
+  /** Where a supervised seat works and what it may run there, or null for any other conversation. */
+  seatWorkplace(conversationId: string): SupervisedSeatWorkplace | null;
   /** Hands an enrolled interactive conversation's next queued message to the core when it is idle. */
   drainConversationQueue(conversationId: string): Promise<void>;
   /** Debug mode on enrolled interactive conversations. */
@@ -145,6 +148,14 @@ export interface Supervision {
   checkpoints: CoreCheckpoints;
   /** Boot: settle what the last process left running, restore runs paused, reconcile. */
   boot(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
+}
+
+/** A seat's binding and its Context's answer about where it works. */
+export interface SupervisedSeatWorkplace {
+  projectPath: string;
+  sessionName: string;
+  contextId: string;
+  workplace: SeatWorkplace;
 }
 
 export function composeSupervision(ports: SupervisionPorts): Supervision {
@@ -314,6 +325,16 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
           attemptId === null
             ? null
             : requests.openedDuring(conversationId, attemptId),
+      };
+    },
+    seatWorkplace(conversationId) {
+      const binding = core.seatBinding(conversationId);
+      if (binding === null) return null;
+      return {
+        projectPath: binding.projectPath,
+        sessionName: binding.sessionName,
+        contextId: binding.contextId,
+        workplace: contexts.seatWorkplace(binding.contextId, binding),
       };
     },
     drainConversationQueue: drainQueue,

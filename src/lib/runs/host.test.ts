@@ -68,6 +68,7 @@ const seat = {
   profile: { tier: "builtin" as const, id: "standard-agent" },
   backend: "claude" as const,
   modelSelection: { modelId: "sonnet", parameters: {} },
+  validationAccess: [] as string[],
 };
 
 function startRequest(

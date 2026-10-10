@@ -888,7 +888,7 @@ The UI reads the same observations. Interactive conversations keep their transcr
 | Turn lifetime with two terminal recorders | Every stage settles an attempt; or a generic stage pipeline | A refusal before any attempt is not a model turn; a framework adds nothing over one function with one exit. |
 | Per-backend enforcement launch policy | Universal `composeLaunch` including pricing and continuation | Those decisions have different lifetimes and owners. |
 | Cooperative interactive writes with evidence checks | Exclusive interactive grants (revision 1) | Exclusive grants serialize a session's conversations and block the owner behind its children. |
-| Scripts as readers; writes fail the check | Preparation-writer mode; silent recapture | Silent recapture accepts auto-written drift such as snapshots. No current command needs a writer mode. |
+| Scripts as readers; writes fail the check | Preparation-writer mode; silent recapture | Silent recapture accepts auto-written drift such as snapshots. No Context check needs a writer mode (a seat may still run a registered writer itself; see registered-command access). |
 | After-all integration Context | Run-owned integration action; synthetic publication | No new action kind or receipt type; coverage becomes an ordinary dependency. |
 | Operation grants and stable review sessions | Lifetime locks per Context; trusting declared paths | Lifetime locks block owner answers; declarations alone do not stabilize review inputs. |
 | Live-worktree review with barriers | Immutable review worktrees | Barriers reuse current machinery. Script checks would need full checkouts with dependencies. |
@@ -902,7 +902,7 @@ The UI reads the same observations. Interactive conversations keep their transcr
 |---|---|
 | Interactive, standalone and workflow agent execution | One Conversation path and one Context protocol, launched through Run |
 | Tasks, blocking and advisory review, scripts, human candidate approval | Context; one acceptance protocol; distinct reviewer authority |
-| Invocation timeout and registered-command access | Conversation policy; separate from inactivity and allowances |
+| Invocation timeout and registered-command access | Invocation timeout: Conversation policy, separate from inactivity and allowances. Registered-command access: frozen per seat in the Context contract when the context is launched or added by an amendment (implementer: every registered command; reviewer: none, shown the context's check results instead), enforced by Validation and refused by dev targeting through the seat binding. An agent-run command is not confined to the Context's paths: a writer such as a formatter can change other work's files in a shared worktree (an edge case Q5's per-role selection decides; the briefing warns confined implementers). |
 | Cohort assignments, disabled cohorts, advisory-only cohorts | Kept; seat identity stable; dormant assignments need not be deleted |
 | Configuration cascade and role settings | Configuration cascade function; Run resolver freezes; provenance kept for backend, model, profile, capabilities, memory read and contribute, validation access |
 | Workflow charter | Mission, invariants, ranked sources, structured applicability, amendment history; resolved before execution; each Context freezes its bundle. Session Alignment does not replace scoped workflow sources, and retired access-policy fields stay retired. |

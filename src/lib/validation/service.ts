@@ -105,6 +105,12 @@ export type ResolvedValidationCaller =
         /** The context's script-gate selection, for the honest skip message. */
         scriptGateCommands: readonly string[];
       })
+  | ({ kind: "run_seat" } & ResolvedCallerTarget & {
+        contextId: string;
+        role: "implementer" | "reviewer";
+        /** The commands frozen for the seat with its context's contract. */
+        allowedCommands: readonly string[];
+      })
   | { kind: "ambiguous"; reason: string };
 
 export interface ValidationCallerResolver {
@@ -363,6 +369,41 @@ export async function waitForSystemValidationCompletion(
 // ============================================================
 // Implementation
 // ============================================================
+
+/** Why an agent's own call is skipped by the access frozen for it, or null when it may run. */
+function policySkip(
+  resolved: ResolvedValidationCaller,
+  commandName: string,
+): { message: string; fields: Record<string, unknown> } | null {
+  if (resolved.kind === "run_seat") {
+    if (resolved.allowedCommands.includes(commandName)) return null;
+    return {
+      message: `Skipped "${commandName}": this ${resolved.role} seat of context "${resolved.contextId}" may not run it; its validation commands were frozen when its context was launched or added by an amendment. Do not run it by other means.`,
+      fields: { role: resolved.role, contextId: resolved.contextId },
+    };
+  }
+  if (
+    resolved.kind !== "graph_lane" ||
+    resolved.allowedCommands.includes(commandName)
+  )
+    return null;
+  const roleLabel =
+    resolved.role === "implementer" ? "implementer" : "context validator";
+  const handledByScriptGate = resolved.scriptGateCommands.includes(commandName);
+  // Only claim another component handles it when that is true.
+  const policyMessage = handledByScriptGate
+    ? `Skipped "${commandName}": it is disabled for the ${roleLabel} in context "${resolved.contextId}". Do not run it in this execution context; it is handled by the script validator.`
+    : `Skipped "${commandName}": workflow policy disables it for the ${roleLabel} in context "${resolved.contextId}". Do not attempt to run it by other means.`;
+  return {
+    message: `${policyMessage} A frozen role selection includes commands registered at launch or the last role live edit; later registration alone does not grant access. An authorized workflow live edit can update the selection.`,
+    fields: {
+      role: resolved.role,
+      executionId: resolved.executionId,
+      contextId: resolved.contextId,
+      handledByScriptGate,
+    },
+  };
+}
 
 export function createValidationService(
   deps: ValidationServiceDeps,
@@ -937,7 +978,7 @@ export function createValidationService(
     if (resolved.kind === "ambiguous") {
       return rejected(
         "identity_unresolved",
-        `Refused: caller identity did not resolve (${resolved.reason}). Graph identity must match server-side workflow state; validation fails closed rather than granting unrestricted access.`,
+        `Refused: caller identity did not resolve (${resolved.reason}). Validation fails closed rather than granting unrestricted access.`,
       );
     }
 
@@ -978,35 +1019,24 @@ export function createValidationService(
     // no-op — zero scheduler or runner involvement. The internal script
     // validator and merge gates are system sources and ignore agent
     // allowlists.
-    if (request.source === "agent_cli" && resolved.kind === "graph_lane") {
-      if (!resolved.allowedCommands.includes(request.commandName)) {
-        const roleLabel =
-          resolved.role === "implementer" ? "implementer" : "context validator";
-        const handledByScriptGate = resolved.scriptGateCommands.includes(
-          request.commandName,
-        );
-        // Only claim another component handles it when that is true.
-        const policyMessage = handledByScriptGate
-          ? `Skipped "${request.commandName}": it is disabled for the ${roleLabel} in context "${resolved.contextId}". Do not run it in this execution context; it is handled by the script validator.`
-          : `Skipped "${request.commandName}": workflow policy disables it for the ${roleLabel} in context "${resolved.contextId}". Do not attempt to run it by other means.`;
-        const message = `${policyMessage} A frozen role selection includes commands registered at launch or the last role live edit; later registration alone does not grant access. An authorized workflow live edit can update the selection.`;
-        logger.info("validation.policy_skipped", {
-          name: request.commandName,
-          role: resolved.role,
-          executionId: resolved.executionId,
-          contextId: resolved.contextId,
-          handledByScriptGate,
-        });
-        publishPhase("policy_skipped", {
-          ...meta,
-          effectiveScope,
-          outcome: "skipped_by_policy",
-        });
-        return {
-          kind: "not_started",
-          result: { kind: "skipped_by_policy", message },
-        };
-      }
+    const skip =
+      request.source === "agent_cli"
+        ? policySkip(resolved, request.commandName)
+        : null;
+    if (skip !== null) {
+      logger.info("validation.policy_skipped", {
+        name: request.commandName,
+        ...skip.fields,
+      });
+      publishPhase("policy_skipped", {
+        ...meta,
+        effectiveScope,
+        outcome: "skipped_by_policy",
+      });
+      return {
+        kind: "not_started",
+        result: { kind: "skipped_by_policy", message: skip.message },
+      };
     }
 
     // Resolve every async preflight dependency before claiming the active
@@ -1091,7 +1121,7 @@ export function createValidationService(
       sessionName: resolved.sessionName ?? "",
       branchName: resolved.branchName ?? "",
       ...(resolved.targetBranch ? { targetBranch: resolved.targetBranch } : {}),
-      ...(resolved.kind === "graph_lane"
+      ...(resolved.kind === "graph_lane" || resolved.kind === "run_seat"
         ? { contextId: resolved.contextId }
         : {}),
       requestedScope: execution.requestedScope,
@@ -1215,7 +1245,7 @@ export function createValidationService(
       return {
         kind: "invalid",
         reason: "identity_unresolved",
-        message: `Refused: caller identity did not resolve (${resolved.reason}). Graph identity must match server-side workflow state; validation fails closed rather than granting unrestricted access.`,
+        message: `Refused: caller identity did not resolve (${resolved.reason}). Validation fails closed rather than granting unrestricted access.`,
       };
     }
 
@@ -1236,7 +1266,7 @@ export function createValidationService(
             : ("native" as const),
         timeoutMs: command.timeoutMs ?? null,
         enabled:
-          resolved.kind !== "graph_lane" ||
+          (resolved.kind !== "graph_lane" && resolved.kind !== "run_seat") ||
           resolved.allowedCommands.includes(name),
       }),
     );

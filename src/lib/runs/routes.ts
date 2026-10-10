@@ -133,6 +133,10 @@ const handlers = createRunRouteHandlers({
   resolveProjectPath,
   getSession,
   laneTargets,
+  async validationCommands(projectPath) {
+    const repoConfig = await readRepoConfig(projectPath);
+    return Object.keys(repoConfig?.validation?.commands ?? {});
+  },
   supervision: getSupervision,
   async ownerWakeable(projectPath, conversationId) {
     const runtime = getSubscriptionRuntime();

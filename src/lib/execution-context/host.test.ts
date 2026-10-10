@@ -211,6 +211,69 @@ describe("execution context host", () => {
     ).toMatchObject({ kind: "applied" });
   });
 
+  it("places a current seat in its context's worktree with the commands frozen for it, and refuses any other caller", async () => {
+    const host = newHost();
+    await host.submit({
+      ...startIntent,
+      request: {
+        contextId: "ctx-1",
+        runId: "run-1",
+        ownerConversationId: "owner-1",
+        policy: DEFAULT_CONTEXT_POLICY,
+        workspace: {
+          kind: "lane",
+          projectPath: "/repo",
+          sessionName: "session",
+          worktreePath: "/repo/.worktrees/session.api",
+          branch: "csm/session-api",
+          scope: { mode: "full" },
+        },
+        contract: contextContractSchema.parse({
+          ...contract,
+          implementer: {
+            id: "implementer",
+            ...seat,
+            validationAccess: ["typecheck", "test"],
+          },
+          reviewers: [{ id: "reviewer-1", authority: "blocking", ...seat }],
+        }),
+      },
+    });
+    const caller = (assignmentId: string, replacement = 0) => ({
+      contextId: "ctx-1",
+      assignmentId,
+      replacement,
+    });
+
+    expect(host.seatWorkplace("ctx-1", caller("implementer"))).toEqual({
+      kind: "current",
+      runId: "run-1",
+      role: "implementer",
+      worktreePath: "/repo/.worktrees/session.api",
+      branch: "csm/session-api",
+      validationAccess: ["typecheck", "test"],
+    });
+    expect(host.seatWorkplace("ctx-1", caller("reviewer-1"))).toMatchObject({
+      kind: "current",
+      role: "reviewer",
+      validationAccess: [],
+    });
+    for (const stranger of [
+      caller("implementer", 1),
+      caller("reviewer-2"),
+      { ...caller("implementer"), contextId: "ctx-2" },
+    ])
+      expect(host.seatWorkplace("ctx-1", stranger)).toMatchObject({
+        kind: "refused",
+      });
+
+    await host.cancel("ctx-1", host.observe("ctx-1")?.record.revision ?? 0);
+    expect(host.seatWorkplace("ctx-1", caller("implementer"))).toEqual({
+      kind: "refused",
+      reason: "Context ctx-1 has finished",
+    });
+  });
+
   it("tells clients its run changed whenever it commits, a task command included", async () => {
     const host = newHost();
     const work = await startContext(host);

@@ -11,6 +11,10 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { decodeRouteSegment } from "@/lib/shared/decode-route-segment";
 import { createLogger, withTracing } from "@/lib/logging";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  CONVERSATION_IDENTITY_HEADER,
+  readConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import { getSession as defaultGetSession } from "@/lib/state-store";
 import {
@@ -236,9 +240,17 @@ export function createDevServerRouteHandlers(
   ): Promise<RouteResolution<ResolvedDevServerTarget>> {
     try {
       const target = parseDevServerTarget(request);
+      const identity = readConversationIdentity(
+        request.headers.get(CONVERSATION_IDENTITY_HEADER),
+      );
       return {
         ok: true,
-        value: await deps.targetResolver.resolve({ ...input, target }),
+        value: await deps.targetResolver.resolve({
+          ...input,
+          target,
+          caller:
+            identity.kind === "valid" ? identity.scope.conversationId : null,
+        }),
       };
     } catch (error) {
       if (!(error instanceof DevServerTargetError)) throw error;

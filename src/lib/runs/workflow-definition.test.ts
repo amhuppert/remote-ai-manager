@@ -27,6 +27,7 @@ const placement = {
     worktreePath: `/repo/.worktrees/session.${laneId}`,
     branch: `csm/session-${laneId}`,
   }),
+  validationCommands: [],
   owner: { conversationId: "owner-1", sessionName: "session" },
 };
 

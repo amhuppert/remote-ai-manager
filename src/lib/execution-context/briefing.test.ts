@@ -8,6 +8,7 @@ import {
   composeRework,
   composeSteer,
 } from "./briefing";
+import type { WorkspaceScope } from "@/lib/workspace/schemas";
 import { initialContextFacts } from "./facts";
 import {
   DEFAULT_CONTEXT_POLICY,
@@ -19,9 +20,13 @@ const seat = {
   profile: { tier: "builtin" as const, id: "standard-agent" },
   backend: "claude" as const,
   modelSelection: { modelId: "sonnet", parameters: {} },
+  validationAccess: [] as string[],
 };
 
-function facts(overrides: Record<string, unknown> = {}): ContextFacts {
+function facts(
+  overrides: Record<string, unknown> = {},
+  scope: WorkspaceScope = { mode: "owned", paths: ["docs"] },
+): ContextFacts {
   return initialContextFacts({
     contextId: "run-1.docs",
     workspace: {
@@ -29,7 +34,7 @@ function facts(overrides: Record<string, unknown> = {}): ContextFacts {
       projectPath: "/repo",
       sessionName: "session",
       worktreePath: "/repo/.worktrees/session",
-      scope: { mode: "owned", paths: ["docs"] },
+      scope,
     },
     contract: contextContractSchema.parse({
       title: "Document the API",
@@ -95,6 +100,60 @@ describe("briefing", () => {
 
     expect(prompt).toMatch(/`typecheck`, `lint`/);
     expect(prompt).toMatch(/assembled/);
+  });
+
+  it("tells each seat which registered validation commands it may run itself", () => {
+    const granted = facts({
+      implementer: {
+        id: "implementer",
+        ...seat,
+        validationAccess: ["typecheck", "test"],
+      },
+    });
+
+    expect(composeInitialWork(granted)).toMatch(
+      /`cctl validate run <name>` for `typecheck`, `test`/,
+    );
+    expect(composeRetryWork(granted)).toMatch(/`typecheck`, `test`/);
+    expect(
+      composeReview(granted, { candidate, round, seat: reviewer }),
+    ).toMatch(/Do not run `cctl validate`/);
+  });
+
+  it("warns an implementer confined to part of its working directory that its commands run on all of it", () => {
+    const implementer = {
+      id: "implementer",
+      ...seat,
+      validationAccess: ["format", "test"],
+    };
+
+    expect(composeInitialWork(facts({ implementer }))).toMatch(
+      /run on your whole working directory[^\n]*run none that rewrites files/,
+    );
+    expect(
+      composeInitialWork(facts({ implementer }, { mode: "full" })),
+    ).not.toMatch(/whole working directory/);
+    expect(composeInitialWork(facts())).not.toMatch(/whole working directory/);
+  });
+
+  it("shows a reviewer which of the context's checks passed on the candidate", () => {
+    const checked = composeReview(facts(), {
+      candidate,
+      round: {
+        ...round,
+        checks: [
+          { command: "typecheck", status: "passed" },
+          { command: "test", status: "passed" },
+        ],
+      },
+      seat: reviewer,
+    });
+
+    expect(checked).toContain("## Checks");
+    expect(checked).toMatch(/`typecheck` and `test` passed on this result/);
+    expect(
+      composeReview(facts(), { candidate, round, seat: reviewer }),
+    ).toMatch(/No registered checks ran on this result/);
   });
 
   it("omits both sections for a context with neither", () => {

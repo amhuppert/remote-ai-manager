@@ -118,6 +118,19 @@ export interface SeatBinding {
   replacement: number;
 }
 
+export type SeatWorkplace =
+  | {
+      kind: "current";
+      runId: string;
+      role: "implementer" | "reviewer";
+      worktreePath: string;
+      /** A lane's branch; null in the session worktree, whose branch the session names. */
+      branch: string | null;
+      /** The registered validation commands frozen for this seat. */
+      validationAccess: string[];
+    }
+  | { kind: "refused"; reason: string };
+
 export interface ContextObservation {
   record: ContextRecord;
   /** Open intents whose executor already settled: a stalled host, cleared by reconcile. */
@@ -174,16 +187,11 @@ export interface ContextHost extends Executor<ContextProgressReport> {
   /** The Workspace evidence a candidate froze, to show what it changed; null for an unknown one. */
   candidateEvidence(contextId: string, candidateId: string): string | null;
   /**
-   * Where this context's current implementer works, for a command it sends
-   * about its work; a refusal when `caller` is not that seat or the context
-   * has finished.
+   * Where one of this context's current seats works and what it may run
+   * there, for a command it sends about its work; a refusal when `caller` is
+   * not a current seat or the context has finished.
    */
-  implementerWorkplace(
-    contextId: string,
-    caller: SeatBinding,
-  ):
-    | { kind: "current"; runId: string; worktreePath: string }
-    | { kind: "refused"; reason: string };
+  seatWorkplace(contextId: string, caller: SeatBinding): SeatWorkplace;
   /** `caller` is the calling conversation's controller binding, resolved from its record. */
   applyTaskCommand(
     contextId: string,
@@ -222,14 +230,60 @@ function implementerRefusal(
   if (
     caller === null ||
     caller.contextId !== record.contextId ||
-    caller.assignmentId !== "implementer" ||
-    caller.replacement !==
-      (record.facts.seats.replacements[caller.assignmentId] ?? 0)
+    caller.assignmentId !== record.facts.contract.current.implementer.id ||
+    !isCurrentIncarnation(record, caller)
   )
     return "Only this context's current implementer may do this";
-  if (isTerminal(record.progress) || record.facts.control.cancelled)
-    return `Context ${record.contextId} has finished`;
-  return null;
+  return finishedRefusal(record);
+}
+
+function isCurrentIncarnation(
+  record: ContextRecord,
+  caller: SeatBinding,
+): boolean {
+  return (
+    caller.replacement ===
+    (record.facts.seats.replacements[caller.assignmentId] ?? 0)
+  );
+}
+
+function finishedRefusal(record: ContextRecord): string | null {
+  return isTerminal(record.progress) || record.facts.control.cancelled
+    ? `Context ${record.contextId} has finished`
+    : null;
+}
+
+function seatWorkplaceOf(
+  record: ContextRecord,
+  caller: SeatBinding,
+): SeatWorkplace {
+  const contract = record.facts.contract.current;
+  const reviewer = contract.reviewers.find((r) => r.id === caller.assignmentId);
+  const seat =
+    caller.assignmentId === contract.implementer.id
+      ? { role: "implementer" as const, assignment: contract.implementer }
+      : reviewer !== undefined
+        ? { role: "reviewer" as const, assignment: reviewer }
+        : null;
+  if (
+    seat === null ||
+    caller.contextId !== record.contextId ||
+    !isCurrentIncarnation(record, caller)
+  )
+    return {
+      kind: "refused",
+      reason: `This conversation is not a current seat of context ${record.contextId}`,
+    };
+  const finished = finishedRefusal(record);
+  if (finished !== null) return { kind: "refused", reason: finished };
+  return {
+    kind: "current",
+    runId: record.runId,
+    role: seat.role,
+    worktreePath: record.workspace.worktreePath,
+    branch: record.workspace.kind === "lane" ? record.workspace.branch : null,
+    validationAccess: seat.assignment.validationAccess,
+  };
 }
 
 export function createContextHost(deps: ContextHostDeps): ContextHost {
@@ -584,16 +638,8 @@ export function createContextHost(deps: ContextHostDeps): ContextHost {
       );
     },
 
-    implementerWorkplace(contextId, caller) {
-      const record = requireRecord(contextId);
-      const refusal = implementerRefusal(record, caller);
-      return refusal !== null
-        ? { kind: "refused", reason: refusal }
-        : {
-            kind: "current",
-            runId: record.runId,
-            worktreePath: record.workspace.worktreePath,
-          };
+    seatWorkplace(contextId, caller) {
+      return seatWorkplaceOf(requireRecord(contextId), caller);
     },
 
     applyTaskCommand(contextId, caller, command) {

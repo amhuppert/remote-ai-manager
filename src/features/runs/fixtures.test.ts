@@ -59,6 +59,7 @@ describe("run prototype evidence", () => {
         worktreePath: `/repo/.worktrees/checkout-${key}`,
         branch: `csm/checkout-${key}`,
       }),
+      validationCommands: [],
       seats: Object.fromEntries(
         result.data.contexts.map((context) => [
           context.key,

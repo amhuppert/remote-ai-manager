@@ -24,7 +24,7 @@ import {
   type ConversationCoreRepo,
 } from "@/lib/state-store/conversation-core-repo";
 import { getStateDb } from "@/lib/state-store/store";
-import type { Supervision } from "./supervision";
+import type { Supervision, SupervisedSeatWorkplace } from "./supervision";
 
 export const SUPERVISION_KEY = "__cc_run_supervision";
 export const CORE_TURN_RUNTIME_KEY = "__cc_core_turn_runtime";
@@ -156,6 +156,17 @@ export async function runCoreTask(input: {
     };
   }
   return supervision.core.runTask(input);
+}
+
+/**
+ * Where a run seat works and what it may run there; null for any other
+ * conversation. Null before supervision is composed too: a seat's turns run
+ * only inside it, so no seat can be calling then.
+ */
+export function supervisedSeatWorkplace(
+  conversationId: string,
+): SupervisedSeatWorkplace | null {
+  return composedSupervision()?.seatWorkplace(conversationId) ?? null;
 }
 
 /** A core conversation's running turn, as alignment authoring and active waits read it; null when none runs. */

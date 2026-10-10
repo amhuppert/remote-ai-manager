@@ -157,6 +157,33 @@ describe("run supervision", () => {
     });
   });
 
+  it("tells where a running seat works and which validation commands it may run there", async () => {
+    const seen: unknown[] = [];
+    h.script = async (input, self) => {
+      seen.push(self.seatWorkplace(input.conversationId));
+      return done("Done.");
+    };
+    const s = h.compose();
+    await launch(s, "run-1");
+
+    expect(seen).toEqual([
+      {
+        projectPath: "/repo",
+        sessionName: "session",
+        contextId: "run-1.agent",
+        workplace: {
+          kind: "current",
+          runId: "run-1",
+          role: "implementer",
+          worktreePath: "/repo/.worktrees/session",
+          branch: null,
+          validationAccess: [],
+        },
+      },
+    ]);
+    expect(s.seatWorkplace("owner-1")).toBeNull();
+  });
+
   it("recovers a refused bind once the owner continues: the bind runs again and the run finishes", async () => {
     h.evidenceFailures = 1;
     const s = h.compose();
@@ -276,6 +303,7 @@ describe("lane runs across a restart", () => {
           worktreePath: `/repo/.worktrees/session.${laneId}`,
           branch: `csm/session-${laneId}`,
         }),
+        validationCommands: [],
         request,
         seats: {
           x: { implementer: seat, reviewers: [] },
@@ -387,6 +415,7 @@ describe("workflow runs on the supervision graph", () => {
         worktreePath: `/repo/.worktrees/session.${laneId}`,
         branch: `csm/session-${laneId}`,
       }),
+      validationCommands: [],
       request,
       seats: {
         api: { implementer: seat, reviewers: [] },

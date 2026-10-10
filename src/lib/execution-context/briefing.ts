@@ -205,10 +205,23 @@ function findingsBlock(findings: readonly Finding[]): string {
     .join("\n");
 }
 
+/** What a seat may run itself with `cctl validate`: the commands frozen for it. */
+function validationAccessRule(access: readonly string[]): string {
+  return access.length === 0
+    ? "Do not run `cctl validate`: no validation commands were given to you here."
+    : `You may run \`cctl validate run <name>\` for ${access.map((c) => `\`${c}\``).join(", ")}; no other registered command is available to you here.`;
+}
+
 function workingRules(facts: ContextFacts): string {
   const contract = facts.contract.current;
+  const access = contract.implementer.validationAccess;
   return [
     TASK_COMMANDS_HELP,
+    validationAccessRule(access),
+    // A registered command is not confined to the Context's paths: a formatter would rewrite other work's files.
+    access.length > 0 && facts.binding.request.scope.mode !== "full"
+      ? "Registered commands run on your whole working directory, not only on this work's paths: run none that rewrites files, and judge what they report only for this work's changes."
+      : null,
     contract.allowTaskAddition ? ADD_TASK_HELP : null,
     contract.ownerQuestions ? QUESTION_HELP : null,
     contract.documentPublishing ? PUBLISH_HELP : null,
@@ -337,6 +350,29 @@ function closingReportSection(facts: ContextFacts): string | null {
   return section("The implementer's closing report", clip(report, 4000));
 }
 
+function commandList(commands: readonly string[]): string {
+  const named = commands.map((c) => `\`${c}\``);
+  return named.length <= 1
+    ? (named[0] ?? "")
+    : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+}
+
+/** What the context's own checks showed on the result under review: the evidence a reviewer judges with. */
+function checksSection(round: ReviewRound): string {
+  if (round.checks.length === 0)
+    return section("Checks", "No registered checks ran on this result.");
+  const passed = round.checks
+    .filter((c) => c.status === "passed")
+    .map((c) => c.command);
+  const lines = [
+    passed.length > 0 ? `${commandList(passed)} passed on this result.` : null,
+    ...round.checks
+      .filter((c) => c.status !== "passed")
+      .map((c) => `\`${c.command}\` is ${c.status}.`),
+  ].filter((line): line is string => line !== null);
+  return section("Checks", lines.join("\n"));
+}
+
 export function composeReview(
   facts: ContextFacts,
   input: { candidate: Candidate; round: ReviewRound; seat: ReviewerAssignment },
@@ -362,11 +398,13 @@ export function composeReview(
       `The implementer's changes are in your working directory. The exact result downstream work will consume:\n\n\`\`\`json\n${JSON.stringify(input.candidate.output, null, 2)}\n\`\`\``,
     ),
     closingReportSection(facts),
+    checksSection(input.round),
     documents !== null ? section("Documents", documents) : null,
     section(
       "Your answer",
       "Return `verdict` (`pass`, `fail` or `plan_defect`), `findings` for anything that blocks acceptance (cite the criterion id when one applies), and `advisories` for optional improvements. Do not edit files.",
     ),
+    validationAccessRule(input.seat.validationAccess),
   ]
     .filter((part): part is string => part !== null)
     .join("\n\n");

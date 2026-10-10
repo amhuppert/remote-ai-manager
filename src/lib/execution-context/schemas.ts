@@ -14,7 +14,20 @@ import {
 export const reviewerAuthoritySchema = z.enum(["blocking", "advisory"]);
 export type ReviewerAuthority = z.infer<typeof reviewerAuthoritySchema>;
 
-export const reviewerAssignmentSchema = seatAssignmentSchema
+/** A seat as its Context's contract holds it: who works it, and the policy the Context enforces for it. */
+export const contractSeatSchema = seatAssignmentSchema
+  .extend({
+    /**
+     * The registered validation commands the seat may run itself, frozen when
+     * its context is launched or added by an amendment; a seat recorded
+     * without it may run none.
+     */
+    validationAccess: z.array(validationCommandNameSchema).default([]),
+  })
+  .strict();
+export type ContractSeat = z.infer<typeof contractSeatSchema>;
+
+export const reviewerAssignmentSchema = contractSeatSchema
   .extend({ authority: reviewerAuthoritySchema })
   .strict();
 export type ReviewerAssignment = z.infer<typeof reviewerAssignmentSchema>;
@@ -107,7 +120,7 @@ export const contextContractSchema = z
     acceptanceCriteria: z.array(acceptanceCriterionSchema),
     outputSchema: z.record(z.string(), z.unknown()).nullable(),
     allowTaskAddition: z.boolean(),
-    implementer: seatAssignmentSchema,
+    implementer: contractSeatSchema,
     reviewers: z.array(reviewerAssignmentSchema),
     /** Context-scoped acceptance checks; they run as readers before seats. */
     checks: z.array(validationCommandNameSchema),

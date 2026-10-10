@@ -2,6 +2,8 @@ import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import { readConfig } from "@/lib/config/loader";
 import { readRepoConfig } from "@/lib/projects/repo-config";
+import { supervisedSeatWorkplace } from "@/lib/supervision/handles";
+import type { SupervisedSeatWorkplace } from "@/lib/supervision/supervision";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
@@ -101,6 +103,10 @@ function expandLanePolicy(
 }
 
 export interface ProductionValidationResolverDeps {
+  /** The run seat this conversation is bound to, or null for any other conversation. */
+  seatWorkplace(
+    conversationId: string,
+  ): Promise<SupervisedSeatWorkplace | null>;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -113,6 +119,8 @@ export interface ProductionValidationResolverDeps {
 }
 
 const productionResolverDeps: ProductionValidationResolverDeps = {
+  seatWorkplace: async (conversationId) =>
+    supervisedSeatWorkplace(conversationId),
   getSession: (projectPath, sessionName) =>
     getSession(projectPath, sessionName),
   getActiveGraphWorkflowExecution: (projectPath, sessionName) =>
@@ -127,8 +135,49 @@ export function createProductionValidationCallerResolver(
   resolveCaller(ref: ValidationCallerRef): Promise<ResolvedValidationCaller>;
 } {
   const targetResolver = createExecutionTargetResolver();
+
+  /**
+   * A run seat validates where it works, with the commands frozen for it; a
+   * seat that cannot be placed is refused, never sent to the session worktree.
+   */
+  async function resolveRunSeat(
+    ref: ValidationCallerRef,
+    seat: SupervisedSeatWorkplace,
+  ): Promise<ResolvedValidationCaller> {
+    if (ref.claimedWorkflow)
+      return ambiguous("a run seat holds no graph workflow identity");
+    if (
+      seat.projectPath !== ref.projectPath ||
+      seat.sessionName !== (ref.sessionName ?? null)
+    )
+      return ambiguous(
+        `run seat of context "${seat.contextId}" belongs to session "${seat.sessionName}"`,
+      );
+    const { workplace } = seat;
+    if (workplace.kind === "refused") return ambiguous(workplace.reason);
+    const session = await deps.getSession(seat.projectPath, seat.sessionName);
+    if (!session)
+      return ambiguous(`session "${seat.sessionName}" was not found`);
+    return {
+      kind: "run_seat",
+      worktreePath: workplace.worktreePath,
+      sessionName: seat.sessionName,
+      // A lane's diff base is the session branch it publishes into.
+      branchName: workplace.branch ?? session.branchName,
+      targetBranch:
+        workplace.branch === null ? session.targetBranch : session.branchName,
+      contextId: seat.contextId,
+      role: workplace.role,
+      allowedCommands: workplace.validationAccess,
+    };
+  }
+
   return {
     async resolveCaller(ref) {
+      if (ref.conversationId) {
+        const seat = await deps.seatWorkplace(ref.conversationId);
+        if (seat !== null) return resolveRunSeat(ref, seat);
+      }
       const sessionName = ref.sessionName ?? null;
       if (!sessionName) {
         if (ref.claimedWorkflow) {
