@@ -14,18 +14,23 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
 import { StatusChip } from "@/components/ui/StatusChip";
-import { formatElapsed } from "@/components/session/sidebar/active-work";
+import {
+  formatElapsed,
+  type ActiveWorkKind,
+} from "@/components/session/sidebar/active-work";
 import { cn } from "@/lib/ui/cn";
 
 export interface NeedsYouAction {
   id: string;
-  kind: "job" | "workflow" | "collab" | "spec";
+  kind: ActiveWorkKind;
   title: string;
   projectName: string;
   sessionName: string;
   phase: string;
   href: string;
   startedAt: string;
+  /** When it started asking for the person, when that differs from its start. */
+  askedAt?: string;
   detail?: string;
 }
 
@@ -113,7 +118,7 @@ export function buildNeedsYouItems(
         title: action.title,
         detail:
           action.detail ?? `${action.projectName} · ${action.sessionName}`,
-        occurredAt: action.startedAt,
+        occurredAt: action.askedAt ?? action.startedAt,
         href: action.href,
       },
     });

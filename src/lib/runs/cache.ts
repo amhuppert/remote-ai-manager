@@ -1,6 +1,7 @@
 /**
  * The run cache's one refresh (design r2 §9): mutations and SSE reactions ask
- * for a run's page or a session's list to be read again, and every request in
+ * for a run's page, a session's list or every session's current runs to be
+ * read again, and every request in
  * a short window is served by one refetch per query. A request arriving while
  * a read is in flight is still honoured: the next window refetches.
  */
@@ -40,7 +41,7 @@ function refresh(queryClient: QueryClient, keys: QueryKey[]): Promise<void> {
   return window.done;
 }
 
-/** A run changed: its page and its session's list. */
+/** A run changed: its page, its session's list, and every session's current runs. */
 export function refreshRun(
   queryClient: QueryClient,
   run: { projectName: string; sessionName: string; runId: string },
@@ -48,6 +49,7 @@ export function refreshRun(
   return refresh(queryClient, [
     runKeys.page(run.projectName, run.sessionName, run.runId),
     runKeys.list(run.projectName, run.sessionName),
+    runKeys.active(),
   ]);
 }
 

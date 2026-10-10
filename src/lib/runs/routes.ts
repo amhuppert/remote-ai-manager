@@ -14,7 +14,7 @@ import { deriveLaneTargets } from "@/lib/workflow-graph/parallel-worktrees";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { getSession } from "@/lib/state-store";
+import { getArchivedProjects, getSession } from "@/lib/state-store";
 import type { ResolvedSeat } from "./launch";
 import { snapshotDocumentFile, snapshotRunDocuments } from "./documents";
 import { freezeCharter } from "./charter";
@@ -129,6 +129,7 @@ const laneTargets: RunRouteDeps["laneTargets"] = async ({
 
 const handlers = createRunRouteHandlers({
   auth: createAgentAuth(),
+  archivedProjects: getArchivedProjects,
   resolveProjectPath,
   getSession,
   laneTargets,
@@ -193,6 +194,7 @@ export const launchRunPOST = withTracing(handlers.launch);
 export const launchWorkflowRunPOST = withTracing(handlers.launchWorkflow);
 export const showRunGET = withTracing(handlers.show);
 export const listRunsGET = withTracing(handlers.list);
+export const activeRunsGET = withTracing(handlers.active);
 export const runPageGET = withTracing(handlers.page);
 export const runDefinitionGET = withTracing(handlers.definition);
 export const answerRunPOST = withTracing(handlers.answer);

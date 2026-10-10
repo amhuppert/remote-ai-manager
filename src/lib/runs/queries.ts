@@ -2,9 +2,10 @@ import { queryOptions, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiFetch } from "@/lib/api/fetcher";
 import { runKeys } from "./query-keys";
-import { runPageSchema, runSummarySchema } from "./schemas";
+import { activeRunSchema, runPageSchema, runSummarySchema } from "./schemas";
 
 const runListSchema = z.array(runSummarySchema);
+const activeRunsSchema = z.array(activeRunSchema);
 
 function sessionRunsUrl(projectName: string, sessionName: string): string {
   return `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/runs`;
@@ -30,7 +31,18 @@ export const runQueries = {
           { signal },
         ),
     }),
+  active: () =>
+    queryOptions({
+      queryKey: runKeys.active(),
+      queryFn: ({ signal }) =>
+        apiFetch("/api/runs/active", activeRunsSchema, { signal }),
+    }),
 };
+
+/** Every session's current runs, for the sidebar and the "Needs you" menu. */
+export function useActiveRunsQuery() {
+  return useQuery(runQueries.active());
+}
 
 export function useSessionRunsQuery(projectName: string, sessionName: string) {
   return useQuery(runQueries.list(projectName, sessionName));

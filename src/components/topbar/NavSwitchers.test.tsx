@@ -181,6 +181,7 @@ beforeEach(() => {
     total: 0,
     unreadCount: 0,
   });
+  api.json("GET", "/api/runs/active", []);
   api.json("GET", "/api/conversations/active", {
     conversations: [],
     graphWorkflowExecutions: [],

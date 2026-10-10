@@ -5,9 +5,11 @@ import type {
   ActiveGraphWorkflowExecution,
 } from "@/lib/active-conversations/schemas";
 import type { Notification } from "@/lib/notifications/schemas";
+import type { ActiveRun } from "@/lib/runs/schemas";
 import {
   adaptCollaborations,
   adaptGraphWorkflows,
+  adaptRuns,
   adaptSpecExecutions,
   adaptStoreJobs,
   deriveNotificationOutcomes,
@@ -252,6 +254,83 @@ describe("adaptSpecExecutions", () => {
         kind: "spec",
         phase: "Running",
       }),
+    ]);
+  });
+});
+
+function makeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
+  return {
+    runId: "run-1",
+    title: "Checkout v2 rollout",
+    kind: "workflow",
+    projectName: "command-center",
+    sessionName: "session-12",
+    status: { kind: "running" },
+    attention: 0,
+    approvals: 0,
+    contexts: { done: 2, total: 5 },
+    startedAt: "2026-10-09T10:00:00.000Z",
+    askedAt: null,
+    ...overrides,
+  };
+}
+
+describe("adaptRuns", () => {
+  it("lists a running run with its progress, leading to its page", () => {
+    expect(adaptRuns([makeRun()])).toEqual([
+      {
+        id: "run:run-1",
+        kind: "run",
+        title: "Checkout v2 rollout",
+        projectName: "command-center",
+        sessionName: "session-12",
+        phase: "Running",
+        href: "/projects/command-center/session-12/runs?run=run-1",
+        startedAt: "2026-10-09T10:00:00.000Z",
+        progress: { completed: 2, total: 5 },
+      },
+    ]);
+  });
+
+  it("asks for a review when a result waits for approval, and for a look when something else needs the person", () => {
+    const [approval, halted] = adaptRuns([
+      makeRun({
+        attention: 2,
+        approvals: 1,
+        status: { kind: "needs_input" },
+        askedAt: "2026-10-09T12:00:00.000Z",
+      }),
+      makeRun({
+        runId: "run-2",
+        kind: "agent",
+        attention: 1,
+        status: { kind: "needs_input" },
+      }),
+    ]);
+
+    expect(approval).toMatchObject({
+      phase: "Approval required",
+      askedAt: "2026-10-09T12:00:00.000Z",
+      needsAction: { primary: { label: "Review", kind: "review" } },
+    });
+    expect(halted).toMatchObject({
+      phase: "Action required",
+      needsAction: { primary: { label: "Open", kind: "review" } },
+    });
+    expect(halted).not.toHaveProperty("progress");
+  });
+
+  it("marks a paused or stopping run as held, not running", () => {
+    const [paused, stopping, running] = adaptRuns([
+      makeRun({ status: { kind: "paused", draining: false } }),
+      makeRun({ runId: "run-2", status: { kind: "stopping" } }),
+      makeRun({ runId: "run-3" }),
+    ]);
+
+    expect([paused?.held, stopping?.held, running?.held]).toEqual([
+      true,
+      true,
+      undefined,
     ]);
   });
 });

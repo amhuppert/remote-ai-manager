@@ -21,6 +21,8 @@ interface ActiveWorkSectionProps {
   defaultExpanded?: boolean;
   onAction?: (item: ActiveWorkItem, action: ActiveWorkAction) => void;
   onDismissAttention?: (item: AttentionItem) => void;
+  /** Why some active work could not be read; shown even when nothing else is. */
+  notice?: React.ReactNode;
 }
 
 const GROUP_HEADER_CLASS =
@@ -33,6 +35,7 @@ const ROW_CLASS =
   "flex items-start gap-xs px-[12px] py-[10px] no-underline text-inherit border-y-0 border-r-0 border-l-2 border-solid border-transparent transition-[background-color,border-color] duration-100 ease-[ease] hover:bg-bg-elevated";
 
 const DOT_RUNNING = "bg-cyan shadow-[0_0_4px_var(--color-cyan)]";
+const DOT_HELD = "bg-text-tertiary";
 const DOT_NEEDS_ACTION = "bg-amber shadow-[0_0_4px_var(--color-amber)]";
 const DOT_ATTENTION = "bg-red shadow-[0_0_4px_var(--color-red)]";
 
@@ -62,7 +65,11 @@ function ActiveWorkRow({
       <span
         className={cn(
           "mt-[5px] size-[6px] shrink-0 rounded-full",
-          needsAction ? DOT_NEEDS_ACTION : DOT_RUNNING,
+          needsAction
+            ? DOT_NEEDS_ACTION
+            : item.held === true
+              ? DOT_HELD
+              : DOT_RUNNING,
         )}
         aria-hidden="true"
       />
@@ -183,10 +190,12 @@ export default function ActiveWorkSection({
   defaultExpanded = false,
   onAction,
   onDismissAttention,
+  notice,
 }: ActiveWorkSectionProps): React.JSX.Element | null {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  if (items.length === 0 && attention.length === 0) return null;
+  if (items.length === 0 && attention.length === 0 && notice === undefined)
+    return null;
 
   const partition = partitionActiveWork(items);
   const { visible, hiddenCount } = expanded
@@ -211,6 +220,9 @@ export default function ActiveWorkSection({
           </span>
         </div>
       )}
+      {notice !== undefined && (
+        <div className="px-[12px] pt-[6px] pb-[4px]">{notice}</div>
+      )}
       {visibleNeedsAction.length > 0 && (
         <div className={cn(SUBGROUP_LABEL_CLASS, "text-amber")}>
           Needs action {partition.needsAction.length}
@@ -226,7 +238,7 @@ export default function ActiveWorkSection({
       ))}
       {visibleRunning.length > 0 && (
         <div className={cn(SUBGROUP_LABEL_CLASS, "text-text-tertiary")}>
-          Running {partition.running.length}
+          In progress {partition.running.length}
         </div>
       )}
       {visibleRunning.map((item) => (

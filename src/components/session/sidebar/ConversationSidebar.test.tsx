@@ -19,6 +19,8 @@ import type {
   ProjectActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { runKeys } from "@/lib/runs/query-keys";
+import type { ActiveRun } from "@/lib/runs/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
 import {
@@ -103,6 +105,7 @@ function renderSidebarWithActiveData(
   active: ActiveConversationsResponse,
   props: Partial<ComponentProps<typeof ConversationSidebar>> = {},
   dispatcher?: HotkeyDispatcher,
+  runs: ActiveRun[] | null = [],
 ): void {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -112,6 +115,7 @@ function renderSidebarWithActiveData(
   queryClient.setQueryData(conversationKeys.active(), active);
   queryClient.setQueryData(conversationKeys.sidebar(false), active);
   queryClient.setQueryData(conversationKeys.sidebar(true), active);
+  if (runs !== null) queryClient.setQueryData(runKeys.active(), runs);
 
   const sidebar = (
     <QueryClientProvider client={queryClient}>
@@ -373,6 +377,45 @@ describe("ConversationSidebar", () => {
     const section = screen.getByRole("region", { name: "Active work" });
     expect(within(section).getByText("Native SDD")).not.toBeNull();
     expect(within(section).getByText(/Definition review/)).not.toBeNull();
+  });
+
+  it("lists a current run in the Active work rail, asking for the person when it needs them", () => {
+    renderSidebarWithActiveData(activeConversations, {}, undefined, [
+      {
+        runId: "run-1",
+        title: "Checkout v2 rollout",
+        kind: "workflow",
+        projectName: "remote-ai-manager",
+        sessionName: "conversation-ui-overhaul",
+        status: { kind: "needs_input" },
+        attention: 1,
+        approvals: 1,
+        contexts: { done: 2, total: 5 },
+        startedAt: "2026-05-15T12:00:00.000Z",
+        askedAt: "2026-05-15T12:05:00.000Z",
+      },
+    ]);
+
+    const section = screen.getByRole("region", { name: "Active work" });
+    expect(within(section).getByText("Checkout v2 rollout")).not.toBeNull();
+    expect(within(section).getByText(/Approval required/)).not.toBeNull();
+  });
+
+  it("says in the Active work rail when the current runs could not be read, with a way to read them again", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 500 })),
+    );
+    renderSidebarWithActiveData(activeConversations, {}, undefined, null);
+
+    const section = await screen.findByRole("region", { name: "Active work" });
+    expect(within(section).getByRole("alert")).toHaveTextContent(
+      "Could not load runs.",
+    );
+    expect(
+      within(section).getByRole("button", { name: "Try again" }),
+    ).not.toBeNull();
+    vi.unstubAllGlobals();
   });
 
   it("can hide the session-scoped new conversation action for the project cockpit rail", () => {

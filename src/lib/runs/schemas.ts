@@ -805,6 +805,28 @@ export const runSummarySchema = z
   .strict();
 export type RunSummary = z.infer<typeof runSummarySchema>;
 
+/** A current run, across every session, as the sidebar and the "Needs you" menu read it. */
+export const activeRunSchema = runSummarySchema
+  .pick({
+    runId: true,
+    title: true,
+    kind: true,
+    status: true,
+    attention: true,
+    contexts: true,
+    startedAt: true,
+  })
+  .extend({
+    projectName: z.string().min(1),
+    sessionName: z.string().min(1),
+    /** Results awaiting a person's approval, among `attention`. */
+    approvals: z.number().int().min(0),
+    /** When the newest of what needs a person arose; null when nothing does, or nothing dated does. */
+    askedAt: z.string().min(1).nullable(),
+  })
+  .strict();
+export type ActiveRun = z.infer<typeof activeRunSchema>;
+
 /** One conversation a context's seat held, replaced incarnations included. */
 export const seatConversationSchema = z
   .object({

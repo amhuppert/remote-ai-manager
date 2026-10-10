@@ -197,6 +197,8 @@ export interface RunHost {
   observe(runId: string): RunObservation | null;
   /** A session's runs, newest first. */
   listSession(projectPath: string, sessionName: string): RunRecord[];
+  /** Every session's runs that have not succeeded or been cancelled, oldest first. */
+  listActive(): RunRecord[];
   /** Reads every started Context and pending start. */
   inspect(runId: string): RunInspection | null;
   /** Each control act names who asked for it: the run's owner or a person. */
@@ -976,6 +978,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
 
     listSession(projectPath, sessionName) {
       return deps.runs.listBySession(projectPath, sessionName);
+    },
+
+    listActive() {
+      return deps.runs.listActive();
     },
 
     inspect(runId) {

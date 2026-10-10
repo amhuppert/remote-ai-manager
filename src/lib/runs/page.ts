@@ -18,6 +18,7 @@ import { guardOf } from "./schedule";
 import { laneSkipped, loopOf } from "./topology";
 import {
   laneStateOf,
+  type ActiveRun,
   type ContextDetail,
   type ContextInvocation,
   type RouteGuard,
@@ -896,22 +897,44 @@ export async function runPage(
   };
 }
 
-/** A run as the session's run list shows it. */
-export function runSummary(
-  sources: Pick<RunPageSources, "supervision" | "conversations">,
+/**
+ * How far a run got and what it needs of a person, as its list rows read it:
+ * contexts done of those not skipped, and what the page's attention lists
+ * (seat questions aside), with the approvals among it and when the newest of
+ * it arose (a stalled completion has no time of its own).
+ */
+function runStanding(
+  supervision: RunPageSources["supervision"],
   record: RunRecord,
-): RunSummary {
-  const { supervision } = sources;
+): Pick<
+  ActiveRun,
+  "status" | "attention" | "approvals" | "contexts" | "askedAt"
+> {
   const inspection = supervision.runs.inspect(record.runId);
-  const boundaries = supervision.runs.observe(record.runId)?.boundaries ?? [];
+  const times = boundaryTimes(
+    supervision.runs.observe(record.runId)?.boundaries ?? [],
+  );
   const keys = record.facts.definition.contexts;
   const live = actionable(record);
+  const asked: string[] = [];
   let done = 0;
   let skipped = 0;
-  let attention = live ? (inspection?.plan.halts.length ?? 0) : 0;
-  if (live && record.facts.control.fault !== null) attention += 1;
-  // A completion no one consumed is attention too, as the page lists it.
-  if (live && (inspection?.stalled.length ?? 0) > 0) attention += 1;
+  let approvals = 0;
+  let attention = 0;
+  if (live) {
+    for (const halt of inspection?.plan.halts ?? []) {
+      attention += 1;
+      const at = times.get(halt.occurrence);
+      if (at !== undefined) asked.push(at);
+    }
+    const { fault } = record.facts.control;
+    if (fault !== null) {
+      attention += 1;
+      asked.push(fault.at);
+    }
+    // A completion no one consumed is attention too, as the page lists it.
+    if ((inspection?.stalled.length ?? 0) > 0) attention += 1;
+  }
   for (const defined of keys) {
     const state = inspection?.plan.keys.get(defined.key);
     if (state?.kind === "skipped") {
@@ -923,14 +946,38 @@ export function runSummary(
     if (live && (summary?.stalled.length ?? 0) > 0) attention += 1;
     const progress = summary?.progress;
     if (progress?.kind === "succeeded") done += 1;
-    if (
-      live &&
-      (progress?.kind === "halted" ||
-        (progress?.kind === "waiting" &&
-          progress.obligation.kind === "await_approval"))
-    )
-      attention += 1;
+    if (!live || summary === undefined || summary === null) continue;
+    const approval =
+      progress?.kind === "waiting" &&
+      progress.obligation.kind === "await_approval";
+    if (progress?.kind !== "halted" && !approval) continue;
+    attention += 1;
+    if (approval) approvals += 1;
+    const at = times.get(
+      contextBoundaryOccurrence(state.contextId, summary.occurrence),
+    );
+    if (at !== undefined) asked.push(at);
   }
+  return {
+    status: statusOf(record.progress),
+    attention,
+    approvals,
+    contexts: { done, total: keys.length - skipped },
+    askedAt:
+      attention > 0 && asked.length > 0
+        ? asked.reduce((newest, at) => (at > newest ? at : newest))
+        : null,
+  };
+}
+
+/** A run as the session's run list shows it. */
+export function runSummary(
+  sources: Pick<RunPageSources, "supervision" | "conversations">,
+  record: RunRecord,
+): RunSummary {
+  const { supervision } = sources;
+  const boundaries = supervision.runs.observe(record.runId)?.boundaries ?? [];
+  const { status, attention, contexts } = runStanding(supervision, record);
   const seats = record.facts.invocations.flatMap((invocation) =>
     supervision.core
       .seatBindingsOf(invocation.contextId)
@@ -940,13 +987,30 @@ export function runSummary(
     runId: record.runId,
     title: record.facts.title,
     kind: record.facts.kind,
-    status: statusOf(record.progress),
+    status,
     attention,
-    contexts: { done, total: keys.length - skipped },
+    contexts,
     costUsd: seats.reduce((sum, seat) => sum + (seat?.costUsd ?? 0), 0),
     costComplete: seats.every((seat) => seat !== undefined),
     startedAt: record.createdAt,
     finishedAt: finishedAt(boundaries),
     owner: ownerOf(record, sources.conversations),
+  };
+}
+
+/** A current run as the sidebar and the "Needs you" menu list it, among every session's. */
+export function activeRun(
+  supervision: RunPageSources["supervision"],
+  record: RunRecord,
+  projectName: string,
+): ActiveRun {
+  return {
+    runId: record.runId,
+    title: record.facts.title,
+    kind: record.facts.kind,
+    projectName,
+    sessionName: record.sessionName,
+    ...runStanding(supervision, record),
+    startedAt: record.createdAt,
   };
 }

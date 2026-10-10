@@ -30,7 +30,11 @@ import { useActiveConversationsQuery } from "@/lib/active-conversations/queries"
 import { activeConversationNeedsAttention } from "@/lib/active-conversations/row-helpers";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useNotificationJobs } from "@/stores/notification.store";
-import { deriveNotificationOutcomes } from "@/components/session/sidebar/active-work-adapters";
+import {
+  adaptRuns,
+  deriveNotificationOutcomes,
+} from "@/components/session/sidebar/active-work-adapters";
+import { useActiveRunsQuery } from "@/lib/runs/queries";
 import {
   buildNeedsYouItems,
   NeedsYouMenu,
@@ -122,6 +126,7 @@ export default function Topbar({
 
   const { data: activeConvosData } = useActiveConversationsQuery();
   const { data: notificationsData } = useNotificationsQuery();
+  const { data: activeRuns } = useActiveRunsQuery();
   const notificationJobs = useNotificationJobs();
   const clientStateReady = useClientStateReady();
   const [needsYouNowMs] = useState(() => Date.now());
@@ -145,10 +150,16 @@ export default function Topbar({
     const detailByActionId = new Map(
       notifications.map((row) => [`notification:${row.id}`, row.message]),
     );
-    return deriveNotificationOutcomes(notifications, liveJobs).needsAction.map(
-      (item) => ({ ...item, detail: detailByActionId.get(item.id) }),
+    const runs = adaptRuns(clientStateReady ? (activeRuns ?? []) : []).filter(
+      (item) => item.needsAction !== undefined,
     );
-  }, [clientStateReady, liveJobs, notificationsData]);
+    return [
+      ...deriveNotificationOutcomes(notifications, liveJobs).needsAction.map(
+        (item) => ({ ...item, detail: detailByActionId.get(item.id) }),
+      ),
+      ...runs,
+    ];
+  }, [activeRuns, clientStateReady, liveJobs, notificationsData]);
   const needsYouItems = useMemo(
     () => buildNeedsYouItems(pinnedConversations, actionItems),
     [actionItems, pinnedConversations],

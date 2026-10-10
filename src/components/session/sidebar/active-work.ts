@@ -1,9 +1,9 @@
 // Presentation-only view model for the sidebar's Active Work section.
 // Source schemas (BackgroundJob, ActiveGraphWorkflowExecution,
-// ActiveCollaborationExecution, SpecExecution) stay authoritative; adapters
+// ActiveCollaborationExecution, SpecExecution, ActiveRun) stay authoritative; adapters
 // map them into this shape for display. See docs/design/activity-panel-rework.md.
 
-export type ActiveWorkKind = "job" | "workflow" | "collab" | "spec";
+export type ActiveWorkKind = "job" | "workflow" | "collab" | "spec" | "run";
 
 export type ActiveWorkActionKind = "land" | "resolve" | "discard" | "review";
 
@@ -21,7 +21,11 @@ export interface ActiveWorkItem {
   phase: string;
   href: string;
   startedAt: string;
+  /** When it started asking for the person, when that differs from its start; "Needs you" dates and orders by it. */
+  askedAt?: string;
   progress?: { completed: number; total: number };
+  /** Current but not moving (paused, or stopping): shown quieter than running work. */
+  held?: true;
   needsAction?: { primary: ActiveWorkAction; secondary?: ActiveWorkAction };
 }
 

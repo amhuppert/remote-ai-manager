@@ -64,10 +64,12 @@ import {
 import type { FrozenCharter } from "./charter";
 import {
   runPage,
+  activeRun,
   runSummary,
   type ConversationFacts,
   type RunPageSources,
 } from "./page";
+import { getProjectDisplayName } from "@/lib/projects/resolver";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   compileWorkflow,
@@ -82,6 +84,8 @@ type Handler = (request: Request, context: RouteContext) => Promise<Response>;
 
 export interface RunRouteDeps {
   auth: Pick<AgentAuth, "requireToken" | "validateOptionalToken">;
+  /** Paths of the projects archived from view; their runs leave the active list. */
+  archivedProjects(): Promise<Set<string>>;
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -273,6 +277,7 @@ export function createRunRouteHandlers(
   | "tasks"
   | "publishDocument"
   | "list"
+  | "active"
   | "page",
   Handler
 > {
@@ -824,6 +829,46 @@ export function createRunRouteHandlers(
         // A document a seat published while the owner wrote the amendment may be among them; say so.
         removedDocuments,
       });
+    },
+
+    async active(request) {
+      const sent = await senderOf(request);
+      if (!sent.ok) return sent.response;
+      if (sent.sender !== "person")
+        return jsonError(
+          "Only a person in Command Center reads every session's runs",
+          403,
+          "person_required",
+        );
+      const supervision = deps.supervision();
+      const archived = await deps.archivedProjects();
+      const current = supervision.runs
+        .listActive()
+        .filter((record) => !archived.has(record.projectPath));
+      // A run outlives a deleted session, but its page can no longer be opened.
+      const placeOf = (record: RunRecord) =>
+        `${record.projectPath}\u0000${record.sessionName}`;
+      const extant = new Set<string>();
+      for (const record of current) {
+        const place = placeOf(record);
+        if (extant.has(place)) continue;
+        if (
+          (await deps.getSession(record.projectPath, record.sessionName)) !==
+          null
+        )
+          extant.add(place);
+      }
+      return NextResponse.json(
+        current
+          .filter((record) => extant.has(placeOf(record)))
+          .map((record) =>
+            activeRun(
+              supervision,
+              record,
+              getProjectDisplayName(record.projectPath),
+            ),
+          ),
+      );
     },
 
     async list(request, context) {

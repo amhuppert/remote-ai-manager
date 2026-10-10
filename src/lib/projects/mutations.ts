@@ -7,6 +7,8 @@ import { z } from "zod";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import { projectKeys } from "@/lib/projects/query-keys";
+import { runKeys } from "@/lib/runs/query-keys";
+import type { ActiveRun } from "@/lib/runs/schemas";
 import type {
   discoveredProjectSchema,
   projectPreferencesResponseSchema,
@@ -124,6 +126,15 @@ export function useArchiveProjectMutation() {
                 }
               : undefined,
         }),
+        // An archived project's runs leave every session's current runs; an
+        // unarchived one's return with the next read.
+        cacheUpdate<{ projectName: string; archived: boolean }, ActiveRun[]>({
+          key: () => runKeys.active(),
+          update: (old, vars) =>
+            vars.archived
+              ? old?.filter((run) => run.projectName !== vars.projectName)
+              : undefined,
+        }),
       ],
     }),
   );
@@ -190,6 +201,7 @@ export function useDeleteProjectMutation() {
     },
     onSettled: () => {
       invalidateProjectCaches(queryClient);
+      void queryClient.invalidateQueries({ queryKey: runKeys.active() });
       scheduleTicketCacheInvalidation(queryClient, { includeLists: true });
     },
   });

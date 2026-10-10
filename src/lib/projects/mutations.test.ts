@@ -10,6 +10,8 @@ import {
   usePinProjectMutation,
 } from "@/lib/projects/mutations";
 import { projectKeys } from "@/lib/projects/query-keys";
+import { runKeys } from "@/lib/runs/query-keys";
+import type { ActiveRun } from "@/lib/runs/schemas";
 import type { z } from "zod";
 import type {
   discoveredProjectSchema,
@@ -76,6 +78,26 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function currentRun(
+  projectName: string,
+  sessionName: string,
+  runId: string,
+): ActiveRun {
+  return {
+    runId,
+    title: runId,
+    kind: "agent",
+    projectName,
+    sessionName,
+    status: { kind: "needs_input" },
+    attention: 1,
+    approvals: 1,
+    contexts: { done: 0, total: 1 },
+    startedAt: "2026-10-09T10:00:00.000Z",
+    askedAt: "2026-10-09T10:05:00.000Z",
+  };
+}
+
 describe("useArchiveProjectMutation", () => {
   const fetchSpy = vi.fn<typeof fetch>();
 
@@ -114,6 +136,29 @@ describe("useArchiveProjectMutation", () => {
 
     resolveFetch(jsonResponse({ ok: true }));
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("drops an archived project's current runs at once, and reads every session's runs again for an unarchive", async () => {
+    const client = makeClient();
+    const runsKey = runKeys.active();
+    client.setQueryData<ActiveRun[]>(runsKey, [
+      currentRun("p1", "s", "run-1"),
+      currentRun("other", "s", "run-2"),
+    ]);
+    fetchSpy.mockImplementation(async () => jsonResponse({ ok: true }));
+
+    const { result } = renderHook(() => useArchiveProjectMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({ projectName: "p1", archived: true });
+
+    await waitFor(() =>
+      expect(
+        client.getQueryData<ActiveRun[]>(runsKey)?.map((run) => run.runId),
+      ).toEqual(["run-2"]),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryState(runsKey)?.isInvalidated).toBe(true);
   });
 
   it("optimistically removes the project from the archived preferences on unarchive", async () => {

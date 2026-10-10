@@ -7,7 +7,12 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createRunRouteHandlers, type RunRouteDeps } from "./route-handlers";
 import { currentDocuments } from "./documents";
-import { runPageSchema, runSummarySchema, runViewSchema } from "./schemas";
+import {
+  activeRunSchema,
+  runPageSchema,
+  runSummarySchema,
+  runViewSchema,
+} from "./schemas";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
   agentStartRequest,
@@ -29,6 +34,8 @@ let codexWithdrawn: boolean;
 let branchPrefix: string;
 /** Conversations the inbox cannot wake: owned, archived or not an ordinary conversation. */
 let unwakeable: Set<string>;
+let archived: Set<string>;
+let deletedSessions: Set<string>;
 /** Every candidate whose changes the page asked Workspace for. */
 let diffed: Array<{ worktreePath: string; evidence: string }>;
 /** Seat conversations deleted from the session since they ran. */
@@ -122,6 +129,8 @@ beforeEach(() => {
   codexWithdrawn = false;
   branchPrefix = "csm";
   unwakeable = new Set();
+  archived = new Set();
+  deletedSessions = new Set();
   diffed = [];
   deleted = new Set();
   snapshots = [];
@@ -152,6 +161,7 @@ beforeEach(() => {
       });
     },
     async getSession(_projectPath, sessionName) {
+      if (deletedSessions.has(sessionName)) return null;
       if (sessionName === "session-2") {
         return {
           sessionName,
@@ -327,6 +337,9 @@ beforeEach(() => {
             artifactId: `sha256:${contents}`,
             bytes: contents.length,
           };
+    },
+    async archivedProjects() {
+      return archived;
     },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   };
@@ -1361,6 +1374,79 @@ describe("run routes", () => {
       issues: [{ path: "contexts.1.dependsOn.0" }],
     });
     expect(supervision.runs.observe("run-1")).toBeNull();
+  });
+
+  it("lists a person every current run across sessions, with what each needs of them", async () => {
+    await launch({ brief: "Finishes on its own" });
+    await launch({ brief: "Waits for Alex", humanApproval: true });
+
+    const response = await routes.active(request(null, {}, "GET"), params());
+
+    const asked = h.recorded.find(
+      (boundary) => boundary.runId === "run-2" && boundary.kind === "approval",
+    );
+    expect(response.status).toBe(200);
+    expect(z.array(activeRunSchema).parse(await json(response))).toEqual([
+      {
+        runId: "run-2",
+        title: "Waits for Alex",
+        kind: "agent",
+        projectName: "repo",
+        sessionName: "session",
+        status: { kind: "needs_input" },
+        attention: 1,
+        approvals: 1,
+        contexts: { done: 0, total: 1 },
+        startedAt: expect.any(String),
+        askedAt: asked?.recordedAt,
+      },
+    ]);
+  });
+
+  it("asks nothing of the person for a run waiting on its seat's question, which is its owner's to answer", async () => {
+    h.script = async (input, self) => {
+      self.requests.open({
+        conversationId: input.conversationId,
+        attemptId: input.attemptId,
+        questionText: "Which file?",
+        questions: [{ question: "Which file?" }],
+      });
+      return done("Asked.");
+    };
+    await launch();
+
+    const listed = z
+      .array(activeRunSchema)
+      .parse(
+        await json(await routes.active(request(null, {}, "GET"), params())),
+      );
+
+    expect(listed).toEqual([
+      expect.objectContaining({ attention: 0, approvals: 0, askedAt: null }),
+    ]);
+  });
+
+  it("keeps the active runs to the person, and leaves out archived projects", async () => {
+    await launch({ brief: "Waits for Alex", humanApproval: true });
+
+    const agent = await routes.active(
+      request(null, identity("owner-1"), "GET"),
+      params(),
+    );
+    expect(agent.status).toBe(403);
+
+    archived = new Set(["/repo"]);
+    const listed = await routes.active(request(null, {}, "GET"), params());
+    expect(await json(listed)).toEqual([]);
+  });
+
+  it("leaves out a run whose session was deleted, since its page cannot be opened", async () => {
+    await launch({ brief: "Waits for Alex", humanApproval: true });
+
+    deletedSessions = new Set(["session"]);
+    const listed = await routes.active(request(null, {}, "GET"), params());
+
+    expect(await json(listed)).toEqual([]);
   });
 
   it("launches an agent whose result waits for a person's approval on the run page", async () => {

@@ -46,13 +46,14 @@ function cachedPage(input: {
 const session = { scope: "session", projectName: "plc", sessionName: "fx" };
 
 describe("run SSE reactions", () => {
-  it("refreshes the changed run's page and its session's list, and nothing else", async () => {
+  it("refreshes the changed run's page, its session's list and every session's current runs, and nothing else", async () => {
     const { fake, queryClient, stale, settle } = setup();
     const list = runKeys.list("plc", "fx");
     const page = runKeys.page("plc", "fx", "run-1");
     const other = runKeys.page("plc", "fx", "run-2");
     const elsewhere = runKeys.list("plc", "other");
-    for (const key of [list, page, other, elsewhere])
+    const active = runKeys.active();
+    for (const key of [list, page, other, elsewhere, active])
       queryClient.setQueryData(key, []);
 
     fake.emit("run-changed", {
@@ -63,12 +64,13 @@ describe("run SSE reactions", () => {
     });
     await settle();
 
-    expect([stale(list), stale(page), stale(other), stale(elsewhere)]).toEqual([
-      true,
-      true,
-      false,
-      false,
-    ]);
+    expect([
+      stale(list),
+      stale(page),
+      stale(other),
+      stale(elsewhere),
+      stale(active),
+    ]).toEqual([true, true, false, false, true]);
   });
 
   it("refreshes the pages a seat works in when its turn starts or ends, earlier passes included, and the list when it spends", async () => {

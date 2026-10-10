@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { runKeys } from "@/lib/runs/query-keys";
+import type { ActiveRun } from "@/lib/runs/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { pushToast } from "@/stores/toast.store";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
@@ -46,6 +48,16 @@ export function useDeleteSessionMutation(projectName: string) {
               old,
               projectName,
               new Set([sessionName]),
+            ),
+        }),
+        // A run outlives its session, but its page goes with it.
+        cacheUpdate<string, ActiveRun[]>({
+          key: () => runKeys.active(),
+          update: (old, sessionName) =>
+            old?.filter(
+              (run) =>
+                run.projectName !== projectName ||
+                run.sessionName !== sessionName,
             ),
         }),
       ],
