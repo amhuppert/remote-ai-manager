@@ -427,6 +427,11 @@ export interface ConversationRecordPort {
     identity: ConversationIdentity,
     backend: ConversationState["agentBackend"],
   ): Promise<void>;
+  /** The session charter version an attended turn's runtime carried, for stale-charter detection. */
+  recordSeenAlignment(
+    identity: ConversationIdentity,
+    version: number | null,
+  ): Promise<void>;
   /** The backend announced a continuation mid-turn: a restart must still be able to resume it. */
   recordContinuity(
     identity: ConversationIdentity,

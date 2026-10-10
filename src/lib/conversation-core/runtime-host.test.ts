@@ -25,6 +25,12 @@ function harness() {
   const registered: string[] = [];
   const unregistered: string[] = [];
   let instructions = ["You are a CC agent."];
+  /** Each created runtime's way to keep its own late work open until it closes. */
+  const trackers: Array<(work: Promise<void>) => void> = [];
+  let charter: { version: number | null; eligible: boolean } = {
+    version: null,
+    eligible: false,
+  };
   const factory: ConversationBackendFactory = {
     backend: "claude",
     async createRuntime(input) {
@@ -61,7 +67,11 @@ function harness() {
   const host = createRuntimeHost({
     factory: () => factory,
     async instructions() {
-      return { sessionInstructions: instructions, alignmentVersion: null };
+      return {
+        sessionInstructions: instructions,
+        alignmentVersion: charter.version,
+        alignmentEligible: charter.eligible,
+      };
     },
     async tooling() {
       return {
@@ -81,7 +91,10 @@ function harness() {
         },
       };
     },
-    callbacks: () => ({}),
+    callbacks: (_conversation, track) => {
+      trackers.push(track);
+      return {};
+    },
     index: {
       register: (conversationId) => registered.push(conversationId),
       unregister: (conversationId) => unregistered.push(conversationId),
@@ -100,6 +113,10 @@ function harness() {
     setInstructions(next: string[]) {
       instructions = next;
     },
+    setCharter(next: typeof charter) {
+      charter = next;
+    },
+    trackers,
   };
 }
 
@@ -277,6 +294,38 @@ describe("runtime host", () => {
     await h.host.releaseAll();
     expect(h.created.map((r) => r.closed)).toEqual([true, true]);
     expect(h.unregistered.sort()).toEqual(["conv-1", "conv-2"]);
+  });
+
+  it("closes a runtime only once the work its callbacks started has finished", async () => {
+    const h = harness();
+    await h.host.obtain(conversation, sonnet);
+    let finish: () => void = () => {};
+    h.trackers[0]?.(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    let released = false;
+    const release = h.host.release("conv-1").then(() => {
+      released = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(released).toBe(false);
+    finish();
+    await release;
+    expect(released).toBe(true);
+  });
+
+  it("keeps the charter a runtime was created with past its close, until a new runtime replaces it", async () => {
+    const h = harness();
+    h.setCharter({ version: 4, eligible: true });
+    await h.host.obtain(conversation, sonnet);
+    await h.host.release("conv-1");
+    expect(h.host.alignment("conv-1")).toEqual({ version: 4, eligible: true });
+
+    h.setCharter({ version: 5, eligible: true });
+    await h.host.obtain(conversation, sonnet);
+    expect(h.host.alignment("conv-1")).toEqual({ version: 5, eligible: true });
   });
 
   it("persists the application baseline of every runtime it creates, including a mid-turn replacement", async () => {

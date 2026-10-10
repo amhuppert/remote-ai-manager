@@ -151,7 +151,7 @@ import {
   applyCapabilityCascadeAtTurnStart,
 } from "./pre-turn/capability-apply";
 import { recordSeenAlignmentVersion } from "@/lib/conversation-core/contributions/alignment-gate";
-import { createBackgroundTasksLostHandler } from "./pre-turn/background-tasks-lost";
+import { createBackgroundTasksLostHandler } from "@/lib/conversation-core/contributions/background-tasks-lost";
 
 import { wireTurnAbort } from "@/lib/conversation-core/turn/abort-wiring";
 import { createQueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";

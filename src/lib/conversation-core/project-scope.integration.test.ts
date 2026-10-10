@@ -25,6 +25,7 @@ const PROJECT = mkdtempSync(path.join(tmpdir(), "cc-core-project-root-"));
 const log = createCapturingLogger();
 
 const records: ConversationRecordPort = {
+  async recordSeenAlignment() {},
   async read() {
     return {
       agentBackend: "claude",
@@ -78,6 +79,7 @@ async function runProjectMessage() {
     instructions: async () => ({
       sessionInstructions: ["Work carefully."],
       alignmentVersion: null,
+      alignmentEligible: false,
     }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
     beginSeed: async () => ({ commit: async () => {} }),

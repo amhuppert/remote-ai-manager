@@ -63,6 +63,7 @@ afterEach(() => {
 
 /** The row's own fields come from the store; only what a turn reads to start is answered here. */
 const records: ConversationRecordPort = {
+  async recordSeenAlignment() {},
   async read() {
     return {
       agentBackend: "claude",
@@ -126,6 +127,7 @@ async function compose() {
     instructions: async () => ({
       sessionInstructions: ["Work carefully."],
       alignmentVersion: null,
+      alignmentEligible: false,
     }),
     tooling: async () => ({
       overrides: { portableMcp: DOCS_MCP, capabilities: SKILLS },

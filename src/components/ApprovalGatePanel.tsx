@@ -203,7 +203,7 @@ function CandidateState({
 }
 
 /** The frozen bytes themselves, under the state that vouches for them. */
-export function ScopedChangesSection({
+function ScopedChangesSection({
   ownedPaths,
   diff,
 }: {

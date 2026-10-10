@@ -60,12 +60,16 @@ export interface RuntimeHostDeps {
   ): Promise<{
     sessionInstructions: string[];
     alignmentVersion: number | null;
+    /** Whether the session charter applies to this runtime's turn (an attended session turn). */
+    alignmentEligible: boolean;
   }>;
   tooling(conversation: HostedConversation): Promise<ComposedTooling>;
   /** Every runtime created is seeded before it is handed out; a failure fails the creation. */
   beginSeed: RuntimeApplicationState["beginSeed"];
   callbacks(
     conversation: HostedConversation,
+    /** Keeps late work the runtime's callbacks start (notices, loss handling) open until the runtime closes. */
+    track: (work: Promise<void>) => void,
   ): Pick<
     ConversationBackendCreateInput,
     "onCostSettled" | "onBackgroundActivity" | "onBackgroundTasksLost"
@@ -95,6 +99,10 @@ export interface RuntimeHost {
   isLive(conversationId: string): boolean;
   /** The live runtime the conversation's running turn holds, or null. */
   runtime(conversationId: string): ConversationBackendRuntime | null;
+  /** The session charter the conversation's latest runtime was created with, and whether it applied to that runtime's turn. */
+  alignment(
+    conversationId: string,
+  ): { version: number | null; eligible: boolean } | null;
   /** Records unverified process cleanup; true the first time. Closing then fails and no new runtime starts. */
   recordCleanupFailure(
     conversationId: string,
@@ -120,6 +128,15 @@ interface Hosted {
  */
 export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
   const hosted = new Map<string, Hosted>();
+  /**
+   * The charter each conversation's latest runtime was created with. It
+   * outlives the runtime's close, so a turn whose acceptance bookkeeping
+   * overlaps a stop still knows what the agent received.
+   */
+  const charters = new Map<
+    string,
+    { version: number | null; eligible: boolean }
+  >();
 
   async function desiredFor(
     conversation: HostedConversation,
@@ -127,13 +144,13 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
   ): Promise<{
     desired: DesiredRuntimeConfiguration;
     sessionInstructions: string[];
+    alignment: { version: number | null; eligible: boolean };
   }> {
-    const { sessionInstructions, alignmentVersion } = await deps.instructions(
-      conversation,
-      requirements.instructionSelection,
-    );
+    const { sessionInstructions, alignmentVersion, alignmentEligible } =
+      await deps.instructions(conversation, requirements.instructionSelection);
     return {
       sessionInstructions,
+      alignment: { version: alignmentVersion, eligible: alignmentEligible },
       desired: {
         backend: conversation.backend,
         modelSelection: requirements.modelSelection,
@@ -149,7 +166,7 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
 
   async function create(entry: Hosted): Promise<ConversationBackendRuntime> {
     const { conversation, requirements, managed } = entry;
-    const { desired, sessionInstructions } = await desiredFor(
+    const { desired, sessionInstructions, alignment } = await desiredFor(
       conversation,
       requirements,
     );
@@ -187,9 +204,13 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       ...(requirements.fsWritePolicy !== undefined
         ? { fsWritePolicy: requirements.fsWritePolicy }
         : {}),
-      ...deps.callbacks(conversation),
+      ...deps.callbacks(conversation, (work) => {
+        // A failure is the work's own to report; tracking only holds the close open for it.
+        void managed.track(work).catch(() => {});
+      }),
     });
     managed.install(incarnation, runtime, desired, deps.index);
+    charters.set(conversation.conversationId, alignment);
     deps.log.info("conversation_core.runtime_created", {
       conversationId: conversation.conversationId,
       backend: conversation.backend,
@@ -245,6 +266,9 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       return create(entry);
     },
 
+    alignment(conversationId) {
+      return charters.get(conversationId) ?? null;
+    },
     runtime(conversationId) {
       const backend = hosted.get(conversationId)?.managed.backend ?? null;
       return backend?.status === "alive" ? backend : null;

@@ -90,6 +90,7 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
     ref: "sdk-1",
   };
   const records: ConversationRecordPort = {
+    async recordSeenAlignment() {},
     async read() {
       return {
         agentBackend: "claude",

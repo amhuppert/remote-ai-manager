@@ -59,13 +59,22 @@ export function prepareAcceptedNotepadReferences(
   };
 }
 
-export interface PassiveSubscriptionContext {
+/** A briefing one input carries (the passive briefing, or the runtime-recovery reminder). */
+export interface InputBriefing {
   block: string | null;
   onInputAccepted(): Promise<void>;
   markDispatched(): void;
   markDispatchFailure(error: unknown): void;
   finish(): Promise<void>;
 }
+
+export const inertBriefingContext: InputBriefing = {
+  block: null,
+  onInputAccepted: async () => {},
+  markDispatched() {},
+  markDispatchFailure() {},
+  finish: async () => {},
+};
 
 export async function preparePassiveSubscriptionContext(
   deps: PassiveSubscriptionContextDependencies | undefined,
@@ -76,20 +85,24 @@ export async function preparePassiveSubscriptionContext(
     providedNotepadContext?: readonly NotepadDeliveryRecord[];
   },
   ownReceipt: (finish: () => Promise<void>) => void,
-): Promise<PassiveSubscriptionContext> {
-  const inert: PassiveSubscriptionContext = {
-    block: null,
-    onInputAccepted: async () => {},
-    markDispatched() {},
-    markDispatchFailure() {},
-    finish: async () => {},
-  };
-  if (!deps || !input.eligible) return inert;
+): Promise<InputBriefing> {
+  if (!deps || !input.eligible) return inertBriefingContext;
   const briefing = await deps.prepareBriefing({
     recipient: input.recipient,
     attemptId: input.attemptId,
     providedNotepadContext: input.providedNotepadContext,
   });
+  return trackBriefingDelivery(briefing, ownReceipt);
+}
+
+/**
+ * A prepared briefing as one input carries it: what its sending showed decides
+ * how it settles when the input is not accepted (not sent, or uncertain).
+ */
+export function trackBriefingDelivery(
+  briefing: PreparedSubscriptionBriefing,
+  ownReceipt: (finish: () => Promise<void>) => void,
+): InputBriefing {
   let dispatched = false;
   let provenUndelivered = false;
   let finalized = false;

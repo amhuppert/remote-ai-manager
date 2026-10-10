@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import ApprovalGatePanel, {
-  ScopedChangesSection,
   type ApprovalScopedChanges,
   type ApprovalWording,
 } from "@/components/ApprovalGatePanel";
@@ -343,19 +342,6 @@ function ResultTab({ context }: { context: ContextInvocation }) {
           </div>
         )}
       </section>
-      {context.candidate?.status === "ready" ? (
-        <section className="flex flex-col gap-sm">
-          <PanelHeading>Candidate changes</PanelHeading>
-          <ScopedChangesSection
-            ownedPaths={
-              context.candidate.scope === "owned"
-                ? context.candidate.ownedPaths
-                : null
-            }
-            diff={context.candidate.diff}
-          />
-        </section>
-      ) : null}
       <section className="flex flex-col gap-sm">
         <PanelHeading count={context.inputs.length}>Inputs</PanelHeading>
         {context.inputs.length === 0 ? (

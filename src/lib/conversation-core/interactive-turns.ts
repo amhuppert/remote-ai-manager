@@ -86,7 +86,7 @@ export interface DebugVerificationStart {
 export interface InteractiveTurnDeps {
   engine: Pick<TurnEngine, "runTurn">;
   records: ConversationRecordPort;
-  host: Pick<RuntimeHost, "release" | "isLive" | "runtime">;
+  host: Pick<RuntimeHost, "release" | "isLive" | "runtime" | "alignment">;
   /** Where the conversation's agent works: its session's worktree, or the project root for a project conversation. */
   worktreeOf(projectPath: string, target: ConversationTarget): Promise<string>;
   /** Explicit, else the conversation's last used, else the backend default; admitted for the project. */
@@ -265,7 +265,14 @@ function asError(error: unknown): Error {
 }
 
 /** A person's messages to an enrolled conversation, and the receipts their turns still owe. */
+/** A conversation's running turn: whether a person attends it, and the message it delivers. */
+export interface RunningTurnDescription {
+  autonomous: boolean;
+  originMessageId: string | null;
+}
+
 export interface InteractiveTurns extends UserTurnPort {
+  describeRunning(conversationId: string): RunningTurnDescription | null;
   /** Whether the conversation's running turn could take a queued message now. */
   acceptsLive(conversationId: string): Promise<boolean>;
   /**
@@ -303,6 +310,8 @@ export function createInteractiveTurns(
   const settling = new Map<string, Promise<void>>();
   /** Each conversation's running turn, which live input joins. */
   const running = new Map<string, RunningTurn>();
+  /** What each running turn is, from its start: whether a person attends it, and the delivery it came from. */
+  const described = new Map<string, RunningTurnDescription>();
 
   function retain(conversationId: string, input: PreparedTurnInput): void {
     deps.log.error("conversation_core.input_receipts_unsettled", {
@@ -473,6 +482,9 @@ export function createInteractiveTurns(
   }
 
   return {
+    describeRunning(conversationId) {
+      return described.get(conversationId) ?? null;
+    },
     settleRetained,
     acceptsLive,
     async deliverLive(identity, request) {
@@ -555,6 +567,7 @@ export function createInteractiveTurns(
         storeSessionName: enrollment.sessionName,
         conversationId,
       };
+      const autonomous = request.autonomous === true;
       const delivery = request.queuedDelivery;
       /** The queue's side of this turn, once the input it delivers is known. */
       let accounting: QueuedDeliveryAccounting | null = null;
@@ -586,8 +599,12 @@ export function createInteractiveTurns(
           debugMode === null
             ? undefined
             : resolveDebugOutputFormat(debugMode.phase);
-        const recorded = await runRecordedTurn(deps, identity, "user", () =>
-          runMessage(row, debugMode, outputFormat),
+        // An unattended turn keeps out of the person's bookkeeping, and `cctl ask` refuses it, as on the actor.
+        const recorded = await runRecordedTurn(
+          deps,
+          identity,
+          autonomous ? "workflow" : "user",
+          () => runMessage(row, debugMode, outputFormat),
         );
         const { outcome, debug } = recorded;
         ran = outcome;
@@ -697,14 +714,15 @@ export function createInteractiveTurns(
           projectName,
           storeSessionName: enrollment.sessionName,
         };
+        // One id for the message: the transcript entry carries it, and the running turn reports it as its origin.
         const messageId =
           delivery === undefined
-            ? undefined
+            ? attemptId
             : (delivery.subscriptionBatchId ??
               delivery.messageIds[0] ??
               delivery.deliveryAttemptId);
         const userEntry: TranscriptEntry = {
-          ...(messageId !== undefined ? { id: messageId } : {}),
+          id: messageId,
           timestamp: new Date().toISOString(),
           type: "user",
           role: "user",
@@ -719,7 +737,7 @@ export function createInteractiveTurns(
               }
             : {}),
         };
-        if (delivery !== undefined && messageId !== undefined) {
+        if (delivery !== undefined) {
           // The queue owns a delivered batch's content until the backend accepts it.
           accounting = deps.queuedDelivery({
             identity,
@@ -778,6 +796,14 @@ export function createInteractiveTurns(
           settling: false,
           deliveries: new Set(),
         };
+        described.set(conversationId, {
+          autonomous,
+          originMessageId: messageId,
+        });
+        /** The charter the agent received with this turn's input. */
+        const received: {
+          charter: ReturnType<InteractiveTurnDeps["host"]["alignment"]>;
+        } = { charter: null };
         try {
           // Durable before the provider is called: a crash from here leaves an attempt that may have
           // run, distinguishable from one that never did.
@@ -815,18 +841,28 @@ export function createInteractiveTurns(
             },
             requirements: {
               modelSelection,
-              instructionSelection: { autonomous: false },
+              instructionSelection: { autonomous },
             },
-            onUserQuestion: (questions, questionSignal) =>
-              deps.requestUserQuestion(
-                {
-                  projectPath: enrollment.projectPath,
-                  sessionName: enrollment.sessionName,
-                  conversationId,
-                },
-                questions,
-                questionSignal,
-              ),
+            // An autonomous turn has no person to ask.
+            ...(autonomous
+              ? {}
+              : {
+                  onUserQuestion: (
+                    questions: Parameters<
+                      InteractiveTurnDeps["requestUserQuestion"]
+                    >[1],
+                    questionSignal: AbortSignal,
+                  ) =>
+                    deps.requestUserQuestion(
+                      {
+                        projectPath: enrollment.projectPath,
+                        sessionName: enrollment.sessionName,
+                        conversationId,
+                      },
+                      questions,
+                      questionSignal,
+                    ),
+                }),
             broadcast,
             promptText: prepared.dispatchPromptText,
             userPromptText: prepared.userPromptText,
@@ -842,7 +878,7 @@ export function createInteractiveTurns(
             },
             userEntry: owned === null ? userEntry : null,
             writeCapability: "write_capable",
-            autonomous: false,
+            autonomous,
             waitForBackgroundTasks: false,
             async onBackendInit(ref) {
               currentRef = ref;
@@ -865,6 +901,8 @@ export function createInteractiveTurns(
                   stream?.emit("error", { message: event.message });
                   break;
                 case "input_accepted":
+                  // The charter the agent received: the runtime that took this input was created with it.
+                  received.charter = deps.host.alignment(conversationId);
                   // Never throws: a receipt that cannot be written stays owned, and the turn goes on.
                   await prepared.accepted(currentRef);
                   if (!turn.settling) running.set(conversationId, turn);
@@ -877,8 +915,19 @@ export function createInteractiveTurns(
           });
           if (debugMode !== null)
             await recordDebugReport(turnOutcome, debugMode, broadcast);
+          // Captured on acceptance: the agent received this charter, however the turn ended.
+          if (received.charter?.eligible === true)
+            await deps.records
+              .recordSeenAlignment(identity, received.charter.version)
+              .catch((error: unknown) =>
+                deps.log.warn("conversation_core.seen_alignment_failed", {
+                  conversationId,
+                  error: getErrorMessage(error),
+                }),
+              );
           return turnOutcome;
         } finally {
+          described.delete(conversationId);
           turn.settling = true;
           if (running.get(conversationId) === turn)
             running.delete(conversationId);

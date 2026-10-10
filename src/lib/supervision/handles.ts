@@ -10,6 +10,7 @@ import {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { QuestionCommand } from "@/lib/conversation-core/turn/types";
 import type { CoreTurnRuntime } from "@/lib/conversation-core/production-engine";
+import type { RunningTurnDescription } from "@/lib/conversation-core/interactive-turns";
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
 import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
 import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
@@ -27,6 +28,8 @@ import type { Supervision } from "./supervision";
 
 export const SUPERVISION_KEY = "__cc_run_supervision";
 export const CORE_TURN_RUNTIME_KEY = "__cc_core_turn_runtime";
+/** The core's turn engine once loaded, for readers that cannot wait on its load. */
+export const CORE_TURN_RUNTIME_READY_KEY = "__cc_core_turn_runtime_ready";
 
 /**
  * The composed supervision graph and the core's turn engine, when this process
@@ -153,6 +156,17 @@ export async function runCoreTask(input: {
     };
   }
   return supervision.core.runTask(input);
+}
+
+/** A core conversation's running turn, as alignment authoring and active waits read it; null when none runs. */
+export function describeCoreTurn(
+  conversationId: string,
+): RunningTurnDescription | null {
+  return (
+    getGlobalValue<CoreTurnRuntime>(
+      CORE_TURN_RUNTIME_READY_KEY,
+    )?.interactiveTurns.describeRunning(conversationId) ?? null
+  );
 }
 
 /** Whether a core conversation's running turn takes a queued message now. */

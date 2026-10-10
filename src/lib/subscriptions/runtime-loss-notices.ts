@@ -11,7 +11,7 @@ import type {
   SubscriptionServiceDeps,
 } from "./service";
 
-/** This operational context is admitted at runtime creation for every durable role. */
+/** This operational context is admitted for every durable role: at an actor runtime's creation, or at the head of a core turn's input. */
 export function isRuntimeLossNotice(
   delivery: Pick<SubscriptionDelivery, "recipient" | "source" | "fact">,
 ): boolean {
@@ -119,6 +119,9 @@ export function createRuntimeLossNotices(
         lines.set(delivery.id, line);
         chars += line.length + 1;
       }
+      // Most turns have nothing to recover; they write nothing.
+      if (lines.size === 0)
+        return { block: null, async onInputAccepted() {}, async finish() {} };
       const claimed = await deps.repo.claimRuntimeLossNotices(
         recipient,
         [...lines.keys()],

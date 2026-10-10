@@ -368,6 +368,10 @@ export interface ConversationManagerDependencies {
   ): Promise<boolean>;
   /** The checkpoint owner of core conversations; undefined while run supervision is not running. */
   coreCheckpoints?(): CoreConversationCheckpoints | undefined;
+  /** The running turn of a core conversation; null when none runs. */
+  describeCoreTurn?(
+    conversationId: string,
+  ): ActiveConversationTurnDescription | null;
   readSubscriptionWakeHold?(identity: {
     projectPath: string;
     sessionName: string;
@@ -555,6 +559,8 @@ export function createConversationManager(
     address: ConversationAddress,
   ): ActiveConversationTurnDescription | null {
     const identity = conversationStoreIdentity(address);
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true)
+      return deps.describeCoreTurn?.(identity.conversationId) ?? null;
     const runtime = deps.getRuntime(
       conversationRuntimeKey(
         identity.projectPath,

@@ -8,7 +8,6 @@ import {
   checkoutRun,
   noticeRunAwaitingApproval,
   owner,
-  uiCandidate,
 } from "../fixtures";
 import type { ContextDetail } from "@/components/runs/model";
 import { ContextInspector, type ContextActions } from "./ContextInspector";
@@ -152,14 +151,6 @@ describe("ContextInspector evidence", () => {
     });
     expect(screen.getByText("Keep the existing heading?")).toBeInTheDocument();
     expect(screen.getByText("Keep the old enum value?")).toBeInTheDocument();
-  });
-
-  it("shows the candidate's changes beside its result when the page has them", async () => {
-    const { user } = setup({ ...context("plan"), candidate: uiCandidate });
-    await user.click(screen.getByRole("tab", { name: "Result" }));
-    expect(
-      screen.getByText("src/checkout/ui/PaymentStep.tsx"),
-    ).toBeInTheDocument();
   });
 
   it("keeps the selected historical invocation when earlier passes are reordered", async () => {

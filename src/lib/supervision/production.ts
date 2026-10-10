@@ -59,6 +59,7 @@ import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import {
   composedSupervision,
   CORE_TURN_RUNTIME_KEY,
+  CORE_TURN_RUNTIME_READY_KEY,
   loadedCoreTurnRuntime,
   SUPERVISION_KEY,
 } from "./handles";
@@ -100,10 +101,15 @@ function coreTurnRuntime(): Promise<CoreTurnRuntime> {
     // Resolved when a cleanup turn ends: by then the supervision that owns debug mode is composed.
     startDebugVerification: (input) =>
       composedSupervision()?.debug.startVerification(input),
-  }).catch((error: unknown) => {
-    deleteGlobalValue(CORE_TURN_RUNTIME_KEY);
-    throw error;
-  });
+  })
+    .then((runtime) => {
+      setGlobalValue(CORE_TURN_RUNTIME_READY_KEY, runtime);
+      return runtime;
+    })
+    .catch((error: unknown) => {
+      deleteGlobalValue(CORE_TURN_RUNTIME_KEY);
+      throw error;
+    });
   setGlobalValue(CORE_TURN_RUNTIME_KEY, created);
   return created;
 }

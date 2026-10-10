@@ -8,6 +8,7 @@ import { buildDebugPromptContext } from "@/lib/workflows/debug/prompt-policy";
 import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/dependencies";
 import { prepareMemoryContext } from "@/lib/conversation-core/contributions/memory-context";
 import { prepareNotepadContext } from "@/lib/conversation-core/contributions/notepad-context";
+import { prepareRuntimeRecoveryContext } from "@/lib/conversation-core/contributions/runtime-recovery-context";
 import {
   preparePassiveSubscriptionContext,
   type PassiveSubscriptionContextDependencies,
@@ -47,7 +48,9 @@ export interface TurnInputDependencies {
   >;
   effects: Pick<
     ConversationTurnDependencies["effects"],
-    "recordNotepadDeliveries" | "recordMemoryIndexDeliveries"
+    | "recordNotepadDeliveries"
+    | "recordMemoryIndexDeliveries"
+    | "prepareRuntimeLossNotice"
   >;
   subscriptions?: PassiveSubscriptionContextDependencies;
   debug: Pick<ConversationTurnDependencies["debug"], "getDebugLogUrl">;
@@ -170,6 +173,13 @@ export async function prepareTurnInput(
     promptText: expanded,
   });
   const references = notepad.references;
+  // Prepared before the briefing claims its facts: a reminder that cannot be read fails the turn with nothing claimed.
+  // Its own attempt id is load-bearing: loss notices settle by attempt, so it must never share the briefing's.
+  const recovery = await prepareRuntimeRecoveryContext(deps.effects, {
+    recipient,
+    attemptId: `runtime-loss:${request.briefingAttemptId}`,
+    eligible: ordinary && execution.persistence === "durable",
+  });
   const passive = await preparePassiveSubscriptionContext(
     deps.subscriptions,
     {
@@ -188,6 +198,7 @@ export async function prepareTurnInput(
     read: (reference) => deps.context.readLiveReference(reference),
   });
   const blocks = {
+    runtimeRecoveryBlock: recovery.block,
     checkpointSeedBlock: checkpoint?.block ?? null,
     passiveBriefingBlock: passive.block,
     activeTicketBlock: ticket,
@@ -205,6 +216,15 @@ export async function prepareTurnInput(
     : undefined;
 
   const receipts: Receipt[] = [
+    ...(recovery.block !== null
+      ? [
+          {
+            name: "runtime_recovery",
+            required: true,
+            write: () => recovery.onInputAccepted(),
+          },
+        ]
+      : []),
     ...(references.length > 0
       ? [
           {
@@ -308,11 +328,13 @@ export async function prepareTurnInput(
     sending() {
       delivery.dispatched = true;
       delivery.provenUndelivered = false;
+      recovery.markDispatched();
       passive.markDispatched();
       checkpoint?.markDispatched();
     },
     failed(error) {
       delivery.provenUndelivered = isPromptNotDeliveredFailure(error);
+      recovery.markDispatchFailure(error);
       passive.markDispatchFailure(error);
       checkpoint?.markDispatchFailure(error);
     },
@@ -346,16 +368,21 @@ export async function prepareTurnInput(
     },
     async settle() {
       let settled = true;
-      /** The briefing settles by its own evidence: not sent, or held as uncertain. */
-      const finishBriefing = () =>
-        passive.finish().catch((error: unknown) => {
-          settled = false;
-          deps.log.warn("conversation_core.input_receipt_failed", {
-            conversationId,
-            receipt: "passive_briefing",
-            error: getErrorMessage(error),
+      /** The briefings settle by their own evidence: not sent, or held as uncertain. */
+      const finishBriefing = async () => {
+        for (const [name, briefing] of [
+          ["runtime_recovery", recovery],
+          ["passive_briefing", passive],
+        ] as const)
+          await briefing.finish().catch((error: unknown) => {
+            settled = false;
+            deps.log.warn("conversation_core.input_receipt_failed", {
+              conversationId,
+              receipt: name,
+              error: getErrorMessage(error),
+            });
           });
-        });
+      };
       if (delivery.accepted === null) {
         await finishBriefing();
       } else if (checkpoint === null) {

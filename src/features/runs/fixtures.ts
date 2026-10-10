@@ -134,7 +134,7 @@ const allDone = (approval = false): ContextStage[] =>
     approval,
   );
 
-export const uiCandidate: CandidateChanges = {
+const uiCandidate: CandidateChanges = {
   status: "ready",
   scope: "owned",
   ownedPaths: ["src/checkout/ui", "src/checkout/copy.ts"],

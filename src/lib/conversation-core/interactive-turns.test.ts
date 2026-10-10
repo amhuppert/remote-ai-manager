@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DebugModePhase, DebugModeState } from "@/lib/debug-log/schemas";
 import type { DebugFinalization } from "@/lib/workflows/debug/finalization";
 import { resolveDebugOutputFormat } from "@/lib/workflows/debug/prompt-policy";
@@ -109,6 +109,8 @@ function harness(
   let settledDebug: DebugFinalization | null = null;
   /** The runtime the running turn holds, as the host would hand it out. */
   let runtime: ConversationBackendRuntime | null = null;
+  /** The charter the running turn's runtime was created with. */
+  let alignment: { version: number | null; eligible: boolean } | null = null;
   const records: ConversationRecordPort = {
     async read() {
       return row === null
@@ -143,6 +145,9 @@ function harness(
     async adoptBackend(_identity, backend) {
       events.push(`adopt:${backend}`);
     },
+    async recordSeenAlignment(_identity, version) {
+      events.push(`seen-alignment:${version}`);
+    },
     async admitProfile() {
       events.push("admit-profile");
       return {
@@ -166,6 +171,7 @@ function harness(
       },
       isLive: () => false,
       runtime: () => runtime,
+      alignment: () => alignment,
     },
     async worktreeOf(projectPath, target) {
       worktreeTargets.push(target);
@@ -306,6 +312,9 @@ function harness(
     holdRuntime(held: ConversationBackendRuntime | null) {
       runtime = held;
     },
+    createdWithCharter(charter: typeof alignment) {
+      alignment = charter;
+    },
   };
 }
 
@@ -344,6 +353,11 @@ function realTurnInput(finished: string[] = []): TurnInputDependencies {
     effects: {
       recordNotepadDeliveries: async () => {},
       recordMemoryIndexDeliveries: async () => {},
+      prepareRuntimeLossNotice: async () => ({
+        block: null,
+        onInputAccepted: async () => {},
+        finish: async () => {},
+      }),
     },
     subscriptions: {
       prepareBriefing: async () => ({
@@ -1063,6 +1077,83 @@ describe("interactive turns", () => {
     expect(h.turns[0]?.requirements.instructionSelection).toEqual({
       autonomous: false,
     });
+  });
+
+  it("runs an autonomous turn on autonomous instructions, asking the person nothing", async () => {
+    const h = harness(async () => completed());
+    await h.run(message({ autonomous: true }));
+    expect(h.turns[0]?.requirements.instructionSelection).toEqual({
+      autonomous: true,
+    });
+    expect(h.turns[0]?.onUserQuestion).toBeUndefined();
+  });
+
+  it("keeps an autonomous turn out of the person's bookkeeping: it begins and settles as unattended work", async () => {
+    const h = harness(async () => completed());
+    await h.run(message({ autonomous: true }));
+    expect(h.events).toContain("begin:workflow");
+    expect(
+      h.events.some(
+        (event) => event.startsWith("settle:") && event.endsWith(":workflow"),
+      ),
+    ).toBe(true);
+  });
+
+  it("names a direct message's transcript entry with the origin its running turn reports", async () => {
+    let origin: string | null = null;
+    const h = harness(async () => {
+      origin = h.port.describeRunning("conv-1")?.originMessageId ?? null;
+      return completed();
+    });
+    await h.run(message());
+    expect(origin).not.toBeNull();
+    expect(h.turns[0]?.userEntry?.id).toBe(origin);
+  });
+
+  it("describes the turn it is running: whether it is autonomous, and the delivery it came from", async () => {
+    let finish: () => void = () => {};
+    const h = harness(async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return completed();
+    });
+    expect(h.port.describeRunning("conv-1")).toBeNull();
+    const running = h.run({
+      ...queued("Wake"),
+      queuedDelivery: {
+        messageIds: ["q-1"],
+        deliveryAttemptId: "att-1",
+        subscriptionBatchId: "batch-1",
+      },
+    });
+    await vi.waitFor(() =>
+      expect(h.port.describeRunning("conv-1")).toEqual({
+        autonomous: false,
+        originMessageId: "batch-1",
+      }),
+    );
+    finish();
+    await running;
+    expect(h.port.describeRunning("conv-1")).toBeNull();
+  });
+
+  it("records the charter version an attended turn ran with, and none for a turn the charter does not apply to", async () => {
+    const accepting = async (turn: TurnRequest) => {
+      await turn.onEvent?.({ type: "input_accepted" });
+      return completed();
+    };
+    const h = harness(accepting);
+    h.createdWithCharter({ version: 3, eligible: true });
+    await h.run(message());
+    expect(h.events).toContain("seen-alignment:3");
+
+    const unattended = harness(accepting);
+    unattended.createdWithCharter({ version: 3, eligible: false });
+    await unattended.run(message({ autonomous: true }));
+    expect(
+      unattended.events.some((event) => event.startsWith("seen-alignment")),
+    ).toBe(false);
   });
 
   it("names a conversation from its first message", async () => {

@@ -22,9 +22,15 @@ const notepad: NotepadInjectionSource = {
 
 /** Records each write in order; a named write can be made to fail. */
 function harness(
-  options: { failing?: Set<string>; briefing?: string | null } = {},
+  options: {
+    failing?: Set<string>;
+    briefing?: string | null;
+    recovery?: string | null;
+    recoveryFails?: boolean;
+  } = {},
 ) {
   const calls: string[] = [];
+  const claimed = { briefing: false };
   const failing = options.failing ?? new Set<string>();
   const write = async (name: string) => {
     calls.push(name);
@@ -54,9 +60,22 @@ function harness(
     effects: {
       recordNotepadDeliveries: () => write("notepad_deliveries"),
       recordMemoryIndexDeliveries: () => write("memory"),
+      prepareRuntimeLossNotice: async () => {
+        if (options.recoveryFails) throw new Error("notices unreadable");
+        return {
+          block: options.recovery ?? null,
+          onInputAccepted: () => write("recovery"),
+          async finish(settled) {
+            calls.push(`recovery_finish:${settled?.disposition ?? "accepted"}`);
+          },
+        };
+      },
     },
     subscriptions: {
-      prepareBriefing: async () => briefing,
+      prepareBriefing: async () => {
+        claimed.briefing = true;
+        return briefing;
+      },
       recordAcceptedNotepadReferences: () => write("notepad_follows"),
     },
     debug: { getDebugLogUrl: () => "http://debug" },
@@ -89,7 +108,7 @@ function harness(
     release: () => write("release"),
     ...overrides,
   });
-  return { deps, calls, request };
+  return { deps, calls, request, claimed };
 }
 
 describe("turn input", () => {
@@ -170,6 +189,48 @@ describe("turn input", () => {
     await sent.settle();
     expect(unknown.calls).toEqual(["passive_finish:uncertain"]);
     expect(classifyDelivery(sent.delivery)).toBe("uncertain");
+  });
+
+  it("tells the agent first that its previous runtime's background tasks ended, and settles that reminder with the input", async () => {
+    const h = harness({ recovery: "<runtime_recovery/>" });
+    const turn = await prepareTurnInput(h.deps, h.request());
+    expect(turn.promptText.startsWith("<runtime_recovery/>")).toBe(true);
+    turn.sending();
+    await turn.accepted({ backend: "claude", ref: "s-1" });
+    expect(h.calls).toEqual([
+      "archive",
+      "recovery",
+      "notepad_deliveries",
+      "passive",
+      "notepad_follows",
+      "memory",
+      "release",
+    ]);
+
+    const unsent = harness({ recovery: "<runtime_recovery/>" });
+    const refused = await prepareTurnInput(unsent.deps, unsent.request());
+    refused.sending();
+    refused.failed(markPromptNotDelivered(new Error("Refused")));
+    await refused.settle();
+    expect(unsent.calls).toEqual([
+      "recovery_finish:not_sent",
+      "passive_finish:not_sent",
+    ]);
+
+    const live = harness({ recovery: "<runtime_recovery/>" });
+    const delivery = await prepareTurnInput(
+      live.deps,
+      live.request({ mode: "live", briefingAttemptId: "delivery-1" }),
+    );
+    expect(delivery.promptText).not.toContain("<runtime_recovery/>");
+  });
+
+  it("claims no briefing for a turn whose recovery reminder cannot be read", async () => {
+    const h = harness({ recoveryFails: true });
+    await expect(prepareTurnInput(h.deps, h.request())).rejects.toThrow(
+      "notices unreadable",
+    );
+    expect(h.claimed.briefing).toBe(false);
   });
 
   it("settles a checkpoint input accepted without a reference: the seed's reconciliation owns it, the briefing is uncertain", async () => {

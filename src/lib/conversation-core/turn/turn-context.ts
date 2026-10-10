@@ -22,14 +22,21 @@ export interface PreparedTurnContribution {
  * directly below the ticket block so the artifact being worked on reads
  * before the memory about it. Transient like the rest, never baked in.
  *
+ * `runtimeRecoveryBlock` comes first when present: the previous runtime ended
+ * with background tasks still running, which the agent must hear before
+ * anything it might otherwise wait on.
+ *
  * `checkpointSeedBlock` is the frozen CC checkpoint a fresh runtime is seeded
  * from, delivered exactly once on the first ordinary turn after readiness. It
- * leads everything else because it IS the conversation's prior history — the
- * transient blocks describe the present — and it is passed through byte for
- * byte: the saved payload's hash is what acceptance is later recorded against.
+ * leads the conversation's own context because it IS the conversation's prior
+ * history — the transient blocks describe the present — and it is passed
+ * through byte for byte: the saved payload's hash is what acceptance is later
+ * recorded against.
  */
 export function assembleTurnPrompt(input: {
   userText: string;
+  /** The previous runtime's background tasks ended with it: said first, once. */
+  runtimeRecoveryBlock?: string | null;
   debugContext: string | null;
   activeTicketBlock: string | null;
   memoryIndexBlock: string | null;
@@ -37,6 +44,7 @@ export function assembleTurnPrompt(input: {
   passiveBriefingBlock?: string | null;
 }): string {
   return [
+    input.runtimeRecoveryBlock,
     input.checkpointSeedBlock,
     input.passiveBriefingBlock,
     input.activeTicketBlock,

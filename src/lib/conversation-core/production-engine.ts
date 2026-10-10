@@ -17,6 +17,7 @@ import {
   getSession,
   mutateConversation,
 } from "@/lib/state-store";
+import { createBackgroundTasksLostHandler } from "@/lib/conversation-core/contributions/background-tasks-lost";
 import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
 import {
   resolveBackendStallTimeoutMs,
@@ -114,6 +115,7 @@ export async function createProductionTurnRuntime(options: {
       return {
         sessionInstructions: prepared.sessionInstructions,
         alignmentVersion: prepared.alignmentVersion,
+        alignmentEligible: prepared.alignmentEligible,
       };
     },
     async tooling(conversation) {
@@ -157,7 +159,7 @@ export async function createProductionTurnRuntime(options: {
       };
     },
     beginSeed: applicationState.beginSeed,
-    callbacks(conversation) {
+    callbacks(conversation, track) {
       const storeSessionName = conversationTargetStoreSessionName(
         conversation.target,
       );
@@ -201,33 +203,34 @@ export async function createProductionTurnRuntime(options: {
             },
             null,
           );
-          const summary = info.tasks
-            .map((task) =>
-              task.description !== null
-                ? `${task.taskId} (${task.description})`
-                : task.taskId,
-            )
-            .join(", ");
-          log.warn("conversation_core.background_tasks_lost", {
-            conversationId: conversation.conversationId,
-            reason: info.reason,
-            taskCount: info.tasks.length,
-          });
-          void deps.transcript.safeAppendTranscriptEntry(
-            conversation.conversationId,
+          // The person reads it in the transcript; an ordinary conversation's agent hears it at its
+          // next turn's head (a seat's work orders carry no such reminder, so it records none).
+          const ordinary =
+            conversation.executionClass === "ordinary-conversation";
+          const surfaced = createBackgroundTasksLostHandler(
             {
-              timestamp: new Date().toISOString(),
-              type: "notice",
-              role: "notice",
-              content: [
-                {
-                  type: "text",
-                  text: `${info.tasks.length} background task(s) ended with the agent session (${info.reason}): ${summary}.`,
-                },
-              ],
+              recordRuntimeLossNotice: ordinary
+                ? deps.effects.recordRuntimeLossNotice
+                : async () => false,
+              log,
             },
-            { projectName: conversation.projectName, storeSessionName },
-          );
+            {
+              projectPath: conversation.projectPath,
+              sessionName: storeSessionName,
+              conversationId: conversation.conversationId,
+              appendTranscriptEntry: (conversationId, entry) =>
+                deps.transcript.safeAppendTranscriptEntry(
+                  conversationId,
+                  entry,
+                  {
+                    projectName: conversation.projectName,
+                    storeSessionName,
+                  },
+                ),
+            },
+          )(info);
+          // Its writes finish before the runtime counts as closed, as the actor's do.
+          track(surfaced);
         },
         onBackgroundActivity(activity) {
           // A background task's progress after the agent's own output: the turn still works.

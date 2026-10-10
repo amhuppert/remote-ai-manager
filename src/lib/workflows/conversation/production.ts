@@ -23,6 +23,7 @@ import {
   coreDebugCommand,
   coreOwnsConversation,
   coreQuestionCommand,
+  describeCoreTurn,
   drainCoreConversation,
   runCoreTask,
   retireCoreConversation,
@@ -154,6 +155,7 @@ export function createProductionConversationManagerDependencies(): ConversationM
     coreQuestionCommand,
     coreDebugCommand,
     coreCheckpoints,
+    describeCoreTurn,
     runCoreTask,
     readSubscriptionWakeHold: createSubscriptionWakeAdmissionReader({
       async isBatchCurrent(batchId) {

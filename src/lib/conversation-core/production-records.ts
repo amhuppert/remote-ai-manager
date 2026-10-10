@@ -1,3 +1,4 @@
+import { recordSeenAlignmentVersion } from "@/lib/conversation-core/contributions/alignment-gate";
 import { dispatchPushForConversationStatus } from "@/lib/push-notification/dispatcher";
 import {
   projectConversationTarget,
@@ -282,6 +283,17 @@ export function createProductionConversationRecords(
         identity.conversationId,
         "conversation-core.backend.adopt",
         (row) => applyBackendAdoption(row, backend),
+      );
+    },
+    async recordSeenAlignment(identity, version) {
+      await recordSeenAlignmentVersion(
+        { mutateConversation: rows.mutateConversation },
+        {
+          projectPath: identity.projectPath,
+          sessionName: identity.storeSessionName,
+          conversationId: identity.conversationId,
+          seenAlignmentVersion: version,
+        },
       );
     },
     async recordContinuity(identity, ref) {

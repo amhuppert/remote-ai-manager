@@ -141,6 +141,7 @@ function reloaded() {
 /** The conversation row as a core turn reads it and records its continuity; the rest of its bookkeeping is inert here. */
 function rowRecords(): ConversationRecordPort {
   return {
+    async recordSeenAlignment() {},
     async read() {
       const row = await fixture.store.getConversation(PROJECT, SESSION, CHAT);
       return row === null
@@ -228,6 +229,7 @@ function harness(
     instructions: async () => ({
       sessionInstructions: ["Work carefully."],
       alignmentVersion: null,
+      alignmentEligible: false,
     }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
     beginSeed: async () => ({ commit: async () => {} }),

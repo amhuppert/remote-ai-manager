@@ -80,6 +80,8 @@ export const userTurnRequestSchema = z
     inputOrigin: z.enum(["user", "generated"]),
     /** Rows of the conversation's message queue this turn delivers; the queue owns them until accepted. */
     queuedDelivery: queuedDeliveryMetadataSchema.optional(),
+    /** Run with no person attending (an optimistic session's kickoff): it asks nothing and the charter does not apply. */
+    autonomous: z.boolean().optional(),
   })
   .strict()
   .refine(
