@@ -59,7 +59,9 @@ import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/messag
 import type {
   ConversationBackgroundActivity,
   ConversationState,
+  ForkedFrom,
 } from "@/lib/conversations/schemas";
+import type { CheckpointForkOrigin } from "@/lib/conversation-checkpoints/fork-schemas";
 import type { Logger } from "@/lib/logging";
 import type {
   TranscriptEntriesResult,
@@ -1318,11 +1320,12 @@ export interface CoreContinuation {
 }
 
 /**
- * A ready checkpoint's frozen seed, delivered by the conversation's next
- * message into a fresh runtime, or ordinary resume. A conversation the core
- * runs is never a fork (forks stay on the conversation actor), so neither the
- * synthetic fork seed nor a checkpoint fork's framing applies. Any other
- * active phase fails the turn: the core's holds admit no message under one.
+ * What the conversation's next message continues from (see
+ * `resolveContinuationSeed`): a ready checkpoint's frozen seed in a fresh
+ * runtime, framed as its source's history when the conversation is that
+ * checkpoint's fork; a fork's synthetic history; or ordinary resume. Any
+ * other active phase fails the turn: the core's holds admit no message under
+ * one.
  */
 export function createCheckpointContinuation(deps: {
   repo(): ConversationCheckpointsRepo;
@@ -1333,13 +1336,16 @@ export function createCheckpointContinuation(deps: {
   log: Logger;
 }): (input: {
   identity: ConversationIdentity;
+  /** The backend the message runs on. */
+  backend: AgentBackendId;
   row: {
-    agentBackend: AgentBackendId;
     backendRef: unknown;
     transcriptPath: string | null;
+    forkedFrom: ForkedFrom;
+    checkpointFork: CheckpointForkOrigin | undefined;
   };
 }) => Promise<CoreContinuation> {
-  return async ({ identity, row }) => {
+  return async ({ identity, backend, row }) => {
     const key = checkpointScopeKeyForStoreIdentity({
       projectPath: identity.projectPath,
       sessionName: identity.storeSessionName,
@@ -1362,13 +1368,18 @@ export function createCheckpointContinuation(deps: {
         key,
         checkpoint: checkpointActorProjection(active),
         sessionName: identity.storeSessionName,
-        agentBackend: row.agentBackend,
+        agentBackend: backend,
         backendRef: row.backendRef,
-        forkedFrom: null,
+        forkedFrom: row.forkedFrom,
         transcriptPath: row.transcriptPath,
       },
     );
     if (continuation.kind !== "checkpoint") return { continuation, seed: null };
+    // The fork's admission certified its backend for this seed when its first message was submitted.
+    const forkOrigin =
+      row.checkpointFork?.operationId === continuation.operationId
+        ? row.checkpointFork
+        : undefined;
     return {
       continuation,
       seed: prepareCheckpointSeed(
@@ -1380,6 +1391,7 @@ export function createCheckpointContinuation(deps: {
           key,
           operationId: continuation.operationId,
           payload: continuation.payload,
+          ...(forkOrigin !== undefined ? { forkOrigin } : {}),
           closeAttemptedRuntime: () => deps.release(identity.conversationId),
         },
       ),

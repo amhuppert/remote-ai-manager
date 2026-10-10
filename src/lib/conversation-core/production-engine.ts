@@ -293,6 +293,11 @@ export async function createProductionTurnRuntime(options: {
       now: () => new Date().toISOString(),
       log,
     }),
+    async admitCheckpointFork(identity, backend, explicit, isCurrent) {
+      const { admitCheckpointForkTurn } =
+        await import("@/lib/conversation-checkpoints/fork-production");
+      return admitCheckpointForkTurn(identity, backend, explicit, isCurrent);
+    },
     async resolveModelSelection({
       projectPath,
       backend,

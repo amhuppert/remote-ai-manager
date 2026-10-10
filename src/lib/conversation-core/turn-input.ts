@@ -14,6 +14,8 @@ import {
   type PassiveSubscriptionContextDependencies,
 } from "@/lib/conversation-core/contributions/passive-subscription-context";
 import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
+import { acknowledgeSyntheticForkSeed } from "@/lib/conversation-checkpoints/fork-seed";
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   assembleTurnPrompt,
   type TurnContextExecution,
@@ -51,6 +53,7 @@ export interface TurnInputDependencies {
     | "recordNotepadDeliveries"
     | "recordMemoryIndexDeliveries"
     | "prepareRuntimeLossNotice"
+    | "mutateConversation"
   >;
   subscriptions?: PassiveSubscriptionContextDependencies;
   debug: Pick<ConversationTurnDependencies["debug"], "getDebugLogUrl">;
@@ -68,6 +71,8 @@ export interface TurnInputRequest {
   runtimeCreatedWithoutResume?: boolean;
   /** Turn mode only: the ready checkpoint this turn delivers. */
   checkpoint?: PreparedCheckpointSeed | null;
+  /** Turn mode only: a fork's synthetic history, which this turn carries until the agent accepts it. */
+  forkSeed?: string | null;
   /** First once the input is accepted: keep it. */
   archive(): Promise<void>;
   /** Last once the input is accepted: consume the queued rows it came from. */
@@ -86,6 +91,12 @@ export interface PreparedTurnInput {
   failed(error: unknown): void;
   accepted(backendRef: AgentSessionRef | null): Promise<void>;
   backendInit(ref: AgentSessionRef): Promise<void>;
+  /**
+   * The session the turn ended on, kept for the next message: it names the
+   * session that took a fork's history when the backend named none while the
+   * turn ran. A checkpoint seed is not given it.
+   */
+  ended(backendRef: AgentSessionRef | null): Promise<void>;
   readonly delivery: InputDelivery;
   settle(): Promise<boolean>;
 }
@@ -117,6 +128,7 @@ export async function prepareTurnInput(
   const conversationId = target.conversationId;
   const ordinary = request.mode === "turn";
   const checkpoint = ordinary ? (request.checkpoint ?? null) : null;
+  const forkSeed = ordinary ? (request.forkSeed ?? null) : null;
   const recipient = { projectPath: execution.projectPath, conversationId };
 
   // The conversation's present, read once per turn; a live delivery joins a turn that already has it.
@@ -279,6 +291,36 @@ export async function prepareTurnInput(
     provenUndelivered: false,
   };
 
+  /** The agent session that took this input, once the backend has named it. */
+  let knownRef: AgentSessionRef | null = null;
+  let forkSeedAcknowledged = forkSeed === null;
+
+  /**
+   * A fork's history is acknowledged once the input is accepted and the
+   * session that took it is known, whichever comes last; a turn that never
+   * learns its session leaves the next message to carry the history again.
+   */
+  async function acknowledgeForkSeed(): Promise<void> {
+    if (forkSeedAcknowledged || forkSeed === null) return;
+    if (delivery.accepted === null || knownRef === null) return;
+    try {
+      await acknowledgeSyntheticForkSeed(deps.effects, {
+        projectPath: execution.projectPath,
+        sessionName: conversationTargetStoreSessionName(target),
+        conversationId,
+        seed: forkSeed,
+        backendRef: knownRef,
+      });
+      forkSeedAcknowledged = true;
+    } catch (error) {
+      deps.log.warn("conversation_core.input_receipt_failed", {
+        conversationId,
+        receipt: "fork_seed",
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   async function archiveOnce(): Promise<void> {
     if (archived) return;
     try {
@@ -342,8 +384,10 @@ export async function prepareTurnInput(
       // Accepted input was certainly sent, whatever the send observer saw.
       delivery.dispatched = true;
       delivery.accepted ??= { backendRef };
+      knownRef ??= backendRef;
       if (checkpoint === null) {
         await archiveOnce();
+        await acknowledgeForkSeed();
         await acknowledge();
         return;
       }
@@ -364,7 +408,13 @@ export async function prepareTurnInput(
         );
     },
     async backendInit(ref) {
+      knownRef = ref;
+      await acknowledgeForkSeed();
       await checkpoint?.onBackendInit(ref);
+    },
+    async ended(backendRef) {
+      knownRef ??= backendRef;
+      await acknowledgeForkSeed();
     },
     async settle() {
       let settled = true;
@@ -414,9 +464,11 @@ export async function prepareTurnInput(
         }
       }
       if (delivery.accepted === null) return settled;
+      await acknowledgeForkSeed();
       return (
         settled &&
         released &&
+        (forkSeedAcknowledged || knownRef === null) &&
         receipts.every((receipt) => !receipt.required || written.has(receipt))
       );
     },

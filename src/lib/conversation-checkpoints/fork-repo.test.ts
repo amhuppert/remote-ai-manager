@@ -176,6 +176,61 @@ async function source(
 describe.each(["session", "project"] as const)(
   "checkpoint fork persistence at %s scope",
   (scope) => {
+    it("places a fork on its source's engine before the fork exists", async () => {
+      const input = await source(scope);
+      const requestId = "34614a95-aac2-4314-bc69-cb889cfd207c";
+      const placed: Array<{ conversationId: string; rowExisted: boolean }> = [];
+      const service = createCheckpointForkService({
+        repo: () => repo,
+        load: async (_path, target) =>
+          fx.store.checkpointContinuation.find({
+            ...input.sourceKey,
+            conversationId: target.conversationId,
+          }),
+        admit: async (_path, _backend, selection) => selection,
+        resolveWork: async () => {},
+        profile: async () => NO_OP_SNAPSHOT_FIXTURE,
+        publish: () => {},
+        now: () => AT,
+        async enrollWithSource(placement) {
+          expect(placement).toMatchObject({
+            projectPath: PROJECT,
+            scope:
+              scope === "session"
+                ? { scope: "session", sessionName: SESSION }
+                : { scope: "project" },
+            sourceConversationId: "source",
+          });
+          placed.push({
+            conversationId: placement.conversationId,
+            rowExisted:
+              (await fx.store.checkpointContinuation.find({
+                ...input.sourceKey,
+                conversationId: placement.conversationId,
+              })) !== null,
+          });
+        },
+      });
+
+      await service.create({
+        projectPath: PROJECT,
+        source: input.origin.source,
+        operationId: input.sourceOperationId,
+        request: {
+          requestId,
+          name: "Next phase",
+          task: "",
+          relatedWork: null,
+          backend: "codex",
+          modelSelection: { modelId: "gpt-6-astra", parameters: {} },
+        },
+      });
+
+      expect(placed).toEqual([
+        { conversationId: requestId, rowExisted: false },
+      ]);
+    });
+
     it("persists a fork with no task or related work", async () => {
       const input = await source(scope);
       const parsed = checkpointForkRequestSchema.safeParse({
@@ -200,6 +255,7 @@ describe.each(["session", "project"] as const)(
         profile: async () => NO_OP_SNAPSHOT_FIXTURE,
         publish: () => {},
         now: () => AT,
+        enrollWithSource: async () => {},
       });
       const request = {
         projectPath: PROJECT,
@@ -234,6 +290,7 @@ describe.each(["session", "project"] as const)(
         profile: async () => NO_OP_SNAPSHOT_FIXTURE,
         publish: () => {},
         now: () => AT,
+        enrollWithSource: async () => {},
       });
       const result = await service.create({
         projectPath: PROJECT,
@@ -293,6 +350,7 @@ describe.each(["session", "project"] as const)(
         profile: async () => NO_OP_SNAPSHOT_FIXTURE,
         publish: () => {},
         now: () => AT,
+        enrollWithSource: async () => {},
       });
       const request = {
         requestId: "34614a95-aac2-4314-bc69-cb889cfd207c",
@@ -406,6 +464,7 @@ describe.each(["session", "project"] as const)(
         profile: async () => NO_OP_SNAPSHOT_FIXTURE,
         publish: () => {},
         now: () => AT,
+        enrollWithSource: async () => {},
       });
       const invocation = {
         projectPath: PROJECT,

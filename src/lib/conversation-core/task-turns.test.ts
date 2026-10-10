@@ -73,6 +73,8 @@ function harness(
         debugMode,
         pendingQuestionId: null,
         owner: null,
+        forkedFrom: null,
+        checkpointFork: undefined,
       };
     },
     async beginTurn(_identity, source) {

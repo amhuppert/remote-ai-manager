@@ -43,6 +43,7 @@ export type ConversationRow = Pick<
   | "agentBackend"
   | "debugMode"
   | "turnGeneration"
+  | "checkpointFork"
 >;
 
 /**
@@ -173,12 +174,17 @@ export function runtimeDebugMode(
 /**
  * The backend is fixed once the conversation has run, or carries a
  * continuation (a fork's, before its own first prompt): only that backend can
- * resume it.
+ * resume it. A checkpoint fork's is fixed by its first submission, even one
+ * that never ran.
  */
 export function backendLocked(
-  row: Pick<ConversationRow, "promptCount" | "backendRef">,
+  row: Pick<ConversationRow, "promptCount" | "backendRef" | "checkpointFork">,
 ): boolean {
-  return row.promptCount > 0 || row.backendRef !== null;
+  return (
+    row.promptCount > 0 ||
+    row.backendRef !== null ||
+    row.checkpointFork?.submission !== undefined
+  );
 }
 
 /** The continuation a turn on `backend` resumes: the row's own, when it is that backend's. */
@@ -411,6 +417,10 @@ export interface ConversationRecordPort {
     pendingQuestionId: string | null;
     /** A collaboration that holds the conversation. */
     owner: ConversationState["owner"];
+    /** Where a fork came from: its synthetic history, until the agent accepts it. */
+    forkedFrom: ConversationState["forkedFrom"];
+    /** A checkpoint fork's origin: its first message carries the source's checkpoint. */
+    checkpointFork: ConversationState["checkpointFork"];
   } | null>;
   /** The core took up the conversation's next turn: running from now, though it may still wait for capacity. */
   claimTurn(identity: ConversationIdentity): Promise<void>;

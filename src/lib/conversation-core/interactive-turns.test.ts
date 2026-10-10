@@ -121,6 +121,8 @@ function harness(
             debugMode: null,
             pendingQuestionId: null,
             owner: null,
+            forkedFrom: null,
+            checkpointFork: undefined,
             ...row,
           };
     },
@@ -179,6 +181,7 @@ function harness(
         ? `${projectPath}/.worktrees/${target.sessionName}`
         : projectPath;
     },
+    admitCheckpointFork: async () => null,
     async resolveModelSelection(input) {
       selections.push(input);
       return input.explicit ?? { modelId: "opus", parameters: {} };
@@ -214,6 +217,7 @@ function harness(
           await request.release();
         },
         async backendInit() {},
+        async ended() {},
         async settle() {
           events.push("receipts-finished");
           return true;
@@ -353,6 +357,7 @@ function realTurnInput(finished: string[] = []): TurnInputDependencies {
     effects: {
       recordNotepadDeliveries: async () => {},
       recordMemoryIndexDeliveries: async () => {},
+      mutateConversation: async () => {},
       prepareRuntimeLossNotice: async () => ({
         block: null,
         onInputAccepted: async () => {},

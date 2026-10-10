@@ -100,6 +100,8 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
         debugMode: null,
         pendingQuestionId: null,
         owner: null,
+        forkedFrom: null,
+        checkpointFork: undefined,
       };
     },
     async beginTurn(identity, source) {

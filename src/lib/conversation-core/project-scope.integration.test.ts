@@ -35,6 +35,8 @@ const records: ConversationRecordPort = {
       debugMode: null,
       pendingQuestionId: null,
       owner: null,
+      forkedFrom: null,
+      checkpointFork: undefined,
     };
   },
   async claimTurn() {},
@@ -107,6 +109,7 @@ async function runProjectMessage() {
         throw new Error("a project conversation has no session worktree");
       return projectPath;
     },
+    admitCheckpointFork: async () => null,
     resolveModelSelection: async () => ({
       modelId: "sonnet",
       parameters: { effort: "medium" },

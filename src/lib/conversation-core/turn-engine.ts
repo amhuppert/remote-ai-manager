@@ -72,6 +72,8 @@ export interface TurnRequest {
   userPromptText?: string;
   /** Per-turn context a backend may deliver apart from the user's words. */
   promptContext?: string;
+  /** A fork's history, carried ahead of its first message until the agent accepts it. */
+  syntheticForkSeed?: string;
   /** Whether the provider send happened, for receipts that must know. */
   observe?: { sending(): void; failed(error: unknown): void };
   /**
@@ -383,6 +385,9 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
                 : {}),
               ...(request.promptContext !== undefined
                 ? { promptContext: request.promptContext }
+                : {}),
+              ...(request.syntheticForkSeed !== undefined
+                ? { syntheticForkSeed: request.syntheticForkSeed }
                 : {}),
               onEvent,
             }),

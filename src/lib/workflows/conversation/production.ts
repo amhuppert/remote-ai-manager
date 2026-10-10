@@ -1,4 +1,3 @@
-import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import {
   createSubscriptionWakeAdmissionReader,
@@ -321,29 +320,14 @@ export function createProductionConversationManagerDependencies(): ConversationM
       modelSelection,
       isCurrent,
     ) {
-      const { getConversation, mutateConversation } =
-        await import("@/lib/state-store");
-      const row = await getConversation(
-        identity.projectPath,
-        identity.sessionName,
-        identity.conversationId,
-      );
-      if (!row?.checkpointFork) return null;
-      const { admitCheckpointForkTurnSelection } =
+      const { admitCheckpointForkTurn } =
         await import("@/lib/conversation-checkpoints/fork-production");
-      const selection = await admitCheckpointForkTurnSelection({
-        projectPath: identity.projectPath,
-        conversation: row,
-        backend,
-        ...(modelSelection ? { modelSelection } : {}),
-      });
-      await admitCheckpointForkSubmission(
-        { mutateConversation },
+      return admitCheckpointForkTurn(
         identity,
         backend,
+        modelSelection ?? undefined,
         isCurrent,
       );
-      return selection;
     },
     queue: getConversationQueueDeps(),
     persistence: resolveConversationPersistenceAdapter,

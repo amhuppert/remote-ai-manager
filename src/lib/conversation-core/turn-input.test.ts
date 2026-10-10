@@ -60,6 +60,8 @@ function harness(
     effects: {
       recordNotepadDeliveries: () => write("notepad_deliveries"),
       recordMemoryIndexDeliveries: () => write("memory"),
+      mutateConversation: async (_project, _session, _conversation, label) =>
+        write(label === "acknowledgeSyntheticForkSeed" ? "fork_seed" : label),
       prepareRuntimeLossNotice: async () => {
         if (options.recoveryFails) throw new Error("notices unreadable");
         return {
@@ -110,6 +112,54 @@ function harness(
   });
   return { deps, calls, request, claimed };
 }
+
+describe("a fork's history in turn input", () => {
+  it("acknowledges it after the input is kept and before the queue is released", async () => {
+    const h = harness();
+    const input = await prepareTurnInput(
+      h.deps,
+      h.request({ forkSeed: "Earlier history." }),
+    );
+    input.sending();
+    await input.accepted({ backend: "cursor", ref: "s-1" });
+
+    expect(h.calls.indexOf("archive")).toBeLessThan(
+      h.calls.indexOf("fork_seed"),
+    );
+    expect(h.calls.indexOf("fork_seed")).toBeLessThan(
+      h.calls.indexOf("release"),
+    );
+  });
+
+  it("acknowledges it against the session the turn ended on when the backend named none while it ran", async () => {
+    const h = harness();
+    const input = await prepareTurnInput(
+      h.deps,
+      h.request({ forkSeed: "Earlier history." }),
+    );
+    input.sending();
+    await input.accepted(null);
+    expect(h.calls).not.toContain("fork_seed");
+
+    await input.ended({ backend: "claude", ref: "s-9" });
+
+    expect(h.calls).toContain("fork_seed");
+    expect(await input.settle()).toBe(true);
+  });
+
+  it("does not acknowledge it for a turn whose input was never accepted", async () => {
+    const h = harness();
+    const input = await prepareTurnInput(
+      h.deps,
+      h.request({ forkSeed: "Earlier history." }),
+    );
+    input.sending();
+
+    await input.ended({ backend: "claude", ref: "s-9" });
+
+    expect(h.calls).not.toContain("fork_seed");
+  });
+});
 
 describe("turn input", () => {
   it("places a turn's contributions before the message, and a live delivery's briefing alone", async () => {

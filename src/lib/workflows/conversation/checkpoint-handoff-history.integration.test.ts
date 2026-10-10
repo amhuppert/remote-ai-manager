@@ -230,6 +230,7 @@ describe.each(["session", "project"] as const)(
             profile: async () => NO_OP_SNAPSHOT_FIXTURE,
             publish() {},
             now: () => new Date().toISOString(),
+            enrollWithSource: async () => {},
           });
           for (const backend of ["claude", "codex"] as const) {
             const modelSelection = {

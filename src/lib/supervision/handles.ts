@@ -17,6 +17,7 @@ import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
 import {
   storeSessionNameFromScopeRef,
   type ConversationScopeRef,
+  type ForkPlacement,
 } from "@/lib/conversations/conversation-target";
 import { getGlobalValue } from "@/lib/shared/global-singleton";
 import {
@@ -258,5 +259,15 @@ export function enrollInCore(input: {
     // The conversation's storage key (the project sentinel at project scope), which every row write uses.
     sessionName: storeSessionNameFromScopeRef(input.scope),
     enrolledAt: new Date().toISOString(),
+  });
+}
+
+/** A fork runs where its source runs: enrolled with the core when the core runs its source. */
+export function enrollForkWithSource(input: ForkPlacement): void {
+  if (!coreOwnsConversation(input.sourceConversationId)) return;
+  enrollInCore({
+    conversationId: input.conversationId,
+    projectPath: input.projectPath,
+    scope: input.scope,
   });
 }

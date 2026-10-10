@@ -31,6 +31,7 @@ export function passthroughTurnInput(
       await request.release();
     },
     async backendInit() {},
+    async ended() {},
     settle: async () => true,
   };
 }

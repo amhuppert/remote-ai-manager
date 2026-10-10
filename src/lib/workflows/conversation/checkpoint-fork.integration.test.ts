@@ -139,6 +139,7 @@ async function fork(
     profile: async () => NO_OP_SNAPSHOT_FIXTURE,
     publish: () => {},
     now: () => new Date().toISOString(),
+    enrollWithSource: async () => {},
   });
   const created = await service.create({
     projectPath: h.scopeKey.projectPath,

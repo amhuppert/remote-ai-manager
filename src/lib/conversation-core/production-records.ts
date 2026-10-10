@@ -232,6 +232,8 @@ export function createProductionConversationRecords(
             debugMode: row.debugMode,
             pendingQuestionId: row.pendingQuestionId,
             owner: row.owner,
+            forkedFrom: row.forkedFrom,
+            checkpointFork: row.checkpointFork,
           };
     },
     async claimTurn(identity) {

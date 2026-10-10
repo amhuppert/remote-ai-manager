@@ -89,6 +89,21 @@ export interface InteractiveTurnDeps {
   host: Pick<RuntimeHost, "release" | "isLive" | "runtime" | "alignment">;
   /** Where the conversation's agent works: its session's worktree, or the project root for a project conversation. */
   worktreeOf(projectPath: string, target: ConversationTarget): Promise<string>;
+  /**
+   * A checkpoint fork's first message: its backend fixed by this submission,
+   * on the selection it was forked with unless the message names one; null
+   * for any other conversation.
+   */
+  admitCheckpointFork(
+    identity: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
+    backend: AgentBackendId,
+    explicit: BackendModelSelection | undefined,
+    isCurrent: () => boolean,
+  ): Promise<BackendModelSelection | null>;
   /** Explicit, else the conversation's last used, else the backend default; admitted for the project. */
   resolveModelSelection(input: {
     projectPath: string;
@@ -102,6 +117,7 @@ export interface InteractiveTurnDeps {
    */
   continuation(input: {
     identity: ConversationIdentity;
+    backend: AgentBackendId;
     row: ConversationRowRead;
   }): Promise<{
     continuation: ContinuationSeed;
@@ -582,6 +598,8 @@ export function createInteractiveTurns(
         message: "The turn did not run",
       };
       try {
+        // Inputs an earlier turn still owes settle first: what they record can decide this message's continuation.
+        await settleRetained(conversationId);
         const row = await deps.records.read(identity);
         if (row === null) {
           const failure = `Conversation ${conversationId} no longer exists`;
@@ -642,7 +660,6 @@ export function createInteractiveTurns(
         const projectName = deps.getProjectDisplayName(enrollment.projectPath);
         const backend = request.backend ?? row.agentBackend;
         const persistedRef = resumableRef(row, backend);
-        await settleRetained(conversationId);
         if (backend !== row.agentBackend) {
           // Decided here, inside the conversation's one running turn, so a
           // refused concurrent message can never change it.
@@ -666,12 +683,26 @@ export function createInteractiveTurns(
         }
         let modelSelection: BackendModelSelection;
         try {
-          modelSelection = await deps.resolveModelSelection({
-            projectPath: enrollment.projectPath,
-            backend,
-            transcriptPath: row.transcriptPath,
-            explicit: request.modelSelection ?? null,
-          });
+          // A checkpoint fork's first message is the fork's own; every later one is the conversation's.
+          modelSelection =
+            (row.checkpointFork !== undefined && row.promptCount === 0
+              ? await deps.admitCheckpointFork(
+                  {
+                    projectPath: enrollment.projectPath,
+                    sessionName: enrollment.sessionName,
+                    conversationId,
+                  },
+                  backend,
+                  request.modelSelection,
+                  () => !signal.aborted,
+                )
+              : null) ??
+            (await deps.resolveModelSelection({
+              projectPath: enrollment.projectPath,
+              backend,
+              transcriptPath: row.transcriptPath,
+              explicit: request.modelSelection ?? null,
+            }));
         } catch (error) {
           deps.log.warn("conversation_core.model_selection_refused", {
             conversationId,
@@ -685,7 +716,7 @@ export function createInteractiveTurns(
         }
         let resumed: Awaited<ReturnType<InteractiveTurnDeps["continuation"]>>;
         try {
-          resumed = await deps.continuation({ identity, row });
+          resumed = await deps.continuation({ identity, backend, row });
         } catch (error) {
           deps.log.error("conversation_core.continuation_unavailable", {
             conversationId,
@@ -698,6 +729,10 @@ export function createInteractiveTurns(
           };
         }
         const { seed } = resumed;
+        const forkSeed =
+          resumed.continuation.kind === "fork"
+            ? resumed.continuation.seed
+            : null;
         // A checkpoint retired the provider continuation: its seed starts a fresh runtime that resumes nothing.
         const resumeRef = seed === null ? persistedRef : null;
         if (seed !== null && deps.host.isLive(conversationId)) {
@@ -783,6 +818,7 @@ export function createInteractiveTurns(
             pendingCheckpoint: seed !== null,
           }),
           checkpoint: seed,
+          forkSeed,
           archive: () => owned?.appendAcceptedUserEntry() ?? Promise.resolve(),
           release: () => owned?.releaseAccepted() ?? Promise.resolve(),
         });
@@ -869,6 +905,7 @@ export function createInteractiveTurns(
             ...(prepared.promptContext !== undefined
               ? { promptContext: prepared.promptContext }
               : {}),
+            ...(forkSeed !== null ? { syntheticForkSeed: forkSeed } : {}),
             ...(input.imageRefs.length > 0
               ? { imageRefs: input.imageRefs }
               : {}),
@@ -882,14 +919,18 @@ export function createInteractiveTurns(
             waitForBackgroundTasks: false,
             async onBackendInit(ref) {
               currentRef = ref;
-              await deps.records.recordContinuity(identity, ref);
-              // A delivered seed's acceptance that cannot be recorded now is retried by its receipt.
-              await prepared.backendInit(ref).catch((error: unknown) =>
-                deps.log.warn("conversation_core.input_receipts_failed", {
-                  conversationId,
-                  error: getErrorMessage(error),
-                }),
-              );
+              try {
+                await deps.records.recordContinuity(identity, ref);
+              } finally {
+                // The input learns its session whether or not the row could record it.
+                // A delivered seed's acceptance that cannot be recorded now is retried by its receipt.
+                await prepared.backendInit(ref).catch((error: unknown) =>
+                  deps.log.warn("conversation_core.input_receipts_failed", {
+                    conversationId,
+                    error: getErrorMessage(error),
+                  }),
+                );
+              }
             },
             async onEvent(event) {
               switch (event.type) {
@@ -913,6 +954,12 @@ export function createInteractiveTurns(
             },
             signal,
           });
+          // A backend may name the session only in the turn's result (Claude, when a turn ends early).
+          if (
+            turnOutcome.kind === "call_result" &&
+            turnOutcome.result.continuationDisposition !== "clear"
+          )
+            await prepared.ended(turnOutcome.result.backendRef);
           if (debugMode !== null)
             await recordDebugReport(turnOutcome, debugMode, broadcast);
           // Captured on acceptance: the agent received this charter, however the turn ended.

@@ -73,6 +73,8 @@ const records: ConversationRecordPort = {
       debugMode: null,
       pendingQuestionId: null,
       owner: null,
+      forkedFrom: null,
+      checkpointFork: undefined,
     };
   },
   async claimTurn() {},
@@ -229,6 +231,7 @@ async function runInteractiveTurn(): Promise<unknown> {
     records,
     host,
     worktreeOf: async () => WORKTREE,
+    admitCheckpointFork: async () => null,
     resolveModelSelection: async () => ({
       modelId: "sonnet",
       parameters: { effort: "medium" },

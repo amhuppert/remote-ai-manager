@@ -4,6 +4,7 @@ import type {
   ConversationProfileAdmissionIdentity,
 } from "@/lib/conversations/profile-admission";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 import { createLogger } from "@/lib/logging";
 import { CheckpointForkError } from "./fork-service";
@@ -21,6 +22,26 @@ export function assertCheckpointForkBackend(
     );
   }
 }
+/**
+ * The selection a checkpoint fork's message asks for: the one it names, else
+ * on its first message the selection it was forked with. Its backend is fixed
+ * by its first submission.
+ */
+export function checkpointForkSelection(
+  conversation: ConversationState,
+  backend: AgentBackendId,
+  modelSelection: BackendModelSelection | undefined,
+): BackendModelSelection | undefined {
+  assertCheckpointForkBackend(conversation, backend);
+  const initial = conversation.checkpointFork?.initialSelection;
+  return (
+    modelSelection ??
+    (conversation.promptCount === 0 && initial?.backend === backend
+      ? initial.modelSelection
+      : undefined)
+  );
+}
+
 export function stampCheckpointForkSubmission(
   conversation: ConversationState,
   backend: AgentBackendId,
@@ -57,4 +78,50 @@ export async function admitCheckpointForkSubmission(
       ...identity,
       backend,
     });
+}
+
+/**
+ * A checkpoint fork's turn: its backend is fixed by its first submission, and
+ * its first message runs on the selection it was forked with unless the
+ * message names one. Null for a conversation that is not a checkpoint fork.
+ */
+export function createCheckpointForkTurnAdmission(deps: {
+  getConversation(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+  mutateConversation: ConversationProfileAdmissionDeps["mutateConversation"];
+  /** The backend's certified checkpoint fork continuation, and the selection configured models admit. */
+  admitSelection(
+    projectPath: string,
+    backend: AgentBackendId,
+    modelSelection?: BackendModelSelection,
+  ): Promise<BackendModelSelection>;
+}): (
+  identity: ConversationProfileAdmissionIdentity,
+  backend: AgentBackendId,
+  modelSelection: BackendModelSelection | undefined,
+  isCurrent?: () => boolean,
+) => Promise<BackendModelSelection | null> {
+  return async (identity, backend, modelSelection, isCurrent = () => true) => {
+    const conversation = await deps.getConversation(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+    );
+    if (!conversation?.checkpointFork) return null;
+    const selection = await deps.admitSelection(
+      identity.projectPath,
+      backend,
+      checkpointForkSelection(conversation, backend, modelSelection),
+    );
+    await admitCheckpointForkSubmission(
+      { mutateConversation: deps.mutateConversation },
+      identity,
+      backend,
+      isCurrent,
+    );
+    return selection;
+  };
 }
