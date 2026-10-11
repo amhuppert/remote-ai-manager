@@ -66,7 +66,6 @@ function handlers(
       }),
     createConversation: async () => conversation,
     deleteConversation: async () => {},
-    enrollInCore: () => {},
     renameConversation: async () => {},
     resolveConversationNamingContent: async () => null,
     resolveMessageNamingContent: async () => null,

@@ -325,12 +325,6 @@ function composeProductionSupervision(): Supervision {
         getConversationQueueDeps().runConversationCommand(input),
     },
     getProjectDisplayName,
-    readConversation: (enrollment) =>
-      getConversation(
-        enrollment.projectPath,
-        enrollment.sessionName,
-        enrollment.conversationId,
-      ),
     debug: {
       records: createProductionDebugRecords(),
       verify: (request) => runDebugCleanupVerification(request),
@@ -360,11 +354,11 @@ function composeProductionSupervision(): Supervision {
     },
     slots: { acquire: (label, signal) => acquireQuerySlot(label, { signal }) },
     evidence: createWorkspaceEvidence(),
-    async interactiveWorktree(enrollment) {
-      const scope = scopeRefFromStoreSessionName(enrollment.sessionName);
-      if (scope.scope === "project") return enrollment.projectPath;
+    async interactiveWorktree(place) {
+      const scope = scopeRefFromStoreSessionName(place.sessionName);
+      if (scope.scope === "project") return place.projectPath;
       return (
-        (await getSession(enrollment.projectPath, scope.sessionName))
+        (await getSession(place.projectPath, scope.sessionName))
           ?.worktreePath ?? null
       );
     },

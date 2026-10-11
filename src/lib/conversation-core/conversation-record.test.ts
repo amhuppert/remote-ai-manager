@@ -43,6 +43,7 @@ const row = (): ConversationRow => ({
   agentBackend: "claude",
   debugMode: null,
   turnGeneration: 3,
+  owner: null,
 });
 
 describe("conversation record", () => {
@@ -86,6 +87,7 @@ describe("conversation record", () => {
       agentBackend: "claude",
       debugMode: null,
       turnGeneration: 3,
+      owner: null,
     });
   });
 
@@ -400,6 +402,39 @@ describe("conversation record", () => {
         pendingQuestionId: null,
         pendingQuestions: null,
       });
+    });
+
+    it("clears a question asked inside a turn that a restart ended, though the stored row no longer shows the turn", () => {
+      // The turn's source is not stored, and a question parks the row in
+      // waiting_for_input: after a restart only the question's id is left.
+      const stored = row();
+      applyQuestionAsked(stored, { ...batch, questionId: "cc-in-turn-1" });
+      stored.activeTurnSource = null;
+
+      expect(applyTurnInterrupted(stored, "t")).toBe("awaiting");
+      expect(stored).toMatchObject({
+        pendingQuestionId: null,
+        pendingQuestions: null,
+      });
+
+      const durable = row();
+      applyQuestionAsked(durable, batch);
+      durable.activeTurnSource = null;
+      expect(applyTurnInterrupted(durable, "t")).toBeNull();
+      expect(durable.pendingQuestionId).toBe("q-1");
+    });
+
+    it("leaves a conversation a collaboration holds to the collaboration", () => {
+      const held = row();
+      held.activeTurnSource = null;
+      held.owner = {
+        kind: "collaboration",
+        workflowId: "wf-1",
+        attemptEpoch: 1,
+      };
+
+      expect(applyTurnInterrupted(held, "t")).toBeNull();
+      expect(held.status).toBe("running");
     });
 
     it("lets a person's new message supersede an unanswered question", () => {

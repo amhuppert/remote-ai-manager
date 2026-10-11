@@ -93,10 +93,10 @@ export interface TaskTurnDeps {
  */
 export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
   return {
-    async run({ conversationId, enrollment, request, attemptId, signal }) {
+    async run({ conversationId, place, request, attemptId, signal }) {
       const identity = {
-        projectPath: enrollment.projectPath,
-        storeSessionName: enrollment.sessionName,
+        projectPath: place.projectPath,
+        storeSessionName: place.sessionName,
         conversationId,
       };
       const row = await deps.records.read(identity);
@@ -122,15 +122,15 @@ export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
           outcome: { kind: "not_started", reason: "configuration", message },
         };
       }
-      const projectName = deps.getProjectDisplayName(enrollment.projectPath);
+      const projectName = deps.getProjectDisplayName(place.projectPath);
       const target = targetFromStoreSessionName(
         projectName,
-        enrollment.sessionName,
+        place.sessionName,
         conversationId,
       );
       const broadcast = {
         projectName,
-        storeSessionName: enrollment.sessionName,
+        storeSessionName: place.sessionName,
       };
 
       const lifetime = taskLifetime(signal, request.timeoutMs);
@@ -142,20 +142,17 @@ export function createTaskTurns(deps: TaskTurnDeps): TaskTurnPort {
           // Locked once any turn runs under it, as the conversation actor's admission locks it.
           await deps.records.admitProfile(identity);
           const settings = await deps.resolveSettings({
-            projectPath: enrollment.projectPath,
+            projectPath: place.projectPath,
             backend,
             modelSelection: request.modelSelection,
             timeoutMs: request.timeoutMs,
           });
           const prompt = await deps.preparePrompt({
-            projectPath: enrollment.projectPath,
+            projectPath: place.projectPath,
             target,
             promptText: request.promptText,
           });
-          const worktreePath = await deps.worktreeOf(
-            enrollment.projectPath,
-            target,
-          );
+          const worktreePath = await deps.worktreeOf(place.projectPath, target);
           const call = taskCall(deps, {
             request,
             backend,

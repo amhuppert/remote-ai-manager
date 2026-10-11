@@ -10,6 +10,8 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
+import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import {
   createWorkspaceAdmission,
   type WorkspaceAdmission,
@@ -306,13 +308,15 @@ beforeEach(() => {
   slotWaiters = [];
 });
 
-function enroll(conversationId = "conv-u"): void {
-  createConversationCoreRepo(fixture.db).enrollInteractive({
-    conversationId,
-    projectPath: "/repo",
-    sessionName: "session",
-    enrolledAt: now,
-  });
+/** An interactive conversation the core runs: a row in the session with no role. */
+function interactiveConversation(conversationId = "conv-u"): void {
+  fixture.seedProject("/repo");
+  fixture.seedSession("/repo", "session");
+  createConversationsRepo(fixture.db).upsert(
+    "/repo",
+    "session",
+    makeConversationState({ id: conversationId, role: null }),
+  );
 }
 afterEach(() => fixture.close());
 
@@ -414,9 +418,9 @@ describe("conversation core for seats", () => {
     });
   });
 
-  describe("a person's message to an enrolled conversation", () => {
+  describe("a person's message to a conversation the core runs", () => {
     it("runs with no permit or workspace grant, streams to its sender, and resolves the sender's wait", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore();
       const events: string[] = [];
       const sent = await core.sendUserMessage({
@@ -444,7 +448,7 @@ describe("conversation core for seats", () => {
     });
 
     it("waits for a Git operation on its worktree, then holds the worktree for interactive writes while it runs", async () => {
-      enroll();
+      interactiveConversation();
       const worktree = "/repo/.worktrees/session";
       const core = newCore({ interactiveWorktree: async () => worktree });
       const publication = admission.tryAcquire({
@@ -498,10 +502,10 @@ describe("conversation core for seats", () => {
         }),
       ).toMatchObject({
         kind: "refused",
-        code: "not_enrolled",
+        code: "not_core",
       });
 
-      enroll();
+      interactiveConversation();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const first = await core.sendUserMessage({
@@ -525,7 +529,7 @@ describe("conversation core for seats", () => {
     });
 
     it("stops the conversation's running turn on request", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore();
       nextUserResult = () =>
         new Promise((resolve) =>
@@ -547,8 +551,57 @@ describe("conversation core for seats", () => {
       expect(core.stopConversation("conv-u").requested).toBe(false);
     });
 
+    it("leaves a conversation to the core when its retirement's disposal fails, so its repair can still hold it", async () => {
+      interactiveConversation();
+      const core = newCore();
+
+      await expect(
+        core.retireConversation("conv-u", async () => {
+          throw new Error("the runtime could not be closed");
+        }),
+      ).rejects.toThrow("the runtime could not be closed");
+
+      const held = core.hold("conv-u", {
+        kind: "checkpoint",
+        requestId: "req-1",
+      });
+      expect(held.kind).toBe("held");
+      if (held.kind === "held") held.release();
+    });
+
+    it("reports a stop as failed when the stopped turn's agent processes could not be confirmed closed", async () => {
+      interactiveConversation();
+      const core = newCore();
+      nextUserResult = () =>
+        new Promise((resolve) =>
+          userCalls[userCalls.length - 1]?.signal.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                ...ok(),
+                status: "cancelled",
+                finalText: null,
+                runtimeUncollected: "the agent process did not exit",
+              }),
+          ),
+        );
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Long",
+        inputOrigin: "user",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const stop = core.stopConversation("conv-u");
+
+      expect(stop.requested).toBe(true);
+      await expect(stop.settled).rejects.toThrow(
+        /could not be confirmed stopped: the agent process did not exit/,
+      );
+    });
+
     it("keeps a message the person stopped before it started as the one a debug retry sends again", async () => {
-      enroll();
+      interactiveConversation();
       freeSlots = 0;
       const core = newCore();
       const sent = await core.sendUserMessage({
@@ -569,7 +622,7 @@ describe("conversation core for seats", () => {
     });
 
     it("withdraws a message still waiting for model capacity when the person stops it", async () => {
-      enroll();
+      interactiveConversation();
       freeSlots = 0;
       const core = newCore();
       const sent = await core.sendUserMessage({
@@ -596,7 +649,7 @@ describe("conversation core for seats", () => {
     });
 
     it("after a crash, withdraws a message that was still waiting to start, so the conversation takes new ones", async () => {
-      enroll();
+      interactiveConversation();
       // The process that died never gets model capacity.
       const crashed = newCore({
         slots: {
@@ -656,7 +709,7 @@ describe("conversation core for seats", () => {
     });
 
     it("answers the sender and frees the conversation when a turn fails before it can settle", async () => {
-      enroll();
+      interactiveConversation();
       let failSettlement = true;
       const core = newCore({
         questions: {
@@ -689,7 +742,7 @@ describe("conversation core for seats", () => {
     });
 
     it("asks an idle conversation's queue for its next turn once its mailbox is empty", async () => {
-      enroll();
+      interactiveConversation();
       const idle: string[] = [];
       const core = newCore({
         onConversationIdle: (conversationId) => idle.push(conversationId),
@@ -706,7 +759,7 @@ describe("conversation core for seats", () => {
     });
 
     it("answers a stop once the stopped turn has ended", async () => {
-      enroll();
+      interactiveConversation();
       nextUserResult = () =>
         new Promise((resolve) =>
           userCalls[userCalls.length - 1]?.signal.addEventListener(
@@ -729,7 +782,7 @@ describe("conversation core for seats", () => {
     });
 
     it("shows the conversation running while its turn waits for model capacity, and ends that once the turn is over", async () => {
-      enroll();
+      interactiveConversation();
       freeSlots = 0;
       const core = newCore();
       const sent = await core.sendUserMessage({
@@ -765,7 +818,7 @@ describe("conversation core for seats", () => {
     });
 
     it("after a crash, ends the claim of a turn that was still waiting to start", async () => {
-      enroll();
+      interactiveConversation();
       const crashed = newCore({
         slots: {
           acquire: (_label, signal) =>
@@ -786,7 +839,7 @@ describe("conversation core for seats", () => {
     });
 
     it("runs a debug command only while nothing runs or waits, holding messages off while it does", async () => {
-      enroll();
+      interactiveConversation();
       const idle: string[] = [];
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
@@ -834,7 +887,7 @@ describe("conversation core for seats", () => {
     });
 
     it("holds the conversation for maintenance: nothing starts until the holder lets go", async () => {
-      enroll();
+      interactiveConversation();
       const idle: string[] = [];
       const core = newCore({
         onConversationIdle: (conversationId) => idle.push(conversationId),
@@ -869,7 +922,7 @@ describe("conversation core for seats", () => {
     });
 
     it("tells a holder to stop when the conversation is going away", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore();
       const lease = core.hold("conv-u", {
         kind: "checkpoint",
@@ -883,7 +936,7 @@ describe("conversation core for seats", () => {
     });
 
     it("answers admission alike for every entry: a running turn holds messages, commands and claims, and a task waits its turn", async () => {
-      enroll();
+      interactiveConversation();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const core = newCore({ holds: { refusal: async () => null } });
@@ -909,7 +962,7 @@ describe("conversation core for seats", () => {
     });
 
     it("checks a direct message's holds again when its turn comes after another admitted alongside it", async () => {
-      enroll();
+      interactiveConversation();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       let held: { code: "queue_review"; message: string } | null = null;
@@ -976,7 +1029,7 @@ describe("conversation core for seats", () => {
     });
 
     it("passes a durable hold's own code through to every entry", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore({
         holds: {
           async refusal(_conversationId, turn) {
@@ -1000,7 +1053,7 @@ describe("conversation core for seats", () => {
     });
 
     it("refuses new work while another owner durably holds the conversation, and admits it once released", async () => {
-      enroll();
+      interactiveConversation();
       let refusal: { code: "busy" | "owned"; message: string } | null = {
         code: "owned",
         message: "A collaboration owns this conversation",
@@ -1046,7 +1099,7 @@ describe("conversation core for seats", () => {
     });
 
     it("re-reads the holds when a claim began and ended while a message's admission was being read", async () => {
-      enroll();
+      interactiveConversation();
       let owned = false;
       const reads: string[] = [];
       let release: (value: null) => void = () => {};
@@ -1082,7 +1135,7 @@ describe("conversation core for seats", () => {
     });
 
     it("asks the durable holds for exclusive work only when its caller says what it is", async () => {
-      enroll();
+      interactiveConversation();
       const asked: string[] = [];
       const core = newCore({
         holds: {
@@ -1121,7 +1174,7 @@ describe("conversation core for seats", () => {
     });
 
     it("lets go of the conversation when reading its holds fails", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore({
         holds: {
           async refusal() {
@@ -1141,7 +1194,7 @@ describe("conversation core for seats", () => {
     });
 
     it("checks a queued task's holds again when its turn comes, after the turn before it settled", async () => {
-      enroll();
+      interactiveConversation();
       let held = false;
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
@@ -1179,7 +1232,7 @@ describe("conversation core for seats", () => {
     });
 
     it("does not run a task cancelled while its turn's holds were being read", async () => {
-      enroll();
+      interactiveConversation();
       let answerTurnCheck: (refusal: null) => void = () => {};
       const core = newCore({
         holds: {
@@ -1207,7 +1260,7 @@ describe("conversation core for seats", () => {
     });
 
     it("does not run a task whose caller cancelled it while its admission was being checked", async () => {
-      enroll();
+      interactiveConversation();
       let answerHold: (refusal: null) => void = () => {};
       const core = newCore({
         holds: {
@@ -1232,7 +1285,7 @@ describe("conversation core for seats", () => {
     });
 
     it("keeps the request of the conversation's latest message, for a debug retry", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore();
       expect(core.lastMessageRequest("conv-u")).toBeNull();
       const image = {
@@ -1267,7 +1320,7 @@ describe("conversation core for seats", () => {
     });
 
     it("a stop with no turn running withdraws the agent's unanswered question, and lets held work run", async () => {
-      enroll();
+      interactiveConversation();
       const idle: string[] = [];
       const core = newCore({
         onConversationIdle: (conversationId) => idle.push(conversationId),
@@ -1284,7 +1337,7 @@ describe("conversation core for seats", () => {
     });
 
     it("stopping the turn that asked withdraws its question once the turn has ended", async () => {
-      enroll();
+      interactiveConversation();
       const events: string[] = [];
       nextUserResult = () =>
         new Promise((resolve) =>
@@ -1321,7 +1374,7 @@ describe("conversation core for seats", () => {
     });
 
     it("a workflow cancelling its own task leaves the person's question standing", async () => {
-      enroll();
+      interactiveConversation();
       questionsPending.add("conv-u");
       const core = newCore({
         taskTurns: {
@@ -1355,7 +1408,7 @@ describe("conversation core for seats", () => {
     });
 
     it("retiring a conversation stops what runs, and it takes and drains nothing more", async () => {
-      enroll();
+      interactiveConversation();
       const idle: string[] = [];
       nextUserResult = () =>
         new Promise((resolve) =>
@@ -1376,10 +1429,7 @@ describe("conversation core for seats", () => {
 
       await core.retireConversation("conv-u");
       expect(idle).toEqual([]);
-      // Gone for good: nothing recovers or drains it at the next boot.
-      expect(
-        createConversationCoreRepo(fixture.db).getInteractive("conv-u"),
-      ).toBeNull();
+      // Its row goes with the deletion that retired it; until then nothing more starts.
       expect(
         await core.sendUserMessage({
           conversationId: "conv-u",
@@ -1393,7 +1443,7 @@ describe("conversation core for seats", () => {
     });
 
     it("carries a queued delivery's content and identity to its turn, once", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore();
       const delivery = { messageIds: ["q-1"], deliveryAttemptId: "att-q" };
       const first = await core.sendUserMessage({
@@ -1418,7 +1468,7 @@ describe("conversation core for seats", () => {
     });
 
     it("hands a queued delivery that never started back to its owner, saying who stopped it", async () => {
-      enroll();
+      interactiveConversation();
       freeSlots = 0;
       const core = newCore();
       await core.sendUserMessage({
@@ -1484,7 +1534,7 @@ describe("conversation core for seats", () => {
     });
 
     it("leaves a message a server stop caught before it started for the next boot, which hands it back whole", async () => {
-      enroll();
+      interactiveConversation();
       const image = {
         attachmentId: "img-1",
         mediaType: "image/png" as const,
@@ -1530,7 +1580,7 @@ describe("conversation core for seats", () => {
     });
 
     it("answers a task's caller when the conversation goes away or the server stops before the task runs", async () => {
-      enroll();
+      interactiveConversation();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () =>
         new Promise((resolve) => {
@@ -1558,7 +1608,7 @@ describe("conversation core for seats", () => {
         reason: "cancelled",
       });
 
-      enroll("conv-v");
+      interactiveConversation("conv-v");
       nextUserResult = () =>
         new Promise((resolve) =>
           userCalls[userCalls.length - 1]?.signal.addEventListener(
@@ -1587,7 +1637,7 @@ describe("conversation core for seats", () => {
     });
 
     it("settles a queued delivery as failed when the core itself fails to run it", async () => {
-      enroll();
+      interactiveConversation();
       const repo = createConversationCoreRepo(fixture.db);
       const order: string[] = [];
       const core = newCore({
@@ -1634,7 +1684,7 @@ describe("conversation core for seats", () => {
     });
 
     it("runs a workflow's task in the conversation's own turn order and hands back its outcome", async () => {
-      enroll();
+      interactiveConversation();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const core = newCore();
@@ -1657,7 +1707,7 @@ describe("conversation core for seats", () => {
     });
 
     it("withdraws a task its caller cancels while it waits, and refuses one for a conversation it does not run", async () => {
-      enroll();
+      interactiveConversation();
       nextUserResult = () =>
         new Promise((resolve) =>
           userCalls[userCalls.length - 1]?.signal.addEventListener(
@@ -1697,7 +1747,7 @@ describe("conversation core for seats", () => {
     });
 
     it("never runs a task it answered as cancelled, even when removing it failed at first", async () => {
-      enroll();
+      interactiveConversation();
       let finish: (result: CoreTurnResult) => void = () => {};
       nextUserResult = () => new Promise((resolve) => (finish = resolve));
       const repo = createConversationCoreRepo(fixture.db);
@@ -1729,7 +1779,7 @@ describe("conversation core for seats", () => {
     });
 
     it("after a restart, never runs an orphaned task whose removal failed", async () => {
-      enroll();
+      interactiveConversation();
       const crashed = newCore({
         slots: {
           acquire: (_label, signal) =>
@@ -1760,7 +1810,7 @@ describe("conversation core for seats", () => {
     });
 
     it("removes a mailbox item no request schema reads, rather than letting it hold the conversation", async () => {
-      enroll();
+      interactiveConversation();
       const repo = createConversationCoreRepo(fixture.db);
       const unreadable = (cause: string) =>
         repo.insertMailboxIfAbsent({
@@ -1795,7 +1845,7 @@ describe("conversation core for seats", () => {
     });
 
     it("refuses a message once the server is stopping, rather than leaving its sender waiting", async () => {
-      enroll();
+      interactiveConversation();
       const core = newCore();
       await core.shutdown();
       expect(

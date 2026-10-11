@@ -14,11 +14,6 @@ import type { RunningTurnDescription } from "@/lib/conversation-core/interactive
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
 import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
 import type { UserTurnRequest } from "@/lib/conversation-core/schemas";
-import {
-  storeSessionNameFromScopeRef,
-  type ConversationScopeRef,
-  type ForkPlacement,
-} from "@/lib/conversations/conversation-target";
 import { getGlobalValue } from "@/lib/shared/global-singleton";
 import {
   createConversationCoreRepo,
@@ -209,9 +204,14 @@ export async function deliverCoreLive(
 export async function retireCoreConversation(
   conversationId: string,
 ): Promise<void> {
-  await composedSupervision()?.core.retireConversation(conversationId);
-  const runtime = loadedCoreTurnRuntime();
-  if (runtime !== undefined) await (await runtime).host.release(conversationId);
+  const release = async () => {
+    const runtime = loadedCoreTurnRuntime();
+    if (runtime !== undefined)
+      await (await runtime).host.release(conversationId);
+  };
+  const core = composedSupervision()?.core;
+  if (core === undefined) await release();
+  else await core.retireConversation(conversationId, release);
 }
 
 let cached:
@@ -253,40 +253,7 @@ export async function adoptCoreConversationBackend(
   await createProductionConversationRecords().adoptBackend(identity, backend);
 }
 
-/** A run's seat conversation, which takes work only from its run. */
-export function coreRunsSeat(conversationId: string): boolean {
-  return coreRepo().getSeat(conversationId) !== null;
-}
-
-/** Whether the core runs this conversation's turns, as a seat or an enrolled interactive conversation. */
+/** Whether the core runs this conversation's turns: a run's seat, or any conversation without a role. */
 export function coreOwnsConversation(conversationId: string): boolean {
   return coreRepo().ownsConversation(conversationId);
-}
-
-/**
- * Hands a new interactive conversation's turns to the core. Only safe before
- * anyone can address the conversation: the actor refuses it from then on.
- */
-export function enrollInCore(input: {
-  conversationId: string;
-  projectPath: string;
-  scope: ConversationScopeRef;
-}): void {
-  coreRepo().enrollInteractive({
-    conversationId: input.conversationId,
-    projectPath: input.projectPath,
-    // The conversation's storage key (the project sentinel at project scope), which every row write uses.
-    sessionName: storeSessionNameFromScopeRef(input.scope),
-    enrolledAt: new Date().toISOString(),
-  });
-}
-
-/** A fork runs where its source runs: enrolled with the core when the core runs its source. */
-export function enrollForkWithSource(input: ForkPlacement): void {
-  if (!coreOwnsConversation(input.sourceConversationId)) return;
-  enrollInCore({
-    conversationId: input.conversationId,
-    projectPath: input.projectPath,
-    scope: input.scope,
-  });
 }

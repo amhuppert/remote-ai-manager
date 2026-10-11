@@ -155,7 +155,6 @@ describe("session conversation routes", () => {
       getSession: async () => makeSession([conversation]),
       createConversation: async () => conversation,
       deleteConversation: async () => {},
-      enrollInCore: () => {},
       changeConversationProfile: async () => {
         throw new Error("not exercised here");
       },
@@ -242,7 +241,6 @@ describe("project conversation routes", () => {
           throw new Error("No conversation here runs on the shared core");
         },
       },
-      enrollInCore: () => {},
       changeConversationProfile: async () =>
         redactAgentProfileSnapshot(SNAPSHOT_FIXTURE),
       broadcast: (event) => {

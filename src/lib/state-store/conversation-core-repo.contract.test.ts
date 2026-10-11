@@ -8,7 +8,6 @@ import {
   attemptRecordSchema,
   coreQuestionRecordSchema,
   mailboxItemRecordSchema,
-  interactiveEnrollmentRecordSchema,
   seatBindingRecordSchema,
 } from "@/lib/conversation-core/schemas";
 import { createConversationCoreRepo } from "./conversation-core-repo";
@@ -79,39 +78,6 @@ describe("conversation core repository", () => {
       "conv-i2",
       "conv-r",
     ]);
-  });
-
-  it("round-trips an interactive conversation's enrollment and reports the core owns it", async () => {
-    fixture = createPersistenceFixture();
-    const db = fixture.db;
-    await assertRoundTripDurability({
-      label: "interactive enrollment",
-      schema: interactiveEnrollmentRecordSchema,
-      buildMaximalFixture: () => ({
-        conversationId: "conv-9",
-        projectPath: "/repo",
-        sessionName: "session",
-        enrolledAt: at,
-      }),
-      persist: (value) => {
-        createConversationCoreRepo(db).enrollInteractive(value);
-        return value;
-      },
-      reload: (value) =>
-        createConversationCoreRepo(db).getInteractive(value.conversationId),
-    });
-    const repo = createConversationCoreRepo(db);
-    expect(repo.ownsConversation("conv-9")).toBe(true);
-    expect(repo.ownsConversation("conv-unknown")).toBe(false);
-    expect(
-      repo.listInteractive().map((enrollment) => enrollment.conversationId),
-    ).toEqual(["conv-9"]);
-
-    // A deleted conversation leaves the core's list, so nothing recovers or drains it at boot.
-    repo.unenrollInteractive("conv-9");
-    expect(createConversationCoreRepo(db).getInteractive("conv-9")).toBeNull();
-    expect(repo.ownsConversation("conv-9")).toBe(false);
-    expect(repo.listInteractive()).toEqual([]);
   });
 
   it("round-trips a consumed mailbox item with its permit", async () => {

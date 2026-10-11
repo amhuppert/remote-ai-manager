@@ -55,14 +55,9 @@ import {
 } from "@/lib/conversations/schemas";
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-import {
-  projectConversationTarget,
-  type ConversationScopeRef,
-} from "@/lib/conversations/conversation-target";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import type { CoreConversationPrompts } from "@/lib/conversation-core/prompt-route";
 import { productionCoreConversationPrompts } from "@/lib/prompt/route-handlers";
-import { enrollInCore as defaultEnrollInCore } from "@/lib/supervision/handles";
-import { getErrorMessage } from "@/lib/shared/errors";
 import {
   publishEvent,
   publishEventBestEffort,
@@ -165,12 +160,6 @@ export interface ProjectConversationRouteDeps {
   ): boolean;
   /** Conversations the shared core runs take their prompts there, not to the actor. */
   coreConversations: CoreConversationPrompts;
-  /** Hands a new conversation's turns to the shared conversation core. */
-  enrollInCore(input: {
-    conversationId: string;
-    projectPath: string;
-    scope: ConversationScopeRef;
-  }): void;
   broadcast: PublishFn;
 }
 
@@ -212,7 +201,6 @@ function defaultDeps(): ProjectConversationRouteDeps {
     executeProjectPromptStream: defaultExecuteProjectPromptStream,
     isConversationBusy: defaultIsConversationBusy,
     coreConversations: productionCoreConversationPrompts(logger),
-    enrollInCore: defaultEnrollInCore,
     broadcast: publishEvent,
   };
 }
@@ -353,45 +341,11 @@ export function createProjectConversationRouteHandlers(
     );
     if (!parsed.ok) return parsed.response;
 
-    const { engine, ...options } = parsed.value;
     const conversation = await deps.createProjectConversation(
       projectPath,
-      options,
+      parsed.value,
     );
     const projectName = deps.getProjectDisplayName(projectPath);
-
-    // Enrolled before the id leaves this request, so no turn can reach the
-    // actor first.
-    if (engine === "core") {
-      try {
-        deps.enrollInCore({
-          conversationId: conversation.id,
-          projectPath,
-          scope: { scope: "project" },
-        });
-      } catch (err) {
-        logger.error("conversation_core.enrollment_failed", {
-          projectName,
-          conversationId: conversation.id,
-          error: getErrorMessage(err),
-        });
-        // A project conversation cannot be deleted, so the half-made one is
-        // archived out of sight instead.
-        await deps
-          .setProjectConversationArchived(projectPath, conversation.id, true)
-          .catch((archiveError: unknown) =>
-            logger.error("conversation_core.enrollment_cleanup_failed", {
-              projectName,
-              conversationId: conversation.id,
-              error: getErrorMessage(archiveError),
-            }),
-          );
-        return jsonError(
-          `Failed to create a core conversation: ${getErrorMessage(err)}`,
-          500,
-        );
-      }
-    }
 
     publishEventBestEffort({
       publish: deps.broadcast,

@@ -11,7 +11,6 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { createProductionConversationHold } from "@/lib/conversation-core/production-holds";
 import type { Supervision } from "./supervision";
 import {
@@ -49,6 +48,24 @@ async function launch(
   await quiesce(s, turnsSettle);
 }
 
+function pendingMessage(id: string): PendingQueuedMessage {
+  return {
+    id,
+    content: [{ type: "text", text: "Queued" }],
+    status: "pending",
+    enqueuedAt: "2026-10-03T10:00:00.000Z",
+    updatedAt: "2026-10-03T10:00:00.000Z",
+    deliveryStartedAt: null,
+    deliveredAt: null,
+    cancelledAt: null,
+    failedAt: null,
+    deliveryAttemptId: null,
+    attemptCount: 0,
+    error: null,
+    metadata: null,
+  };
+}
+
 beforeEach(() => {
   fixture = createPersistenceFixture();
   h = createSupervisionHarness(fixture);
@@ -56,13 +73,18 @@ beforeEach(() => {
 afterEach(() => fixture.close());
 
 describe("run supervision", () => {
-  it("runs an enrolled conversation's queued message on the core when its queue is drained, and after a restart", async () => {
-    createConversationCoreRepo(fixture.db).enrollInteractive({
-      conversationId: "chat-1",
-      projectPath: "/repo",
-      sessionName: "session",
-      enrolledAt: "2026-10-03T10:00:00.000Z",
-    });
+  it("runs a conversation's queued message on the core when its queue is drained, and after a restart", async () => {
+    fixture.seedProject("/repo");
+    fixture.seedSession("/repo", "session");
+    await fixture.seedConversation(
+      "/repo",
+      "session",
+      makeConversationState({
+        id: "chat-1",
+        role: null,
+        pendingQueue: [pendingMessage("q-2")],
+      }),
+    );
     const s = h.compose();
     h.queued.push({
       deliveryAttemptId: "att-1",
@@ -87,20 +109,70 @@ describe("run supervision", () => {
     expect(h.userMessages).toEqual(["First", "Second"]);
   });
 
-  it("forgets at boot an enrolled conversation whose row is gone, instead of recovering it", async () => {
-    const repo = createConversationCoreRepo(fixture.db);
-    repo.enrollInteractive({
-      conversationId: "chat-gone",
-      projectPath: "/repo",
-      sessionName: "session",
-      enrolledAt: "2026-10-03T10:00:00.000Z",
+  it("recovers an archived conversation's queue at boot but starts none of its messages; settles no turn a row does not show", async () => {
+    fixture.seedProject("/repo");
+    fixture.seedSession("/repo", "session");
+    await fixture.seedConversation(
+      "/repo",
+      "session",
+      makeConversationState({
+        id: "archived",
+        role: null,
+        archived: true,
+        pendingQueue: [pendingMessage("q-a")],
+      }),
+    );
+    await fixture.seedConversation(
+      "/repo",
+      "session",
+      makeConversationState({
+        id: "waiting",
+        role: null,
+        pendingQueue: [pendingMessage("q-w")],
+      }),
+    );
+    h.queued.push({
+      deliveryAttemptId: "att-w",
+      messageIds: ["q-w"],
+      content: [{ type: "text", text: "Waiting" }],
+      command: null,
     });
-    h.deletedConversations.add("chat-gone");
+
     const s = h.compose();
     await s.boot();
     await quiesce(s);
+
+    expect(h.queueRecoveries.sort()).toEqual(["archived", "waiting"]);
+    expect(h.claims).not.toContain("archived");
+    expect(h.userMessages).toEqual(["Waiting"]);
+    expect(h.interrupted).toEqual([]);
+  });
+
+  it("settles at boot a turn the last process left running, and leaves the graph engine's conversations to the actor", async () => {
+    fixture.seedProject("/repo");
+    fixture.seedSession("/repo", "session");
+    for (const conversation of [
+      makeConversationState({
+        id: "left-running",
+        role: null,
+        status: "running",
+      }),
+      makeConversationState({ id: "idle", role: null, status: "awaiting" }),
+      makeConversationState({
+        id: "graph-lane",
+        role: "iteration",
+        status: "running",
+      }),
+    ])
+      await fixture.seedConversation("/repo", "session", conversation);
+
+    const s = h.compose();
+    await s.boot();
+    await quiesce(s);
+
+    expect(h.interrupted).toEqual(["left-running"]);
+    // It had no queue rows to recover.
     expect(h.queueRecoveries).toEqual([]);
-    expect(repo.getInteractive("chat-gone")).toBeNull();
   });
 
   it("runs one agent end to end, gives the worktree back, and lets the next run bind it", async () => {
@@ -449,12 +521,6 @@ describe("a collaboration's claim on a conversation the core runs", () => {
       "session",
       makeConversationState({ id: "chat-stuck" }),
     );
-    createConversationCoreRepo(fixture.db).enrollInteractive({
-      conversationId: "chat-stuck",
-      projectPath: "/repo",
-      sessionName: "session",
-      enrolledAt: "2026-10-03T10:00:00.000Z",
-    });
     h.uncollected.set("chat-stuck", "the agent process did not exit");
     const s = h.compose();
 
@@ -494,12 +560,6 @@ describe("a collaboration's claim on a conversation the core runs", () => {
         owner: { kind: "collaboration", workflowId: "wf-1", attemptEpoch: 1 },
       }),
     );
-    createConversationCoreRepo(fixture.db).enrollInteractive({
-      conversationId: "chat-collab",
-      projectPath: "/repo",
-      sessionName: "session",
-      enrolledAt: "2026-10-03T10:00:00.000Z",
-    });
     h.conversationHold = createProductionConversationHold(() => fixture.db);
     const s = h.compose();
 
@@ -540,7 +600,7 @@ describe("a collaboration's claim on a conversation the core runs", () => {
   });
 });
 
-describe("run supervision boot and the checkpoints of enrolled conversations", () => {
+describe("run supervision boot and the checkpoints of the conversations the core runs", () => {
   const BASIS = { capturedThroughSeq: 4, sourceHash: "sha256:source" };
   const LIVE_REF = { backend: "claude", ref: "sdk-live" } as const;
   const keyOf = (conversationId: string): CheckpointScopeKey => ({
@@ -551,7 +611,7 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
   });
   const at = () => new Date().toISOString();
 
-  async function enrolledChat(
+  async function chat(
     conversationId: string,
     overrides: Parameters<typeof makeConversationState>[0] = {},
   ) {
@@ -566,12 +626,6 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
         ...overrides,
       }),
     );
-    createConversationCoreRepo(fixture.db).enrollInteractive({
-      conversationId,
-      projectPath: "/repo",
-      sessionName: "session",
-      enrolledAt: "2026-10-03T10:00:00.000Z",
-    });
   }
 
   function unwrap<T>(
@@ -642,9 +696,9 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
   });
 
   it("settles what the last process left in flight: a build fails, a retirement finishes, a delivery is held", async () => {
-    await enrolledChat("chat-a");
-    await enrolledChat("chat-b");
-    await enrolledChat("chat-c");
+    await chat("chat-a");
+    await chat("chat-b");
+    await chat("chat-c");
     const building = await operationAt("chat-a", "building");
     const retiring = await operationAt("chat-b", "retiring");
     const delivering = await operationAt("chat-c", "delivering");
@@ -684,7 +738,7 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
   });
 
   it("keeps a queued batch in its queue behind a delivery the restart left unresolved", async () => {
-    await enrolledChat("chat-c");
+    await chat("chat-c");
     await operationAt("chat-c", "delivering");
     h.queued.push({
       deliveryAttemptId: "att-1",
@@ -718,7 +772,7 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
       metadata: null,
       inputOrigin: "user",
     };
-    await enrolledChat("chat-q");
+    await chat("chat-q");
     const id = await operationAt("chat-q", "delivering", {
       queuedAttemptId: "queued-att-1",
       queuedMessageId: "q-1",
@@ -737,7 +791,7 @@ describe("run supervision boot and the checkpoints of enrolled conversations", (
       }),
     );
     // The crash came after the acceptance and the fresh reference, before the queue's own receipt.
-    await enrolledChat("chat-q", {
+    await chat("chat-q", {
       backendRef: { backend: "claude", ref: "sdk-fresh" },
       pendingQueue: [row],
     });

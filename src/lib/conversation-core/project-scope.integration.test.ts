@@ -136,11 +136,10 @@ async function runProjectMessage() {
     log,
   }).run({
     conversationId: "conv-p",
-    enrollment: {
+    place: {
       conversationId: "conv-p",
       projectPath: PROJECT,
       sessionName: storeSessionNameFromScopeRef({ scope: "project" }),
-      enrolledAt: "2026-10-03T10:00:00.000Z",
     },
     request: { kind: "user_message", text: "Hello", inputOrigin: "user" },
     attemptId: "attempt-1",

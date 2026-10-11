@@ -257,7 +257,7 @@ const REFUSAL_RESPONSES: Record<
   queue_review: { status: 409, code: "QUEUE_REVIEW_REQUIRED" },
   debug_mode: { status: 409, code: "DEBUG_MODE_ACTIVE" },
   stopping: { status: 503, code: "SERVER_STOPPING" },
-  not_enrolled: { status: 409, code: "CONVERSATION_NOT_ENROLLED" },
+  not_core: { status: 409, code: "CONVERSATION_NOT_CORE" },
 };
 
 /** One answer per admission refusal, whichever entry was refused. */

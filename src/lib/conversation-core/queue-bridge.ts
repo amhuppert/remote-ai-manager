@@ -6,11 +6,11 @@ import {
 } from "@/lib/conversations/message-queue-drain";
 import type { Logger } from "@/lib/logging";
 import type { ConversationCore, UserMessageAdmission } from "./executor";
-import type { InteractiveEnrollmentRecord } from "./schemas";
+import type { InteractiveConversation } from "./schemas";
 
 export interface CoreQueueBridgeDeps {
   queue: Omit<ConversationQueueDeps, "submitTurn">;
-  enrollment(conversationId: string): InteractiveEnrollmentRecord | null;
+  place(conversationId: string): InteractiveConversation | null;
   /** The conversation runs or holds a turn now; its end drains the queue again. */
   isBusy(conversationId: string): boolean;
   send(
@@ -37,13 +37,13 @@ export function createCoreQueueBridge(
 ): CoreQueueBridge {
   return {
     async drain(conversationId) {
-      const enrollment = deps.enrollment(conversationId);
-      if (enrollment === null || deps.isBusy(conversationId)) return;
+      const place = deps.place(conversationId);
+      if (place === null || deps.isBusy(conversationId)) return;
       const context = {
-        projectPath: enrollment.projectPath,
+        projectPath: place.projectPath,
         target: targetFromStoreSessionName(
-          deps.getProjectDisplayName(enrollment.projectPath),
-          enrollment.sessionName,
+          deps.getProjectDisplayName(place.projectPath),
+          place.sessionName,
           conversationId,
         ),
       };
@@ -87,11 +87,11 @@ export function createCoreQueueBridge(
       }
     },
     async recover(conversationId) {
-      const enrollment = deps.enrollment(conversationId);
-      if (enrollment === null) return;
+      const place = deps.place(conversationId);
+      if (place === null) return;
       await deps.queue.recoverAbandonedDeliveries({
-        projectPath: enrollment.projectPath,
-        sessionName: enrollment.sessionName,
+        projectPath: place.projectPath,
+        sessionName: place.sessionName,
         conversationId,
       });
     },

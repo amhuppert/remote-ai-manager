@@ -142,10 +142,5 @@ export function getCheckpointForkService() {
       });
     },
     now: () => new Date().toISOString(),
-    async enrollWithSource(placement) {
-      const { enrollForkWithSource } =
-        await import("@/lib/supervision/handles");
-      enrollForkWithSource(placement);
-    },
   });
 }

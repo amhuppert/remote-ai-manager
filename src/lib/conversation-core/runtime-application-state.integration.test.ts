@@ -258,11 +258,10 @@ async function runInteractiveTurn(): Promise<unknown> {
     log,
   }).run({
     conversationId: "conv-1",
-    enrollment: {
+    place: {
       conversationId: "conv-1",
       projectPath: PROJECT,
       sessionName: SESSION,
-      enrolledAt: "2026-10-03T10:00:00.000Z",
     },
     request: { kind: "user_message", text: "Hello", inputOrigin: "user" },
     attemptId: "attempt-1",

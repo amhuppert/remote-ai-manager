@@ -44,6 +44,7 @@ export type ConversationRow = Pick<
   | "debugMode"
   | "turnGeneration"
   | "checkpointFork"
+  | "owner"
 >;
 
 /**
@@ -306,14 +307,23 @@ export function applyQuestionWithdrawn(row: ConversationRow): boolean {
 /**
  * Pure over the row draft: a restart ended the turn. A durable question it
  * asked (cctl ask) can still be answered; one asked inside the turn died with
- * the turn's transport. Null, changing nothing, when the row shows no turn:
- * its turn settled the row before the restart reached its attempt.
+ * the turn's transport, and is the only trace of its turn once the row is
+ * stored (the turn's source is not). Null, changing nothing, when the row
+ * shows no turn (its turn settled the row before the restart reached its
+ * attempt), or when a collaboration holds the conversation: the collaboration
+ * recovers its own claim.
  */
 export function applyTurnInterrupted(
   row: ConversationRow,
   now: string,
 ): "waiting_for_input" | "awaiting" | null {
-  if (row.activeTurnSource === null && row.status !== "running") return null;
+  if (row.owner !== null) return null;
+  if (
+    row.activeTurnSource === null &&
+    row.status !== "running" &&
+    !isInTurnQuestionId(row.pendingQuestionId)
+  )
+    return null;
   if (isInTurnQuestionId(row.pendingQuestionId)) {
     row.pendingQuestionId = null;
     row.pendingQuestions = null;

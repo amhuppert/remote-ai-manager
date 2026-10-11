@@ -10,9 +10,6 @@ export const createProjectConversationRequestSchema = z.object({
   // Runtime (backend) and identity (profile) are separate selections, and the
   // Standard Agent default applies when the picker sends nothing (R7).
   profile: conversationProfileSelectionSchema.optional(),
-  // Hands the new conversation's turns to the shared conversation core. Only this
-  // explicit create offers it: the create-and-send entry stays on the actor.
-  engine: z.literal("core").optional(),
 });
 
 /**

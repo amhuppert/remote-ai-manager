@@ -11,11 +11,10 @@ import { createCoreDebugMode, type CoreDebugModeDeps } from "./debug-mode";
 import type { UserMessageAdmission } from "./executor";
 import type { UserTurnRequest } from "./schemas";
 
-const enrollment = {
+const place = {
   conversationId: "conv-1",
   projectPath: "/repo",
   sessionName: "session",
-  enrolledAt: "2026-10-03T10:00:00.000Z",
 };
 
 const session = (overrides: Partial<DebugModeState> = {}): DebugModeState => ({
@@ -71,8 +70,7 @@ function harness(debugMode: DebugModeState | null = null) {
         return admission;
       },
     },
-    enrollment: (conversationId) =>
-      conversationId === "conv-1" ? enrollment : null,
+    place: (conversationId) => (conversationId === "conv-1" ? place : null),
     records: {
       async readDebugMode() {
         return row.debugMode;

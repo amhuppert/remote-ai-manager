@@ -11,7 +11,7 @@ import type {
 } from "./conversation-record";
 import type { ConversationCore } from "./executor";
 import type { DebugVerificationStart } from "./interactive-turns";
-import type { InteractiveEnrollmentRecord } from "./schemas";
+import type { InteractiveConversation } from "./schemas";
 
 export type CoreDebugCommandOutcome =
   | { kind: "applied" | "unchanged" }
@@ -30,7 +30,7 @@ export interface CoreDebugModeDeps {
     | "runningAttempt"
     | "conversationIdle"
   >;
-  enrollment(conversationId: string): InteractiveEnrollmentRecord | null;
+  place(conversationId: string): InteractiveConversation | null;
   records: {
     readDebugMode(
       identity: ConversationIdentity,
@@ -112,8 +112,8 @@ export function createCoreDebugMode(deps: CoreDebugModeDeps): CoreDebugMode {
     conversationId: string,
     debugCommand: DebugCommand,
   ): Promise<CoreDebugCommandOutcome> {
-    const enrollment = deps.enrollment(conversationId);
-    if (enrollment === null) {
+    const place = deps.place(conversationId);
+    if (place === null) {
       return {
         kind: "refused",
         code: "not_found",
@@ -121,8 +121,8 @@ export function createCoreDebugMode(deps: CoreDebugModeDeps): CoreDebugMode {
       };
     }
     const identity = {
-      projectPath: enrollment.projectPath,
-      storeSessionName: enrollment.sessionName,
+      projectPath: place.projectPath,
+      storeSessionName: place.sessionName,
       conversationId,
     };
     if (debugCommand.kind === "retry_turn")

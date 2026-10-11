@@ -35,11 +35,10 @@ import {
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
 
-const enrollment = {
+const place = {
   conversationId: "conv-1",
   projectPath: "/repo",
   sessionName: "session",
-  enrolledAt: "2026-10-03T10:00:00.000Z",
 };
 const identity = {
   projectPath: "/repo",
@@ -94,7 +93,7 @@ function harness(
     backendRef: { backend: "claude", ref: "sdk-1" },
     promptCount: 2,
   },
-  turnEnrollment: typeof enrollment = enrollment,
+  turnPlace: typeof place = place,
 ) {
   const turns: TurnRequest[] = [];
   const worktreeTargets: ConversationTarget[] = [];
@@ -290,7 +289,7 @@ function harness(
   ) =>
     port.run({
       conversationId: "conv-1",
-      enrollment: turnEnrollment,
+      place: turnPlace,
       request,
       attemptId: "attempt-1",
       signal,
@@ -454,15 +453,11 @@ describe("interactive turns", () => {
   });
 
   it("runs a project conversation's message in the project root as the project, with no session identity for the agent", async () => {
-    const projectEnrollment = {
-      ...enrollment,
+    const projectPlace = {
+      ...place,
       sessionName: storeSessionNameFromScopeRef({ scope: "project" }),
     };
-    const h = harness(
-      async () => completed("Hi"),
-      undefined,
-      projectEnrollment,
-    );
+    const h = harness(async () => completed("Hi"), undefined, projectPlace);
     const result = await h.run(message());
 
     expect(result).toMatchObject({ status: "succeeded", finalText: "Hi" });
@@ -1019,7 +1014,7 @@ describe("interactive turns", () => {
     ) =>
       h.port.notStarted?.({
         conversationId: "conv-1",
-        enrollment,
+        place,
         request: queued(attempt),
         cause: `queue:conv-1:${attempt}`,
         reason,
@@ -1031,7 +1026,7 @@ describe("interactive turns", () => {
     await notStarted("att-u", "failure", "database is locked");
     await h.port.notStarted?.({
       conversationId: "conv-1",
-      enrollment,
+      place,
       request: message({ text: "Direct" }),
       cause: "user:conv-1:1",
       reason: "cancelled before admission",
@@ -1275,7 +1270,7 @@ describe("interactive turns", () => {
       });
       await h.port.notStarted?.({
         conversationId: "conv-1",
-        enrollment,
+        place,
         request: message({ text: "Reproduced it" }),
         cause: "user:conv-1:1",
         reason: "cancelled before admission",
@@ -1286,7 +1281,7 @@ describe("interactive turns", () => {
       const ordinary = harness(async () => completed());
       await ordinary.port.notStarted?.({
         conversationId: "conv-1",
-        enrollment,
+        place,
         request: message({ text: "Never mind" }),
         cause: "user:conv-1:2",
         reason: "cancelled before admission",

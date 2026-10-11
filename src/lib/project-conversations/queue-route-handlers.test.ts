@@ -212,7 +212,6 @@ function projectRouteDeps(
         throw new Error("No conversation here runs on the shared core");
       },
     },
-    enrollInCore: () => {},
     changeConversationProfile: async () => {
       throw new Error("not used");
     },

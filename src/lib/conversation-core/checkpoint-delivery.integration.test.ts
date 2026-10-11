@@ -85,11 +85,10 @@ const PAYLOAD = {
     .update(FIXTURE_PAYLOAD.seedText)
     .digest("hex"),
 };
-const enrollment = {
+const place = {
   conversationId: CHAT,
   projectPath: PROJECT,
   sessionName: SESSION,
-  enrolledAt: "2026-10-03T10:00:00.000Z",
 };
 
 let fixture: PersistenceFixture;
@@ -418,7 +417,7 @@ function harness(
     ) {
       return turns.run({
         conversationId,
-        enrollment: { ...enrollment, conversationId },
+        place: { ...place, conversationId },
         request: {
           kind: "user_message",
           text,
@@ -603,7 +602,6 @@ describe("a fork the core runs", () => {
       }),
       publish: () => {},
       now: () => new Date().toISOString(),
-      enrollWithSource: async () => {},
     });
     await forks.create({
       projectPath: PROJECT,

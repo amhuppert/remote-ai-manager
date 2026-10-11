@@ -85,6 +85,7 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/conversations/conversation-target.ts", "contract"],
 
   ["lib/state-store/store.ts", "internal-adapter"],
+  ["lib/state-store/conversation-core-repo.ts", "internal-adapter"],
   ["lib/state-store/accessors.ts", "internal-adapter"],
   ["lib/state-store/setters.ts", "internal-adapter"],
   ["lib/prompt/sdk-driver.ts", "internal-adapter"],

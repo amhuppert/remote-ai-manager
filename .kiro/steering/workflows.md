@@ -2,7 +2,7 @@
 
 Command Center has three orchestration shapes. Pick by shape; do not invent a fourth (see P7 in `docs/reports/2026-07-12_consolidated-architecture-design-and-plan.md`):
 
-1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. One actor per conversation; owns the prompt-turn lifecycle, queue drain, and rehydration. Conversation turns and hosted tasks enter through its semantic `lifecycle.ts` API. Fresh tasks use AgentCall without a conversation host.
+1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. Since the conversation switch it runs only the graph engine's role conversations (until deploy 2 deletes it); the conversation core (`src/lib/conversation-core/`, composed by `src/lib/supervision/`) runs every conversation without a role and every run seat, including their queue drain and boot recovery. Conversation turns and hosted tasks still enter through the semantic `lifecycle.ts` API, which forwards to the core. Fresh tasks use AgentCall without a conversation host.
 2. **Job machines** (XState v5, ephemeral) — `src/lib/workflows/merge/` (Smart Merge) and `src/lib/workflows/commit/` (Smart Commit), hosted by `src/lib/jobs/queue.ts`. Machine actors are not restart-durable by decision; the `BackgroundJob` registry records phases and outcomes.
 3. **Graph engine** (deterministic execution loop, NOT XState) — `src/lib/workflow-graph/`. Multi-context executions with loop-generation fencing at the persistence layer. Do not convert it to XState — the loop already has machine-grade guarantees plus fencing XState cannot provide.
 

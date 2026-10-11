@@ -3,10 +3,7 @@ import { createHash } from "node:crypto";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type {
-  ConversationTarget,
-  ForkPlacement,
-} from "@/lib/conversations/conversation-target";
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { stableStringify } from "@/lib/shared/stable-stringify";
 import { buildConversation } from "@/lib/conversations/build-conversation";
@@ -56,12 +53,6 @@ export interface CheckpointForkServiceDeps {
   profile(projectPath: string): Promise<AgentProfileSnapshot>;
   publish(target: ConversationTarget, conversation: ConversationState): void;
   now(): string;
-  /**
-   * A fork runs on the engine its source runs on. Called before the fork's row
-   * exists; a fork that is then refused leaves an enrollment with no row,
-   * which boot forgets.
-   */
-  enrollWithSource(input: ForkPlacement): Promise<void>;
 }
 
 export interface CheckpointForkServiceInput {
@@ -198,15 +189,6 @@ export function createCheckpointForkService(deps: CheckpointForkServiceDeps) {
       const existing = await replay(input);
       if (existing) return existing;
       const { repo, sourceKey, key, origin } = await prepare(input);
-      await deps.enrollWithSource({
-        projectPath: input.projectPath,
-        scope:
-          input.source.scope === "session"
-            ? { scope: "session", sessionName: input.source.sessionName }
-            : { scope: "project" },
-        sourceConversationId: input.source.conversationId,
-        conversationId: input.request.requestId,
-      });
       const conversation = buildConversation({
         id: input.request.requestId,
         scope: input.source.scope,

@@ -9,8 +9,6 @@ import AgentProfileChoicePopover from "./AgentProfileChoicePopover";
 export interface NewConversationProfileButtonProps {
   projectName: string;
   onCreate: (profile: AgentProfileRef) => void;
-  /** Where the surface can create one: a conversation the shared conversation core runs. */
-  onCreateCore?: (profile: AgentProfileRef) => void;
   pending: boolean;
   disabled?: boolean;
 }
@@ -27,7 +25,6 @@ export interface NewConversationProfileButtonProps {
 export default function NewConversationProfileButton({
   projectName,
   onCreate,
-  onCreateCore,
   pending,
   disabled,
 }: NewConversationProfileButtonProps): React.JSX.Element {
@@ -38,14 +35,6 @@ export default function NewConversationProfileButton({
       title="New conversation"
       confirmLabel="Create conversation"
       onConfirm={onCreate}
-      {...(onCreateCore !== undefined
-        ? {
-            secondaryAction: {
-              label: "Create core conversation",
-              onConfirm: onCreateCore,
-            },
-          }
-        : {})}
       disabled={disabled || pending}
       trigger={
         <IconButton

@@ -21,11 +21,10 @@ import {
 } from "./task-turns";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 
-const enrollment = {
+const place = {
   conversationId: "conv-1",
   projectPath: "/repo",
   sessionName: "session",
-  enrolledAt: "2026-10-03T10:00:00.000Z",
 };
 
 function task(overrides: Record<string, unknown> = {}): TaskTurn {
@@ -50,7 +49,7 @@ function callResult(result: Partial<AgentCallResult>): AgentCallResult {
 function harness(
   answer: () => AgentCallResult,
   debugMode: DebugModeState | null = null,
-  turnEnrollment: typeof enrollment = enrollment,
+  turnPlace: typeof place = place,
 ) {
   const events: string[] = [];
   const entries: TranscriptEntry[] = [];
@@ -135,7 +134,7 @@ function harness(
   const run = (request: TaskTurn, signal = new AbortController().signal) =>
     createTaskTurns(deps).run({
       conversationId: "conv-1",
-      enrollment: turnEnrollment,
+      place: turnPlace,
       request,
       attemptId: "attempt-1",
       signal,
@@ -194,8 +193,8 @@ describe("task turns on an interactive conversation", () => {
   });
 
   it("runs a project conversation's task in the project root as the project, with no session to scope the agent's CC calls to", async () => {
-    const projectEnrollment = {
-      ...enrollment,
+    const projectPlace = {
+      ...place,
       sessionName: storeSessionNameFromScopeRef({ scope: "project" }),
     };
     const governed = task({ executionClass: "governed-execution" });
@@ -215,7 +214,7 @@ describe("task turns on an interactive conversation", () => {
     const project = harness(
       () => callResult({ outcome: { kind: "completed", text: "done" } }),
       null,
-      projectEnrollment,
+      projectPlace,
     );
     const { result } = await project.run(governed);
     expect(result).toMatchObject({ status: "succeeded" });

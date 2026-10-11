@@ -32,7 +32,6 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 
@@ -99,12 +98,6 @@ beforeEach(async () => {
   fixture.seedProject(PROJECT);
   fixture.seedSession(PROJECT, SESSION);
   await seedChat();
-  createConversationCoreRepo(fixture.db).enrollInteractive({
-    conversationId: CHAT,
-    projectPath: PROJECT,
-    sessionName: SESSION,
-    enrolledAt: "2026-10-03T10:00:00.000Z",
-  });
   h = createSupervisionHarness(fixture);
   h.checkpoint.entries = [
     entry(0, "user", "the deploy key lives in vault"),
@@ -300,7 +293,6 @@ describe("checkpoints of a conversation the core runs", () => {
     ["a pending question", { pendingQuestionId: "q-1" }, "question_pending"],
     ["no recorded turns", { promptCount: 0 }, "no_recorded_history"],
     ["archival", { archived: true }, "conversation_archived"],
-    ["a workflow role", { role: "validator" }, "conversation_owned"],
   ])(
     "refuses %s alike in a check and a start, and writes nothing",
     async (_name, overrides, code) => {
@@ -318,6 +310,22 @@ describe("checkpoints of a conversation the core runs", () => {
       expect(await message()).toMatchObject({ kind: "accepted" });
     },
   );
+
+  it("refuses a conversation with a workflow role alike in a check and a start: the core runs none of its turns", async () => {
+    await seedChat({ role: "validator" });
+    const checked = await s.checkpoints.check(address, { recover: null });
+    expect(checked.refusals.map((refusal) => refusal.code)).toContain(
+      "conversation_owned",
+    );
+    expect(
+      await s.checkpoints.start({ address, requestId: "op-1" }),
+    ).toMatchObject({ kind: "refused" });
+    expect((await reloaded().repo.listReceipts(KEY)).receipts).toEqual([]);
+    expect(await message()).toMatchObject({
+      kind: "refused",
+      code: "not_core",
+    });
+  });
 
   it("refuses a checkpoint while a turn runs, and reports the backend's handoff capture as available", async () => {
     let finish: () => void = () => {};

@@ -127,17 +127,19 @@ export const seatBindingRecordSchema = z
   .strict();
 export type SeatBindingRecord = z.infer<typeof seatBindingRecordSchema>;
 
-/** An interactive conversation the core runs instead of the conversation actor. */
-export const interactiveEnrollmentRecordSchema = z
+/**
+ * Where an interactive conversation the core runs is stored: its project and
+ * its storage key (the session, or the project sentinel at project scope).
+ */
+export const interactiveConversationSchema = z
   .object({
     conversationId: z.string().min(1),
     projectPath: z.string().min(1),
     sessionName: z.string().min(1),
-    enrolledAt: z.string().min(1),
   })
   .strict();
-export type InteractiveEnrollmentRecord = z.infer<
-  typeof interactiveEnrollmentRecordSchema
+export type InteractiveConversation = z.infer<
+  typeof interactiveConversationSchema
 >;
 
 /** What a mailbox item asks its conversation to run: a person's message, a workflow's task or a seat's work order. */

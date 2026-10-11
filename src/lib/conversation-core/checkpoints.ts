@@ -105,7 +105,7 @@ import type {
 } from "@/lib/conversation-checkpoints/operation-contract";
 import type { ConversationIdentity } from "./conversation-record";
 import type { ConversationCore, HoldSource } from "./executor";
-import type { InteractiveEnrollmentRecord } from "./schemas";
+import type { InteractiveConversation } from "./schemas";
 import type { TaskLane } from "./task-turns";
 
 /** A conversation as the state store keys it: the project sentinel for a project conversation. */
@@ -173,7 +173,7 @@ export interface CoreCheckpointPorts {
 
 export interface CoreCheckpointDeps extends CoreCheckpointPorts {
   core: Pick<ConversationCore, "hold" | "isBusy" | "runningAttempt">;
-  enrollment(conversationId: string): InteractiveEnrollmentRecord | null;
+  place(conversationId: string): InteractiveConversation | null;
   log: Logger;
 }
 
@@ -181,7 +181,7 @@ export interface CoreCheckpoints extends CoreConversationCheckpoints {
   /** The checkpoint half of the core's hold check: null when a turn of this kind may start. */
   refusal: HoldSource["refusal"];
   /** Boot: the restart rules for an operation the last process left in flight, then the queued receipts an acceptance proves. */
-  recover(enrollment: InteractiveEnrollmentRecord): Promise<void>;
+  recover(place: InteractiveConversation): Promise<void>;
 }
 
 /** A build this process runs, from its lease to its durable outcome. */
@@ -330,13 +330,11 @@ export function createCoreCheckpoints(
     else slots.set(conversationId, phase);
   }
 
-  function storeIdentityOf(
-    enrollment: InteractiveEnrollmentRecord,
-  ): StoreIdentity {
+  function storeIdentityOf(place: InteractiveConversation): StoreIdentity {
     return {
-      projectPath: enrollment.projectPath,
-      sessionName: enrollment.sessionName,
-      conversationId: enrollment.conversationId,
+      projectPath: place.projectPath,
+      sessionName: place.sessionName,
+      conversationId: place.conversationId,
     };
   }
 
@@ -1326,9 +1324,9 @@ export function createCoreCheckpoints(
     },
 
     async refusal(conversationId, turn, options) {
-      const enrollment = deps.enrollment(conversationId);
-      if (enrollment === null) return null;
-      const identity = storeIdentityOf(enrollment);
+      const place = deps.place(conversationId);
+      if (place === null) return null;
+      const identity = storeIdentityOf(place);
       const key = checkpointScopeKeyForStoreIdentity(identity);
       const repo = deps.repo();
       // A turn still running owns its receipts and its continuity, so they are repaired only
@@ -1386,8 +1384,8 @@ export function createCoreCheckpoints(
       };
     },
 
-    async recover(enrollment) {
-      const identity = storeIdentityOf(enrollment);
+    async recover(place) {
+      const identity = storeIdentityOf(place);
       const key = checkpointScopeKeyForStoreIdentity(identity);
       try {
         const hydration = await hydrateCheckpointAuthority(key, {
@@ -1395,10 +1393,7 @@ export function createCoreCheckpoints(
           now: deps.now,
           log,
         });
-        remember(
-          enrollment.conversationId,
-          activePhase(hydration.state.active),
-        );
+        remember(place.conversationId, activePhase(hydration.state.active));
         await repairQueue(identity);
       } catch (error) {
         // Unsettled, the operation keeps holding the conversation: its refusal reads it from the row.

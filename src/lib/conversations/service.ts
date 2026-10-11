@@ -1,5 +1,4 @@
 import { assertCheckpointForkBackend } from "@/lib/conversation-checkpoints/fork-submission";
-import type { ForkPlacement } from "@/lib/conversations/conversation-target";
 import crypto from "node:crypto";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
@@ -135,12 +134,6 @@ export interface ConversationsDeps {
     projectPath: string,
     ref?: AgentProfileRef | null,
   ): Promise<AgentProfileSnapshot>;
-  /**
-   * A fork runs on the engine its source runs on. Called before the fork's row
-   * exists, so no message can reach it on the other engine first; a fork that
-   * then fails leaves an enrollment with no row, which boot forgets.
-   */
-  enrollForkWithSource?(input: ForkPlacement): Promise<void>;
 }
 
 function defaultGetContinuityAdapter(
@@ -180,10 +173,6 @@ const defaultConversationsDeps: ConversationsDeps = {
   },
   getContinuityAdapter: defaultGetContinuityAdapter,
   resolveProfileSnapshot: resolveConversationProfileSnapshot,
-  enrollForkWithSource: async (input) => {
-    const { enrollForkWithSource } = await import("@/lib/supervision/handles");
-    enrollForkWithSource(input);
-  },
 };
 
 /** A managed conversation (a run's seat) takes its work, and its backend, only from what manages it. */
@@ -218,7 +207,6 @@ export function createConversationService(
     configDir,
     getContinuityAdapter = defaultGetContinuityAdapter,
     resolveProfileSnapshot = resolveConversationProfileSnapshot,
-    enrollForkWithSource,
   } = deps;
 
   // ============================================================
@@ -664,12 +652,6 @@ export function createConversationService(
     // used to invert it: `continuity.fork()` ran with no row in existence, so a
     // crash in between left a forked backend session nothing referenced. The
     // row goes in first, marked pending, and is finalized or removed below.
-    await enrollForkWithSource?.({
-      projectPath,
-      scope: { scope: "session", sessionName },
-      sourceConversationId,
-      conversationId: newId,
-    });
     const forkedFrom: ForkedFrom = {
       sourceConversationId,
       messageIndex,

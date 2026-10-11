@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
-import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { compactionConfigSchema } from "@/lib/config/schemas";
 import type {
   GenerateCheckpointInput,
@@ -171,29 +170,31 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     /** Runs whose owner was asked to follow them. */
     follows: [] as string[],
     turnMessages: [] as string[],
-    /** Batches waiting in enrolled conversations' message queues, claimed first in, first out. */
+    /** Batches waiting in interactive conversations' message queues, claimed first in, first out. */
     queued: [] as ClaimedQueuedBatch[],
     userMessages: [] as string[],
     queueRecoveries: [] as string[],
+    /** Conversations whose message queue was asked for its next batch, in order. */
+    claims: [] as string[],
+    /** Conversations the core's records were asked to settle as interrupted by a restart. */
+    interrupted: [] as string[],
     /** Conversations whose last runtime did not close, with why. */
     uncollected: new Map<string, string>(),
     /** How many evidence captures fail before they succeed again. */
     evidenceFailures: 0,
-    /** Conversations whose rows are gone; every other enrolled conversation reads as a row. */
-    deletedConversations: new Set<string>(),
     /** What conversations' rows hold; none unless a test composes the real rule. */
     conversationHold: { refusal: async () => null } as HoldSource,
     script: (async () => done("Done.")) as TurnScript,
-    /** An enrolled conversation's turn, after its text is recorded. */
+    /** An interactive conversation's turn, after its text is recorded. */
     userTurn: (async () => done("Hello.")) as (
       input: Parameters<UserTurnPort["run"]>[0],
     ) => Promise<CoreTurnResult>,
     conversations: 0,
     /** Every acceptance check run, in order, with the binding it ran for. */
     checksRun: [] as Array<{ bindingId: string; command: string }>,
-    /** Checkpoints of enrolled conversations: the real repository over the fixture, the rest faked. */
+    /** Checkpoints of interactive conversations: the real repository over the fixture, the rest faked. */
     checkpoint: {
-      /** The archive every enrolled conversation reads. */
+      /** The archive every interactive conversation reads. */
       entries: [] as TranscriptEntryWithSeq[],
       generate: (async (input) => {
         const payload = checkpointPayloadFor(input);
@@ -219,7 +220,7 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           usage: EMPTY_CHECKPOINT_USAGE,
         };
       }) as typeof generateCheckpoint,
-      /** Why closing an enrolled conversation's runtime fails; null closes it. */
+      /** Why closing an interactive conversation's runtime fails; null closes it. */
       closeFailure: null as string | null,
       /** Runtime closes the checkpoints asked for, by conversation, `retry:` marking a retried close. */
       releases: [] as string[],
@@ -265,7 +266,9 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           },
         },
         records: {
-          async recordInterrupted() {},
+          async recordInterrupted(identity) {
+            harness.interrupted.push(identity.conversationId);
+          },
           async recordWithdrawn() {},
           hasPendingQuestion: () => false,
           withdrawQuestion: async () => false,
@@ -284,7 +287,8 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           },
         },
         queue: {
-          async claimNextTurnBatch() {
+          async claimNextTurnBatch(input) {
+            harness.claims.push(input.conversationId);
             return harness.queued.shift() ?? null;
           },
           async markPending() {},
@@ -306,10 +310,6 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           },
           verify: async () => null,
         },
-        readConversation: async (enrollment) =>
-          harness.deletedConversations.has(enrollment.conversationId)
-            ? null
-            : makeConversationState({ id: enrollment.conversationId }),
         conversationHold: harness.conversationHold,
         checkpoints: {
           repo: () => harness.checkpoint.repo,

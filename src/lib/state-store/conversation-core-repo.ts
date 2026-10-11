@@ -5,14 +5,24 @@ import {
   attemptRecordSchema,
   coreQuestionRecordSchema,
   mailboxItemRecordSchema,
-  interactiveEnrollmentRecordSchema,
+  interactiveConversationSchema,
   seatBindingRecordSchema,
   type AttemptRecord,
   type CoreQuestionRecord,
   type MailboxItemRecord,
-  type InteractiveEnrollmentRecord,
+  type InteractiveConversation,
   type SeatBindingRecord,
 } from "@/lib/conversation-core/schemas";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  IN_TURN_QUESTION_ID_PREFIX,
+  isInTurnQuestionId,
+} from "@/lib/conversations/in-turn-questions";
+import {
+  PENDING_QUEUED_MESSAGE_STATUSES,
+  isActiveQueuedMessageStatus,
+} from "@/lib/conversations/message-queue-schemas";
+import { ACTIVE_CHECKPOINT_PHASES } from "@/lib/conversation-checkpoints/schemas";
 
 type Db = InstanceType<typeof Database>;
 
@@ -28,12 +38,30 @@ const seatRow = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 });
-const enrollmentRow = z.object({
-  conversation_id: z.string(),
+const locatedRow = z.object({
+  id: z.string(),
   project_path: z.string(),
   session_name: z.string(),
-  enrolled_at: z.string(),
 });
+const recoverableRow = locatedRow.extend({
+  status: z.string(),
+  pending_question_id: z.string().nullable(),
+  archived: z.number().int(),
+  queued: z.number().int(),
+});
+
+/** An interactive conversation a restart may have left something in, with what boot does about it. */
+export interface RecoverableConversation extends InteractiveConversation {
+  /** The row still shows a turn (running, or a question asked inside one): it is settled as interrupted. */
+  showsTurn: boolean;
+  /** It has queue rows the queue still owns: the queue's own recovery runs for it. */
+  queued: boolean;
+  /** Archived: recovered, but no queued message of it is started. */
+  archived: boolean;
+}
+
+const sqlList = (values: readonly string[]): string =>
+  values.map((value) => `'${value}'`).join(", ");
 const mailboxRow = z.object({
   cause: z.string(),
   conversation_id: z.string(),
@@ -144,12 +172,20 @@ function questionFromRow(raw: unknown): CoreQuestionRecord {
 
 /** Sole writer of the Conversation core's seat, mailbox, attempt and question tables. */
 export interface ConversationCoreRepo {
-  enrollInteractive(record: InteractiveEnrollmentRecord): void;
-  getInteractive(conversationId: string): InteractiveEnrollmentRecord | null;
-  listInteractive(): InteractiveEnrollmentRecord[];
-  unenrollInteractive(conversationId: string): void;
-  /** Whether the core runs this conversation's turns, as a seat or an enrolled interactive conversation. */
+  /**
+   * Where an interactive conversation the core runs is stored, or null: the
+   * core runs every conversation without a role (a role marks a run's seat,
+   * or a conversation the graph engine drives through the conversation actor).
+   */
+  getInteractive(conversationId: string): InteractiveConversation | null;
+  /** Whether the core runs this conversation's turns: a run's seat, or a conversation without a role. */
   ownsConversation(conversationId: string): boolean;
+  /**
+   * The interactive conversations a restart may have left something in: a row
+   * still running or holding a question asked inside its turn, active queue
+   * rows, or a checkpoint operation that has not finished.
+   */
+  listRecoverable(): RecoverableConversation[];
   insertSeat(record: SeatBindingRecord): void;
   getSeat(conversationId: string): SeatBindingRecord | null;
   /** Every seat a context's assignments held, by assignment and incarnation. */
@@ -212,28 +248,29 @@ export interface ConversationCoreRepo {
 }
 
 export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
+  // Rows a restart may have left something in: a turn the row still shows, a
+  // queue row still owned by the queue, or a checkpoint operation not finished.
+  const activeQueueStatuses = PENDING_QUEUED_MESSAGE_STATUSES.filter(
+    isActiveQueuedMessageStatus,
+  );
+  const QUEUED = `EXISTS (SELECT 1 FROM json_each(COALESCE(c.pending_queue, '[]')) WHERE json_extract(value, '$.status') IN (${sqlList(activeQueueStatuses)}))`;
+  const RECOVERABLE = `c.status = 'running' OR c.pending_question_id LIKE '${IN_TURN_QUESTION_ID_PREFIX}%' OR ${QUEUED} OR c.id IN (SELECT conversation_id FROM conversation_checkpoint_operations WHERE phase IN (${sqlList(ACTIVE_CHECKPOINT_PHASES)}))`;
   const SEAT = `conversation_id, context_id, assignment_id, replacement, role, project_path, session_name, backend, created_at, updated_at`;
   const MAILBOX = `cause, conversation_id, requester_kind, requester_id, request_json, permit_controller_id, permit_generation, state, attempt_id, created_at, updated_at`;
   const ATTEMPT = `attempt_id, conversation_id, cause, state, outcome_json, opened_at, settled_at`;
   const QUESTION = `question_id, conversation_id, attempt_id, question_text, questions_json, state, answer, created_at, answered_at`;
   const st = {
-    enroll: db.prepare(
-      `INSERT OR IGNORE INTO core_interactive_conversations (conversation_id, project_path, session_name, enrolled_at) VALUES (@conversationId, @projectPath, @sessionName, @enrolledAt)`,
-    ),
-    getEnrollment: db.prepare(
-      `SELECT conversation_id, project_path, session_name, enrolled_at FROM core_interactive_conversations WHERE conversation_id = ?`,
-    ),
-    unenroll: db.prepare(
-      `DELETE FROM core_interactive_conversations WHERE conversation_id = ?`,
+    locate: db.prepare(
+      `SELECT id, project_path, session_name FROM conversations WHERE id = @id AND role IS NULL UNION ALL SELECT id, project_path, @projectKey AS session_name FROM project_conversations WHERE id = @id AND role IS NULL LIMIT 1`,
     ),
     lastConsumedMessage: db.prepare(
       `SELECT ${MAILBOX} FROM core_mailbox WHERE conversation_id = ? AND state = 'consumed' AND json_extract(request_json, '$.kind') = 'user_message' ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
     ),
-    listEnrollments: db.prepare(
-      `SELECT conversation_id, project_path, session_name, enrolled_at FROM core_interactive_conversations ORDER BY enrolled_at, conversation_id`,
+    recoverable: db.prepare(
+      `SELECT id, project_path, session_name, status, pending_question_id, archived, ${QUEUED} AS queued FROM conversations c WHERE role IS NULL AND (${RECOVERABLE}) UNION ALL SELECT id, project_path, @projectKey AS session_name, status, pending_question_id, archived, ${QUEUED} AS queued FROM project_conversations c WHERE role IS NULL AND (${RECOVERABLE}) ORDER BY id`,
     ),
     owns: db.prepare(
-      `SELECT 1 FROM core_seat_bindings WHERE conversation_id = @id UNION ALL SELECT 1 FROM core_interactive_conversations WHERE conversation_id = @id LIMIT 1`,
+      `SELECT 1 FROM core_seat_bindings WHERE conversation_id = @id UNION ALL SELECT 1 FROM conversations WHERE id = @id AND role IS NULL UNION ALL SELECT 1 FROM project_conversations WHERE id = @id AND role IS NULL LIMIT 1`,
     ),
     insertSeat: db.prepare(
       `INSERT OR IGNORE INTO core_seat_bindings (${SEAT}) VALUES (@conversationId, @contextId, @assignmentId, @replacement, @role, @projectPath, @sessionName, @backend, @createdAt, @updatedAt)`,
@@ -312,34 +349,37 @@ export function createConversationCoreRepo(db: Db): ConversationCoreRepo {
     ),
   };
   return {
-    enrollInteractive(record) {
-      const p = interactiveEnrollmentRecordSchema.parse(record);
-      st.enroll.run(p);
-    },
     getInteractive(conversationId) {
-      const raw: unknown = st.getEnrollment.get(conversationId);
+      const raw: unknown = st.locate.get({
+        id: conversationId,
+        projectKey: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      });
       if (raw === undefined) return null;
-      const r = enrollmentRow.parse(raw);
-      return interactiveEnrollmentRecordSchema.parse({
-        conversationId: r.conversation_id,
+      const r = locatedRow.parse(raw);
+      return interactiveConversationSchema.parse({
+        conversationId: r.id,
         projectPath: r.project_path,
         sessionName: r.session_name,
-        enrolledAt: r.enrolled_at,
       });
     },
-    listInteractive() {
-      return st.listEnrollments.all().map((raw: unknown) => {
-        const r = enrollmentRow.parse(raw);
-        return interactiveEnrollmentRecordSchema.parse({
-          conversationId: r.conversation_id,
-          projectPath: r.project_path,
-          sessionName: r.session_name,
-          enrolledAt: r.enrolled_at,
+    listRecoverable() {
+      return st.recoverable
+        .all({ projectKey: PROJECT_CONVERSATION_SESSION_SENTINEL })
+        .map((raw: unknown) => {
+          const r = recoverableRow.parse(raw);
+          return {
+            ...interactiveConversationSchema.parse({
+              conversationId: r.id,
+              projectPath: r.project_path,
+              sessionName: r.session_name,
+            }),
+            showsTurn:
+              r.status === "running" ||
+              isInTurnQuestionId(r.pending_question_id),
+            queued: r.queued === 1,
+            archived: r.archived === 1,
+          };
         });
-      });
-    },
-    unenrollInteractive(conversationId) {
-      st.unenroll.run(conversationId);
     },
     ownsConversation(conversationId) {
       return st.owns.get({ id: conversationId }) !== undefined;

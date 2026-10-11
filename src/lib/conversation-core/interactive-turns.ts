@@ -280,7 +280,7 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(getErrorMessage(error));
 }
 
-/** A person's messages to an enrolled conversation, and the receipts their turns still owe. */
+/** A person's messages to a conversation the core runs, and the receipts their turns still owe. */
 /** A conversation's running turn: whether a person attends it, and the message it delivers. */
 export interface RunningTurnDescription {
   autonomous: boolean;
@@ -310,7 +310,7 @@ export interface InteractiveTurns extends UserTurnPort {
 }
 
 /**
- * A person's messages to an enrolled conversation, on the same turn engine and
+ * A person's messages to a conversation the core runs, on the same turn engine and
  * row bookkeeping as seat turns: the ordinary conversation's context, model
  * and continuity, streamed live to the request that sent it.
  */
@@ -529,11 +529,11 @@ export function createInteractiveTurns(
         turn.deliveries.delete(work);
       }
     },
-    async notStarted({ conversationId, enrollment, request, reason, endedBy }) {
+    async notStarted({ conversationId, place, request, reason, endedBy }) {
       const delivery = request.queuedDelivery;
       const identity = {
-        projectPath: enrollment.projectPath,
-        storeSessionName: enrollment.sessionName,
+        projectPath: place.projectPath,
+        storeSessionName: place.sessionName,
         conversationId,
       };
       if (delivery === undefined) {
@@ -570,17 +570,10 @@ export function createInteractiveTurns(
             : `Not sent: ${reason}`,
       });
     },
-    async run({
-      conversationId,
-      enrollment,
-      request,
-      attemptId,
-      signal,
-      stream,
-    }) {
+    async run({ conversationId, place, request, attemptId, signal, stream }) {
       const identity = {
-        projectPath: enrollment.projectPath,
-        storeSessionName: enrollment.sessionName,
+        projectPath: place.projectPath,
+        storeSessionName: place.sessionName,
         conversationId,
       };
       const autonomous = request.autonomous === true;
@@ -657,7 +650,7 @@ export function createInteractiveTurns(
         debugMode: RuntimeDebugModeState | null,
         outputFormat: ReturnType<typeof resolveDebugOutputFormat>,
       ): Promise<TurnExecutionOutcome> {
-        const projectName = deps.getProjectDisplayName(enrollment.projectPath);
+        const projectName = deps.getProjectDisplayName(place.projectPath);
         const backend = request.backend ?? row.agentBackend;
         const persistedRef = resumableRef(row, backend);
         if (backend !== row.agentBackend) {
@@ -674,9 +667,9 @@ export function createInteractiveTurns(
         }
         if (row.promptCount === 0 && request.text.trim().length > 0) {
           deps.nameConversation({
-            projectPath: enrollment.projectPath,
+            projectPath: place.projectPath,
             projectName,
-            sessionName: enrollment.sessionName,
+            sessionName: place.sessionName,
             conversationId,
             content: request.text.slice(0, 4_000),
           });
@@ -688,8 +681,8 @@ export function createInteractiveTurns(
             (row.checkpointFork !== undefined && row.promptCount === 0
               ? await deps.admitCheckpointFork(
                   {
-                    projectPath: enrollment.projectPath,
-                    sessionName: enrollment.sessionName,
+                    projectPath: place.projectPath,
+                    sessionName: place.sessionName,
                     conversationId,
                   },
                   backend,
@@ -698,7 +691,7 @@ export function createInteractiveTurns(
                 )
               : null) ??
             (await deps.resolveModelSelection({
-              projectPath: enrollment.projectPath,
+              projectPath: place.projectPath,
               backend,
               transcriptPath: row.transcriptPath,
               explicit: request.modelSelection ?? null,
@@ -747,7 +740,7 @@ export function createInteractiveTurns(
         const input = await renderMessage(deps, conversationId, request);
         const broadcast = {
           projectName,
-          storeSessionName: enrollment.sessionName,
+          storeSessionName: place.sessionName,
         };
         // One id for the message: the transcript entry carries it, and the running turn reports it as its origin.
         const messageId =
@@ -788,16 +781,13 @@ export function createInteractiveTurns(
         const owned = accounting;
         const target = targetFromStoreSessionName(
           projectName,
-          enrollment.sessionName,
+          place.sessionName,
           conversationId,
         );
-        const worktreePath = await deps.worktreeOf(
-          enrollment.projectPath,
-          target,
-        );
+        const worktreePath = await deps.worktreeOf(place.projectPath, target);
         turnWorktree = worktreePath;
         const execution: TurnInputRequest["execution"] = {
-          projectPath: enrollment.projectPath,
+          projectPath: place.projectPath,
           target,
           worktreePath,
           role: null,
@@ -862,7 +852,7 @@ export function createInteractiveTurns(
             ...(outputFormat !== undefined ? { outputFormat } : {}),
             conversation: {
               conversationId,
-              projectPath: enrollment.projectPath,
+              projectPath: place.projectPath,
               projectName,
               target,
               worktreePath,
@@ -891,8 +881,8 @@ export function createInteractiveTurns(
                   ) =>
                     deps.requestUserQuestion(
                       {
-                        projectPath: enrollment.projectPath,
-                        sessionName: enrollment.sessionName,
+                        projectPath: place.projectPath,
+                        sessionName: place.sessionName,
                         conversationId,
                       },
                       questions,

@@ -19,7 +19,7 @@ import {
   mailboxRequestSchema,
   seatTurnRequestSchema,
   userTurnRequestSchema,
-  type InteractiveEnrollmentRecord,
+  type InteractiveConversation,
   type UserTurnRequest,
   type MailboxItemRecord,
   type SeatBindingRecord,
@@ -142,7 +142,7 @@ export interface UserTurnPort {
   /** A message that will not start, and why; it settles what the message owes (a queued batch's rows, a debug turn's phase). */
   notStarted?(input: {
     conversationId: string;
-    enrollment: InteractiveEnrollmentRecord;
+    place: InteractiveConversation;
     request: UserTurnRequest;
     cause: string;
     reason: string;
@@ -151,7 +151,7 @@ export interface UserTurnPort {
   }): Promise<void> | void;
   run(input: {
     conversationId: string;
-    enrollment: InteractiveEnrollmentRecord;
+    place: InteractiveConversation;
     request: UserTurnRequest;
     attemptId: string;
     signal: AbortSignal;
@@ -161,7 +161,7 @@ export interface UserTurnPort {
 
 /** Why work cannot start on a conversation now. */
 export interface AdmissionRefusal {
-  code: "not_enrolled" | "stopping" | HoldRefusal["code"];
+  code: "not_core" | "stopping" | HoldRefusal["code"];
   message: string;
 }
 
@@ -219,7 +219,7 @@ export type TaskTurn = z.output<typeof taskTurnRequestSchema>;
 export interface TaskTurnPort {
   run(input: {
     conversationId: string;
-    enrollment: InteractiveEnrollmentRecord;
+    place: InteractiveConversation;
     request: TaskTurn;
     attemptId: string;
     signal: AbortSignal;
@@ -243,14 +243,12 @@ export interface ConversationCoreDeps {
   permits: ControlPermits;
   admission: WorkspaceAdmission;
   /**
-   * The worktree an enrolled conversation's turns write in. An interactive
+   * The worktree an interactive conversation's turns write in. An interactive
    * turn holds it for interactive writes, which conflict only with Git and
    * publication operations there: those wait for the turn, and the turn waits
    * for them. Without it, interactive turns take no grant.
    */
-  interactiveWorktree?(
-    enrollment: InteractiveEnrollmentRecord,
-  ): Promise<string | null>;
+  interactiveWorktree?(place: InteractiveConversation): Promise<string | null>;
   createSeatConversation(input: {
     projectPath: string;
     sessionName: string;
@@ -292,7 +290,7 @@ export interface ConversationCoreDeps {
 }
 
 /**
- * The Conversation core for supervised seats and enrolled interactive
+ * The Conversation core for supervised seats and interactive
  * conversations. Every requested turn enters the mailbox; one turn lifetime
  * per conversation selects it, opens an attempt, acquires its permit, model
  * capacity and workspace grant, runs it, and settles it through the single
@@ -312,7 +310,7 @@ export interface ConversationCore extends Executor {
   /** Every seat a context's assignments held, replaced incarnations included. */
   seatBindingsOf(contextId: string): SeatBindingRecord[];
   /**
-   * A person's message to an enrolled interactive conversation. While a turn
+   * A person's message to an interactive conversation. While a turn
    * runs the message is refused as busy: input sent meanwhile belongs on the
    * conversation's message queue, which hands it over once the turn ends.
    */
@@ -330,15 +328,23 @@ export interface ConversationCore extends Executor {
     requested: boolean;
     settled: Promise<void>;
   };
-  /** The conversation is going away: what waits is withdrawn, what runs is stopped, and it runs nothing more. */
-  retireConversation(conversationId: string): Promise<void>;
+  /**
+   * The conversation is going away: what waits is withdrawn, what runs is
+   * stopped, and it runs nothing more, once `dispose` (closing what it holds)
+   * succeeds. A disposal that fails leaves the conversation to the core, so
+   * what repairs it can still take it.
+   */
+  retireConversation(
+    conversationId: string,
+    dispose?: () => Promise<void>,
+  ): Promise<void>;
   /** Resolves once the conversation runs no turn and has none waiting to start. */
   conversationIdle(conversationId: string): Promise<void>;
   /** The conversation runs a turn or has one waiting to start. */
   isBusy(conversationId: string): boolean;
   /**
    * Whether work of this kind may start now, by the same rules every entry
-   * uses: the server, enrollment, maintenance, a running turn (which holds
+   * uses: the server, place, maintenance, a running turn (which holds
    * everything but a task, which waits its turn) and the durable holds.
    */
   admission(
@@ -346,7 +352,7 @@ export interface ConversationCore extends Executor {
     turn: HoldTurn,
   ): Promise<AdmissionRefusal | null>;
   /**
-   * A workflow's task turn on an enrolled conversation, run in the
+   * A workflow's task turn on a conversation the core runs, run in the
    * conversation's own turn order (after a turn already running). Resolves with
    * its outcome; the caller's cancellation withdraws or stops it.
    */
@@ -438,7 +444,8 @@ export function createConversationCore(
   /** Items answered as never starting whose mailbox removal failed: they never run (see `leaveMailbox`). */
   const unremoved = new Set<string>();
   /** Resolves when each running or acquiring turn has ended, by cause. */
-  const turnsEnded = new Map<string, Promise<void>>();
+  /** Each running turn's end: why its agent's processes could not be confirmed stopped, or null. */
+  const turnsEnded = new Map<string, Promise<string | null>>();
   /** Grants kept for turns whose processes could not be confirmed stopped, by holder, with the reason. */
   const quarantined = new Map<string, string>();
 
@@ -618,12 +625,12 @@ export function createConversationCore(
     resolve?.(outcome);
   }
 
-  /** The interactive-write grant an enrolled conversation's turn holds on its worktree, if it has one. */
+  /** The interactive-write grant an interactive conversation's turn holds on its worktree, if it has one. */
   async function interactiveGrant(
-    enrollment: InteractiveEnrollmentRecord,
+    place: InteractiveConversation,
     holder: string,
   ): Promise<GrantRequest | null> {
-    const worktree = await deps.interactiveWorktree?.(enrollment);
+    const worktree = await deps.interactiveWorktree?.(place);
     return worktree === undefined || worktree === null
       ? null
       : { worktree, kind: "interactive_write", holder };
@@ -635,24 +642,24 @@ export function createConversationCore(
     | {
         kind: "user";
         request: UserTurnRequest;
-        enrollment: InteractiveEnrollmentRecord;
+        place: InteractiveConversation;
       }
     | {
         kind: "task";
         request: TaskTurn;
-        enrollment: InteractiveEnrollmentRecord;
+        place: InteractiveConversation;
       } {
     const request = mailboxRequestSchema.parse(item.request);
     if (request.kind !== "user_message" && request.kind !== "task_run")
       return { kind: "seat", request, grant: grantFor(request, item.cause) };
-    const enrollment = deps.repo.getInteractive(item.conversationId);
-    if (enrollment === null)
+    const place = deps.repo.getInteractive(item.conversationId);
+    if (place === null)
       throw new Error(
         `Conversation ${item.conversationId} is not run by the core`,
       );
     return request.kind === "user_message"
-      ? { kind: "user", request, enrollment }
-      : { kind: "task", request, enrollment };
+      ? { kind: "user", request, place }
+      : { kind: "task", request, place };
   }
 
   /**
@@ -748,17 +755,17 @@ export function createConversationCore(
     streams.delete(cause);
     const { reason, endedBy } = messageNotStarted(why);
     const direct = request.queuedDelivery === undefined;
-    const enrollment = deps.repo.getInteractive(conversationId);
-    if (enrollment !== null && why.why !== "retired") {
+    const place = deps.repo.getInteractive(conversationId);
+    if (place !== null && why.why !== "retired") {
       // Settled before the mailbox copy goes: a queued batch the queue still holds as
       // delivering would otherwise block it until restart.
-      await settleNotStarted(item, enrollment, request, reason, endedBy);
+      await settleNotStarted(item, place, request, reason, endedBy);
       if (direct && (why.why === "held" || why.why === "restart")) {
         await deps.records
           .recordWithdrawn(
             {
-              projectPath: enrollment.projectPath,
-              storeSessionName: enrollment.sessionName,
+              projectPath: place.projectPath,
+              storeSessionName: place.sessionName,
               conversationId,
             },
             {
@@ -794,7 +801,7 @@ export function createConversationCore(
 
   async function settleNotStarted(
     item: { cause: string; conversationId: string },
-    enrollment: InteractiveEnrollmentRecord,
+    place: InteractiveConversation,
     request: UserTurnRequest,
     reason: string,
     endedBy: "person" | "server" | "failure",
@@ -802,7 +809,7 @@ export function createConversationCore(
     await Promise.resolve(
       deps.userTurns.notStarted?.({
         conversationId: item.conversationId,
-        enrollment,
+        place,
         request,
         cause: item.cause,
         reason,
@@ -883,19 +890,20 @@ export function createConversationCore(
     const controller = new AbortController();
     controllers.set(item.cause, controller);
     activeCauses.set(item.conversationId, item.cause);
-    let endTurn: () => void = () => {};
+    let endTurn: (uncollected: string | null) => void = () => {};
     turnsEnded.set(
       item.cause,
-      new Promise<void>((resolve) => (endTurn = resolve)),
+      new Promise<string | null>((resolve) => (endTurn = resolve)),
     );
+    let uncollected: string | null = null;
     // An interactive conversation shows running from here, while its turn may
     // still wait for model capacity: its person's next message is queued, not refused.
     const claimed =
       turn.kind === "seat"
         ? null
         : {
-            projectPath: turn.enrollment.projectPath,
-            storeSessionName: turn.enrollment.sessionName,
+            projectPath: turn.place.projectPath,
+            storeSessionName: turn.place.sessionName,
             conversationId: item.conversationId,
           };
     if (claimed !== null) {
@@ -910,7 +918,7 @@ export function createConversationCore(
       const grantRequest =
         turn.kind === "seat"
           ? turn.grant
-          : await interactiveGrant(turn.enrollment, item.cause);
+          : await interactiveGrant(turn.place, item.cause);
       const acquired = await acquire(item, grantRequest, controller.signal);
       if (acquired.kind === "blocked") {
         resolveWaiters(
@@ -953,7 +961,7 @@ export function createConversationCore(
         if (turn.kind === "user") {
           result = await deps.userTurns.run({
             conversationId: item.conversationId,
-            enrollment: turn.enrollment,
+            place: turn.place,
             request: turn.request,
             attemptId,
             signal: controller.signal,
@@ -962,7 +970,7 @@ export function createConversationCore(
         } else if (turn.kind === "task") {
           const ran = await deps.taskTurns.run({
             conversationId: item.conversationId,
-            enrollment: turn.enrollment,
+            place: turn.place,
             request: turn.request,
             attemptId,
             signal: controller.signal,
@@ -1001,6 +1009,7 @@ export function createConversationCore(
         acquired.releaseSlot();
       }
       if (result.runtimeUncollected !== undefined) {
+        uncollected = result.runtimeUncollected;
         // Processes that may still write keep the workspace they were granted;
         // a conflicting turn waits rather than run beside them.
         deps.log.error("conversation_core.runtime_uncollected", {
@@ -1047,7 +1056,7 @@ export function createConversationCore(
           }),
         );
       }
-      endTurn();
+      endTurn(uncollected);
     }
   }
 
@@ -1183,7 +1192,7 @@ export function createConversationCore(
       retired.has(conversationId)
     ) {
       return {
-        code: "not_enrolled",
+        code: "not_core",
         message: `Conversation ${conversationId} is not run by the core`,
       };
     }
@@ -1336,12 +1345,12 @@ export function createConversationCore(
       });
       // A turn that was still waiting to start left its conversation claimed (running).
       for (const conversationId of claimed) {
-        const enrollment = deps.repo.getInteractive(conversationId);
-        if (enrollment === null) continue;
+        const place = deps.repo.getInteractive(conversationId);
+        if (place === null) continue;
         await deps.records
           .endClaim({
-            projectPath: enrollment.projectPath,
-            storeSessionName: enrollment.sessionName,
+            projectPath: place.projectPath,
+            storeSessionName: place.sessionName,
             conversationId,
           })
           .catch((error: unknown) =>
@@ -1505,13 +1514,13 @@ export function createConversationCore(
     },
     stopConversation(conversationId) {
       const cause = activeCauses.get(conversationId);
-      const enrollment = deps.repo.getInteractive(conversationId);
+      const place = deps.repo.getInteractive(conversationId);
       const identity =
-        enrollment === null
+        place === null
           ? null
           : {
-              projectPath: enrollment.projectPath,
-              storeSessionName: enrollment.sessionName,
+              projectPath: place.projectPath,
+              storeSessionName: place.sessionName,
               conversationId,
             };
       const asked =
@@ -1519,9 +1528,17 @@ export function createConversationCore(
       if (cause === undefined && !asked)
         return { requested: false, settled: Promise.resolve() };
       if (cause !== undefined) controllers.get(cause)?.abort("user");
-      const turnEnded =
+      // Stopped means its agent's processes were seen to end: one that could
+      // not be confirmed is a failed stop, though nothing new starts meanwhile.
+      const turnEnded = (
         (cause !== undefined ? turnsEnded.get(cause) : undefined) ??
-        Promise.resolve();
+        Promise.resolve(null)
+      ).then((failure) => {
+        if (failure !== null)
+          throw new Error(
+            `The agent's processes could not be confirmed stopped: ${failure}`,
+          );
+      });
       if (identity === null) return { requested: true, settled: turnEnded };
       // After a stop the next input comes from the person: a question the
       // stopped turn left (or asked while stopping) is moot.
@@ -1537,7 +1554,7 @@ export function createConversationCore(
       });
       return { requested: true, settled };
     },
-    async retireConversation(conversationId) {
+    async retireConversation(conversationId, dispose) {
       retired.add(conversationId);
       leases.get(conversationId)?.controller.abort("user");
       const running = activeCauses.get(conversationId);
@@ -1547,7 +1564,12 @@ export function createConversationCore(
         await unstarted(item, { why: "retired" });
       if (running !== undefined) controllers.get(running)?.abort("user");
       while (runners.has(conversationId)) await runners.get(conversationId);
-      deps.transaction(() => deps.repo.unenrollInteractive(conversationId));
+      try {
+        await dispose?.();
+      } catch (error) {
+        retired.delete(conversationId);
+        throw error;
+      }
     },
     seatBinding(conversationId) {
       return deps.repo.getSeat(conversationId);

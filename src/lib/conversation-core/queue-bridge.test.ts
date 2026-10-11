@@ -6,18 +6,17 @@ import { storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-t
 import type { UserMessageAdmission } from "./executor";
 import { createCoreQueueBridge } from "./queue-bridge";
 
-const enrollment = {
+const place = {
   conversationId: "conv-1",
   projectPath: "/repo",
   sessionName: "session",
-  enrolledAt: "2026-10-03T10:00:00.000Z",
 };
 
 function harness(
   batch: ClaimedQueuedBatch | null,
   admission: UserMessageAdmission,
   busy = false,
-  conversationEnrollment: typeof enrollment = enrollment,
+  conversationPlace: typeof place = place,
 ) {
   const marks: string[] = [];
   const sent: unknown[] = [];
@@ -46,8 +45,8 @@ function harness(
   };
   const bridge = createCoreQueueBridge({
     queue,
-    enrollment: (conversationId) =>
-      conversationId === "conv-1" ? conversationEnrollment : null,
+    place: (conversationId) =>
+      conversationId === "conv-1" ? conversationPlace : null,
     isBusy: () => busy,
     async send(input) {
       sent.push(input);
@@ -117,7 +116,7 @@ describe("the core's message queue bridge", () => {
       },
       accepted,
       false,
-      { ...enrollment, sessionName: projectStore },
+      { ...place, sessionName: projectStore },
     );
     await h.bridge.drain("conv-1");
 
@@ -213,8 +212,7 @@ describe("the core's message queue bridge", () => {
           return { status: "dispatched", jobId: "job-1", usedFallback: false };
         },
       },
-      enrollment: (conversationId) =>
-        conversationId === "conv-1" ? enrollment : null,
+      place: (conversationId) => (conversationId === "conv-1" ? place : null),
       isBusy: () => false,
       async send(input) {
         sent.push(input.text);

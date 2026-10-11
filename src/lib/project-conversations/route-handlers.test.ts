@@ -108,7 +108,6 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
       },
       admitCollaboration: async () => null,
     },
-    enrollInCore: () => {},
     changeConversationProfile: async () => {
       throw new Error("not used");
     },
@@ -840,74 +839,5 @@ describe("a project conversation the shared core runs", () => {
       code: refusal.code,
     });
     expect(h.sent).toEqual([]);
-  });
-
-  it("creates a conversation the core runs when asked, enrolled before anyone hears of it", async () => {
-    const order: string[] = [];
-    const enrolled: unknown[] = [];
-    const created: unknown[] = [];
-    const h = harness({
-      enrollInCore: (input) => {
-        order.push("enrolled");
-        enrolled.push(input);
-      },
-      broadcast: (event) => {
-        order.push(event.type);
-        return { delivered: true };
-      },
-    });
-    const create = h.deps.createProjectConversation;
-    h.deps.createProjectConversation = async (projectPath, opts) => {
-      created.push(opts);
-      return create(projectPath, opts);
-    };
-
-    const res = await h.handlers.createPOST(
-      jsonRequest({ engine: "core", name: "Core chat" }),
-      ctx({ name: "demo" }),
-    );
-
-    expect(res.status).toBe(201);
-    expect(enrolled).toEqual([
-      {
-        conversationId: "new-1",
-        projectPath: "/repo",
-        scope: { scope: "project" },
-      },
-    ]);
-    expect(order).toEqual(["enrolled", "conversation-created"]);
-    // The engine is how the route hands the conversation over, not a property of the conversation.
-    expect(created).toEqual([{ name: "Core chat" }]);
-  });
-
-  it("leaves an ordinary project conversation to the conversation actor", async () => {
-    const enrolled: unknown[] = [];
-    const h = harness({ enrollInCore: (input) => enrolled.push(input) });
-
-    expect(
-      (await h.handlers.createPOST(jsonRequest({}), ctx({ name: "demo" })))
-        .status,
-    ).toBe(201);
-    expect(enrolled).toEqual([]);
-  });
-
-  it("archives a conversation it could not enroll and answers 500, rather than handing out a half-made one", async () => {
-    const h = harness({
-      enrollInCore: () => {
-        throw new Error("database is locked");
-      },
-    });
-
-    const res = await h.handlers.createPOST(
-      jsonRequest({ engine: "core" }),
-      ctx({ name: "demo" }),
-    );
-
-    expect(res.status).toBe(500);
-    expect(await res.json()).toMatchObject({
-      error: expect.stringContaining("database is locked"),
-    });
-    expect(h.store.get("new-1")?.archived).toBe(true);
-    expect(h.broadcasts).toEqual([]);
   });
 });

@@ -601,18 +601,19 @@ describe("commitChangesActor", () => {
 });
 
 describe("the session conversation a merge, commit or rebase fix turn goes to", () => {
-  it("is the most recently active one that takes task turns, passing over a run's seats", () => {
+  it("is the most recently active one without a role, passing over a run's seats and the graph engine's lanes", () => {
     const conversations = [
-      { id: "seat" },
-      { id: "core-chat" },
-      { id: "actor-chat" },
+      { id: "seat", role: "validator" as const },
+      { id: "graph-lane", role: "iteration" as const },
+      { id: "chat", role: null },
+      { id: "older-chat", role: null },
     ];
-    expect(pickSessionConversation(conversations, (id) => id === "seat")).toBe(
-      "core-chat",
-    );
+    expect(pickSessionConversation(conversations)).toBe("chat");
   });
 
-  it("is none when only a run's seats are left", () => {
-    expect(pickSessionConversation([{ id: "seat" }], () => true)).toBeNull();
+  it("is none when every conversation has a role", () => {
+    expect(
+      pickSessionConversation([{ id: "seat", role: "validator" }]),
+    ).toBeNull();
   });
 });

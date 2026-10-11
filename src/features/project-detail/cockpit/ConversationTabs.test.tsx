@@ -122,23 +122,6 @@ describe("ConversationTabs", () => {
     });
   });
 
-  it("offers a conversation the shared core runs, under the picked profile", async () => {
-    const user = userEvent.setup();
-    const onNewChat = vi.fn();
-    renderTabs({ onNewChat });
-
-    await user.click(
-      screen.getByRole("button", { name: /choose an agent profile/i }),
-    );
-    await user.click(
-      await screen.findByRole("button", { name: /create core conversation/i }),
-    );
-    expect(onNewChat).toHaveBeenCalledWith(
-      { tier: "builtin", id: "standard-agent" },
-      "core",
-    );
-  });
-
   it("shows a busy, disabled Creating… affordance while the create mutation is pending", () => {
     const onNewChat = vi.fn();
     renderTabs({

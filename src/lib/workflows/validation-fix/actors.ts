@@ -35,14 +35,16 @@ import type {
 
 const logger = createLogger("validation-fix-actors");
 
-/** The first conversation, most recently active first, that takes task turns: any but a run's seat. */
+/**
+ * The first conversation, most recently active first, that takes the person's
+ * task turns: one without a role (a role marks a run's seat, or a graph
+ * engine conversation that may work in a lane of its own).
+ */
 export function pickSessionConversation(
-  conversations: readonly { id: string }[],
-  isRunSeat: (conversationId: string) => boolean,
+  conversations: readonly { id: string; role: string | null }[],
 ): string | null {
   return (
-    conversations.find((conversation) => !isRunSeat(conversation.id))?.id ??
-    null
+    conversations.find((conversation) => conversation.role === null)?.id ?? null
   );
 }
 
@@ -61,10 +63,8 @@ export async function resolveSessionConversationId(
   sessionName: string,
 ): Promise<string> {
   const { getSessionConversations } = await import("@/lib/state-store");
-  const { coreRunsSeat } = await import("@/lib/supervision/handles");
   const conversations = await getSessionConversations(projectPath, sessionName);
-  // A run's seat takes work only from its run; any other conversation, on either engine, takes task turns.
-  const id = pickSessionConversation(conversations, coreRunsSeat);
+  const id = pickSessionConversation(conversations);
   if (!id) {
     throw new Error(
       `No conversation that takes task turns found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,

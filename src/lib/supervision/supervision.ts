@@ -1,5 +1,3 @@
-import type { InteractiveEnrollmentRecord } from "@/lib/conversation-core/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCoreQueueBridge } from "@/lib/conversation-core/queue-bridge";
 import {
@@ -92,15 +90,12 @@ export interface SupervisionPorts {
     | "claimTurn"
     | "endClaim"
   >;
-  /** The conversation message queue (the rows clients show) that feeds enrolled interactive conversations. */
+  /** The conversation message queue (the rows clients show) that feeds interactive conversations. */
   queue: Omit<ConversationQueueDeps, "submitTurn">;
   getProjectDisplayName(projectPath: string): string;
-  readConversation(
-    enrollment: InteractiveEnrollmentRecord,
-  ): Promise<ConversationState | null>;
-  /** Debug mode on enrolled conversations' rows, and the debug workflow's cleanup verification. */
+  /** Debug mode on interactive conversations' rows, and the debug workflow's cleanup verification. */
   debug: Pick<CoreDebugModeDeps, "records" | "verify">;
-  /** Checkpoints of enrolled conversations: durable state, the archive, generation and the core's runtimes. */
+  /** Checkpoints of interactive conversations: durable state, the archive, generation and the core's runtimes. */
   checkpoints: CoreCheckpointPorts;
   /** What a conversation's row holds: a collaboration's claim on its turns, and a new claim while the row forbids one. */
   conversationHold: HoldSource;
@@ -111,7 +106,7 @@ export interface SupervisionPorts {
   lanes: LaneGit;
   /** Brings a lane up to date with the session head before it publishes. */
   integrator: LaneIntegrator;
-  /** The worktree an enrolled conversation's turns write in, held for interactive writes while a turn runs. */
+  /** The worktree an interactive conversation's turns write in, held for interactive writes while a turn runs. */
   interactiveWorktree?: ConversationCoreDeps["interactiveWorktree"];
   runCheck: WorkspaceExecutorDeps["runCheck"];
   followOwner: RunHostDeps["followOwner"];
@@ -140,11 +135,11 @@ export interface Supervision {
   } | null;
   /** Where a supervised seat works and what it may run there, or null for any other conversation. */
   seatWorkplace(conversationId: string): SupervisedSeatWorkplace | null;
-  /** Hands an enrolled interactive conversation's next queued message to the core when it is idle. */
+  /** Hands an interactive conversation's next queued message to the core when it is idle. */
   drainConversationQueue(conversationId: string): Promise<void>;
-  /** Debug mode on enrolled interactive conversations. */
+  /** Debug mode on interactive conversations. */
   debug: CoreDebugMode;
-  /** Checkpoints of enrolled interactive conversations. */
+  /** Checkpoints of interactive conversations. */
   checkpoints: CoreCheckpoints;
   /** Boot: settle what the last process left running, restore runs paused, reconcile. */
   boot(): Promise<{ restoredRuns: number; reconciledOwners: number }>;
@@ -193,7 +188,7 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
   const queueLog = ports.logger("conversation-core");
   const queueBridge = createCoreQueueBridge({
     queue: ports.queue,
-    enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
+    place: (conversationId) => coreRepo.getInteractive(conversationId),
     isBusy: (conversationId) => core.isBusy(conversationId),
     send: (input) => core.sendUserMessage(input),
     getProjectDisplayName: ports.getProjectDisplayName,
@@ -206,7 +201,7 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
       isBusy: (conversationId) => core.isBusy(conversationId),
       runningAttempt: (conversationId) => core.runningAttempt(conversationId),
     },
-    enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
+    place: (conversationId) => coreRepo.getInteractive(conversationId),
     log: ports.logger("conversation-core"),
   });
   // A runtime whose close failed may still act in the worktree: nothing new runs beside it.
@@ -262,7 +257,7 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
   });
   const debug = createCoreDebugMode({
     core,
-    enrollment: (conversationId) => coreRepo.getInteractive(conversationId),
+    place: (conversationId) => coreRepo.getInteractive(conversationId),
     records: ports.debug.records,
     verify: ports.debug.verify,
     log: ports.logger("conversation-core"),
@@ -343,34 +338,50 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
     async boot() {
       await core.recover();
       const drainable: string[] = [];
-      // Rows the last process claimed go back to the queue's own rules before anything drains.
-      for (const enrollment of coreRepo.listInteractive()) {
-        const { conversationId } = enrollment;
-        // A conversation deleted while the core still listed it has nothing to recover.
-        if ((await ports.readConversation(enrollment)) === null) {
-          coreRepo.unenrollInteractive(conversationId);
-          queueLog.info("conversation_core.enrollment_dropped", {
+      // What the last process left in the conversations the core runs: a turn
+      // the conversation actor or the core never settled is settled as
+      // interrupted, claimed queue rows go back to the queue's own rules and
+      // checkpoints settle before anything drains. An archived conversation is
+      // recovered but none of its queued messages is started.
+      for (const conversation of coreRepo.listRecoverable()) {
+        const { conversationId } = conversation;
+        if (conversation.showsTurn) {
+          queueLog.info("conversation_core.boot_turn_settled", {
             conversationId,
           });
-          continue;
+          await ports.records
+            .recordInterrupted({
+              projectPath: conversation.projectPath,
+              storeSessionName: conversation.sessionName,
+              conversationId,
+            })
+            .catch((error: unknown) =>
+              queueLog.error("conversation_core.recover_row_failed", {
+                conversationId,
+                error: getErrorMessage(error),
+              }),
+            );
         }
-        await queueBridge.recover(conversationId).catch((error: unknown) =>
-          queueLog.error("conversation_core.queue_recover_failed", {
-            conversationId,
-            error: getErrorMessage(error),
-          }),
-        );
+        // Each of these writes the row (and its activity time): only what has something to recover.
+        if (conversation.queued)
+          await queueBridge.recover(conversationId).catch((error: unknown) =>
+            queueLog.error("conversation_core.queue_recover_failed", {
+              conversationId,
+              error: getErrorMessage(error),
+            }),
+          );
         // A checkpoint the last process left in flight is settled before the queue may drain.
-        await checkpoints.recover(enrollment);
-        drainable.push(conversationId);
+        await checkpoints.recover(conversation);
+        if (!conversation.archived) drainable.push(conversationId);
       }
       // Runs restore paused first: recovering an operation wakes its Run, which must start nothing until resumed.
       const restoredRuns = runsRepo.listActive().length;
-      await runs.restoreAfterRestart();
       try {
+        await runs.restoreAfterRestart();
         // Before any interactive turn starts, so finishing a publication never waits behind one.
         await workspace.recover();
       } finally {
+        // A failed restoration leaves the conversations' queues to drain all the same.
         for (const conversationId of drainable) void drainQueue(conversationId);
       }
       const owners = intents.owners();

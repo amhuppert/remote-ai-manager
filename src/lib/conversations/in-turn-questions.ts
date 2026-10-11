@@ -25,8 +25,11 @@ export interface InTurnQuestionDeps {
   timeoutMs: number;
 }
 
+/** Marks a question asked inside a turn, which dies with the turn's transport. */
+export const IN_TURN_QUESTION_ID_PREFIX = "cc-in-turn-";
+
 export function isInTurnQuestionId(id: string | null | undefined): boolean {
-  return id?.startsWith("cc-in-turn-") ?? false;
+  return id?.startsWith(IN_TURN_QUESTION_ID_PREFIX) ?? false;
 }
 
 export function createInTurnQuestionService(deps: InTurnQuestionDeps) {
@@ -49,7 +52,7 @@ export function createInTurnQuestionService(deps: InTurnQuestionDeps) {
     ): Promise<InTurnQuestionReply> {
       if (signal.aborted)
         return { status: "cancelled", message: "The requesting run stopped" };
-      const questionId = `cc-in-turn-${deps.newId()}`;
+      const questionId = `${IN_TURN_QUESTION_ID_PREFIX}${deps.newId()}`;
       const result = Promise.withResolvers<InTurnQuestionReply>();
       const registered = deps.register(scope, questionId, questions);
       const onAbort = () => {
