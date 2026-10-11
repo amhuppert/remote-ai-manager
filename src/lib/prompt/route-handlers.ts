@@ -5,7 +5,6 @@
  * Tests create handlers with mock deps via `createPromptRouteHandlers(deps)`.
  */
 
-import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 import { NextResponse } from "next/server";
 import { commandRequestRefusal } from "@/lib/commands/route-admission";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
@@ -32,6 +31,7 @@ import {
 } from "@/lib/conversations/service";
 import {
   executePromptStream as defaultExecutePromptStream,
+  productionCorePromptDeps,
   BackendMismatchError,
   CollabBriefRequiredError,
   CollabDispatcherUnavailableError,
@@ -72,13 +72,9 @@ import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 import {
   admitCoreCollaboration,
   promptCoreConversation,
-  type CoreConversationPromptDeps,
   type CoreConversationPrompts,
 } from "@/lib/conversation-core/prompt-route";
-import {
-  adoptCoreConversationBackend,
-  coreOwnsConversation,
-} from "@/lib/supervision/handles";
+import { coreOwnsConversation } from "@/lib/supervision/handles";
 
 const logger = createLogger("prompt");
 
@@ -174,29 +170,10 @@ export function productionCoreConversationPrompts(
 ): CoreConversationPrompts {
   return {
     owns: coreOwnsConversation,
-    async prompt(input) {
-      return promptCoreConversation(await productionPromptDeps(log), input);
-    },
-    async admitCollaboration(input) {
-      return admitCoreCollaboration(await productionPromptDeps(log), input);
-    },
-  };
-}
-
-async function productionPromptDeps(
-  log: Pick<Logger, "info" | "warn">,
-): Promise<CoreConversationPromptDeps> {
-  const { getSupervision } = await import("@/lib/supervision/production");
-  const supervision = getSupervision();
-  return {
-    sendUserMessage: (message) => supervision.core.sendUserMessage(message),
-    admission: (conversationId, turn) =>
-      supervision.core.admission(conversationId, turn),
-    adoptBackend: adoptCoreConversationBackend,
-    clearPendingPromptText: defaultClearConversationPendingPromptTextIfMatches,
-    dispatchCommand: dispatchConversationCommand,
-    commandRefusal: commandRequestRefusal,
-    log,
+    prompt: (input) =>
+      promptCoreConversation(productionCorePromptDeps(log), input),
+    admitCollaboration: (input) =>
+      admitCoreCollaboration(productionCorePromptDeps(log), input),
   };
 }
 
@@ -583,21 +560,12 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       }
       const trimmedCorePrompt = coreBody.prompt.trim();
       if (hasCollabPrefix(trimmedCorePrompt)) {
-        const refused =
-          (await commandRequestRefusal(
-            trimmedCorePrompt,
-            coreBody.backend ?? conversation.agentBackend,
-          )) ??
-          (await deps.coreConversations.admitCollaboration({
-            projectPath,
-            target: sessionConversationTarget(
-              name,
-              sessionName,
-              conversationId,
-            ),
-            conversation,
-            body: coreBody,
-          }));
+        const refused = await deps.coreConversations.admitCollaboration({
+          projectPath,
+          target: sessionConversationTarget(name, sessionName, conversationId),
+          conversation,
+          body: coreBody,
+        });
         if (refused) return refused;
         return startCollaborationFromPrompt({
           name,

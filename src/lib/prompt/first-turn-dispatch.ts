@@ -109,9 +109,13 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
           images: input.images,
         });
       } else {
+        // A refused prompt is returned, not thrown, and leaves no trace in the
+        // conversation, so only an accepted one counts as dispatched; a turn
+        // that fails after acceptance reports itself in its transcript.
+        let accepted = false;
         // `agent` is narrowed to "claude" | "codex" here — both are valid
         // AgentBackendId values, so the first turn runs on the chosen backend.
-        await deps.executePromptStream(
+        const result = await deps.executePromptStream(
           projectPath,
           session,
           initialPrompt,
@@ -122,8 +126,21 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
           {
             backend: agent,
             inputOrigin: input.inputOrigin ?? "generated",
+            onAccepted: () => {
+              accepted = true;
+            },
           },
         );
+        if (!accepted) {
+          logger.error("prompt.first-turn-dispatch.refused", {
+            projectName,
+            sessionName: session.sessionName,
+            conversationId,
+            agent,
+            error: result.error,
+          });
+          return { dispatched: false };
+        }
       }
       logger.info("prompt.first-turn-dispatch.dispatched", {
         projectName,

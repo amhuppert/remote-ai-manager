@@ -63,10 +63,16 @@ function makeDeps(
   overrides: Partial<FirstTurnDispatcherDeps> = {},
 ): FirstTurnDispatcherDeps {
   return {
-    executePromptStream: vi.fn().mockResolvedValue({
-      conversationId: CONVERSATION_ID,
-      contextTokens: null,
-      contextWindowMax: null,
+    // Accepts the prompt, as the real function does before running the turn.
+    executePromptStream: vi.fn(async (...args) => {
+      await args[7]?.onAccepted?.();
+      return {
+        conversationId: CONVERSATION_ID,
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+        error: null,
+      };
     }),
     startDualRace: vi.fn().mockResolvedValue(undefined),
     isConversationBusy: vi.fn().mockReturnValue(false),
@@ -109,7 +115,10 @@ describe("createFirstTurnDispatcher", () => {
     expect(call[0]).toBe("/repo"); // projectPath
     expect(call[2]).toBe("do the thing"); // promptText
     expect(call[4]).toBe(CONVERSATION_ID); // conversationId
-    expect(call[7]).toEqual({ backend: "claude", inputOrigin: "generated" }); // options
+    expect(call[7]).toMatchObject({
+      backend: "claude",
+      inputOrigin: "generated",
+    }); // options
   });
 
   it("dispatches a codex first turn on the codex backend", async () => {
@@ -117,7 +126,10 @@ describe("createFirstTurnDispatcher", () => {
     await dispatchFirstTurn(input("codex", "do the thing"));
     const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
       .calls[0]!;
-    expect(call[7]).toEqual({ backend: "codex", inputOrigin: "generated" });
+    expect(call[7]).toMatchObject({
+      backend: "codex",
+      inputOrigin: "generated",
+    });
     expect(deps.startDualRace).not.toHaveBeenCalled();
   });
 
@@ -135,7 +147,7 @@ describe("createFirstTurnDispatcher", () => {
       CONVERSATION_ID,
       undefined,
       undefined,
-      { backend: "claude", inputOrigin: "user" },
+      expect.objectContaining({ backend: "claude", inputOrigin: "user" }),
     );
   });
 
@@ -154,7 +166,10 @@ describe("createFirstTurnDispatcher", () => {
       modelId: "gpt-5.4",
       parameters: { fast: "false", reasoning: "high" },
     });
-    expect(call[7]).toEqual({ backend: "codex", inputOrigin: "generated" });
+    expect(call[7]).toMatchObject({
+      backend: "codex",
+      inputOrigin: "generated",
+    });
   });
 
   it("delivers ordered image payloads with the first turn", async () => {
@@ -199,7 +214,10 @@ describe("createFirstTurnDispatcher", () => {
     const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
       .calls[0]!;
     expect(call[5]).toEqual({ modelId: "haiku", parameters: {} });
-    expect(call[7]).toEqual({ backend: "claude", inputOrigin: "generated" });
+    expect(call[7]).toMatchObject({
+      backend: "claude",
+      inputOrigin: "generated",
+    });
   });
 
   it("delivers a single turn for two concurrent dispatches (exactly once)", async () => {
@@ -287,6 +305,24 @@ describe("createFirstTurnDispatcher", () => {
     expect(deps.startDualRace).toHaveBeenCalledWith(
       expect.objectContaining({ brief: "Attached image." }),
     );
+  });
+
+  it("does not count a first turn the conversation refused as dispatched", async () => {
+    deps = makeDeps({
+      executePromptStream: vi.fn().mockResolvedValue({
+        conversationId: CONVERSATION_ID,
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+        aborted: false,
+        error: "The conversation is busy",
+      }),
+    });
+    const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
+
+    const result = await dispatchFirstTurn(input("claude", "do the thing"));
+
+    expect(result).toEqual({ dispatched: false });
   });
 
   it("logs and drops on dispatch error without throwing or re-dispatching", async () => {

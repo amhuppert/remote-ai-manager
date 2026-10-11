@@ -767,6 +767,10 @@ describe("a project conversation the shared core runs", () => {
                 throw new Error("not used");
               },
               commandRefusal: async () => null,
+              admitCommandModel: async ({ selection }) => ({
+                ok: true,
+                selection,
+              }),
               log: createCapturingLogger(),
             },
             input,

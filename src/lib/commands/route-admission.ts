@@ -8,10 +8,14 @@ import {
   parseConversationCommand,
 } from "@/lib/conversation-commands/parse";
 
-export async function commandRequestRefusal(
+/** Why the command a prompt names cannot run on the backend, as status and body; null when it may. */
+export async function commandAdmissionRefusal(
   prompt: string,
   backend?: AgentBackendId,
-): Promise<Response | null> {
+): Promise<{
+  status: number;
+  body: { error: string; code: string; refusal: unknown };
+} | null> {
   const command = hasCollabPrefix(prompt)
     ? "/collab"
     : parseConversationCommand(prompt)?.command;
@@ -24,9 +28,19 @@ export async function commandRequestRefusal(
     return null;
   } catch (error) {
     if (!(error instanceof BackendAdmissionError)) throw error;
-    return NextResponse.json(
-      { error: error.message, code: error.code, refusal: error.refusal },
-      { status: 400 },
-    );
+    return {
+      status: 400,
+      body: { error: error.message, code: error.code, refusal: error.refusal },
+    };
   }
+}
+
+export async function commandRequestRefusal(
+  prompt: string,
+  backend?: AgentBackendId,
+): Promise<Response | null> {
+  const refused = await commandAdmissionRefusal(prompt, backend);
+  return refused === null
+    ? null
+    : NextResponse.json(refused.body, { status: refused.status });
 }

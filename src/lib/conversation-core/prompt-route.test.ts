@@ -16,8 +16,11 @@ import { conversationHoldRefusal } from "./conversation-record";
 import {
   admitCoreCollaboration,
   promptCoreConversation,
+  sendCorePrompt,
   type CoreConversationPromptDeps,
+  type CorePromptMessage,
 } from "./prompt-route";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { SeatTurnReport } from "./schemas";
 
 const report = (overrides: Partial<SeatTurnReport> = {}): SeatTurnReport => ({
@@ -34,6 +37,7 @@ const report = (overrides: Partial<SeatTurnReport> = {}): SeatTurnReport => ({
 interface Sent {
   conversationId: string;
   text: string;
+  autonomous?: boolean;
   images?: unknown;
   documentFeedback?: unknown;
   inputOrigin?: string;
@@ -61,6 +65,12 @@ function harness(answer: (sent: Sent) => UserMessageAdmission) {
   let durableHold: { code: "busy" | "owned"; message: string } | null = null;
   const holdsAsked: string[] = [];
   let current = makeConversationState({ agentBackend: "claude" });
+  let modelAdmission = (
+    selection: BackendModelSelection,
+  ): Awaited<ReturnType<CoreConversationPromptDeps["admitCommandModel"]>> => ({
+    ok: true,
+    selection,
+  });
   const deps: CoreConversationPromptDeps = {
     // The core's admission over the conversation under test: its running turn, its row, its other holds.
     async admission(_conversationId, turn) {
@@ -95,6 +105,9 @@ function harness(answer: (sent: Sent) => UserMessageAdmission) {
       return commandOutcome;
     },
     commandRefusal: async () => null,
+    async admitCommandModel({ selection }) {
+      return modelAdmission(selection);
+    },
     log: createCapturingLogger(),
   };
   const prompt = (
@@ -129,6 +142,9 @@ function harness(answer: (sent: Sent) => UserMessageAdmission) {
     setCommandOutcome(outcome: RunCommandOutcome) {
       commandOutcome = outcome;
     },
+    setModelAdmission(next: typeof modelAdmission) {
+      modelAdmission = next;
+    },
   };
 }
 
@@ -146,6 +162,169 @@ async function eventsOf(response: Response): Promise<[string, unknown][]> {
       ];
     });
 }
+
+describe("sending a prompt from the server to a conversation the core runs", () => {
+  function send(
+    h: ReturnType<typeof harness>,
+    message: CorePromptMessage,
+    draft?: string,
+  ) {
+    const events: [string, unknown][] = [];
+    const sink = {
+      emit: (event: string, data: unknown) => events.push([event, data]),
+    };
+    return {
+      events,
+      outcome: sendCorePrompt(h.deps, {
+        projectPath: "/repo",
+        target: sessionTarget,
+        conversation: makeConversationState({ agentBackend: "claude" }),
+        message,
+        sink,
+        ...(draft !== undefined ? { draft } : {}),
+      }),
+    };
+  }
+
+  it("settles with the turn's ending, streaming its events to the caller's sink", async () => {
+    const h = harness((sent) => {
+      sent.stream?.emit("content", { type: "text", text: "Working" });
+      return {
+        kind: "accepted",
+        cause: "user:conv-1:1",
+        settled: Promise.resolve(
+          report({ status: "failed", failure: "The provider went away" }),
+        ),
+      };
+    });
+    const { outcome, events } = send(h, { text: "Start the work" });
+
+    const accepted = await outcome;
+    if (accepted.kind !== "accepted") throw new Error(accepted.kind);
+    expect(await accepted.settled).toEqual({
+      error: "The provider went away",
+      aborted: false,
+    });
+    expect(events).toEqual([
+      ["content", { type: "text", text: "Working" }],
+      ["error", { message: "The provider went away" }],
+    ]);
+  });
+
+  it("answers a refusal with what it is, not a response", async () => {
+    const h = harness(() => ({
+      kind: "refused",
+      code: "busy",
+      message: "Conversation is busy — a turn is already running",
+    }));
+
+    expect(await send(h, { text: "Start" }).outcome).toEqual({
+      kind: "refused",
+      refusal: {
+        status: 409,
+        body: {
+          error: "Conversation is busy — a turn is already running",
+          code: "CONVERSATION_BUSY",
+        },
+      },
+    });
+  });
+
+  it("sends an unattended kickoff as an autonomous turn with the origin its caller gave", async () => {
+    const h = harness(() => ({
+      kind: "accepted",
+      cause: "user:conv-1:1",
+      settled: Promise.resolve(report()),
+    }));
+
+    await send(h, {
+      text: "Implement the ticket",
+      autonomous: true,
+      inputOrigin: "generated",
+    }).outcome;
+
+    expect(h.sent[0]).toMatchObject({
+      text: "Implement the ticket",
+      autonomous: true,
+      inputOrigin: "generated",
+    });
+    // A server-side caller has no draft to clear.
+    expect(h.cleared).toEqual([]);
+  });
+
+  it("carries review feedback as a list, as composed by the caller", async () => {
+    const h = harness(() => ({
+      kind: "accepted",
+      cause: "user:conv-1:1",
+      settled: Promise.resolve(report()),
+    }));
+    const notepadFeedback = [
+      {
+        notepadId: "np-1",
+        notepadName: "Plan",
+        notepadRefXml: '<notepad-ref notepad-id="np-1" />',
+        items: [
+          {
+            commentId: "c-1",
+            location: "Steps",
+            quote: "step two",
+            body: "Tighten this",
+          },
+        ],
+      },
+    ];
+
+    await send(h, { text: "", notepadFeedback }).outcome;
+
+    expect(h.sent[0]).toMatchObject({
+      notepadFeedback,
+      inputOrigin: "generated",
+    });
+  });
+
+  it("admits a command's explicit model before anything is recorded, and dispatches the admitted one", async () => {
+    const h = harness(() => {
+      throw new Error("a command is not a message");
+    });
+    const opus = { modelId: "opus", parameters: { effort: "high" } };
+    h.setModelAdmission(() => ({
+      ok: false,
+      refusal: {
+        status: 400,
+        body: {
+          error: "Model opus is not allowed here",
+          code: "MODEL_NOT_ALLOWED",
+        },
+      },
+    }));
+
+    expect(
+      await send(h, { text: "/commit", modelSelection: opus, backend: "codex" })
+        .outcome,
+    ).toEqual({
+      kind: "refused",
+      refusal: {
+        status: 400,
+        body: {
+          error: "Model opus is not allowed here",
+          code: "MODEL_NOT_ALLOWED",
+        },
+      },
+    });
+    expect(h.adopted).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+
+    const canonical = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "high" },
+    };
+    h.setModelAdmission(() => ({ ok: true, selection: canonical }));
+    const accepted = await send(h, { text: "/commit", modelSelection: opus })
+      .outcome;
+    if (accepted.kind === "accepted") await accepted.settled;
+    expect(h.dispatched[0]?.modelSelection).toEqual(canonical);
+  });
+});
 
 describe("prompting a conversation the core runs", () => {
   it("streams the turn to the sender, clears their draft once accepted, and ends when the turn settles", async () => {
@@ -314,19 +493,17 @@ describe("prompting a conversation the core runs", () => {
     expect(h.cleared).toEqual(["/commit tidy the notices"]);
   });
 
-  it("refuses what core conversations cannot do yet, before sending anything", async () => {
+  it("refuses /collab sent as a message, before sending anything: it starts through its claim", async () => {
     const h = harness(() => ({
       kind: "accepted",
       cause: "c",
       settled: Promise.resolve(report()),
     }));
-    for (const body of [{ prompt: "/collab build it" }]) {
-      const response = await h.prompt(body);
-      expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({
-        code: "CORE_CONVERSATION_UNSUPPORTED",
-      });
-    }
+    const response = await h.prompt({ prompt: "/collab build it" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "COLLABORATION_CLAIM_REQUIRED",
+    });
     expect(h.sent).toEqual([]);
   });
 
@@ -581,6 +758,37 @@ describe("prompting a conversation the core runs", () => {
       ).toBeNull();
       expect(h.holdsAsked).toEqual(["claim"]);
       expect(h.adopted).toEqual(["codex"]);
+    });
+
+    it("refuses a claim on a backend that cannot run /collab, before holding or adopting anything", async () => {
+      const h = harness(() => ({
+        kind: "accepted",
+        cause: "c",
+        settled: new Promise(() => {}),
+      }));
+      const asked: string[] = [];
+      h.deps.commandRefusal = async (text, backend) => {
+        asked.push(`${backend}:${text}`);
+        return {
+          status: 400,
+          body: { error: "codex cannot run /collab", code: "UNSUPPORTED" },
+        };
+      };
+
+      const refusal = await admit(
+        h,
+        makeConversationState({
+          agentBackend: "claude",
+          promptCount: 0,
+          backendRef: null,
+        }),
+        "codex",
+      );
+
+      expect(refusal?.status).toBe(400);
+      expect(asked).toEqual(["codex:/collab design it"]);
+      expect(h.holdsAsked).toEqual([]);
+      expect(h.adopted).toEqual([]);
     });
 
     it("refuses a backend change on a conversation that has run, and a claim the core holds", async () => {

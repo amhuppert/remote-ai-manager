@@ -327,8 +327,14 @@ describe("status-bus wire contract — job-status shapes, merge dispatch, optimi
     const dispatchSpy = vi
       .fn<(typeof defaultOptimisticDeps)["dispatchMergeJob"]>()
       .mockReturnValue({ ok: true, value: { jobId: "optimistic-job-1" } });
-    const promptSpy =
-      vi.fn<(typeof defaultOptimisticDeps)["executePromptStream"]>();
+    const promptSpy = vi
+      .fn<(typeof defaultOptimisticDeps)["executePromptStream"]>()
+      .mockResolvedValue({
+        conversationId: "conv-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      });
     const notificationSpy =
       vi.fn<(typeof defaultOptimisticDeps)["createNotification"]>();
 
