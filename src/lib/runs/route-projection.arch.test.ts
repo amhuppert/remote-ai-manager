@@ -1,5 +1,5 @@
-// @vitest-inputs src/lib/workflow-graph/output-lookup.ts
-// @vitest-inputs src/lib/workflow-graph/route-projection.ts
+// @vitest-inputs src/lib/runs/output-lookup.ts
+// @vitest-inputs src/lib/runs/route-projection.ts
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -18,8 +18,8 @@ import path from "node:path";
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
-const PROJECTION = "src/lib/workflow-graph/route-projection.ts";
-const OUTPUT_LOOKUP = "src/lib/workflow-graph/output-lookup.ts";
+const PROJECTION = "src/lib/runs/route-projection.ts";
+const OUTPUT_LOOKUP = "src/lib/runs/output-lookup.ts";
 
 const NODE_BUILTIN_IMPORT = /from\s+["']node:[^"']+["']/;
 const ANY_IMPORT = /^\s*import\s+(?!type\s)[^;]*?from\s+["']([^"']+)["']/gm;
@@ -50,7 +50,7 @@ describe("the route projection stays browser-safe (D4 R2)", () => {
     );
 
     expect(valueImports).toEqual([
-      "@/lib/workflow-graph/output-lookup",
+      "./output-lookup",
       "@/lib/workflows/primitives/output-schema-subset",
     ]);
   });

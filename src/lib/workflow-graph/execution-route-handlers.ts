@@ -68,12 +68,14 @@ import type { ConversationIdentityReading } from "@/lib/agent-gateway/conversati
 import type { LaneIdentityReading } from "@/lib/agent-gateway/lane-identity";
 import { authorizeWorkflowLaunch } from "./request-principal";
 import {
-  classifyRoutePrincipal,
   guardExecutionMutation,
   guardHumanOnlyAct,
-  invalidTokenResponse,
   runPinnedMutation,
 } from "./mutation-guard";
+import {
+  classifyRoutePrincipal,
+  invalidTokenResponse,
+} from "@/lib/agent-gateway/request-principal";
 
 import { type GraphWorkflowResumeOptions } from "@/lib/workflow-graph/workflow-manager";
 

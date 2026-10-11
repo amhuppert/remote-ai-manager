@@ -8,7 +8,7 @@ import {
   projectRoutes,
   type RouteEdgeResolution,
   type RouteProjection,
-} from "@/lib/workflow-graph/route-projection";
+} from "./route-projection";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import {
   laneStateOf,

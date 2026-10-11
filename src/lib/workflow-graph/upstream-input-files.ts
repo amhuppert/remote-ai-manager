@@ -13,8 +13,8 @@ import type { GraphWorkflowUpstreamInput } from "./context-outputs";
 import {
   contextPayloadDirectory,
   type ImplementerLaneWriteEnvelopeDeps,
-} from "./implementer-lane-write-envelope";
-import { toLanePathSegment } from "./lane-path-segments";
+} from "@/lib/workspace/write-envelope";
+import { toLanePathSegment } from "@/lib/workspace/lane-path-segments";
 
 const INPUTS_DIR_NAME = "inputs";
 

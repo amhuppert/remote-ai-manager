@@ -18,11 +18,8 @@
  */
 
 import type { LaneBand } from "./lane-bands";
-import {
-  laneIdViolation,
-  SESSION_LANE_ID,
-  SESSION_LANE_NAME,
-} from "./lane-identity";
+import { SESSION_LANE_ID, SESSION_LANE_NAME } from "./lane-identity";
+import { laneIdViolation } from "@/lib/workspace/lane-id";
 
 /** A client-only empty lane. `id` survives renames; `name` is what it is called. */
 export interface EphemeralLane {

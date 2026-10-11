@@ -13,7 +13,8 @@ import { getErrorMessage } from "@/lib/shared/errors";
 
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-import { AgentTurnFailedError, toHaltReason, type DirtyPath } from "./errors";
+import { AgentTurnFailedError, toHaltReason } from "./errors";
+import type { DirtyPath } from "@/lib/git/worktree";
 import { contextOwesOutput } from "./context-outputs";
 import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
@@ -41,7 +42,7 @@ import type {
   ExecutionTargetResolver,
   ExecutionTarget,
 } from "@/lib/workflow-graph/execution-target-resolver";
-import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import type { ParallelWorktrees } from "@/lib/workspace/parallel-worktrees";
 
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { type SessionGitLock } from "@/lib/shared/lock-retry";

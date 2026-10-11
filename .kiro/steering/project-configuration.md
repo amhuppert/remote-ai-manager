@@ -8,7 +8,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 - `src/lib/projects/repo-config.ts` — `readRepoConfig()`
 - `src/lib/validation/singleton.ts` — process-wide `ValidationService` entry point
 - `src/lib/sessions/service.ts` — init script execution lives **in `createSession()`**, not in `repo-config.ts`
-- `src/lib/workflow-graph/parallel-worktrees.ts` — `provision()` runs the same init script after each graph-workflow parallel-context worktree is created
+- `src/lib/workspace/parallel-worktrees.ts` — `provision()` runs the same init script after each graph-workflow parallel-context worktree is created
 - `src/lib/dev-server/registry.ts` — spawn/stop, CC-assigned port injection (`CC_ASSIGNED_PORT`/`PORT`)
 - `src/lib/dev-server/port-selection.ts` — port scan + ownership (`selectPort`)
 - `src/lib/dev-server/liveness.ts` — liveness polling
@@ -80,7 +80,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 ## Navigation
 
-- Init logic: search `initScriptPath` in `sessions/service.ts` and `workflow-graph/parallel-worktrees.ts` (not `repo-config.ts`)
+- Init logic: search `initScriptPath` in `sessions/service.ts` and `workspace/parallel-worktrees.ts` (not `repo-config.ts`)
 - Validation entry point: `validation/singleton.ts`; command configuration: `validation/schemas.ts`; executable resolution: `validation/command-resolution.ts`; cost projection: `validation/cost-resolution.ts` (kept free of `node:` builtins because browser-reachable preflight consumers import it)
 - Dev server lifecycle: `dev-server/registry.ts` (spawn/stop), `dev-server/port-selection.ts` (port scan/ownership), `dev-server/liveness.ts` (polling)
 - Timeouts: init = none (script self-bounds), validation = command `timeoutMs` or global `validation.defaultTimeoutMs`, dev server readiness = `READINESS_TIMEOUT_MS` in `dev-server/config.ts`

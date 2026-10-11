@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  OUTPUT_SCHEMA_SUPPORTED_KEYWORDS,
-  validateJsonSchemaSubset,
-} from "@/lib/workflows/primitives/output-schema-subset";
-import {
-  GUARD_COMPATIBILITY_KEYWORD_ROLES,
   lintGuardEnumCoverage,
   validateEdgeGuards,
   type GuardBearingEdge,
@@ -101,39 +96,6 @@ describe("validateEdgeGuards — dormant on unconditional edges", () => {
   });
 });
 
-describe("numeric guard overlap", () => {
-  it.each([
-    { sourceType: "integer", guardType: "number" },
-    { sourceType: "number", guardType: "integer" },
-    { sourceType: ["integer", "null"], guardType: ["number", "string"] },
-    { sourceType: ["number", "null"], guardType: "integer" },
-  ])(
-    "accepts an integer witness for $sourceType and $guardType",
-    ({ sourceType, guardType }) => {
-      const sourceSchema = {
-        type: "object",
-        properties: { score: { type: sourceType } },
-      };
-      const guardSchema = {
-        type: "object",
-        properties: { score: { type: guardType } },
-      };
-      expect(validateJsonSchemaSubset(sourceSchema, { score: 2 }).valid).toBe(
-        true,
-      );
-      expect(validateJsonSchemaSubset(guardSchema, { score: 2 }).valid).toBe(
-        true,
-      );
-      expect(
-        validateEdgeGuards(
-          [classifier({ outputSchema: sourceSchema }), { id: "approve" }],
-          [edge("numeric", { schema: guardSchema })],
-        ),
-      ).toEqual([]);
-    },
-  );
-});
-
 describe("validateEdgeGuards — source must declare an outputSchema", () => {
   it("refuses a guard-bearing edge whose source declares no outputSchema", () => {
     const errors = validateEdgeGuards(
@@ -223,6 +185,8 @@ describe("validateEdgeGuards — guard document must satisfy the schema subset",
 });
 
 describe("validateEdgeGuards — compatibility walk against the source schema", () => {
+  // The walk's cases live with it in `runs/guard-compatibility.test.ts`; these
+  // check that its issues are located on the edge's guard.
   it("refuses a guard property the source schema never declares", () => {
     const errors = validateEdgeGuards(contexts(), [
       edge("approve-edge", guard({ verdcit: { const: "approve" } })),
@@ -237,182 +201,6 @@ describe("validateEdgeGuards — compatibility walk against the source schema", 
         field: "edges[0].when.schema.properties.verdcit",
       },
     ]);
-  });
-
-  it("refuses a const the source's enum can never produce", () => {
-    const errors = validateEdgeGuards(contexts(), [
-      edge("approve-edge", guard({ verdict: { const: "aprove" } })),
-    ]);
-
-    expect(errors).toEqual([
-      {
-        code: "incompatible-guard-schema",
-        message: expect.stringContaining("approve, reject, escalate"),
-        contextId: "classify",
-        edgeId: "approve-edge",
-        field: "edges[0].when.schema.properties.verdict.const",
-      },
-    ]);
-  });
-
-  it("locates an unsatisfiable enum member by index", () => {
-    const errors = validateEdgeGuards(contexts(), [
-      edge("approve-edge", guard({ verdict: { enum: ["approve", "nope"] } })),
-    ]);
-
-    expect(errors.map((error) => error.field)).toEqual([
-      "edges[0].when.schema.properties.verdict.enum[1]",
-    ]);
-  });
-
-  it("refuses a guard type that cannot intersect the source type", () => {
-    const errors = validateEdgeGuards(contexts(), [
-      edge("approve-edge", guard({ score: { type: "string" } })),
-    ]);
-
-    expect(errors.map((error) => error.field)).toEqual([
-      "edges[0].when.schema.properties.score.type",
-    ]);
-  });
-
-  it("refuses a required property the source schema never declares", () => {
-    const errors = validateEdgeGuards(contexts(), [
-      edge("approve-edge", {
-        schema: {
-          type: "object",
-          properties: { verdict: { const: "approve" } },
-          required: ["verdict", "ghost"],
-        },
-      }),
-    ]);
-
-    expect(errors.map((error) => error.field)).toEqual([
-      "edges[0].when.schema.required[1]",
-    ]);
-  });
-
-  it("walks into array items", () => {
-    const compatible = validateEdgeGuards(contexts(), [
-      edge("approve-edge", {
-        schema: {
-          type: "object",
-          properties: {
-            findings: {
-              type: "array",
-              minItems: 1,
-              items: {
-                type: "object",
-                properties: { severity: { const: "high" } },
-              },
-            },
-          },
-        },
-      }),
-    ]);
-    expect(compatible).toEqual([]);
-
-    const incompatible = validateEdgeGuards(contexts(), [
-      edge("approve-edge", {
-        schema: {
-          type: "object",
-          properties: {
-            findings: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { sevrity: { const: "high" } },
-              },
-            },
-          },
-        },
-      }),
-    ]);
-    expect(incompatible.map((error) => error.field)).toEqual([
-      "edges[0].when.schema.properties.findings.items.properties.sevrity",
-    ]);
-  });
-
-  it("accepts a guard oneOf branch set whose branches are each compatible", () => {
-    expect(
-      validateEdgeGuards(contexts(), [
-        edge("approve-edge", {
-          schema: {
-            oneOf: [
-              {
-                type: "object",
-                properties: { verdict: { const: "approve" } },
-                required: ["verdict"],
-              },
-              {
-                type: "object",
-                properties: { verdict: { const: "escalate" } },
-                required: ["verdict"],
-              },
-            ],
-          },
-        }),
-      ]),
-    ).toEqual([]);
-  });
-
-  it("locates the incompatible branch of a guard oneOf", () => {
-    const errors = validateEdgeGuards(contexts(), [
-      edge("approve-edge", {
-        schema: {
-          oneOf: [
-            {
-              type: "object",
-              properties: { verdict: { const: "approve" } },
-              required: ["verdict"],
-            },
-            {
-              type: "object",
-              properties: { verdict: { const: "nope" } },
-              required: ["verdict"],
-            },
-          ],
-        },
-      }),
-    ]);
-
-    expect(errors.map((error) => error.field)).toEqual([
-      "edges[0].when.schema.oneOf[1].properties.verdict.const",
-    ]);
-  });
-
-  it("accepts a guard compatible with at least one source oneOf branch", () => {
-    const source: GuardSourceContext = {
-      id: "classify",
-      outputSchema: {
-        oneOf: [
-          {
-            type: "object",
-            properties: { kind: { const: "done" } },
-            required: ["kind"],
-          },
-          {
-            type: "object",
-            properties: {
-              kind: { const: "retry" },
-              attempt: { type: "integer" },
-            },
-            required: ["kind"],
-          },
-        ],
-      },
-    };
-
-    expect(
-      validateEdgeGuards(
-        [source, { id: "approve" }],
-        [
-          edge(
-            "approve-edge",
-            guard({ attempt: { type: "integer", minimum: 2 } }),
-          ),
-        ],
-      ),
-    ).toEqual([]);
   });
 
   it("refuses a guard compatible with no source oneOf branch", () => {
@@ -443,40 +231,6 @@ describe("validateEdgeGuards — compatibility walk against the source schema", 
       "incompatible-guard-schema",
     ]);
     expect(errors[0]?.field).toBe("edges[0].when.schema");
-  });
-
-  it("reads guard and source properties as own properties only", () => {
-    const source: GuardSourceContext = {
-      id: "classify",
-      outputSchema: {
-        type: "object",
-        properties: { verdict: { type: "string" } },
-        required: ["verdict"],
-      },
-    };
-    // Built through JSON.parse, not a literal: `{ __proto__: … }` in an object
-    // literal sets the prototype instead of creating the own property this case
-    // is about. `constructor` and `toString` resolve on Object.prototype, so a
-    // walk using `in`/bare indexing would read the source schema as declaring
-    // them and pass an unsatisfiable guard.
-    const adversarialGuard: unknown = JSON.parse(
-      `{"schema":{"type":"object","properties":{
-         "__proto__":{"type":"string"},
-         "constructor":{"type":"string"},
-         "toString":{"type":"string"}
-       }}}`,
-    );
-
-    const errors = validateEdgeGuards(
-      [source, { id: "approve" }],
-      [edge("approve-edge", adversarialGuard as GuardBearingEdge["when"])],
-    );
-
-    expect(errors.map((error) => error.field)).toEqual([
-      "edges[0].when.schema.properties.__proto__",
-      "edges[0].when.schema.properties.constructor",
-      "edges[0].when.schema.properties.toString",
-    ]);
   });
 });
 
@@ -806,16 +560,5 @@ describe("lintGuardEnumCoverage — R3.2", () => {
     expect(lintGuardEnumCoverage(contexts(), [edge("e1"), edge("e2")])).toEqual(
       [],
     );
-  });
-});
-
-describe("GUARD_COMPATIBILITY_KEYWORD_ROLES", () => {
-  it("classifies every keyword the shared subset descriptor supports", () => {
-    const supported = Object.values(OUTPUT_SCHEMA_SUPPORTED_KEYWORDS)
-      .flat()
-      .sort();
-    const classified = Object.keys(GUARD_COMPATIBILITY_KEYWORD_ROLES).sort();
-
-    expect(classified).toEqual(supported);
   });
 });

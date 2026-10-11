@@ -25,10 +25,8 @@ import {
   type GraphWorkflowContextOutputCaptureOutcome,
 } from "@/lib/workflow-graph/context-output-capture";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
-import {
-  composeImplementerLaneWriteEnvelope,
-  resolveImplementerContinuationWriteEnvelope,
-} from "@/lib/workflow-graph/implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
+import { resolveImplementerContinuationWriteEnvelope } from "@/lib/workflow-graph/implementer-continuation-write-envelope";
 import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/lifecycle";
 import {
   toTaskRunResult,

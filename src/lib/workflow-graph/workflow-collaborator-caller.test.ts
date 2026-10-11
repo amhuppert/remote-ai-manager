@@ -27,6 +27,7 @@ import type {
   AgentCallResult,
   BackendCapabilityView,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   CollaborationCounterProposalOutput,
   CollaborationCrossReviewOutput,
@@ -34,8 +35,7 @@ import type {
   CollaborationInitialDraftOutput,
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 import {
   makeAgentOneInitialDraft,
   makeAgentOneProposedChanges,

@@ -3,7 +3,7 @@
  *
  * The wire-shape contracts — the asymmetric per-artifact outputs every
  * participating agent emits — live in
- * `src/lib/workflow-graph/collaboration-schemas.ts` and are documented in
+ * `src/lib/workflows/collaboration/schemas.ts` and are documented in
  * `memory-bank/COLLABORATION_MODE_FLOW.md`. This module re-exports them so
  * feature code keeps a stable import site, adds the lane-identity enum that is
  * internal to the orchestrator, and derives provider-neutral JSON Schema
@@ -31,7 +31,7 @@ import {
   type GatedBackendFacet,
 } from "@/lib/agent-backends/facet-gating";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { CollaborationFlowAgent } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationFlowAgent } from "@/lib/workflows/collaboration/schemas";
 
 export {
   type CollaborationArtifactAgreement,
@@ -72,7 +72,7 @@ export {
   collaborationResolutionDecisionOutputSchema,
   type CollaborationResolutionDecisionOutput,
   type CollaborationUserQuestion,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 
 /**
  * The backends Collaboration Mode runs — the ONE documented product-policy site

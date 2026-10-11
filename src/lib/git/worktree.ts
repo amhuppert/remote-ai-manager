@@ -3,7 +3,6 @@ import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
 import { isMergeInProgress } from "./conflict-markers";
 import { createLogger } from "../logging";
-import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("git-worktree");
@@ -20,6 +19,13 @@ const MAX_BUFFER = 10 * 1024 * 1024;
  * trips the dirty-start gate and halts the final join.
  */
 export const CC_ARTIFACTS_IGNORE_PATTERN = ".cc/";
+
+/** One entry of a worktree's `git status --porcelain`. */
+export type DirtyPath = {
+  path: string;
+  statusCode: string;
+  tracked: boolean;
+};
 
 /**
  * Parse output of `git status --porcelain` into structured dirty-path entries.

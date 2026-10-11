@@ -47,7 +47,7 @@ import {
   type LiveEditDeps,
   type ResolvedContextConfig,
 } from "./runtime-edits";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { GraphWorkflowContextValidationInput } from "./validator-cohort-runner";
 import type { CohortParkedLane } from "./validation-cohort";

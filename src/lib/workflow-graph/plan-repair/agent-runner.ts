@@ -20,7 +20,7 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import {
   composeImplementerLaneWriteEnvelope,
   type ImplementerLaneWriteEnvelope,
-} from "@/lib/workflow-graph/implementer-lane-write-envelope";
+} from "@/lib/workspace/write-envelope";
 import { type ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
 import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";

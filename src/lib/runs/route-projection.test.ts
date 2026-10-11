@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EdgeGuardDeclaration } from "@/lib/workflow-graph/edge-guard-validation";
+import type { EdgeGuardDeclaration } from "./route-projection";
 import {
   activeDependencySourceIds,
   incomingRoutes,

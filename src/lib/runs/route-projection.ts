@@ -29,12 +29,10 @@
  * required to go through.
  */
 
-import type { EdgeGuardDeclaration } from "@/lib/workflow-graph/edge-guard-validation";
-import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 import {
   lookupRawContextOutput,
   type RawOutputLookupSource,
-} from "@/lib/workflow-graph/output-lookup";
+} from "./output-lookup";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 
 // ============================================================
@@ -42,10 +40,23 @@ import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-sche
 // ============================================================
 
 /**
- * The context statuses this projection reads — the engine enum itself, which
- * now carries the terminal `skipped` status the projection derives.
+ * The context statuses this projection reads (the graph engine's context
+ * statuses, including the terminal `skipped` the projection derives).
  */
-export type RouteProjectionContextStatus = GraphWorkflowContextStatus;
+export type RouteProjectionContextStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "completed"
+  | "halted"
+  | "awaiting_approval"
+  | "awaiting_user_input"
+  | "skipped";
+
+/** An edge's route guard: a schema its source's output must match, or the else branch. */
+export type EdgeGuardDeclaration =
+  | { readonly schema: Record<string, unknown> }
+  | { readonly else: true };
 
 export type RouteCardinalityPolicy =
   | "independent"

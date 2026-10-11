@@ -54,7 +54,7 @@ import {
   recordServerBaseUrl,
 } from "@/lib/agent-gateway/server-url";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 
 let codexFixture: ReturnType<typeof createCodexWriteEnvelopeFixture>;
 

@@ -4,11 +4,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
-export type DirtyPath = {
-  path: string;
-  statusCode: string;
-  tracked: boolean;
-};
+import type { DirtyPath } from "@/lib/git/worktree";
 
 export class WorkflowDocumentDeliveryError extends Error {
   constructor(

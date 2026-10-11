@@ -35,7 +35,7 @@ import {
   DEFAULT_AGENT_BACKEND_ID,
   type AgentBackendId,
 } from "@/lib/shared/schemas";
-import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/collaboration/schemas";
 import type { CollaborationAgentTwoRequest } from "@/lib/workflows/collaboration/types";
 import type {
   ConversationBinding,

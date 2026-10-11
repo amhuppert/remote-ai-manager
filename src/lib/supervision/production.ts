@@ -42,7 +42,7 @@ import {
 } from "@/lib/state-store";
 import { getStateDb } from "@/lib/state-store/store";
 import { getValidationService } from "@/lib/validation/singleton";
-import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 import { createWorkspaceEvidence } from "@/lib/workspace/evidence";
 import { createLaneGit } from "@/lib/workspace/lane-git";
 import { existsSync } from "node:fs";
@@ -54,7 +54,7 @@ import {
 import { mergeMachine } from "@/lib/workflows/merge/machine";
 import { defaultGitClient } from "@/lib/git/client";
 import { acquireSessionLock, isSessionBusy } from "@/lib/prompt/single-flight";
-import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import { createParallelWorktrees } from "@/lib/workspace/parallel-worktrees";
 import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import {
   composedSupervision,

@@ -17,7 +17,7 @@ import {
 import { createWorkflowExecution } from "./test-fixtures";
 import { executionFor, workerJudgeDefinition } from "./loop-test-fixtures";
 import { SESSION_LANE_ID } from "./lane-identity";
-import type { RouteEdgeEvaluation } from "./route-projection";
+import type { RouteEdgeEvaluation } from "@/lib/runs/route-projection";
 import {
   graphWorkflowContextSkipReasonSchema,
   graphWorkflowLoopStateSchema,

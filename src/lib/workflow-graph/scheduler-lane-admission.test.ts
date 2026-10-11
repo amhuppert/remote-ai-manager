@@ -43,7 +43,7 @@ import type {
   ProvisionInput,
   ProvisionLaneInput,
   ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "@/lib/workspace/parallel-worktrees";
 import { classifyContextSchedulability } from "./lane-readiness";
 import { planContextJoin } from "./lane-join";
 import { createContextScheduler } from "./context-scheduler";

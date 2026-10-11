@@ -22,7 +22,7 @@ import {
   collaborationProposedChangesOutputSchema,
   collaborationResolutionDecisionOutputSchema,
   type CollaborationArtifact,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 import {
   COLLABORATION_COUNTER_PROPOSAL_OUTPUT_SCHEMA,
   COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA,

@@ -23,13 +23,13 @@ import type {
 import {
   lookupRawContextOutput,
   type RawContextOutputLookup,
-} from "@/lib/workflow-graph/output-lookup";
+} from "@/lib/runs/output-lookup";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import {
   findLoopBodyMembership,
   loopInstanceId,
 } from "@/lib/workflow-graph/loop-resolver";
-import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
+import { incomingRoutes } from "@/lib/runs/route-projection";
 import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
 import {
   GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES,

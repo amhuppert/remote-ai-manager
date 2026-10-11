@@ -9,7 +9,7 @@ function renderControls() {
   return render(
     <ReactFlowProvider>
       <ReactFlow nodes={[]} edges={[]}>
-        <CanvasControls />
+        <CanvasControls fitViewOptions={{ padding: 0.1 }} />
       </ReactFlow>
     </ReactFlowProvider>,
   );

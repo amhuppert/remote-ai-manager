@@ -6,7 +6,7 @@ import { createWorktreeOperations } from "@/lib/git/worktree";
 import type {
   FrozenLaneProvisioner,
   ParallelWorktrees,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "./parallel-worktrees";
 
 /**
  * The Git effects of isolated lanes, behind one port so the Workspace executor

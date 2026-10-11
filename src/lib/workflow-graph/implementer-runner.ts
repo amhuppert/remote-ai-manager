@@ -22,7 +22,7 @@ import {
   composeImplementerLaneWriteEnvelope,
   renderWriteEnvelopeBriefing,
   type ImplementerLaneWriteEnvelope,
-} from "@/lib/workflow-graph/implementer-lane-write-envelope";
+} from "@/lib/workspace/write-envelope";
 import {
   AgentTurnFailedError,
   ConversationTurnSettlementError,

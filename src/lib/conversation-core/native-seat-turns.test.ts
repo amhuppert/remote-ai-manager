@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
-import type { ImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
+import type { ImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationRecordPort } from "./conversation-record";

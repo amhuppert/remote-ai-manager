@@ -91,7 +91,7 @@ import {
   classifyRoutePrincipal,
   invalidTokenResponse,
   type WorkflowMutationGuardDeps,
-} from "@/lib/workflow-graph/mutation-guard";
+} from "@/lib/agent-gateway/request-principal";
 
 const logger = createLogger("conversation-route-handlers");
 

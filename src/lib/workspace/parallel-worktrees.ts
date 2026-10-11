@@ -15,9 +15,8 @@ import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-con
 import { readConfig as defaultReadGlobalConfig } from "@/lib/config/loader";
 import { resolveBranchPrefix } from "@/lib/config/cascade";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
-import { parseDirtyPaths } from "@/lib/git/worktree";
-import type { DirtyPath } from "@/lib/workflow-graph/errors";
-import { validateLaneId } from "@/lib/workflow-graph/lane-identity";
+import { parseDirtyPaths, type DirtyPath } from "@/lib/git/worktree";
+import { validateLaneId } from "./lane-id";
 import { prepareManagedSkillsCheckout as defaultPrepareManagedSkillsCheckout } from "@/lib/agent-backends/registry";
 
 type ExecFileAsync = (

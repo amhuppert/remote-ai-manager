@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type GitClient } from "@/lib/git/client";
-import { validateLaneId } from "./lane-identity";
+import { validateLaneId } from "./lane-id";
 import {
   createParallelWorktrees,
   deriveLaneTargets,

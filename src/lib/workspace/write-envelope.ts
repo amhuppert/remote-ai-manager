@@ -58,17 +58,17 @@ import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
-import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
+import type { WorkspaceScope } from "./schemas";
 import {
   isInsideLanePath,
   isInsideOrEqualLanePath,
   toLanePathSegment,
-} from "./lane-path-segments";
+} from "@/lib/workspace/lane-path-segments";
 import {
   DEFAULT_LANE_TMP_ROOT_DIR,
   laneTmpDirBudgetViolation,
   laneTmpDirName,
-} from "./lane-tmp-dir";
+} from "@/lib/workspace/lane-tmp-dir";
 
 /** Root for every implementer scratch directory CC creates. */
 const SCRATCH_ROOT_DIR_NAME = "cc-implementer-contexts";
@@ -122,31 +122,6 @@ export interface ImplementerLaneWriteEnvelopeDeps {
   realpath?(target: string): string;
   exists?(target: string): boolean;
 }
-
-export interface ResolveImplementerContinuationWriteEnvelopeInput {
-  executionId: string;
-  contextId: string;
-  projectPath: string;
-  sessionName: string;
-  placement: ContextPlacement;
-  executionTarget?: { worktreePath: string };
-}
-
-export interface ResolveImplementerContinuationWriteEnvelopeDeps {
-  composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
-  resolveWorktreePath?(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<string>;
-}
-
-export type ImplementerContinuationWriteEnvelopeResolution =
-  | {
-      ok: true;
-      envelope: ImplementerLaneWriteEnvelope | null;
-      worktreePath: string | null;
-    }
-  | { ok: false; error: string; worktreePath: string | null };
 
 function fail(reason: string): never {
   throw new Error(`Cannot establish the implementer write envelope: ${reason}`);
@@ -210,7 +185,7 @@ export function contextPayloadDirectory(
     executionId: string;
     contextId: string;
     worktreePath: string;
-    placementMode: ContextPlacement["mode"];
+    placementMode: WorkspaceScope["mode"];
   },
   deps: Pick<ImplementerLaneWriteEnvelopeDeps, "scratchRootDir"> = {},
 ): string {
@@ -344,66 +319,6 @@ export function composeImplementerLaneWriteEnvelope(
     payloadDir,
     ownedPrefixes,
   };
-}
-
-export async function resolveImplementerContinuationWriteEnvelope(
-  input: ResolveImplementerContinuationWriteEnvelopeInput,
-  deps: ResolveImplementerContinuationWriteEnvelopeDeps = {},
-): Promise<ImplementerContinuationWriteEnvelopeResolution> {
-  if (input.placement.mode === "full") {
-    return { ok: true, envelope: null, worktreePath: null };
-  }
-
-  let worktreePath = input.executionTarget?.worktreePath;
-  if (
-    worktreePath === undefined &&
-    input.placement.lane === "session" &&
-    input.placement.mode === "readOnly"
-  ) {
-    try {
-      worktreePath = await deps.resolveWorktreePath?.(
-        input.projectPath,
-        input.sessionName,
-      );
-    } catch (error) {
-      return {
-        ok: false,
-        error: getErrorMessage(error),
-        worktreePath: null,
-      };
-    }
-  }
-  if (worktreePath === undefined) {
-    return {
-      ok: false,
-      error: "no execution target or session worktree was available",
-      worktreePath: null,
-    };
-  }
-
-  try {
-    const composeWriteEnvelope =
-      deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
-    return {
-      ok: true,
-      envelope: composeWriteEnvelope({
-        executionId: input.executionId,
-        contextId: input.contextId,
-        worktreePath,
-        ownedPaths:
-          input.placement.mode === "owned" ? input.placement.ownedPaths : [],
-        payloadLocation:
-          input.placement.mode === "readOnly" ? "scratch" : "worktree",
-      }),
-      worktreePath,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: getErrorMessage(error),
-      worktreePath,
-    };
-  }
 }
 
 /**

@@ -45,7 +45,7 @@ import { getConversationBackendFactory } from "@/lib/agent-backends/registry";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 import {
   _resetServerBaseUrlForTesting,
   recordServerBaseUrl,

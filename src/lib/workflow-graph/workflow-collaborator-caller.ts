@@ -70,6 +70,7 @@ import {
   type ParseSchema,
 } from "@/lib/workflows/collaboration/helpers";
 import type { WorkflowCollaborationCollaboratorCaller } from "@/lib/workflows/collaboration/workflow-envelope";
+import { type ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   collaborationCounterProposalContentSchema,
   collaborationCounterProposalOutputSchema,
@@ -83,8 +84,7 @@ import {
   collaborationProposedChangesOutputSchema,
   collaborationResolutionDecisionContentSchema,
   collaborationResolutionDecisionOutputSchema,
-  type ResolvedCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 
 const logger = createLogger("workflow-graph.workflow-collaborator-caller");
 

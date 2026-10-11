@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyWorkflowRequestPrincipal } from "@/lib/workflow-graph/request-principal";
+import { classifyWorkflowRequestPrincipal } from "@/lib/agent-gateway/request-principal";
 import {
   CONVERSATION_IDENTITY_HEADER,
   encodeConversationIdentity,

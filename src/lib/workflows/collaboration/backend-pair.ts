@@ -25,7 +25,7 @@
 
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { requireCollaborationAgent, type CollaborationAgent } from "./types";
-import type { CollaborationFlowAgent } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationFlowAgent } from "@/lib/workflows/collaboration/schemas";
 import type {
   LanePolicy,
   LaneState,

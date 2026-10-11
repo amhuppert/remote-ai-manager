@@ -38,10 +38,8 @@ import {
 } from "@/lib/workflow-graph/advisory-delivery";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import {
-  composeImplementerLaneWriteEnvelope,
-  resolveImplementerContinuationWriteEnvelope,
-} from "@/lib/workflow-graph/implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
+import { resolveImplementerContinuationWriteEnvelope } from "@/lib/workflow-graph/implementer-continuation-write-envelope";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationAdvisory,

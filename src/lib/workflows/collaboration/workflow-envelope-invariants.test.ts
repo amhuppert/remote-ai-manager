@@ -44,12 +44,12 @@ import {
   type WorkflowCollaborationEnvelopeDeps,
 } from "./workflow-envelope";
 import type { CollaborationPolicyDecision } from "./policy";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   CollaborationCounterProposalOutput,
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 import {
   makeAgentOneInitialDraft,
   makeAgentOneProposedChanges,

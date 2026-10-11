@@ -1,10 +1,14 @@
 "use client";
 
 import { useCallback } from "react";
-import { Panel, useReactFlow, useViewport } from "@xyflow/react";
+import {
+  Panel,
+  useReactFlow,
+  useViewport,
+  type FitViewOptions,
+} from "@xyflow/react";
 
 import { cn } from "@/lib/ui/cn";
-import { CANVAS_FIT_VIEW_PADDING } from "@/lib/workflow-graph/lane-band-geometry";
 import { ZoomInGlyph, ZoomOutGlyph } from "./canvas-glyphs";
 
 /**
@@ -29,15 +33,18 @@ const CONTROL_BASE =
 const ICON_CONTROL = cn(CONTROL_BASE, "w-[26px] p-0");
 const TEXT_CONTROL = cn(CONTROL_BASE, "px-[8px] text-[0.7rem] font-medium");
 
-export default function CanvasControls(): React.JSX.Element {
+export default function CanvasControls({
+  fitViewOptions,
+}: {
+  /** The options the canvas mounts with, so Fit reproduces its initial framing. */
+  fitViewOptions: FitViewOptions;
+}): React.JSX.Element {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
 
-  // The same padding the canvases mount with, so the Fit button reproduces the
-  // initial framing rather than a second opinion about it.
   const handleFit = useCallback(() => {
-    void fitView({ padding: CANVAS_FIT_VIEW_PADDING });
-  }, [fitView]);
+    void fitView(fitViewOptions);
+  }, [fitView, fitViewOptions]);
 
   return (
     <Panel position="bottom-right" className={CLUSTER}>

@@ -43,7 +43,7 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 
 const NOW = "2026-03-27T16:10:00.000Z";
 const RESUMED_BACKEND_REF = {

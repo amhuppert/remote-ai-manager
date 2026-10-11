@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { checkGuardCompatibility } from "@/lib/workflow-graph/edge-guard-validation";
+import { checkGuardCompatibility } from "./guard-compatibility";
 import {
   projectMustRunContextIds,
   projectRouteExclusion,
-} from "@/lib/workflow-graph/route-projection";
+} from "./route-projection";
 import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { bindingScopesOverlap } from "@/lib/workspace/admission";

@@ -6,7 +6,7 @@ import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { AgentTurnFailedError } from "./errors";
 import type { GraphWorkflowExecution } from "./schemas";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 
 /** The single dispatched turn input, narrowed from the spy's untyped call
  *  record so each assertion reads against the real request contract. */

@@ -7,7 +7,7 @@ import {
   renderWriteEnvelopeBriefing,
   type ComposeImplementerLaneWriteEnvelopeInput,
   type ImplementerLaneWriteEnvelope,
-} from "@/lib/workflow-graph/implementer-lane-write-envelope";
+} from "@/lib/workspace/write-envelope";
 import {
   resumableRef,
   type ConversationRecordPort,

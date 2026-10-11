@@ -27,7 +27,7 @@ const SEARCH_ROOTS = ["src/lib", "src/components", "src/features", "src/cli"];
 /** Files licensed to read the AUTHORED source, each with the reason why. */
 const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
   // Route resolution and authored route-control inputs.
-  "src/lib/workflow-graph/route-projection.ts":
+  "src/lib/runs/route-projection.ts":
     "owns the edge-resolution table; the raw field is its input",
   "src/lib/workflow-graph/route-control-revision.ts":
     "diffs a source's authored route-control surface",

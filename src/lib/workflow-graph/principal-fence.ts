@@ -30,7 +30,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { WorkflowRequestPrincipal } from "./request-principal";
+import type { WorkflowRequestPrincipal } from "@/lib/agent-gateway/request-principal";
 import { resolveBoundConversationId } from "./lane-binding";
 
 export interface GraphWorkflowPrincipalFence {

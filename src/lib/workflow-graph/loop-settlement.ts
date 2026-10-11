@@ -62,8 +62,8 @@ import {
   SEED_TEMPLATE_VERSION,
   loopInstanceId,
 } from "@/lib/workflow-graph/loop-resolver";
-import { lookupRawContextOutput } from "@/lib/workflow-graph/output-lookup";
-import { routeVerdict } from "@/lib/workflow-graph/route-projection";
+import { lookupRawContextOutput } from "@/lib/runs/output-lookup";
+import { routeVerdict } from "@/lib/runs/route-projection";
 import type { GraphWorkflowResolvedLoopGroup } from "@/lib/workflow-graph/definition-schemas";
 import type {
   GraphWorkflowExecution,

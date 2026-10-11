@@ -29,7 +29,7 @@ import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import {
   resolvedRouteEdge,
   type RouteEdgeResolution,
-} from "@/lib/workflow-graph/route-projection";
+} from "@/lib/runs/route-projection";
 import { getContextOutput } from "@/lib/workflow-graph/context-outputs";
 import {
   resolveLoopPassMembership,

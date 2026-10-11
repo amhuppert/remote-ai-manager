@@ -25,7 +25,7 @@ import type {
   ProvisionInput,
   ProvisionLaneInput,
   ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "@/lib/workspace/parallel-worktrees";
 import {
   createExecutionTargetResolver,
   type ExecutionTarget,
@@ -64,7 +64,7 @@ import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 import { resolveUpstreamInputs } from "./context-outputs";
 
 /** Synthetic worktrees in this suite have no Git index to prepare. */

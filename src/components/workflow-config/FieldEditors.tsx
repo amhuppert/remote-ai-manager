@@ -14,10 +14,8 @@ import {
   validationCommandNameSchema,
   type ValidationCommandSummary,
 } from "@/lib/validation/schemas";
-import type {
-  CollaborationAutonomousResolutionThreshold,
-  WorkflowCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/collaboration/schemas";
 import {
   defaultValidatorAuthority,
   PLAN_REPAIR_DEFAULT_AGENT,

@@ -41,7 +41,7 @@ import {
   type ExecutionLogger,
 } from "@/lib/workflow-graph/execution-logger";
 
-import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import type { DirtyPath } from "@/lib/git/worktree";
 import { SESSION_LANE_NAME } from "@/lib/workflow-graph/lane-identity";
 import {
   interruptedDefinitionDecision,

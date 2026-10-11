@@ -1,7 +1,7 @@
 import path from "node:path";
 import { buildGraphWorkflowExecutionDeepLink } from "./execution-deep-link";
 import type { LeaseAdmissionDecision } from "./lifecycle-classifier";
-import type { DirtyPath } from "./errors";
+import type { DirtyPath } from "@/lib/git/worktree";
 import type { GraphWorkflowLeaseBlocker } from "./schemas";
 
 /**

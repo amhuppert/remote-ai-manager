@@ -18,7 +18,7 @@ import { nodeAgentPatch } from "@/components/workflow-graph/node-agent-edit";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import AutoLayout from "@/components/workflow-graph/AutoLayout";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
-import CanvasControls from "@/components/workflow-graph/CanvasControls";
+import CanvasControls from "@/components/runs/CanvasControls";
 import WorkflowMobileGraph from "@/components/workflow-graph/WorkflowMobileGraph";
 import ContextEdge from "@/components/workflow-graph/ContextEdge";
 import LaneBandLayer from "@/components/workflow-graph/LaneBandLayer";
@@ -341,7 +341,7 @@ export default function WorkflowExecutionCanvas({
           gap={20}
           size={2}
         />
-        <CanvasControls />
+        <CanvasControls fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING }} />
       </ReactFlow>
     </div>
   );

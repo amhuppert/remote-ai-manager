@@ -13,10 +13,6 @@ import {
   DIFF_LINE_BASE,
   DIFF_LINE_TYPE,
 } from "@/components/git/diff-row-classes";
-import {
-  AlertTriangleIcon,
-  CheckIcon,
-} from "@/components/workflow-config-panel/icons";
 import { Spinner } from "@/components/ui/Spinner";
 import type { SessionDiff } from "@/lib/git/schemas";
 import { cn } from "@/lib/ui/cn";
@@ -456,5 +452,53 @@ export default function ApprovalGatePanel({
         </div>
       </section>
     </div>
+  );
+}
+
+function Glyph({
+  size = 13,
+  children,
+}: {
+  size?: number;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function AlertTriangleIcon(props: { size?: number }): React.JSX.Element {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M8 2.8 14.2 13.2H1.8Z"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path d="M8 6.6v3M8 11.4v.1" strokeWidth="1.4" strokeLinecap="round" />
+    </Glyph>
+  );
+}
+
+function CheckIcon(props: { size?: number }): React.JSX.Element {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M3.2 8.4 6.4 11.6 12.8 4.8"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Glyph>
   );
 }

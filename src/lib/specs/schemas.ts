@@ -164,7 +164,7 @@ export const touchedPathSchema = z
  * place lane placement is decided.
  *
  * The grammar is still the lane-id grammar `laneIdViolation` owns in
- * `@/lib/workflow-graph/lane-identity`, because an intent that could never be
+ * `@/lib/workspace/lane-id`, because an intent that could never be
  * spelled as a lane is worth refusing at the point it is written: a lane id
  * becomes a git branch name and a worktree path segment, so the two must accept
  * exactly the same names. It is mirrored here rather than imported because this

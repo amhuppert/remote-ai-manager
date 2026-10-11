@@ -22,8 +22,8 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { ownedPathSchema } from "@/lib/workspace/schemas";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
-import { MAX_LANE_TMP_DIR_BYTES } from "./lane-tmp-dir";
+import { composeImplementerLaneWriteEnvelope } from "./write-envelope";
+import { MAX_LANE_TMP_DIR_BYTES } from "@/lib/workspace/lane-tmp-dir";
 
 let fixtureRoot: string;
 let worktreePath: string;

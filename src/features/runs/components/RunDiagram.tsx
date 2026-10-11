@@ -16,7 +16,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import CanvasControls from "@/components/workflow-graph/CanvasControls";
+import CanvasControls from "@/components/runs/CanvasControls";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { BranchIcon } from "@/components/icons";
 import { cn } from "@/lib/ui/cn";
@@ -42,6 +42,9 @@ import {
 } from "@/components/runs/present";
 import { Cost } from "@/components/runs/Cost";
 import { ContextGlyph, SeatMark } from "./parts";
+
+/** How the diagram frames itself on mount, and again on Fit. */
+const FIT_VIEW = { padding: 0.06, maxZoom: 1 };
 
 type ContextNodeData = {
   context: RunContext;
@@ -413,7 +416,7 @@ export function RunDiagram({
             if (node.type === "context") onSelect(node.id);
           }}
           fitView
-          fitViewOptions={{ padding: 0.06, maxZoom: 1 }}
+          fitViewOptions={FIT_VIEW}
           minZoom={0.3}
           maxZoom={1.6}
           proOptions={{ hideAttribution: true }}
@@ -424,7 +427,7 @@ export function RunDiagram({
             size={1}
             color="var(--color-border-subtle)"
           />
-          <CanvasControls />
+          <CanvasControls fitViewOptions={FIT_VIEW} />
         </ReactFlow>
       </ReactFlowProvider>
       {edges.some((edge) => edge.outputOnly) ? (

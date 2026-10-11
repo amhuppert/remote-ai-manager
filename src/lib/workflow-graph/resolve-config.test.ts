@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
-import type {
-  CollaborationAutonomousResolutionThreshold,
-  WorkflowCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/collaboration/schemas";
 import type {
   AgentAssignment,
   GraphWorkflowAgentConfig,
@@ -1868,9 +1866,7 @@ describe("agent assignment cascade", () => {
     );
 
     expect(resolved.contextValidator.enabled).toBe(false);
-    expect(resolved.contextValidator.assignments).toEqual([
-      CODEX_REVIEWER,
-    ]);
+    expect(resolved.contextValidator.assignments).toEqual([CODEX_REVIEWER]);
   });
 
   it("inherits from the nearest declaring tier at every level", () => {
@@ -1924,10 +1920,7 @@ describe("agent assignment cascade", () => {
       executionContexts: [
         makeContext({
           id: "ctx-1",
-          contextValidator: cohort([
-            CODEX_REVIEWER,
-            CLAUDE_REVIEWER,
-          ]),
+          contextValidator: cohort([CODEX_REVIEWER, CLAUDE_REVIEWER]),
         }),
       ],
     });

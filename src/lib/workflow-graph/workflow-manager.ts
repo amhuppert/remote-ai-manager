@@ -54,7 +54,6 @@ import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { settleLoops } from "./loop-settlement";
 
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import {
@@ -64,7 +63,7 @@ import {
   transitionContextMergeStatus,
   transitionContextStatus,
 } from "@/lib/workflow-graph/context-transitions";
-import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
+import { readWorktreeDirtyPaths, type DirtyPath } from "@/lib/git/worktree";
 import { defaultGitClient } from "@/lib/git/client";
 import {
   validateLaunchInputs,

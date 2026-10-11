@@ -10,7 +10,7 @@ import path from "node:path";
 import { resolveBranchPrefix } from "@/lib/config/cascade";
 import { readConfig } from "@/lib/config/loader";
 import { readRepoConfig } from "@/lib/projects/repo-config";
-import { deriveLaneTargets } from "@/lib/workflow-graph/parallel-worktrees";
+import { deriveLaneTargets } from "@/lib/workspace/parallel-worktrees";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";

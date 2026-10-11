@@ -5,7 +5,7 @@ import type {
   GraphWorkflowExecutionJoinState,
 } from "@/lib/workflow-graph/schemas";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
-import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
+import { incomingRoutes } from "@/lib/runs/route-projection";
 import {
   isContextOutputCommittedToLane,
   isUpstreamVisibleToLane,

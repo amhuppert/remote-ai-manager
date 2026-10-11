@@ -33,11 +33,8 @@ import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import {
-  laneIdViolation,
-  SESSION_LANE_ID,
-  SESSION_LANE_NAME,
-} from "./lane-identity";
+import { SESSION_LANE_ID, SESSION_LANE_NAME } from "./lane-identity";
+import { laneIdViolation } from "@/lib/workspace/lane-id";
 import { validateAuthoredDefinition } from "./definition-validation";
 
 export interface LaneDropInput {

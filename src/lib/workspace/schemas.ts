@@ -12,7 +12,7 @@ import { z } from "zod";
  * agent able to write it could commit, branch, or reset the lane out from under
  * the engine, which is precisely what the ownership envelope exists to make
  * impossible. `.cc` is reserved because the envelope injects a per-context
- * payload directory beneath it (`implementer-lane-write-envelope.ts`), so an
+ * payload directory beneath it (`write-envelope.ts`), so an
  * authored claim there would put two owners on one subtree. Both comparisons
  * fold case: a case-insensitive filesystem resolves `.GIT` to the same
  * directory, so a literal-only refusal would be bypassable on macOS.
