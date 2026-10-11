@@ -8,6 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { CaptureHandoffResult } from "@/lib/agent-backends/schemas";
+import { omittedCaptureResult } from "@/lib/conversation-checkpoints/checkpoint-capture";
 import { createConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
 import {
   EMPTY_CHECKPOINT_USAGE,
@@ -176,6 +178,70 @@ function gateGeneration() {
   return { begun, release };
 }
 
+/** The parts of every capture audit entry in the archive, in order. */
+function captureParts() {
+  return h.checkpoint.entries.flatMap((e) =>
+    e.origin?.source === "checkpoint_capture"
+      ? [e.origin.checkpointCapture?.part]
+      : [],
+  );
+}
+
+/** A checkpoint that asks for a handoff capture first. */
+async function withHandoff(requestId: string) {
+  const started = await s.checkpoints.start({
+    address,
+    requestId,
+    handoff: { mode: "tool-disabled" },
+  });
+  if (started.kind === "refused")
+    throw new Error(
+      `refused: ${started.refusal.code} ${started.refusal.reason}`,
+    );
+  if (started.kind !== "admitted")
+    throw new Error(`not admitted: ${started.kind}`);
+  return started;
+}
+
+/** A capture that answered with an empty handoff in the conversation's own session. */
+function capturedHandoff(): CaptureHandoffResult {
+  return {
+    modeEstablished: true,
+    submitted: true,
+    correlatedCompletion: true,
+    candidateText: JSON.stringify({
+      plan: [],
+      hypotheses: [],
+      failedApproaches: [],
+      blockers: [],
+      nextStep: [],
+    }),
+    omissionReason: null,
+    executionSettled: true,
+    cleanupFailure: null,
+    continuation: {
+      disposition: "retain",
+      backendRef: LIVE_REF,
+      nextRuntime: "recreate_from_ref",
+    },
+    activity: {
+      transport: "complete",
+      native: "unavailable",
+      prohibited: "not_observed",
+      inspectedBytes: null,
+    },
+    usage: {
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+      costUsd: null,
+      costBasis: null,
+      executionMs: 1,
+      settlementMs: 1,
+    },
+  };
+}
+
 async function admitted(requestId: string, recover: string | null = null) {
   const started = await s.checkpoints.start({ address, requestId, recover });
   if (started.kind === "refused")
@@ -253,7 +319,7 @@ describe("checkpoints of a conversation the core runs", () => {
     },
   );
 
-  it("refuses a checkpoint while a turn runs, and reports the handoff as unavailable on the core", async () => {
+  it("refuses a checkpoint while a turn runs, and reports the backend's handoff capture as available", async () => {
     let finish: () => void = () => {};
     h.userTurn = () =>
       new Promise((resolve) => (finish = () => resolve(done("Hello."))));
@@ -265,8 +331,8 @@ describe("checkpoints of a conversation the core runs", () => {
       "turn_active",
     );
     expect(checked.handoff).toMatchObject({
-      available: false,
-      reason: "unavailable",
+      available: true,
+      mode: "tool-disabled",
     });
     expect(
       await s.checkpoints.start({ address, requestId: "op-1" }),
@@ -279,21 +345,230 @@ describe("checkpoints of a conversation the core runs", () => {
     expect((await reloaded().repo.listReceipts(KEY)).receipts).toEqual([]);
   });
 
-  it("omits a requested handoff as unavailable and continues with the baseline checkpoint", async () => {
-    const started = await s.checkpoints.start({
-      address,
-      requestId: "op-1",
-      handoff: { mode: "tool-disabled" },
+  it("reports no handoff capture for a conversation with no session to resume", async () => {
+    await seedChat({ backendRef: null });
+    const checked = await s.checkpoints.check(address, { recover: null });
+    expect(checked.handoff).toMatchObject({
+      available: false,
+      reason: "continuity_unavailable",
     });
-    if (started.kind === "refused") throw new Error(started.refusal.code);
+  });
+
+  it("captures a requested handoff in the conversation's own session, audits it in the transcript, and builds with it", async () => {
+    h.checkpoint.capture = async () => capturedHandoff();
+    const started = await withHandoff("op-1");
+
     expect(await started.completion).toMatchObject({
       phase: "ready",
-      handoff: { stage: "omitted", omissionReason: "unavailable" },
+      handoff: { stage: "included", omissionReason: null },
     });
+    expect(h.checkpoint.captures).toEqual([
+      {
+        backendRef: LIVE_REF,
+        captureId: "op-1:capture",
+        mode: "tool-disabled",
+        modelSelection: { modelId: "sonnet", parameters: {} },
+      },
+    ]);
+    expect(
+      h.checkpoint.entries.flatMap((e) =>
+        e.origin?.source === "checkpoint_capture"
+          ? [e.origin.checkpointCapture?.part]
+          : [],
+      ),
+    ).toEqual(["control", "output", "settlement"]);
+    expect(h.checkpoint.releases).toContain(CHAT);
     expect(
       await s.checkpoints.skipHandoff({ address, operationId: "op-1" }),
+    ).toMatchObject({ kind: "handoff_already_settled" });
+  });
+
+  it("omits the handoff when its capture cannot start in the conversation's session, and builds the baseline", async () => {
+    const started = await withHandoff("op-1");
+
+    expect(await started.completion).toMatchObject({
+      phase: "ready",
+      handoff: {
+        stage: "omitted",
+        omissionReason: "mode_establishment_failed",
+      },
+    });
+  });
+
+  it("skips a running capture: the capture is stopped and the baseline checkpoint is built", async () => {
+    let capturing: () => void = () => {};
+    const began = new Promise<void>((resolve) => (capturing = resolve));
+    h.checkpoint.capture = (input) =>
+      new Promise((resolve) => {
+        capturing();
+        input.signal.addEventListener(
+          "abort",
+          () => resolve(omittedCaptureResult("skipped", LIVE_REF)),
+          { once: true },
+        );
+      });
+    const started = await withHandoff("op-1");
+    await began;
+
+    await s.checkpoints.skipHandoff({ address, operationId: "op-1" });
+
+    expect(await started.completion).toMatchObject({
+      phase: "ready",
+      handoff: { stage: "omitted", omissionReason: "skipped" },
+    });
+  });
+
+  it("keeps a held capture's audit open until reconcile collects it, then completes the audit", async () => {
+    const late: { frame: (() => Promise<void>) | null } = { frame: null };
+    h.checkpoint.capture = async (input) => {
+      late.frame = () =>
+        input.onTranscript({
+          seq: 0,
+          backend: "claude",
+          type: "assistant",
+          raw: {
+            timestamp: "2026-10-03T10:00:01.000Z",
+            type: "assistant",
+            role: "assistant",
+            content: [{ type: "text", text: "late frame" }],
+          },
+        });
+      return {
+        ...omittedCaptureResult("capture_failed", LIVE_REF),
+        executionSettled: false,
+        cleanupFailure: {
+          code: "cleanup_unverified",
+          message: "the capture process could not be confirmed stopped",
+        },
+      };
+    };
+    const started = await withHandoff("op-1");
+    expect(await started.completion).toMatchObject({
+      phase: "needs_reconciliation",
+    });
+
+    await late.frame?.();
+    expect(
+      await s.checkpoints.reconcile({ address, operationId: "op-1" }),
     ).toMatchObject({
-      kind: "handoff_already_settled",
+      kind: "blocked",
+      refusal: { code: "recovery_required" },
+    });
+
+    expect(captureParts()).toEqual(["control", "output", "settlement"]);
+    expect(
+      (await reloaded().repo.getOperation(KEY, "op-1"))?.handoff,
+    ).toMatchObject({ executionSettled: true, auditDurable: true });
+  });
+
+  it("writes a capture audit entry that failed, with its own id, before the audit counts as durable", async () => {
+    h.checkpoint.capture = async () => capturedHandoff();
+    h.checkpoint.failingAppends.add("op-1:capture:1");
+    const started = await withHandoff("op-1");
+    expect(await started.completion).toMatchObject({
+      phase: "needs_reconciliation",
+    });
+
+    expect(
+      await s.checkpoints.reconcile({ address, operationId: "op-1" }),
+    ).toMatchObject({
+      kind: "blocked",
+      refusal: { code: "recovery_required" },
+    });
+
+    expect(
+      h.checkpoint.entries
+        .filter((e) => e.origin?.source === "checkpoint_capture")
+        .map((e) => e.entryId),
+    ).toEqual(["op-1:capture:0", "op-1:capture:1", "op-1:capture:2"]);
+  });
+
+  it("observes the stop of a capture it ran and released, when the checkpoint failed after it", async () => {
+    h.checkpoint.capture = async () => {
+      h.checkpoint.failNextRead = true;
+      return capturedHandoff();
+    };
+    const started = await withHandoff("op-1");
+    expect(await started.completion).toMatchObject({
+      phase: "needs_reconciliation",
+    });
+
+    expect(
+      await s.checkpoints.reconcile({ address, operationId: "op-1" }),
+    ).toMatchObject({
+      kind: "blocked",
+      refusal: { code: "recovery_required" },
+    });
+    expect(
+      (await reloaded().repo.getOperation(KEY, "op-1"))?.handoff,
+    ).toMatchObject({ executionSettled: true, executionStopAttestation: null });
+  });
+
+  it("after a restart, leaves a held capture's execution unknown until the person confirms it stopped", async () => {
+    h.checkpoint.capture = async () => ({
+      ...omittedCaptureResult("capture_failed", LIVE_REF),
+      executionSettled: false,
+      cleanupFailure: {
+        code: "cleanup_unverified",
+        message: "the capture process could not be confirmed stopped",
+      },
+    });
+    const started = await withHandoff("op-1");
+    await started.completion;
+    s = compose();
+    await s.boot();
+
+    expect(
+      await s.checkpoints.reconcile({ address, operationId: "op-1" }),
+    ).toMatchObject({
+      kind: "blocked",
+      refusal: {
+        code: "recovery_required",
+        reason: expect.stringMatching(/captureExecutionStopped/),
+      },
+    });
+    expect(
+      (await reloaded().repo.getOperation(KEY, "op-1"))?.handoff,
+    ).toMatchObject({ executionSettled: false });
+
+    await s.checkpoints.reconcile({
+      address,
+      operationId: "op-1",
+      captureExecutionStopped: true,
+      source: "cli",
+    });
+    expect(
+      (await reloaded().repo.getOperation(KEY, "op-1"))?.handoff,
+    ).toMatchObject({
+      executionSettled: true,
+      executionStopAttestation: { source: "cli" },
+    });
+  });
+
+  it("holds a capture whose cleanup is unverified for reconciliation, which closes its runtime", async () => {
+    h.checkpoint.capture = async () => ({
+      ...omittedCaptureResult("capture_failed", LIVE_REF),
+      executionSettled: false,
+      cleanupFailure: {
+        code: "cleanup_unverified",
+        message: "the capture process could not be confirmed stopped",
+      },
+    });
+    const started = await withHandoff("op-1");
+    expect(await started.completion).toMatchObject({
+      phase: "needs_reconciliation",
+    });
+    expect(await message()).toMatchObject({ kind: "refused" });
+
+    const reconciled = await s.checkpoints.reconcile({
+      address,
+      operationId: "op-1",
+    });
+
+    expect(h.checkpoint.releases).toContain(`retry:${CHAT}`);
+    expect(reconciled).toMatchObject({
+      kind: "blocked",
+      refusal: { code: "recovery_required" },
     });
   });
 

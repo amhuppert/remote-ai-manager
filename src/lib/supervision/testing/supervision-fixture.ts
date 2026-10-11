@@ -16,6 +16,9 @@ import {
 } from "@/lib/conversation-checkpoints/schemas";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
+import type { CaptureHandoffInput } from "@/lib/agent-backends/conversation";
+import type { CaptureHandoffResult } from "@/lib/agent-backends/schemas";
+import type { CaptureRuntimeRequest } from "@/lib/conversation-core/checkpoint-capture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type {
   SeatTurnPort,
@@ -192,18 +195,51 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     checkpoint: {
       /** The archive every enrolled conversation reads. */
       entries: [] as TranscriptEntryWithSeq[],
-      generate: (async (input) => ({
-        ok: true,
-        payload: checkpointPayloadFor(input),
-        generationPassCount: 1,
-        usage: EMPTY_CHECKPOINT_USAGE,
-      })) as typeof generateCheckpoint,
+      generate: (async (input) => {
+        const payload = checkpointPayloadFor(input);
+        // Generation decides a validated handoff's place in the seed; here it always fits.
+        if (input.agentHandoff === undefined)
+          return {
+            ok: true,
+            payload,
+            generationPassCount: 1,
+            usage: EMPTY_CHECKPOINT_USAGE,
+          };
+        return {
+          ok: true,
+          payload: {
+            ...payload,
+            sections: {
+              ...payload.sections,
+              workingState: { agentHandoff: input.agentHandoff },
+            },
+          },
+          handoffDecision: "included",
+          generationPassCount: 1,
+          usage: EMPTY_CHECKPOINT_USAGE,
+        };
+      }) as typeof generateCheckpoint,
       /** Why closing an enrolled conversation's runtime fails; null closes it. */
       closeFailure: null as string | null,
       /** Runtime closes the checkpoints asked for, by conversation, `retry:` marking a retried close. */
       releases: [] as string[],
       /** Queued rows a checkpoint acceptance released. */
       confirmed: [] as string[],
+      /** The handoff capture each capture runtime runs; null fails the runtime's creation. */
+      capture: null as
+        | ((input: CaptureHandoffInput) => Promise<CaptureHandoffResult>)
+        | null,
+      /** When set, the next archive read fails once. */
+      failNextRead: false,
+      /** Capture audit entries whose next append fails once, by entry id. */
+      failingAppends: new Set<string>(),
+      /** Every capture runtime opened, with the session it resumes and its purpose. */
+      captures: [] as Array<
+        Pick<
+          CaptureRuntimeRequest,
+          "backendRef" | "captureId" | "mode" | "modelSelection"
+        >
+      >,
       repo: createConversationCheckpointsRepo(
         fixture.db,
         createWriteQueue(),
@@ -290,10 +326,16 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
                   identity.conversationId,
                 );
           },
-          readEntries: async () => ({
-            entries: structuredClone(harness.checkpoint.entries),
-            maxSeq: harness.checkpoint.entries.at(-1)?.seq ?? -1,
-          }),
+          async readEntries() {
+            if (harness.checkpoint.failNextRead) {
+              harness.checkpoint.failNextRead = false;
+              throw new Error("the transcript could not be read");
+            }
+            return {
+              entries: structuredClone(harness.checkpoint.entries),
+              maxSeq: harness.checkpoint.entries.at(-1)?.seq ?? -1,
+            };
+          },
           findArtifact: async () => null,
           resolveConfig: async () => compactionConfigSchema.parse({}),
           taskLane: () => async () => {
@@ -305,6 +347,31 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
             parameters: {},
           }),
           backendSupportsCheckpoint: () => true,
+          captureAvailability: () => ({
+            available: true,
+            mode: "tool-disabled",
+          }),
+          // The archive a capture appends to is the one every checkpoint reads.
+          async appendCaptureEntryOnce(_conversationId, entry) {
+            const { entries, failingAppends } = harness.checkpoint;
+            if (failingAppends.delete(entry.id))
+              throw new Error("the transcript could not be written");
+            if (entries.some((e) => e.entryId === entry.id)) return;
+            if (
+              entry.role !== "user" &&
+              entry.role !== "assistant" &&
+              entry.role !== "notice"
+            )
+              return;
+            entries.push({
+              seq: (entries.at(-1)?.seq ?? -1) + 1,
+              entryId: entry.id,
+              role: entry.role,
+              timestamp: entry.timestamp,
+              content: entry.content ?? [],
+              ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
+            });
+          },
           background: { activity: () => null, epoch: () => 0 },
           async confirmQueuedDelivery(input) {
             harness.checkpoint.confirmed.push(...input.ids);
@@ -343,6 +410,21 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
             },
             closeFailure: async (conversationId) =>
               harness.uncollected.get(conversationId) ?? null,
+            async openForCapture(input) {
+              harness.checkpoint.captures.push({
+                backendRef: input.backendRef,
+                captureId: input.captureId,
+                mode: input.mode,
+                modelSelection: input.modelSelection,
+              });
+              const capture = harness.checkpoint.capture;
+              if (capture === null)
+                throw new Error("the capture runtime could not be started");
+              return {
+                modelSelection: input.modelSelection,
+                captureHandoff: capture,
+              };
+            },
           },
           async settleTurnReceipts() {},
           now: () => new Date().toISOString(),

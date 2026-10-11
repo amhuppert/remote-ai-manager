@@ -3,7 +3,10 @@ import type {
   ConversationBackendFactory,
   ConversationBackendRuntime,
 } from "@/lib/agent-backends/conversation";
-import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import type {
+  BackendModelSelection,
+  CaptureMode,
+} from "@/lib/agent-backends/schemas";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { ExecutionClass } from "@/lib/agent-backends/execution-schemas";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
@@ -64,7 +67,7 @@ export interface RuntimeHostDeps {
     alignmentEligible: boolean;
   }>;
   tooling(conversation: HostedConversation): Promise<ComposedTooling>;
-  /** Every runtime created is seeded before it is handed out; a failure fails the creation. */
+  /** Every runtime created for turns is seeded before it is handed out; a failure fails the creation. A capture runtime is not. */
   beginSeed: RuntimeApplicationState["beginSeed"];
   callbacks(
     conversation: HostedConversation,
@@ -86,6 +89,15 @@ export interface RuntimeHost {
   replace(
     conversationId: string,
     persistedRef: AgentSessionRef | null,
+  ): Promise<ConversationBackendRuntime>;
+  /**
+   * A runtime for a checkpoint's handoff capture: the conversation's own
+   * session, resumed with the capture's purpose and no session instructions,
+   * hosted in place of any live runtime so a release closes it.
+   */
+  obtainForCapture(
+    conversation: HostedConversation,
+    capture: CaptureRequest,
   ): Promise<ConversationBackendRuntime>;
   release(conversationId: string): Promise<void>;
   /**
@@ -109,6 +121,13 @@ export interface RuntimeHost {
     failure: { kind: "cleanup_unverified"; message: string },
   ): boolean;
   releaseAll(): Promise<void>;
+}
+
+/** What a handoff capture's runtime is created for. */
+interface CaptureRequest {
+  modelSelection: BackendModelSelection;
+  captureId: string;
+  mode: CaptureMode;
 }
 
 interface Hosted {
@@ -164,15 +183,32 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
     };
   }
 
-  async function create(entry: Hosted): Promise<ConversationBackendRuntime> {
+  async function create(
+    entry: Hosted,
+    capture?: CaptureRequest,
+  ): Promise<ConversationBackendRuntime> {
     const { conversation, requirements, managed } = entry;
-    const { desired, sessionInstructions, alignment } = await desiredFor(
-      conversation,
-      requirements,
-    );
-    // Opened before composing, so a save landing during creation stays pending.
-    const seeding = await deps.beginSeed(conversation);
-    const composed = await deps.tooling(conversation);
+    // A capture resumes the session as it stands: its instructions are the session's own.
+    const { desired, sessionInstructions, alignment } =
+      capture === undefined
+        ? await desiredFor(conversation, requirements)
+        : {
+            desired: {
+              backend: conversation.backend,
+              modelSelection: requirements.modelSelection,
+              alignmentVersion: null,
+              repeatableInstructions: [],
+              instructionSelection: requirements.instructionSelection,
+            },
+            sessionInstructions: [],
+            alignment: null,
+          };
+    // Opened before composing, so a save landing during creation stays pending. A capture
+    // runtime gets no tooling: its mode is established on a session with none.
+    const seeding =
+      capture === undefined ? await deps.beginSeed(conversation) : null;
+    const composed =
+      capture === undefined ? await deps.tooling(conversation) : null;
     if (managed.backend !== undefined) {
       try {
         await managed.close();
@@ -188,6 +224,9 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
     }
     const incarnation = managed.beginCreation();
     const runtime = await deps.factory(conversation.backend).createRuntime({
+      ...(capture !== undefined
+        ? { initialPurpose: { kind: "checkpoint_handoff", ...capture } }
+        : {}),
       executionClass: conversation.executionClass,
       conversationId: conversation.conversationId,
       projectPath: conversation.projectPath,
@@ -200,7 +239,7 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         : {}),
       modelSelection: requirements.modelSelection,
       sessionInstructions,
-      tooling: composed.overrides,
+      tooling: composed?.overrides ?? {},
       ...(requirements.fsWritePolicy !== undefined
         ? { fsWritePolicy: requirements.fsWritePolicy }
         : {}),
@@ -210,14 +249,17 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
       }),
     });
     managed.install(incarnation, runtime, desired, deps.index);
-    charters.set(conversation.conversationId, alignment);
+    if (alignment !== null)
+      charters.set(conversation.conversationId, alignment);
     deps.log.info("conversation_core.runtime_created", {
       conversationId: conversation.conversationId,
       backend: conversation.backend,
       resumed: conversation.persistedRef !== null,
+      purpose: capture === undefined ? "turn" : "checkpoint_handoff",
     });
     // Installed first, so a failed seed leaves the runtime for the turn's release to close.
-    await seeding.commit(composed, runtime);
+    if (seeding !== null && composed !== null)
+      await seeding.commit(composed, runtime);
     return runtime;
   }
 
@@ -254,6 +296,29 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         });
       }
       return { runtime: await create(entry), created: true };
+    },
+
+    async obtainForCapture(conversation, capture) {
+      const existing = hosted.get(conversation.conversationId);
+      if (existing?.closeFailure != null) {
+        throw new Error(
+          `Conversation ${conversation.conversationId} cannot start a runtime: its previous one did not close (${existing.closeFailure.message})`,
+        );
+      }
+      const requirements: RuntimeRequirements = {
+        modelSelection: capture.modelSelection,
+        instructionSelection: { autonomous: true },
+      };
+      const entry: Hosted = existing ?? {
+        managed: new ManagedConversationRuntime(conversation.conversationId),
+        conversation,
+        requirements,
+        closeFailure: null,
+      };
+      entry.conversation = conversation;
+      entry.requirements = requirements;
+      hosted.set(conversation.conversationId, entry);
+      return create(entry, capture);
     },
 
     async replace(conversationId, persistedRef) {

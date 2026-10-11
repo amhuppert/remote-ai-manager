@@ -215,6 +215,13 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
     },
     backendSupportsCheckpoint: (backend) =>
       conversationCapabilitiesForBackend(backend).checkpoint,
+    captureAvailability: (backend) =>
+      conversationCapabilitiesForBackend(backend).handoffCapture,
+    async appendCaptureEntryOnce(conversationId, entry) {
+      const { appendTranscriptEntryOnce } =
+        await import("@/lib/prompt/transcript");
+      await appendTranscriptEntryOnce(conversationId, entry);
+    },
     background: {
       activity: (conversationId) =>
         getBackgroundActivityChannel().get(conversationId),
@@ -249,6 +256,30 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
       async closeFailure(conversationId) {
         return (
           (await loadedRuntimeHost())?.closeFailure(conversationId) ?? null
+        );
+      },
+      async openForCapture(input) {
+        const { host } = await coreTurnRuntime();
+        return host.obtainForCapture(
+          {
+            conversationId: input.identity.conversationId,
+            projectPath: input.identity.projectPath,
+            projectName: input.target.projectName,
+            target: input.target,
+            worktreePath: input.worktreePath,
+            backend: input.backend,
+            executionClass: "ordinary-conversation",
+            persistedRef: input.backendRef,
+            // A project conversation has no session for its agent to act in as itself.
+            ...(input.target.scope === "session"
+              ? { callerIdentity: input.identity.conversationId }
+              : {}),
+          },
+          {
+            modelSelection: input.modelSelection,
+            captureId: input.captureId,
+            mode: input.mode,
+          },
         );
       },
     },

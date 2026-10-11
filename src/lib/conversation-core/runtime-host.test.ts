@@ -157,6 +157,35 @@ describe("runtime host", () => {
     expect(h.registered).toEqual(["conv-1"]);
   });
 
+  it("opens a capture runtime in the conversation's own session, in its place, and closes it on release", async () => {
+    const h = harness();
+    const turn = await h.host.obtain(conversation, sonnet);
+
+    const capture = await h.host.obtainForCapture(conversation, {
+      modelSelection: { modelId: "opus", parameters: {} },
+      captureId: "op-1:capture",
+      mode: "tool-disabled",
+    });
+
+    expect(h.created.map((runtime) => runtime.closed)).toEqual([true, false]);
+    expect(h.created[1]?.input).toMatchObject({
+      persistedRef: { backend: "claude", ref: "sdk-session-1" },
+      modelSelection: { modelId: "opus", parameters: {} },
+      sessionInstructions: [],
+      tooling: {},
+      initialPurpose: {
+        kind: "checkpoint_handoff",
+        captureId: "op-1:capture",
+        mode: "tool-disabled",
+      },
+    });
+    // Nothing is applied to a capture runtime: its mode is established on a session with no tools.
+    expect(h.seeds.map((seed) => seed.runtime)).toEqual([turn.runtime]);
+    expect(capture).not.toBe(turn.runtime);
+    await h.host.release("conv-1");
+    expect(h.created[1]?.closed).toBe(true);
+  });
+
   it("gives the agent the identity it acts as when the conversation declares one", async () => {
     const h = harness();
     await h.host.obtain({ ...conversation, callerIdentity: "conv-1" }, sonnet);
