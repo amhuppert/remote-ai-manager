@@ -48,32 +48,34 @@ export type LifecycleResult<Value> =
   | { kind: "accepted"; value: Value }
   | { kind: "refused"; refusal: LifecycleRefusal };
 
+/**
+ * The graph runtime is composed at server startup, in another bundle than the
+ * routes that answer its refusals, so a refusal arrives as an instance of that
+ * bundle's copy of its class and `instanceof` cannot see it. Each class is
+ * recognised by its unique name instead; a subclass keeps its parent's name to
+ * be recognised as its parent.
+ */
 export function lifecycleRefusalFromError(
   error: unknown,
 ): LifecycleRefusal | null {
   if (
-    error instanceof GraphWorkflowResourceMissingError ||
-    error instanceof WorkflowDefinitionNotFoundError
+    GraphWorkflowResourceMissingError.is(error) ||
+    WorkflowDefinitionNotFoundError.is(error)
   )
     return { code: "missing_resource", error };
-  if (error instanceof GraphWorkflowTransitionConflictError)
+  if (GraphWorkflowTransitionConflictError.is(error))
     return { code: "invalid_transition", error };
-  if (error instanceof WorkflowDefinitionRevisionMismatchError)
+  if (WorkflowDefinitionRevisionMismatchError.is(error))
     return { code: "definition_revision_mismatch", error };
-  if (error instanceof WorkflowStartGuardError)
-    return { code: "launch_guard", error };
-  if (error instanceof WorkflowStartInputError)
-    return { code: "launch_input", error };
-  if (error instanceof WorkflowPrerequisitesUnmetError)
+  if (WorkflowStartGuardError.is(error)) return { code: "launch_guard", error };
+  if (WorkflowStartInputError.is(error)) return { code: "launch_input", error };
+  if (WorkflowPrerequisitesUnmetError.is(error))
     return { code: "prerequisites_unmet", error };
-  if (error instanceof GraphExecutionContractViolationError)
+  if (GraphExecutionContractViolationError.is(error))
     return { code: "execution_contract", error };
-  if (error instanceof GraphWorkflowValidationError)
+  if (GraphWorkflowValidationError.is(error))
     return { code: "definition_validation", error };
-  if (
-    error instanceof ResetExecutionContextError ||
-    error instanceof ResetAssignmentError
-  )
+  if (ResetExecutionContextError.is(error) || ResetAssignmentError.is(error))
     return { code: "reset_refused", error };
   return null;
 }

@@ -478,6 +478,13 @@ export interface RecordDefinitionApprovalInput {
  * of the display message.
  */
 export class WorkflowDefinitionNotFoundError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowDefinitionNotFoundError {
+    return (
+      error instanceof Error && error.name === "WorkflowDefinitionNotFoundError"
+    );
+  }
+
   readonly definitionId: string;
   readonly tier: TemplateTier;
 
@@ -490,6 +497,14 @@ export class WorkflowDefinitionNotFoundError extends Error {
 }
 
 export class WorkflowDefinitionRevisionMismatchError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowDefinitionRevisionMismatchError {
+    return (
+      error instanceof Error &&
+      error.name === "WorkflowDefinitionRevisionMismatchError"
+    );
+  }
+
   readonly code = "definition_revision_mismatch" as const;
 
   constructor(
@@ -516,6 +531,13 @@ export class WorkflowDefinitionRevisionMismatchError extends Error {
  * the not-found error so the rejection class is unambiguous (R6.2).
  */
 export class WorkflowPrerequisitesUnmetError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowPrerequisitesUnmetError {
+    return (
+      error instanceof Error && error.name === "WorkflowPrerequisitesUnmetError"
+    );
+  }
+
   readonly missing: MissingPrerequisite[];
 
   constructor(missing: MissingPrerequisite[], message: string) {
@@ -561,6 +583,14 @@ export type GraphWorkflowLifecycleAction =
   | "halt";
 
 export class GraphWorkflowTransitionConflictError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is GraphWorkflowTransitionConflictError {
+    return (
+      error instanceof Error &&
+      error.name === "GraphWorkflowTransitionConflictError"
+    );
+  }
+
   readonly code = "workflow_transition_conflict" as const;
 
   constructor(

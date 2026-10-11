@@ -33,7 +33,7 @@ export function assignmentReferenceRefusalBody(
  * that needs the located issues rather than the response.
  */
 export function assignmentReferenceRefusal(error: unknown): Response | null {
-  if (!(error instanceof WorkflowAssignmentReferenceError)) return null;
+  if (!WorkflowAssignmentReferenceError.is(error)) return null;
   return NextResponse.json(assignmentReferenceRefusalBody(error.issues), {
     status: 400,
   });
@@ -47,7 +47,5 @@ export function assignmentReferenceRefusal(error: unknown): Response | null {
 export function assignmentReferenceIssues(
   error: unknown,
 ): readonly WorkflowPlanIssue[] | null {
-  return error instanceof WorkflowAssignmentReferenceError
-    ? error.issues
-    : null;
+  return WorkflowAssignmentReferenceError.is(error) ? error.issues : null;
 }

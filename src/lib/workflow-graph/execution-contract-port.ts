@@ -63,6 +63,14 @@ export interface GraphExecutionContract {
 }
 
 export class GraphExecutionContractViolationError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is GraphExecutionContractViolationError {
+    return (
+      error instanceof Error &&
+      error.name === "GraphExecutionContractViolationError"
+    );
+  }
+
   readonly code: string;
   readonly issues: WorkflowGraphValidationError[];
   readonly instruction: string;

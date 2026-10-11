@@ -131,21 +131,23 @@ export class TurnAttempt {
     };
   }
 
+  /**
+   * A restored actor prepares with startup code, so its errors are recognised
+   * by name rather than by this module's copy of their classes.
+   */
   recordFailure(error: unknown): void {
     if (this.outcome?.kind === "call_result") return;
     this.outcome = {
       kind: "not_started",
       reason: this.controller.signal.aborted
         ? "cancelled"
-        : error instanceof QuerySlotAdmissionTimeoutError
+        : QuerySlotAdmissionTimeoutError.is(error)
           ? "query_slot_timeout"
-          : error instanceof BackendAdmissionError
+          : BackendAdmissionError.is(error)
             ? "backend_admission"
             : "configuration",
       message: getErrorMessage(error),
-      ...(error instanceof BackendAdmissionError
-        ? { admission: error.refusal }
-        : {}),
+      ...(BackendAdmissionError.is(error) ? { admission: error.refusal } : {}),
       ...(this.cancellation ? { cancelReason: this.cancellation } : {}),
     };
   }

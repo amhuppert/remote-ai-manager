@@ -37,6 +37,58 @@ it("retains a typed backend admission refusal before dispatch", async () => {
   });
 });
 
+/**
+ * A conversation actor restored at startup prepares its turn with startup
+ * code, so the errors it reports into a route-made attempt are instances of
+ * that bundle's copies of their classes. Copies with the same name stand in.
+ */
+it.each([
+  {
+    name: "QuerySlotAdmissionTimeoutError",
+    fields: { code: "QUERY_SLOT_ADMISSION_TIMEOUT" },
+    expected: { reason: "query_slot_timeout" },
+  },
+  {
+    name: "BackendAdmissionError",
+    fields: {
+      code: "backend-catalog-unavailable",
+      refusal: {
+        backend: "claude",
+        operation: "task-run",
+        code: "backend-catalog-unavailable",
+        message: "Catalog unavailable",
+      },
+    },
+    expected: {
+      reason: "backend_admission",
+      admission: { code: "backend-catalog-unavailable" },
+    },
+  },
+])(
+  "records a $name thrown by startup code's copy of its class as what it is",
+  async ({ name, fields, expected }) => {
+    const attempt = createAttempt();
+    const thrown = Object.assign(new Error(`${name} raised`), fields, {
+      name,
+    });
+    await expect(
+      attempt.track(async () => {
+        throw thrown;
+      }),
+    ).rejects.toBe(thrown);
+    await attempt.settle();
+    attempt.complete({
+      status: "awaiting",
+      pendingQuestion: null,
+      lastError: thrown.message,
+    });
+    expect((await attempt.completed).outcome).toMatchObject({
+      kind: "not_started",
+      ...expected,
+    });
+  },
+);
+
 it("retains required receipt failure and still finishes every cleanup", async () => {
   const attempt = createAttempt();
   const release = vi.fn();

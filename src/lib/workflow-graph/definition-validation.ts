@@ -47,6 +47,13 @@ export interface WorkflowGraphValidationResult {
 }
 
 export class GraphWorkflowValidationError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is GraphWorkflowValidationError {
+    return (
+      error instanceof Error && error.name === "GraphWorkflowValidationError"
+    );
+  }
+
   readonly errors: WorkflowGraphValidationError[];
 
   constructor(

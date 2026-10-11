@@ -1647,6 +1647,40 @@ describe("graph workflow execution route handlers", () => {
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 
+  it("answers an assignment reference the launch could not resolve with its located issues, as the runtime's own copy of the error throws it", async () => {
+    class StartupCopyOfWorkflowAssignmentReferenceError extends Error {
+      readonly code = "workflow_assignment_reference_invalid";
+      readonly issues = [
+        {
+          path: "contexts.build.implementer.profile",
+          message: "Agent profile global:gone does not exist",
+        },
+      ];
+      constructor() {
+        super("contexts.build.implementer.profile: missing");
+        this.name = "WorkflowAssignmentReferenceError";
+      }
+    }
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new StartupCopyOfWorkflowAssignmentReferenceError(),
+    );
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "workflow_assignment_reference_invalid",
+      issues: [{ path: "contexts.build.implementer.profile" }],
+    });
+  });
+
   it("maps the uncommitted-changes guard error to a structured 409", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());

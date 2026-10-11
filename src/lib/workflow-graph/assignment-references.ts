@@ -265,6 +265,14 @@ export function collectDefaultsReferenceSites(
  * thrown error rather than a returned result (storage accept, execution start).
  */
 export class WorkflowAssignmentReferenceError extends Error {
+  /** By name: the startup-composed repository that throws it runs another bundle's copy of this class. */
+  static is(error: unknown): error is WorkflowAssignmentReferenceError {
+    return (
+      error instanceof Error &&
+      error.name === "WorkflowAssignmentReferenceError"
+    );
+  }
+
   readonly code = WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE;
 
   constructor(readonly issues: readonly WorkflowPlanIssue[]) {

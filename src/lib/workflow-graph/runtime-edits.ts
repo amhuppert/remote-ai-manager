@@ -153,10 +153,10 @@ export interface AgentTaskAddResult {
   };
 }
 
+/** Keeps its base class's name, by which route code recognises a validation refusal. */
 export class GraphWorkflowRuntimeEditValidationError extends GraphWorkflowValidationError {
   constructor(errors: WorkflowGraphValidationError[]) {
     super(errors, "Runtime edit validation failed");
-    this.name = "GraphWorkflowRuntimeEditValidationError";
   }
 }
 

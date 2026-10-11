@@ -347,7 +347,7 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
         laneReminderState,
       });
     } catch (error) {
-      if (error instanceof GraphExecutionContractViolationError) {
+      if (GraphExecutionContractViolationError.is(error)) {
         log.warn("graph-workflow-lane.task_completion.contract_rejected", {
           contextId,
           taskId,

@@ -16,7 +16,7 @@ import {
   getRuntime as defaultGetRuntime,
   ownRuntimeInputReceipt,
 } from "@/lib/agent-backends/runtime-registry";
-import { InputDeliveryUncertainError } from "@/lib/agent-backends/errors";
+import { isInputDeliveryUncertain } from "@/lib/agent-backends/errors";
 import { isQueuedUserMessage } from "@/lib/conversations/queued-input-provenance";
 import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
@@ -908,7 +908,7 @@ async function queueMessageInOrder(
   } catch (err) {
     passive.markDispatchFailure(err);
     const error = getErrorMessage(err);
-    if (accepted || err instanceof InputDeliveryUncertainError) {
+    if (accepted || isInputDeliveryUncertain(err)) {
       await holdForReview(error);
       return {
         entry: { ...claimed, status: "uncertain", error },

@@ -29,6 +29,11 @@ export type WorkflowStartGuard =
   | "launches_frozen";
 
 export class WorkflowStartGuardError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowStartGuardError {
+    return error instanceof Error && error.name === "WorkflowStartGuardError";
+  }
+
   readonly guard: WorkflowStartGuard;
   readonly dirtyPaths?: DirtyPath[];
   readonly blocker?: GraphWorkflowLeaseBlocker;

@@ -1590,7 +1590,7 @@ export function createSpecSpineWorld(
       return {
         ok: false,
         reason: error instanceof Error ? error.message : String(error),
-        ...(error instanceof WorkflowStartInputError
+        ...(WorkflowStartInputError.is(error)
           ? { code: "validation" as const }
           : {}),
       };

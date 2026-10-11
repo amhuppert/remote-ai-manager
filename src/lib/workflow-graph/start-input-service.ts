@@ -20,6 +20,11 @@ export type LaunchInputError =
  * a 400 naming the offending parameter without re-parsing the message.
  */
 export class WorkflowStartInputError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowStartInputError {
+    return error instanceof Error && error.name === "WorkflowStartInputError";
+  }
+
   constructor(
     readonly inputError: LaunchInputError,
     message: string,

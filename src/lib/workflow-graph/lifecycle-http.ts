@@ -1,4 +1,5 @@
 import type { RejectDefinitionResult } from "./workflow-manager";
+import { assignmentReferenceRefusal } from "@/lib/workflows/assignment-reference-refusal";
 import {
   abandonRefusalMessage,
   type LifecycleAbandonResult,
@@ -175,6 +176,10 @@ export function respondToLifecycleRefusal(
 export function respondToManagerError(error: unknown): Response {
   const refusal = lifecycleRefusalFromError(error);
   if (refusal) return respondToLifecycleRefusal(refusal);
+  // A launch resolves its assignments' profiles too, so a profile deleted
+  // after validation is refused here with the same located issues.
+  const reference = assignmentReferenceRefusal(error);
+  if (reference !== null) return reference;
   return NextResponse.json(
     {
       error:

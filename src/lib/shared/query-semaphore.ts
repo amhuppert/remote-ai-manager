@@ -46,6 +46,13 @@ export const QUERY_SLOT_ADMISSION_TIMEOUT_CODE = "QUERY_SLOT_ADMISSION_TIMEOUT";
 export class QuerySlotAdmissionTimeoutError extends Error {
   readonly code = QUERY_SLOT_ADMISSION_TIMEOUT_CODE;
 
+  /** By name: the code that throws it may run another bundle's copy of this class. */
+  static is(error: unknown): error is QuerySlotAdmissionTimeoutError {
+    return (
+      error instanceof Error && error.name === "QuerySlotAdmissionTimeoutError"
+    );
+  }
+
   constructor(label: string, timeoutMs: number) {
     super(
       `Query semaphore timeout after ${timeoutMs}ms waiting for slot (label: ${label}) [${QUERY_SLOT_ADMISSION_TIMEOUT_CODE}]`,

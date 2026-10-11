@@ -29,7 +29,7 @@ export type { WorkflowSemanticDefinition } from "./definition-schemas";
 export { criterionRecordsOf } from "./criteria/criterion-records";
 export { collectStableAccountabilityContextIds } from "./authored-accountability";
 // The ONE start-input refusal class — owned by the pure start-input-service
-// module (client-safe), which the manager itself now throws, so a spec-side
-// `instanceof` matches the gauntlet's refusal without dragging the server-side
-// manager into client bundles.
+// module (client-safe), which the manager itself throws. Spec code recognises
+// the gauntlet's refusal with `WorkflowStartInputError.is`, never `instanceof`:
+// the manager runs in the startup bundle, with its own copy of the class.
 export { WorkflowStartInputError } from "./start-input-service";
