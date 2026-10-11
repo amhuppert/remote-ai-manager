@@ -186,6 +186,19 @@ const defaultConversationsDeps: ConversationsDeps = {
   },
 };
 
+/** A managed conversation (a run's seat) takes its work, and its backend, only from what manages it. */
+export class ManagedConversationError extends Error {
+  readonly code = "MANAGED_CONVERSATION" as const;
+  readonly statusCode = 403;
+
+  constructor(conversationId: string) {
+    super(
+      `Managed workflow conversations are not user-interactive (conversation "${conversationId}")`,
+    );
+    this.name = "ManagedConversationError";
+  }
+}
+
 // ============================================================
 // Factory
 // ============================================================
@@ -402,6 +415,8 @@ export function createConversationService(
             `Conversation "${conversationId}" not found in session "${sessionName}"`,
           );
         }
+        if (conversation.role !== null)
+          throw new ManagedConversationError(conversationId);
         if (conversation.promptCount > 0) {
           throw new Error(
             `Cannot change backend after prompts have been sent (conversation "${conversationId}")`,

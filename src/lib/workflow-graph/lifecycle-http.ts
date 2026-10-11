@@ -122,11 +122,13 @@ export function respondToLifecycleRefusal(
           { status: 409 },
         );
       }
-      // The session is being finalized by a merge, so there is no run to name and
-      // no lease to clear — the remedy is the merge, not this session's workflow.
+      // No run holds the session here and no lease is to be cleared: the remedy
+      // is outside this session's workflow (the merge finalizing it, the
+      // session branch, or the drain's launch freeze), named in the message.
       if (
         error.guard === "session_finalizing" ||
-        error.guard === "session_branch_unavailable"
+        error.guard === "session_branch_unavailable" ||
+        error.guard === "launches_frozen"
       ) {
         return NextResponse.json(
           { error: error.message, code: error.guard } satisfies ApiError,

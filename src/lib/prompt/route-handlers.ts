@@ -509,7 +509,13 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       return notFound("Conversation not found");
     }
 
-    if (conversation.role === "iteration") {
+    // The open-approval-gate exception belongs to the old engine's iteration
+    // conversations; a conversation the core runs (a run's seat) is refused by
+    // the core itself, below.
+    if (
+      conversation.role === "iteration" &&
+      !deps.coreConversations.owns(conversationId)
+    ) {
       const activeExecution = await deps.getActiveGraphWorkflowExecution(
         projectPath,
         sessionName,

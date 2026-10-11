@@ -46,6 +46,8 @@ import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { executeOptimisticWorkflow } from "./optimistic";
 import { defaultOptimisticDeps } from "./optimistic-production";
 import { stopConversationActor } from "@/lib/workflows/conversation/lifecycle";
+import { assertNoCurrentRun, type CurrentRun } from "@/lib/runs/session-guard";
+import { currentRuns } from "@/lib/supervision/handles";
 import {
   getTaskRunner as registryGetTaskRunner,
   prepareManagedSkillsCheckout as registryPrepareManagedSkillsCheckout,
@@ -264,6 +266,8 @@ export interface SessionDeps {
     sourceSessionName: string;
     targetSessionName: string;
   }): Promise<void>;
+  /** The runs working in a project, or in one of its sessions, that have not finished. */
+  currentRuns(projectPath: string, sessionName?: string): readonly CurrentRun[];
 }
 
 // Built lazily so importing this module never opens the DB; the alignment
@@ -378,6 +382,7 @@ const defaultSessionDeps: SessionDeps = {
   copyAlignmentCharterFromParent: async (input) => {
     await getAlignmentService().copyActiveCharter(input);
   },
+  currentRuns,
 };
 
 // ============================================================
@@ -430,6 +435,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     publishTicketProjectDeletion,
     sweepLaneWorktrees,
     copyAlignmentCharterFromParent,
+    currentRuns,
   } = deps;
 
   function assertProjectWasNotDeleted(
@@ -1143,6 +1149,12 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     if (expected !== undefined && session.finished) {
       return { deleted: false, reason: "finished" };
     }
+    // Deleting the session would leave its run current with nothing to steer
+    // it from; cancelling here instead would delete under a run still stopping.
+    assertNoCurrentRun(
+      currentRuns(projectPath, sessionName),
+      "deleting this session",
+    );
 
     const result = await performSessionDeletionSideEffects(
       projectPath,
@@ -1239,6 +1251,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         continue;
       }
       try {
+        assertNoCurrentRun(
+          currentRuns(projectPath, sessionName),
+          "deleting this session",
+        );
         await performSessionDeletionSideEffects(
           projectPath,
           sessionName,
@@ -1298,6 +1314,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     if (!(await listProjectPaths()).includes(projectPath)) {
       throw new Error(`Project not found: ${projectPath}`);
     }
+    // Checked once, up front: the per-session deletions below log and carry on.
+    assertNoCurrentRun(currentRuns(projectPath), "deleting this project");
 
     const ticketDeletionSnapshot: TicketProjectDeletionSnapshot =
       await captureTicketProjectDeletion(projectPath);

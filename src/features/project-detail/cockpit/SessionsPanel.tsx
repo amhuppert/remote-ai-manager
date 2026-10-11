@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/EmptyState";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import { useBulkSessionsMutation } from "@/lib/sessions/mutations";
+import { pushToast } from "@/stores/toast.store";
 import { applyFilters } from "../components/apply-filters";
 import SessionRows, { type SortState } from "../components/SessionRows";
 import SectionHeader from "../components/SectionHeader";
@@ -142,7 +143,12 @@ export default function SessionsPanel({
     bulkMutation.mutate(
       { op: confirmKind, sessionNames: [...selection] },
       {
-        onSuccess: () => {
+        onSuccess: ({ results }) => {
+          // A refused session stays in the list; say why, or it simply reappears.
+          for (const refused of results.filter((result) => !result.success))
+            pushToast(
+              `Could not ${confirmKind} ${refused.sessionName}: ${refused.error ?? "it was refused"}`,
+            );
           setSelection(new Set());
           setConfirmKind(null);
         },

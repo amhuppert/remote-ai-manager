@@ -31,7 +31,10 @@ import {
   clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches,
   getSession as defaultGetSession,
 } from "@/lib/state-store";
-import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations/service";
+import {
+  ManagedConversationError,
+  setConversationBackend as defaultSetConversationBackend,
+} from "@/lib/conversations/service";
 import {
   collaborationBackendAdmission,
   CollaborationBackendNotEligibleError,
@@ -354,6 +357,11 @@ export function createCollaborationRouteHandlers(
             parsed.data.backend,
           );
         } catch (err) {
+          if (err instanceof ManagedConversationError)
+            return NextResponse.json(
+              { error: err.message, code: err.code } satisfies ApiError,
+              { status: err.statusCode },
+            );
           const message = getErrorMessage(err);
           if (message.includes("after prompts have been sent")) {
             logger.warn("collaboration.route.backend_adoption_locked", {

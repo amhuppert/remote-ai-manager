@@ -289,6 +289,8 @@ function createProductionGraphWorkflowRuntime(
         readWorktreeDirtyPaths(worktreePath),
       preflightService: createPreflightPrerequisiteService(),
       readGlobalConfig: readConfig,
+      launchesFrozen: async () =>
+        (await readConfig()).graphWorkflowLaunchesFrozen === true,
       abortConversation: ({ projectPath, sessionName, conversationId }) => {
         const stop = requestConversationStop(
           {

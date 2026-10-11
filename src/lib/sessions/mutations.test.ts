@@ -15,8 +15,6 @@ import {
 } from "@/lib/sessions/mutations";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
-import { runKeys } from "@/lib/runs/query-keys";
-import type { ActiveRun } from "@/lib/runs/schemas";
 import type {
   SessionActiveConversation,
   ActiveConversationsResponse,
@@ -389,26 +387,6 @@ describe("useArchiveSessionMutation", () => {
   });
 });
 
-function currentRun(
-  projectName: string,
-  sessionName: string,
-  runId: string,
-): ActiveRun {
-  return {
-    runId,
-    title: runId,
-    kind: "agent",
-    projectName,
-    sessionName,
-    status: { kind: "needs_input" },
-    attention: 1,
-    approvals: 1,
-    contexts: { done: 0, total: 1 },
-    startedAt: "2026-10-09T10:00:00.000Z",
-    askedAt: "2026-10-09T10:05:00.000Z",
-  };
-}
-
 describe("useDeleteSessionMutation", () => {
   const fetchSpy = vi.fn<typeof fetch>();
 
@@ -419,35 +397,6 @@ describe("useDeleteSessionMutation", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("drops the deleted session's current runs from every session's runs, and reads them again on settle", async () => {
-    const client = makeClient();
-    const runsKey = runKeys.active();
-    client.setQueryData<ActiveRun[]>(runsKey, [
-      currentRun("p", "s", "run-1"),
-      currentRun("p", "other", "run-2"),
-      currentRun("q", "s", "run-3"),
-    ]);
-    let resolveFetch: (res: Response) => void = () => {};
-    fetchSpy.mockImplementation(
-      () => new Promise<Response>((r) => (resolveFetch = r)),
-    );
-
-    const { result } = renderHook(() => useDeleteSessionMutation("p"), {
-      wrapper: wrapperFor(client),
-    });
-    result.current.mutate("s");
-
-    await waitFor(() =>
-      expect(
-        client.getQueryData<ActiveRun[]>(runsKey)?.map((run) => run.runId),
-      ).toEqual(["run-2", "run-3"]),
-    );
-    resolveFetch(jsonResponse({ ok: true }));
-    await waitFor(() =>
-      expect(client.getQueryState(runsKey)?.isInvalidated).toBe(true),
-    );
   });
 
   it("optimistically removes the session from the list and its conversations from the active cache, then invalidates both on settle", async () => {

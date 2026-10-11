@@ -10,6 +10,7 @@ import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import { describe, it, expect, vi } from "vitest";
 
 import { createCollaborationRouteHandlers } from "./route-handlers";
+import { ManagedConversationError } from "@/lib/conversations/service";
 import {
   CollaborationStartConflictError,
   CollaborationConversationMismatchError,
@@ -321,6 +322,37 @@ describe("collaboration route handlers — START", () => {
     expect(body.error).toMatch(/collaboration/i);
     expect(body.code).toBe("backend-facet-unsupported");
     expect(setConversationBackend).not.toHaveBeenCalled();
+    expect(startCalls).toHaveLength(0);
+  });
+
+  it("answers a run's seat, whose backend the conversations service refuses to change, 403 and starts nothing", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      setConversationBackend: async (_projectPath, _sessionName, id) => {
+        throw new ManagedConversationError(id);
+      },
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design X",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "seat-1",
+          backend: "codex",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "MANAGED_CONVERSATION",
+    });
     expect(startCalls).toHaveLength(0);
   });
 

@@ -15,6 +15,10 @@ import {
 } from "./schemas";
 import type { Supervision } from "@/lib/supervision/supervision";
 import {
+  createSessionLifecycleGate,
+  type SessionLifecycleGate,
+} from "@/lib/sessions/lifecycle-gate";
+import {
   agentStartRequest,
   createSupervisionHarness,
   done,
@@ -36,6 +40,12 @@ let branchPrefix: string;
 let unwakeable: Set<string>;
 let archived: Set<string>;
 let deletedSessions: Set<string>;
+/** Sessions a merge is finishing, by the merge job's id; and sessions already finished. */
+let finalizing: Map<string, string>;
+let finished: Set<string>;
+let lifecycle: SessionLifecycleGate;
+/** Settles when a launch first asks for its session's lifecycle. */
+let reachedLifecycle: Promise<void>;
 /** Every candidate whose changes the page asked Workspace for. */
 let diffed: Array<{ worktreePath: string; evidence: string }>;
 /** Seat conversations deleted from the session since they ran. */
@@ -129,6 +139,13 @@ beforeEach(() => {
   codexWithdrawn = false;
   branchPrefix = "csm";
   unwakeable = new Set();
+  finalizing = new Map();
+  finished = new Set();
+  lifecycle = createSessionLifecycleGate();
+  let reach = () => {};
+  reachedLifecycle = new Promise((resolve) => {
+    reach = resolve;
+  });
   archived = new Set();
   deletedSessions = new Set();
   diffed = [];
@@ -170,6 +187,7 @@ beforeEach(() => {
           sessionName,
           worktreePath: "/repo/.worktrees/session-2",
           branchName: "csm/session-2",
+          finished: false,
           conversations: [{ id: "s2-conv" }],
         };
       }
@@ -178,6 +196,7 @@ beforeEach(() => {
         sessionName,
         worktreePath: "/repo/.worktrees/session",
         branchName: "csm/session",
+        finished: finished.has(sessionName),
         conversations: [
           ...sessionConversations.map((id) => ({ id })),
           ...Object.values(supervisionSeats()).map((id) => ({ id })),
@@ -185,6 +204,14 @@ beforeEach(() => {
       };
     },
     supervision: () => supervision,
+    sessionLifecycle(projectPath, sessionName, operation) {
+      reach();
+      return lifecycle.runExclusive(projectPath, sessionName, operation);
+    },
+    finalizingMerge(_projectPath, sessionName) {
+      const jobId = finalizing.get(sessionName);
+      return jobId === undefined ? null : { jobId };
+    },
     async ownerWakeable(_projectPath, conversationId) {
       return !unwakeable.has(conversationId);
     },
@@ -492,6 +519,57 @@ describe("run routes", () => {
     );
     expect(response.status).toBe(403);
     expect(await json(response)).toMatchObject({ code: "seat_cannot_launch" });
+  });
+
+  it("refuses a launch into a session a merge is finishing, or one already finished, recording no run", async () => {
+    finalizing.set("session", "merge-job-1");
+    const duringMerge = await routes.launch(
+      request({ brief: "Fix the notice" }, identity("other-1")),
+      params(),
+    );
+    expect(duringMerge.status).toBe(409);
+    expect(await json(duringMerge)).toMatchObject({
+      code: "session_finalizing",
+    });
+
+    finalizing.clear();
+    finished.add("session");
+    const afterMerge = await routes.launch(
+      request({ brief: "Fix the notice" }, identity("other-1")),
+      params(),
+    );
+    expect(afterMerge.status).toBe(409);
+    expect(await json(afterMerge)).toMatchObject({ code: "session_finished" });
+    expect(supervision.runs.listSession("/repo", "session")).toEqual([]);
+  });
+
+  it("records no run for a launch whose session a deletion removed while the launch waited for it", async () => {
+    let finishDeletion = () => {};
+    const deletion = lifecycle.runExclusive(
+      "/repo",
+      "session",
+      () =>
+        new Promise<void>((resolve) => {
+          finishDeletion = () => {
+            deletedSessions.add("session");
+            resolve();
+          };
+        }),
+    );
+    const launching = routes.launch(
+      request({ brief: "Fix the notice" }, identity("other-1")),
+      params(),
+    );
+
+    // The launch has prepared and now waits on the deletion holding the session.
+    await Promise.race([reachedLifecycle, launching]);
+    finishDeletion();
+    await deletion;
+    const response = await launching;
+
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: "session_deleted" });
+    expect(supervision.runs.listSession("/repo", "session")).toEqual([]);
   });
 
   it("refuses a launch from a conversation the inbox cannot wake, since nothing would reach it", async () => {

@@ -292,6 +292,22 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(body.code).toBe("MANAGED_CONVERSATION");
   });
 
+  it("leaves a run seat's refusal to the core, whatever the old engine's gates say", async () => {
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      role: "iteration",
+    } as ConversationState);
+    vi.mocked(deps.coreConversations.owns).mockReturnValue(true);
+
+    await handlers.conversationPOST(
+      makeRequest({ prompt: "Hello" }),
+      makeConvParams(),
+    );
+
+    expect(deps.getActiveGraphWorkflowExecution).not.toHaveBeenCalled();
+    expect(deps.coreConversations.prompt).toHaveBeenCalledOnce();
+  });
+
   // A collaboration occupies the conversation for minutes or hours. Admitting
   // a prompt alongside it would interleave two turns in one transcript and
   // leave the collaboration unable to prove, on resume, that the conversation

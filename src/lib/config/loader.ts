@@ -162,6 +162,7 @@ function defaultConfig(): GlobalConfig {
     preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
     tailscaleEnabled: true,
+    graphWorkflowLaunchesFrozen: false,
     // The cascade resolver's global-layer fallback IS the disk-absent default —
     // one literal, so a newly-seeded workflow default cannot mean one thing to
     // the resolver and another to a config file that never mentions it. Cloned

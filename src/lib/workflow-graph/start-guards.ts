@@ -24,7 +24,9 @@ export type WorkflowStartGuard =
   // The symmetric half of the session delivery gate (R13): the session is
   // already being finalized by a merge, so seeding a run into it would install
   // live work in a session that is about to be marked finished.
-  | "session_finalizing";
+  | "session_finalizing"
+  // Launches are frozen while the old engine drains before its removal.
+  | "launches_frozen";
 
 export class WorkflowStartGuardError extends Error {
   readonly guard: WorkflowStartGuard;

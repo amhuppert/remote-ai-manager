@@ -15,6 +15,8 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getArchivedProjects, getSession } from "@/lib/state-store";
+import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
+import { getSessionLifecycleGate } from "@/lib/sessions/lifecycle-gate";
 import type { ResolvedSeat } from "./launch";
 import { snapshotDocumentFile, snapshotRunDocuments } from "./documents";
 import { freezeCharter } from "./charter";
@@ -138,6 +140,9 @@ const handlers = createRunRouteHandlers({
     return Object.keys(repoConfig?.validation?.commands ?? {});
   },
   supervision: getSupervision,
+  sessionLifecycle: (projectPath, sessionName, operation) =>
+    getSessionLifecycleGate().runExclusive(projectPath, sessionName, operation),
+  finalizingMerge: getFinalizingSessionMergeJob,
   async ownerWakeable(projectPath, conversationId) {
     const runtime = getSubscriptionRuntime();
     return isEligibleSubscriptionRecipient(

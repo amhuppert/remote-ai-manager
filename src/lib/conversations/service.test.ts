@@ -441,6 +441,26 @@ describe("getSessionConversations", () => {
   });
 });
 
+describe("setConversationBackend", () => {
+  it("refuses a managed conversation (a run's seat), whose backend its assignment fixed", async () => {
+    const { state, conversations } = createTestServices();
+    const seat = makeConvo({ role: "validator", promptCount: 0 });
+    await seedSession(state, { conversations: [seat] });
+
+    const refused = await conversations
+      .setConversationBackend("/proj", "test", seat.id, "codex")
+      .catch((error: unknown) => error);
+
+    expect(refused).toMatchObject({
+      code: "MANAGED_CONVERSATION",
+      statusCode: 403,
+    });
+    expect(
+      (await state.getConversation("/proj", "test", seat.id))?.agentBackend,
+    ).toBe(seat.agentBackend);
+  });
+});
+
 describe("setConversationArchived", () => {
   it("archives a conversation and persists the change", async () => {
     const convoId = crypto.randomUUID();

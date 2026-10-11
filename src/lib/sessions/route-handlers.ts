@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CurrentRunError } from "@/lib/runs/session-guard";
 import {
   notFound,
   resolveProjectOr404,
@@ -246,6 +247,15 @@ export const deleteSessionRoute = withTracing(
       const { worktreeRemoved } = await deleteSession(projectPath, sessionName);
       return NextResponse.json({ success: true, worktreeRemoved });
     } catch (err) {
+      if (err instanceof CurrentRunError)
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: err.code,
+            details: err.details,
+          } satisfies ApiError,
+          { status: err.statusCode },
+        );
       const message =
         err instanceof Error ? err.message : "Failed to delete session";
       return NextResponse.json({ error: message } satisfies ApiError, {

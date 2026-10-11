@@ -1,5 +1,6 @@
 "use client";
 
+import { pushToast } from "@/stores/toast.store";
 import { useState, useMemo, useCallback, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
 import Topbar from "@/components/Topbar";
@@ -206,9 +207,15 @@ export default function ProjectsIndexPage(): React.JSX.Element {
 
   const confirmDelete = useCallback(() => {
     if (!deleteTarget) return;
+    const projectName = deleteTarget.name;
     deleteMutation.mutate(
-      { projectName: deleteTarget.name, projectPath: deleteTarget.path },
-      { onSettled: () => setDeleteTarget(null) },
+      { projectName, projectPath: deleteTarget.path },
+      {
+        onSettled: () => setDeleteTarget(null),
+        onError: (error) => {
+          pushToast(`Could not delete ${projectName}: ${error.message}`);
+        },
+      },
     );
   }, [deleteTarget, deleteMutation]);
 

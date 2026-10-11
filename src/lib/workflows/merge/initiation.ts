@@ -2,6 +2,11 @@ import {
   evaluateSessionMergeAdmission,
   type SessionMergeAdmission,
 } from "@/lib/workflow-graph/session-merge-admission";
+import {
+  currentRunRefusal,
+  type CurrentRun,
+  type CurrentRunRefusal,
+} from "@/lib/runs/session-guard";
 import type { MergeAssociationResolver } from "./association-port";
 import type { DeliveryGateEvaluator } from "./types";
 import { createLogger } from "@/lib/logging";
@@ -14,9 +19,15 @@ export type MergeInitiationInput = Parameters<
   projectName?: string;
   association: MergeAssociationResolver;
   gate: DeliveryGateEvaluator;
+  /** The session's runs that have not finished; a merge waits for every one. */
+  readCurrentRuns: (
+    projectPath: string,
+    sessionName: string,
+  ) => readonly CurrentRun[];
 };
 export type MergeInitiation =
   | SessionMergeAdmission
+  | { admitted: false; refusal: CurrentRunRefusal }
   | {
       admitted: false;
       refusal: {
@@ -30,6 +41,20 @@ export type MergeInitiation =
 export async function evaluateMergeInitiation(
   input: MergeInitiationInput,
 ): Promise<MergeInitiation> {
+  const runRefusal = currentRunRefusal(
+    input.readCurrentRuns(input.projectPath, input.sessionName),
+    "merging this session",
+  );
+  if (runRefusal !== null) {
+    logger.warn("merge.initiation.run_current_refused", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      surface: input.surface,
+      runId: runRefusal.runId,
+      runProgress: runRefusal.progress,
+    });
+    return { admitted: false, refusal: runRefusal };
+  }
   const lease = await evaluateSessionMergeAdmission(input);
   const projectName =
     input.projectName ??

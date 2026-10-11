@@ -231,6 +231,7 @@ function createTestDeps() {
     publishTicketProjectDeletion: vi.fn(),
     sweepLaneWorktrees: sweepLaneWorktreesMock,
     copyAlignmentCharterFromParent: copyAlignmentCharterFromParentMock,
+    currentRuns: () => [],
   };
   return {
     deps,
@@ -1256,6 +1257,96 @@ describe("provisionSession — configurable branch prefix", () => {
 // ===========================================================================
 // 1.6 – Session deletion (Req 8.1–8.7)
 // ===========================================================================
+
+describe("deleting while a run works in the session", () => {
+  const pausedRun = (sessionName: string) => ({
+    runId: "run-1",
+    sessionName,
+    progress: "paused" as const,
+  });
+
+  it("refuses to delete a session one of whose runs has not finished, and removes nothing", async () => {
+    readStateMock.mockResolvedValue(stateWithSession("/projects/repo", "busy"));
+    existsSyncMock.mockReturnValue(true);
+    service = createSessionService({
+      ...deps,
+      currentRuns: (projectPath, sessionName) =>
+        projectPath === "/projects/repo" && sessionName === "busy"
+          ? [pausedRun("busy")]
+          : [],
+    });
+
+    const refused = await service
+      .deleteSession("/projects/repo", "busy")
+      .catch((error: unknown) => error);
+
+    expect(refused).toMatchObject({
+      code: "RUN_CURRENT",
+      statusCode: 409,
+      details: { runId: "run-1", progress: "paused" },
+    });
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes the other sessions of a batch and reports the one a run works in", async () => {
+    readStateMock.mockResolvedValue(stateWithSession("/projects/repo", "busy"));
+    const state = await readStateMock();
+    state.projects["/projects/repo"].sessions["idle"] = {
+      ...state.projects["/projects/repo"].sessions["busy"],
+      sessionName: "idle",
+      worktreePath: "/projects/repo/.worktrees/idle",
+      branchName: "csm/idle",
+    };
+    readStateMock.mockResolvedValue(state);
+    service = createSessionService({
+      ...deps,
+      currentRuns: (_projectPath, sessionName) =>
+        sessionName === "busy" ? [pausedRun("busy")] : [],
+    });
+
+    const results = await service.bulkDeleteSessions("/projects/repo", [
+      "busy",
+      "idle",
+    ]);
+
+    expect(results).toEqual([
+      {
+        sessionName: "busy",
+        success: false,
+        error: expect.stringContaining("run-1"),
+      },
+      { sessionName: "idle", success: true },
+    ]);
+    const savedState = writeStateMock.mock.calls.at(-1)![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["busy"],
+    ).toBeDefined();
+    expect(
+      savedState.projects["/projects/repo"].sessions["idle"],
+    ).toBeUndefined();
+  });
+
+  it("refuses to delete a project any of whose runs has not finished, before removing anything", async () => {
+    readStateMock.mockResolvedValue(stateWithSession("/projects/repo", "busy"));
+    service = createSessionService({
+      ...deps,
+      currentRuns: (projectPath) =>
+        projectPath === "/projects/repo" ? [pausedRun("busy")] : [],
+    });
+
+    const refused = await service
+      .deleteProject("/projects/repo")
+      .catch((error: unknown) => error);
+
+    expect(refused).toMatchObject({
+      code: "RUN_CURRENT",
+      details: { runId: "run-1" },
+    });
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("deleteSession", () => {
   it("removes the worktree and removes session from state", async () => {

@@ -190,6 +190,13 @@ export interface RunInspection {
 }
 
 export interface RunHost {
+  /**
+   * Records the run and the work its definition can begin, synchronously;
+   * once per launch cause. A caller that must decide and record under its own
+   * exclusion records first, then launches.
+   */
+  record(input: RunLaunchInput): RunRecord;
+  /** Records the run if it is not yet, follows its owner and starts its work. */
   launch(input: RunLaunchInput): Promise<RunRecord>;
   reconcile(runId: string): Promise<void>;
   recordReconcileFailure(runId: string, error: unknown): void;
@@ -849,8 +856,8 @@ export function createRunHost(deps: RunHostDeps): RunHost {
   }
 
   const host: RunHost = {
-    async launch(input) {
-      const record = deps.transaction(() => {
+    record(input) {
+      return deps.transaction(() => {
         const existing = deps.runs.getByLaunchCause(input.cause);
         if (existing !== null) return existing;
         const now = deps.now();
@@ -901,6 +908,10 @@ export function createRunHost(deps: RunHostDeps): RunHost {
         // persisted without the work its definition can begin.
         return project(created, startEligible(created, facts));
       });
+    },
+
+    async launch(input) {
+      const record = host.record(input);
       await followOwner(record);
       await host.reconcile(record.runId);
       return requireRecord(record.runId);

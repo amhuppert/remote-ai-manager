@@ -642,6 +642,7 @@ describe("graph workflow manager", () => {
       } | null;
       /** Runs mid-gauntlet: after the advisory check, before the reservation. */
       onDefinitionLoad?(): void;
+      launchesFrozen?(): Promise<boolean>;
     }) {
       const eventPublisher = createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
@@ -688,10 +689,35 @@ describe("graph workflow manager", () => {
           return [];
         },
         readSessionFinalizingMerge: input.readSessionFinalizingMerge,
+        ...(input.launchesFrozen !== undefined
+          ? { launchesFrozen: input.launchesFrozen }
+          : {}),
         now: () => "2026-08-14T09:00:00.000Z",
         createExecutionId: () => "execution-raced",
       });
     }
+
+    it("refuses every launch while launches are frozen for the drain, before loading anything", async () => {
+      let definitionLoaded = false;
+      const manager = buildManager({
+        onDefinitionLoad() {
+          definitionLoaded = true;
+        },
+        readSessionFinalizingMerge: () => null,
+        launchesFrozen: async () => true,
+      });
+
+      await expect(manager.start(startInput())).rejects.toMatchObject({
+        guard: "launches_frozen",
+      });
+      expect(definitionLoaded).toBe(false);
+      expect(
+        await fixture.store.getActiveGraphWorkflowExecution(
+          PROJECT_PATH,
+          SESSION_NAME,
+        ),
+      ).toBeNull();
+    });
 
     function startInput() {
       return {

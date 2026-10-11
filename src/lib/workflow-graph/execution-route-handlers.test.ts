@@ -1623,6 +1623,30 @@ describe("graph workflow execution route handlers", () => {
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 
+  it("answers a launch while launches are frozen with a 409 naming the freeze", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new WorkflowStartGuardError(
+        "launches_frozen",
+        "Graph workflow launches are frozen",
+      ),
+    );
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "launches_frozen",
+    });
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
   it("maps the uncommitted-changes guard error to a structured 409", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());

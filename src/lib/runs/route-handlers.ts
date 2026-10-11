@@ -20,6 +20,7 @@
  * owners and alone decides human approval. A seat conversation changes tasks,
  * and publishes documents, only for the Context its seat binding names.
  */
+import { closedSessionRefusal } from "./session-guard";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -96,8 +97,20 @@ export interface RunRouteDeps {
     sessionName: string;
     worktreePath: string;
     branchName: string;
+    finished: boolean;
     conversations: Array<{ id: string }>;
   } | null>;
+  /** Runs the operation exclusively with this session's deletion, merge status and finishing. */
+  sessionLifecycle<T>(
+    projectPath: string,
+    sessionName: string,
+    operation: () => Promise<T>,
+  ): Promise<T>;
+  /** The running merge job that delivers this session's branch on publish, if any. */
+  finalizingMerge(
+    projectPath: string,
+    sessionName: string,
+  ): { jobId: string } | null;
   /** Where this session's lanes live, by lane id, as the lane worktree naming decides. */
   laneTargets(input: {
     projectPath: string;
@@ -642,10 +655,46 @@ export function createRunRouteHandlers(
     );
   }
 
+  /**
+   * The last admission, under the session's lifecycle so a deletion or a
+   * merge-status change cannot pass between it and the run's record: the
+   * session must still exist, not be delivered by a merge, and not be
+   * finished. The merge's own job is read with no yield before the record.
+   */
+  async function recordInOpenSession(
+    caller: Caller,
+    launch: RunLaunchInput,
+  ): Promise<Response | null> {
+    const refusal = await deps.sessionLifecycle(
+      caller.projectPath,
+      caller.sessionName,
+      async () => {
+        const session = await deps.getSession(
+          caller.projectPath,
+          caller.sessionName,
+        );
+        const closed = closedSessionRefusal({
+          session,
+          finalizingMerge: deps.finalizingMerge(
+            caller.projectPath,
+            caller.sessionName,
+          ),
+        });
+        if (closed === null) deps.supervision().runs.record(launch);
+        return closed;
+      },
+    );
+    return refusal === null
+      ? null
+      : jsonError(refusal.message, 409, refusal.code, undefined, refusal.hint);
+  }
+
   async function startLaunch(
     caller: Caller,
     launch: RunLaunchInput,
   ): Promise<Response> {
+    const closed = await recordInOpenSession(caller, launch);
+    if (closed !== null) return closed;
     const record = await deps.supervision().runs.launch(launch);
     deps.log.info("runs.launched", {
       runId: launch.runId,
@@ -864,7 +913,8 @@ export function createRunRouteHandlers(
       const current = supervision.runs
         .listActive()
         .filter((record) => !archived.has(record.projectPath));
-      // A run outlives a deleted session, but its page can no longer be opened.
+      // A session with a current run cannot be deleted; a run left by a session
+      // deleted before that rule has no page to open.
       const placeOf = (record: RunRecord) =>
         `${record.projectPath}\u0000${record.sessionName}`;
       const extant = new Set<string>();

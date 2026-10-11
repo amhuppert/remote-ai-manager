@@ -1,5 +1,6 @@
 "use client";
 
+import { pushToast } from "@/stores/toast.store";
 import { useCallback } from "react";
 import type { useRouter } from "next/navigation";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -20,7 +21,10 @@ interface AnswerMutation {
 }
 
 interface DeleteMutation {
-  mutate: (sessionName: string, opts: { onSuccess: () => void }) => void;
+  mutate: (
+    sessionName: string,
+    opts: { onSuccess: () => void; onError: (error: Error) => void },
+  ) => void;
 }
 
 interface ForkMutation {
@@ -112,6 +116,9 @@ export function useSessionHandlers({
     deleteMutation.mutate(sessionName, {
       onSuccess: () => {
         router.push(`/projects/${encodeURIComponent(projectName)}`);
+      },
+      onError: (error) => {
+        pushToast(`Could not delete ${sessionName}: ${error.message}`);
       },
     });
   }, [deleteMutation, sessionName, projectName, router, cancelDelete]);

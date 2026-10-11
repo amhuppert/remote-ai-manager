@@ -25,6 +25,8 @@ import {
   type ConversationCoreRepo,
 } from "@/lib/state-store/conversation-core-repo";
 import { getStateDb } from "@/lib/state-store/store";
+import { createRunsRepo, type RunsRepo } from "@/lib/state-store/runs-repo";
+import { currentRunsIn, type CurrentRun } from "@/lib/runs/session-guard";
 import type { Supervision, SupervisedSeatWorkplace } from "./supervision";
 
 export const SUPERVISION_KEY = "__cc_run_supervision";
@@ -220,6 +222,23 @@ function coreRepo(): ConversationCoreRepo {
   const db = getStateDb();
   if (cached?.db !== db) cached = { db, repo: createConversationCoreRepo(db) };
   return cached.repo;
+}
+
+let cachedRuns:
+  | { db: ReturnType<typeof getStateDb>; repo: RunsRepo }
+  | undefined;
+function runsRepo(): RunsRepo {
+  const db = getStateDb();
+  if (cachedRuns?.db !== db) cachedRuns = { db, repo: createRunsRepo(db) };
+  return cachedRuns.repo;
+}
+
+/** The runs working in a project, or in one of its sessions, that have not finished. */
+export function currentRuns(
+  projectPath: string,
+  sessionName?: string,
+): CurrentRun[] {
+  return currentRunsIn(runsRepo(), projectPath, sessionName);
 }
 
 /** A core conversation that has not run takes the backend its first input chose. */

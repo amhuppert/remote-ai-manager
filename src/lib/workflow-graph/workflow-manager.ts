@@ -674,6 +674,8 @@ export interface GraphWorkflowManagerDeps {
    * prerequisite gate. Defaults to the real config loader.
    */
   readGlobalConfig?(): Promise<GlobalConfig>;
+  /** Whether new launches are frozen (the drain before the old engine's removal); none are when absent. */
+  launchesFrozen?(): Promise<boolean>;
   lintCommittedSourceLocators?(
     definition: Pick<WorkflowSemanticDefinition, "charter">,
     session: Pick<SessionState, "sessionName" | "branchName" | "worktreePath">,
@@ -1219,11 +1221,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   async function launch(
     input: GraphWorkflowLaunchInput,
   ): Promise<GraphWorkflowLaunchOutcome> {
-    // Guard order is behavior-preserving and load-bearing: active-execution
-    // first, then the dirty-worktree guard, both BEFORE the source is resolved.
+    // The drain before the old engine's removal: existing executions finish,
+    // are abandoned or aborted, and nothing new starts.
+    if ((await deps.launchesFrozen?.()) === true)
+      throw new WorkflowStartGuardError(
+        "launches_frozen",
+        "Graph workflow launches are frozen while the old engine drains. Launch a run instead, or turn the freeze off in Settings → Workflow.",
+      );
+    // Guard order is behavior-preserving and load-bearing: after the freeze,
+    // active-execution first, then the dirty-worktree guard, both BEFORE the
+    // source is resolved.
     // The dirty 409 must still win over a 404 when both apply (the HTTP handler
     // historically checked dirty before resolving the definition), and the
-    // active-execution guard precedes everything so an already-running workflow
+    // active-execution guard precedes the rest so an already-running workflow
     // reports the more specific message.
     const existing = await deps.executionRepository.getActive(
       input.projectPath,

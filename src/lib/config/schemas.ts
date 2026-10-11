@@ -246,6 +246,8 @@ export const globalConfigSchema = z.object({
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
+  /** Refuses every new graph workflow launch while the old engine drains before its removal. */
+  graphWorkflowLaunchesFrozen: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
   workflowDefaults: workflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
@@ -386,6 +388,7 @@ export const rawGlobalConfigSchema = z.object({
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
+  graphWorkflowLaunchesFrozen: z.boolean().optional(),
   pushNotification: rawPushNotificationConfigSchema.optional(),
   workflowDefaults: rawWorkflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),

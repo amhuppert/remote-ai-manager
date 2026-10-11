@@ -6,6 +6,12 @@ import {
 } from "@/lib/shared/route-resolution";
 import { getSession, mutateSession } from "@/lib/state-store";
 import { resolveProjectPath } from "@/lib/projects/resolver";
+import {
+  assertNoCurrentRun,
+  CurrentRunError,
+  type CurrentRun,
+} from "@/lib/runs/session-guard";
+import { currentRuns } from "@/lib/supervision/handles";
 import { getSessionLifecycleGate } from "./lifecycle-gate";
 import { sessionMergeStatusRequestSchema, type SessionState } from "./schemas";
 
@@ -23,6 +29,8 @@ interface MergeStatusDeps {
     label: string,
     mutate: (session: SessionState) => void,
   ): Promise<void>;
+  /** The session's runs that have not finished; marking it merged waits for every one. */
+  currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
 }
 
 export function createMergeStatusHandler(deps: MergeStatusDeps) {
@@ -42,15 +50,21 @@ export function createMergeStatusHandler(deps: MergeStatusDeps) {
       await getSessionLifecycleGate().runExclusive(
         projectPath,
         sessionName,
-        () =>
-          deps.mutateSession(
+        async () => {
+          if (parsed.data.merged)
+            assertNoCurrentRun(
+              deps.currentRuns(projectPath, sessionName),
+              "marking this session merged",
+            );
+          await deps.mutateSession(
             projectPath,
             sessionName,
             "setSessionMergeStatus",
             (row) => {
               row.finished = parsed.data.merged;
             },
-          ),
+          );
+        },
       );
       logger.info("session.merge_status_changed", {
         projectPath,
@@ -59,6 +73,11 @@ export function createMergeStatusHandler(deps: MergeStatusDeps) {
       });
       return NextResponse.json({ ok: true });
     } catch (err) {
+      if (err instanceof CurrentRunError)
+        return NextResponse.json(
+          { error: err.message, code: err.code, details: err.details },
+          { status: err.statusCode },
+        );
       const message =
         err instanceof Error ? err.message : "Failed to update merge status";
       logger.error("session.merge_status_failed", {
@@ -72,5 +91,10 @@ export function createMergeStatusHandler(deps: MergeStatusDeps) {
 }
 
 export const PATCH = withTracing(
-  createMergeStatusHandler({ resolveProjectPath, getSession, mutateSession }),
+  createMergeStatusHandler({
+    resolveProjectPath,
+    getSession,
+    mutateSession,
+    currentRuns,
+  }),
 );

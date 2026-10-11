@@ -22,6 +22,7 @@ import {
   getPinnedProjects as defaultGetPinnedProjects,
 } from "@/lib/state-store";
 import type { ApiError } from "@/lib/api/errors";
+import { CurrentRunError } from "@/lib/runs/session-guard";
 import type { DiscoveredProject } from "@/lib/projects/schemas";
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -92,6 +93,15 @@ export function createProjectRouteHandlers(
         deletedTicketNumbers,
       });
     } catch (err) {
+      if (err instanceof CurrentRunError)
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: err.code,
+            details: err.details,
+          } satisfies ApiError,
+          { status: err.statusCode },
+        );
       const message =
         err instanceof Error ? err.message : "Failed to delete project";
       const status = message.startsWith("Project not found") ? 404 : 500;

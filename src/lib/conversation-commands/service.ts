@@ -1,4 +1,5 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { currentRuns } from "@/lib/supervision/handles";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { admitCommand } from "@/lib/commands/admission";
@@ -853,6 +854,7 @@ const productionDeps: ConversationCommandDeps = {
       surface: "merge-command",
       association: policy.mergeAssociation,
       gate: policy.deliveryGate,
+      readCurrentRuns: currentRuns,
     });
   },
   // Dynamic so the tickets/compaction graph stays off this module's static

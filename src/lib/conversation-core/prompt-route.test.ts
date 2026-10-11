@@ -760,6 +760,38 @@ describe("prompting a conversation the core runs", () => {
       expect(h.adopted).toEqual(["codex"]);
     });
 
+    it("refuses a claim on a managed conversation (a run's seat), before asking anything else", async () => {
+      const h = harness(() => ({
+        kind: "accepted",
+        cause: "c",
+        settled: new Promise(() => {}),
+      }));
+      const asked: string[] = [];
+      h.deps.commandRefusal = async (text) => {
+        asked.push(text);
+        return null;
+      };
+
+      const refusal = await admit(
+        h,
+        makeConversationState({
+          agentBackend: "claude",
+          promptCount: 0,
+          backendRef: null,
+          role: "validator",
+        }),
+        "codex",
+      );
+
+      expect(refusal?.status).toBe(403);
+      expect(await refusal?.json()).toMatchObject({
+        code: "MANAGED_CONVERSATION",
+      });
+      expect(asked).toEqual([]);
+      expect(h.holdsAsked).toEqual([]);
+      expect(h.adopted).toEqual([]);
+    });
+
     it("refuses a claim on a backend that cannot run /collab, before holding or adopting anything", async () => {
       const h = harness(() => ({
         kind: "accepted",

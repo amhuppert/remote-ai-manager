@@ -145,6 +145,18 @@ function refused(refusal: PromptRefusal): CorePromptOutcome {
   return { kind: "refused", refusal };
 }
 
+/** A run's seat takes work only from its run: no message or claim of a person's. */
+function managedRefusal(conversation: ConversationState): PromptRefusal | null {
+  if (conversation.role === null) return null;
+  return {
+    status: 403,
+    body: {
+      error: "Managed workflow conversations are not user-interactive",
+      code: "MANAGED_CONVERSATION",
+    },
+  };
+}
+
 /** The HTTP answer to a refused prompt. */
 function asResponse(refusal: PromptRefusal): Response {
   return NextResponse.json(refusal.body, { status: refusal.status });
@@ -164,6 +176,7 @@ export async function coreCollaborationRefusal(
   const { projectPath, target, conversation } = input;
   const backend = input.backend ?? conversation.agentBackend;
   const refusal =
+    managedRefusal(conversation) ??
     (await deps.commandRefusal(input.text, backend)) ??
     (await coreCommandHold(deps, conversation, "claim"));
   if (refusal !== null) return refusal;
@@ -321,14 +334,8 @@ export async function sendCorePrompt(
   input: CorePromptSend,
 ): Promise<CorePromptOutcome> {
   const { projectPath, target, conversation, message } = input;
-  if (conversation.role !== null)
-    return refused({
-      status: 403,
-      body: {
-        error: "Managed workflow conversations are not user-interactive",
-        code: "MANAGED_CONVERSATION",
-      },
-    });
+  const managed = managedRefusal(conversation);
+  if (managed !== null) return refused(managed);
   const text = message.text.trim();
   if (hasCollabPrefix(text)) return refused(collaborationRefusal(target));
   const feedback =
