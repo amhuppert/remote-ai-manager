@@ -23,6 +23,7 @@ import {
 } from "@/lib/state-store";
 import type { ApiError } from "@/lib/api/errors";
 import { CurrentRunError } from "@/lib/runs/session-guard";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import type { DiscoveredProject } from "@/lib/projects/schemas";
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -93,7 +94,10 @@ export function createProjectRouteHandlers(
         deletedTicketNumbers,
       });
     } catch (err) {
-      if (err instanceof CurrentRunError)
+      if (
+        err instanceof CurrentRunError ||
+        BackgroundWorkUnstoppedError.is(err)
+      )
         return NextResponse.json(
           {
             error: err.message,

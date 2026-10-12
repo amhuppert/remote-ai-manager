@@ -5,6 +5,7 @@ import {
   type ProjectRouteDeps,
 } from "./route-handlers";
 import { CurrentRunError } from "@/lib/runs/session-guard";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 
 function createTestDeps(): ProjectRouteDeps {
   return {
@@ -120,5 +121,26 @@ describe("DELETE /api/projects/[name]", () => {
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(body.error).toBe("disk on fire");
+  });
+});
+
+describe("DELETE /api/projects/[name] while background work cannot be stopped (design C5b §5)", () => {
+  it("answers 409 with the conversation whose background work could not be confirmed stopped", async () => {
+    vi.mocked(deps.deleteProject).mockRejectedValue(
+      new BackgroundWorkUnstoppedError("conv-kept", "the CLI did not exit"),
+    );
+
+    const response = await handlers.DELETE(
+      makeRequest(
+        "http://localhost/api/projects/test-proj?projectPath=%2Fprojects%2Ftest-proj",
+      ),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: "conv-kept" },
+    });
   });
 });

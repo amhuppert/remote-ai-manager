@@ -34,7 +34,10 @@ function buildCopy(kind: BulkConfirmKind, count: number): Copy {
   if (kind === "archive") {
     return {
       title: "Archive sessions?",
-      body: `Archive ${count} ${noun}. They stay accessible via "Include archived".`,
+      body:
+        count === 1
+          ? `Archive 1 session, stopping its dev servers and any background work its agents are still running. It stays accessible via "Include archived".`
+          : `Archive ${count} ${noun}, stopping their dev servers and any background work their agents are still running. They stay accessible via "Include archived".`,
       primary: `Archive ${count}`,
       danger: false,
     };

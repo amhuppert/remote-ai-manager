@@ -6,6 +6,7 @@ import {
 import {
   buildSessionGroups,
   buildSidebarContent,
+  isRunning,
   needsAttention,
   type SessionGroupOptions,
 } from "./conversation-session-groups";
@@ -209,4 +210,9 @@ it("keeps ordinary planner and initialization conversations visible when graph l
       expandedKeys: new Set(["/cc::panel"]),
     })[0]?.items.map((r) => r.id),
   ).toEqual(["planner", "setup"]);
+});
+
+it("counts a conversation whose background work custody holds between turns as running (design C5b §5)", () => {
+  expect(isRunning(row("held", { custody: true }))).toBe(true);
+  expect(isRunning(row("idle", { custody: false }))).toBe(false);
 });

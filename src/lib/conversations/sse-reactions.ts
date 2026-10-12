@@ -15,6 +15,7 @@ import {
   askQuestionEventSchema,
   conversationArchivedEventSchema,
   conversationBackgroundActivityEventSchema,
+  conversationCustodyEventSchema,
   conversationCreatedEventSchema,
   conversationDeletedEventSchema,
   conversationOpenEventSchema,
@@ -636,6 +637,33 @@ export function registerConversationSseReactions(
             }
             changed = true;
             return { ...conversation, backgroundActivity: d.activity };
+          });
+          return changed ? { ...prev, conversations } : prev;
+        },
+      );
+    },
+  );
+
+  // Replace semantics, as for background activity: the event carries the whole
+  // (boolean) custody state, so the row field is overwritten, never refetched.
+  addSseListener(
+    es,
+    "conversation-custody",
+    conversationCustodyEventSchema,
+    (d) => {
+      queryClient.setQueriesData(
+        { queryKey: conversationKeys.active() },
+        (prev: ActiveConversationsResponse | undefined) => {
+          if (!prev || !Array.isArray(prev.conversations)) return prev;
+          let changed = false;
+          const conversations = prev.conversations.map((conversation) => {
+            if (
+              conversation.id !== d.conversationId ||
+              conversation.custody === d.custody
+            )
+              return conversation;
+            changed = true;
+            return { ...conversation, custody: d.custody };
           });
           return changed ? { ...prev, conversations } : prev;
         },

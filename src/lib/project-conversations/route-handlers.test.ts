@@ -16,6 +16,7 @@ import {
 } from "@/lib/conversation-core/prompt-route";
 import type { UserMessageAdmission } from "@/lib/conversation-core/executor";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 
 function makeConv(
   overrides: Partial<ConversationState> & { id: string },
@@ -681,6 +682,25 @@ describe("project conversation route handlers", () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(h.broadcasts[0]?.type).toBe("conversation-archived");
     expect((h.broadcasts[0] as { archived?: boolean }).archived).toBe(true);
+  });
+
+  it("archivePATCH answers 409, broadcasting nothing, when the conversation's background work could not be confirmed stopped", async () => {
+    const h = harness({
+      setProjectConversationArchived: async (_p, id) => {
+        throw new BackgroundWorkUnstoppedError(id, "the CLI did not exit");
+      },
+    });
+    h.store.set("c1", makeConv({ id: "c1" }));
+    const res = await h.handlers.archivePATCH(
+      jsonRequest({ archived: true }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: "c1" },
+    });
+    expect(h.broadcasts).toEqual([]);
   });
 
   it("openPATCH broadcasts the project-only conversation-open event", async () => {

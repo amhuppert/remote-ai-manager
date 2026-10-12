@@ -11,6 +11,7 @@ import {
   type HostedConversation,
   type RuntimeRequirements,
 } from "./runtime-host";
+import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -64,9 +65,19 @@ function harness() {
     runtime: unknown;
   }> = [];
   let seedFailure: Error | null = null;
+  /** Instructions prepared for a turn, which may register documents; reading at rest prepares nothing. */
+  const preparations: string[] = [];
   const host = createRuntimeHost({
     factory: () => factory,
-    async instructions() {
+    async instructions(hosted) {
+      preparations.push(hosted.conversationId);
+      return {
+        sessionInstructions: instructions,
+        alignmentVersion: charter.version,
+        alignmentEligible: charter.eligible,
+      };
+    },
+    async readInstructions() {
       return {
         sessionInstructions: instructions,
         alignmentVersion: charter.version,
@@ -103,6 +114,7 @@ function harness() {
   });
   return {
     host,
+    preparations,
     created,
     registered,
     unregistered,
@@ -444,5 +456,82 @@ describe("runtime host", () => {
     expect(h.host.isLive("conv-1")).toBe(true);
     h.created[0]?.kill();
     expect(h.host.isLive("conv-1")).toBe(false);
+  });
+
+  describe("read outside a turn, as the memory index preview reads a runtime custody keeps (design C5b §5)", () => {
+    /** The preview's question: would the next turn start without its context, as the turn's own reuse rule says? */
+    async function previewLoss(h: ReturnType<typeof harness>) {
+      return readNextTurnContextLoss(
+        {
+          async findConversation() {
+            // A conversation that has run but has no stored resume handle: only a live runtime keeps its context.
+            return {
+              projectPath: "/repo",
+              sessionName: "session",
+              promptCount: 3,
+              hasResumeHandle: false,
+              pendingCheckpoint: false,
+            };
+          },
+          getRuntimeConfiguration: (conversationId) =>
+            h.host.configuration(conversationId),
+          readDesiredRuntimeConfiguration: (conversationId, current) =>
+            h.host.desiredConfiguration(conversationId, current),
+        },
+        "conv-1",
+      );
+    }
+
+    it("reports what the live runtime was created with, and what the conversation stands at now, without touching it", async () => {
+      const h = harness();
+      expect(h.host.configuration("conv-1")).toBeUndefined();
+      await h.host.obtain(conversation, sonnet);
+
+      const current = h.host.configuration("conv-1");
+      expect(current).toMatchObject({
+        status: "alive",
+        backend: "claude",
+        modelSelection: { modelId: "sonnet" },
+        repeatableInstructions: ["You are a CC agent."],
+      });
+      if (current === undefined) throw new Error("no configuration");
+
+      h.setInstructions(["You are a CC agent.", "A new reference document."]);
+      expect(
+        await h.host.desiredConfiguration("conv-1", current),
+      ).toMatchObject({
+        modelSelection: { modelId: "sonnet" },
+        repeatableInstructions: [
+          "You are a CC agent.",
+          "A new reference document.",
+        ],
+      });
+      expect(h.created.map((runtime) => runtime.closed)).toEqual([false]);
+    });
+
+    it("reads the conversation's instructions at rest, preparing none of them", async () => {
+      const h = harness();
+      await h.host.obtain(conversation, sonnet);
+      const current = h.host.configuration("conv-1");
+      if (current === undefined) throw new Error("no configuration");
+      expect(h.preparations).toEqual(["conv-1"]);
+
+      await h.host.desiredConfiguration("conv-1", current);
+      await previewLoss(h);
+      expect(h.preparations).toEqual(["conv-1"]);
+    });
+
+    it("predicts reuse of a live runtime whose configuration stands, and a fresh one once it has drifted or died", async () => {
+      const h = harness();
+      await h.host.obtain(conversation, sonnet);
+      expect((await previewLoss(h)).runtimeCreatedWithoutResume).toBe(false);
+
+      h.setInstructions(["You are a CC agent.", "A new reference document."]);
+      expect((await previewLoss(h)).runtimeCreatedWithoutResume).toBe(true);
+
+      h.setInstructions(["You are a CC agent."]);
+      h.created[0]?.kill();
+      expect((await previewLoss(h)).runtimeCreatedWithoutResume).toBe(true);
+    });
   });
 });

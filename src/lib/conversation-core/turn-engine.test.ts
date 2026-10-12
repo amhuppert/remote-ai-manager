@@ -45,6 +45,11 @@ function engineWith(
       alignmentVersion: null,
       alignmentEligible: false,
     }),
+    readInstructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+      alignmentEligible: false,
+    }),
     tooling: async () => tooling,
     beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),

@@ -4,6 +4,7 @@ import { createConversationManagerFixture } from "@/lib/workflows/conversation/t
 import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
 import type { CoreConversationCheckpoints } from "@/lib/conversation-checkpoints/operation-contract";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/actor-input-loader";
+import type { RecreateRuntimeSnapshot } from "@/lib/conversation-core/turn/runtime-recreate";
 let machineFactory: NonNullable<
   Parameters<typeof createConversationManagerFixture>[0]
 >["machine"];
@@ -20,6 +21,9 @@ let coreDrains: string[] = [];
 let coreQuestions: string[] = [];
 let coreDebugCommands: string[] = [];
 let coreTasks: string[] = [];
+/** The runtimes the core host keeps between turns, by conversation, as the readers see them. */
+const coreRuntimes = new Map<string, RecreateRuntimeSnapshot>();
+let coreReleases: string[] = [];
 let coreCheckpointOwner: CoreConversationCheckpoints | undefined;
 let rehydrator: ConversationManagerDependencies["rehydrate"] = async () => 0;
 import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
@@ -42,6 +46,18 @@ const managerFixture: ReturnType<typeof createConversationManagerFixture> =
       },
       async retireCoreConversation(conversationId) {
         coreRetires.push(conversationId);
+      },
+      coreRuntimeConfiguration: (conversationId) =>
+        coreRuntimes.get(conversationId),
+      async readCoreDesiredRuntimeConfiguration(conversationId, current) {
+        return {
+          ...current,
+          repeatableInstructions: [`read again for ${conversationId}`],
+        };
+      },
+      async releaseCoreIdleRuntime(conversationId) {
+        coreReleases.push(conversationId);
+        return "released";
       },
       async drainCoreConversation(conversationId) {
         coreDrains.push(conversationId);
@@ -460,6 +476,45 @@ describe("conversation manager", () => {
           ),
         ).toBeUndefined(),
       );
+    });
+  });
+
+  describe("readers of a core conversation's runtime (design C5b §5)", () => {
+    it("read the core host, which keeps a runtime between turns, and release through it", async () => {
+      const id = "core-kept";
+      const kept: RecreateRuntimeSnapshot = {
+        status: "alive",
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: {} },
+        alignmentVersion: null,
+        repeatableInstructions: ["as created"],
+        instructionSelection: { autonomous: false },
+      };
+      coreOwned = (conversationId) => conversationId === id;
+      coreRuntimes.set(id, kept);
+      coreReleases = [];
+      try {
+        expect(
+          managerFixture.manager.getConversationRuntimeConfiguration(id),
+        ).toEqual(kept);
+        expect(
+          await managerFixture.manager.readDesiredConversationRuntimeConfiguration(
+            id,
+            kept,
+          ),
+        ).toMatchObject({ repeatableInstructions: [`read again for ${id}`] });
+        expect(
+          await managerFixture.manager.releaseIdleConversationRuntime(
+            DEFAULT_INPUT.projectPath,
+            "session",
+            id,
+          ),
+        ).toBe("released");
+        expect(coreReleases).toEqual([id]);
+      } finally {
+        coreOwned = () => false;
+        coreRuntimes.clear();
+      }
     });
   });
 

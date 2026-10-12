@@ -119,6 +119,8 @@ export interface ConversationTranscriptProps {
    * Surfaces that cannot resolve it (the workflow viewer) leave it unset.
    */
   backgroundActivity?: ConversationBackgroundActivity | null | undefined;
+  /** Custody holds the agent's runtime between turns, owing work no task may show (design C5b §5). */
+  custody?: boolean | undefined;
   worktreePath?: string | undefined;
   thinkingExpansionCommand?: ThinkingBlockExpansionCommand | undefined;
   /**
@@ -231,6 +233,7 @@ function TranscriptCore({
   status,
   pendingQueue,
   backgroundActivity,
+  custody,
   worktreePath,
   thinkingExpansionCommand,
   renderMessageRow,
@@ -444,11 +447,12 @@ function TranscriptCore({
         />
         <BackgroundActivityIndicator
           activity={backgroundActivity ?? null}
+          custody={custody === true}
           visible={!responding}
         />
       </>
     ),
-    [conversationId, backend, responding, backgroundActivity],
+    [conversationId, backend, responding, backgroundActivity, custody],
   );
 
   return (

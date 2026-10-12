@@ -4,6 +4,7 @@ import type { BundleTransferEvent } from "@/lib/tickets/bundle-transfer-schemas"
 import { z } from "zod";
 import type {
   ConversationBackgroundActivityEvent,
+  ConversationCustodyEvent,
   ConversationStatusEvent,
   MessageAppendedEvent,
   MessageUpdatedEvent,
@@ -225,6 +226,7 @@ export type SSEEvent =
   | ConversationUsageUpdatedEvent
   | ConversationProfileChangedEvent
   | ConversationBackgroundActivityEvent
+  | ConversationCustodyEvent
   | AskQuestionEvent
   | JobStatusEvent
   | NotificationCreatedEvent

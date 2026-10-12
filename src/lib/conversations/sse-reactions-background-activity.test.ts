@@ -119,6 +119,16 @@ function createHarness(rows: ActiveConversation[]) {
         activity,
       });
     },
+    sendCustody(custody: boolean, conversationId = "conv-1") {
+      es.dispatch("conversation-custody", {
+        type: "conversation-custody",
+        scope: "session",
+        projectName: "demo",
+        sessionName: "feature-x",
+        conversationId,
+        custody,
+      });
+    },
     rows(): ActiveConversation[] {
       return (
         queryClient.getQueryData<ActiveConversationsResponse>(
@@ -193,5 +203,32 @@ describe("conversation-background-activity SSE reaction", () => {
     });
 
     expect(queryClient.getQueryData(conversationKeys.active())).toBeUndefined();
+  });
+});
+
+describe("conversation-custody SSE reaction (design C5b §5)", () => {
+  it("marks the matching row while custody holds and clears it when custody ends, without refetching", () => {
+    const h = createHarness([makeRow("conv-1"), makeRow("conv-2")]);
+
+    h.sendCustody(true);
+    expect(h.rows()[0]?.custody).toBe(true);
+    expect(h.rows()[1]?.custody).toBeUndefined();
+
+    h.sendCustody(false);
+    expect(h.rows()[0]?.custody).toBe(false);
+    expect(h.invalidateQueries).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent on repeat delivery and ignores an unknown conversation", () => {
+    const h = createHarness([makeRow("conv-1")]);
+    h.sendCustody(true);
+    const afterFirst = h.queryClient.getQueryData(conversationKeys.active());
+
+    h.sendCustody(true);
+    h.sendCustody(true, "conv-unknown");
+
+    expect(h.queryClient.getQueryData(conversationKeys.active())).toBe(
+      afterFirst,
+    );
   });
 });

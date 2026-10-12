@@ -7,6 +7,11 @@ import {
   type CurrentRun,
   type CurrentRunRefusal,
 } from "@/lib/runs/session-guard";
+import {
+  backgroundWorkRefusal,
+  type BackgroundWorkRefusal,
+  type SessionBackgroundWork,
+} from "./background-work-guard";
 import type { MergeAssociationResolver } from "./association-port";
 import type { DeliveryGateEvaluator } from "./types";
 import { createLogger } from "@/lib/logging";
@@ -24,10 +29,16 @@ export type MergeInitiationInput = Parameters<
     projectPath: string,
     sessionName: string,
   ) => readonly CurrentRun[];
+  /** The session's conversations whose background work custody holds between turns; a merge waits for each. */
+  readBackgroundWork: (
+    projectPath: string,
+    sessionName: string,
+  ) => readonly SessionBackgroundWork[];
 };
 export type MergeInitiation =
   | SessionMergeAdmission
   | { admitted: false; refusal: CurrentRunRefusal }
+  | { admitted: false; refusal: BackgroundWorkRefusal }
   | {
       admitted: false;
       refusal: {
@@ -54,6 +65,19 @@ export async function evaluateMergeInitiation(
       runProgress: runRefusal.progress,
     });
     return { admitted: false, refusal: runRefusal };
+  }
+  const workRefusal = backgroundWorkRefusal(
+    input.readBackgroundWork(input.projectPath, input.sessionName),
+    "merging this session",
+  );
+  if (workRefusal !== null) {
+    logger.warn("merge.initiation.background_work_refused", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      surface: input.surface,
+      conversationId: workRefusal.conversationId,
+    });
+    return { admitted: false, refusal: workRefusal };
   }
   const lease = await evaluateSessionMergeAdmission(input);
   const projectName =

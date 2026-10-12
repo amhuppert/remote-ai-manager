@@ -17,6 +17,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { EffectiveCollabConfig } from "@/stores/collaboration.store";
+import { useConversationsInCustody } from "@/lib/active-conversations/queries";
 
 type SubmissionArgs = Parameters<typeof usePromptSubmission>[0];
 
@@ -77,6 +78,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     sessionName,
   );
 
+  const custodyConversationIds = useConversationsInCustody();
   // Read from the receipt cache the info strip's chip already observes, so the
   // composer routes around checkpoint maintenance without opening a second
   // observer on the index.
@@ -98,6 +100,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     sessionName,
     conversationId,
     conversations,
+    custodyConversationIds,
     sending: store.sending,
     pendingImages: local.pendingImages,
     promptTextRef: local.promptTextRef,

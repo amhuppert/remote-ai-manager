@@ -16,7 +16,10 @@ import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversat
 import { useForkConversationMutation } from "@/lib/conversations/mutations";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useCollaborationListQuery } from "@/lib/workflows/queries";
-import { useConversationBackgroundActivity } from "@/lib/active-conversations/queries";
+import {
+  useConversationBackgroundActivity,
+  useConversationCustody,
+} from "@/lib/active-conversations/queries";
 import { useFailPrompt, useOpenDocById } from "@/stores/session-detail.store";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
@@ -80,6 +83,7 @@ export default function PaneConversationBody({
   const failPrompt = useFailPrompt();
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys(isActive);
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
+  const custody = useConversationCustody(conversationId);
   const workflowReceiptExtensions = useWorkflowReceiptTranscriptExtensions({
     projectName,
     sessionName,
@@ -203,6 +207,7 @@ export default function PaneConversationBody({
         status={status}
         pendingQueue={conversationState?.pendingQueue}
         backgroundActivity={backgroundActivity}
+        custody={custody}
         worktreePath={sessionQuery.data?.worktreePath}
         thinkingExpansionCommand={thinkingExpansionCommand}
         renderMessageRow={renderMessageRow}

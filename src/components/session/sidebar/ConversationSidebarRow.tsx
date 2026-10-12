@@ -149,6 +149,7 @@ export default function ConversationSidebarRow({
     unread,
     pendingApproval,
     backgroundActivity,
+    custody,
   } = conversation;
 
   const contextLabel =
@@ -178,12 +179,15 @@ export default function ConversationSidebarRow({
   const showAck =
     isUnreadFinished && pendingApproval === null && onAcknowledge !== undefined;
 
-  // A settled turn with harness background work still running: the row would
-  // otherwise read as finished-and-idle. Only meaningful for `awaiting` — a
-  // running row already advertises activity, and a gated/unread row's amber
-  // standing takes precedence over an ambient background signal.
+  // A settled turn with harness background work still running, or custody of
+  // the runtime owing work with no visible task: the row would otherwise read
+  // as finished-and-idle. Only meaningful for `awaiting` — a running row
+  // already advertises activity, and a gated/unread row's amber standing takes
+  // precedence over an ambient background signal.
   const hasBackgroundActivity =
-    !isClosed && backgroundActivity !== null && status === "awaiting";
+    !isClosed &&
+    (backgroundActivity !== null || custody === true) &&
+    status === "awaiting";
 
   const gated = !isClosed && pendingApproval !== null;
   const rowClassName = cn(

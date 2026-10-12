@@ -88,6 +88,11 @@ async function runProjectMessage() {
       alignmentVersion: null,
       alignmentEligible: false,
     }),
+    readInstructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+      alignmentEligible: false,
+    }),
     tooling: async () => ({ overrides: { portableMcp: { servers: [] } } }),
     beginSeed: async () => ({ commit: async () => {} }),
     callbacks: () => ({}),

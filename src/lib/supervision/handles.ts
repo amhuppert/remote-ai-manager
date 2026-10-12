@@ -1,4 +1,9 @@
-import type { HoldHolder, TaskTurn } from "@/lib/conversation-core/executor";
+import type {
+  CustodyRefusedEnd,
+  CustodyScope,
+  HoldHolder,
+  TaskTurn,
+} from "@/lib/conversation-core/executor";
 import type { CoreDebugCommandOutcome } from "@/lib/conversation-core/debug-mode";
 import type { CoreCheckpoints } from "@/lib/conversation-core/checkpoints";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
@@ -21,7 +26,17 @@ import {
 } from "@/lib/state-store/conversation-core-repo";
 import { getStateDb } from "@/lib/state-store/store";
 import { createRunsRepo, type RunsRepo } from "@/lib/state-store/runs-repo";
+import {
+  createConversationsRepo,
+  type ConversationsRepo,
+} from "@/lib/state-store/conversations-repo";
 import { currentRunsIn, type CurrentRun } from "@/lib/runs/session-guard";
+import type { SessionBackgroundWork } from "@/lib/workflows/merge/background-work-guard";
+import type {
+  DesiredRuntimeConfiguration,
+  RecreateRuntimeSnapshot,
+} from "@/lib/conversation-core/turn/runtime-recreate";
+import { releaseIdleCoreRuntime } from "./core-runtime-release";
 import type { Supervision, SupervisedSeatWorkplace } from "./supervision";
 
 export const SUPERVISION_KEY = "__cc_run_supervision";
@@ -178,6 +193,44 @@ export function describeCoreTurn(
   );
 }
 
+/**
+ * What a core conversation's runtime was created with, as a reader outside a
+ * turn (the memory index preview) sees it; custody keeps a runtime between
+ * turns (design C5b §5). Undefined before the core's engine has loaded, when no
+ * runtime can exist.
+ */
+export function coreRuntimeConfiguration(
+  conversationId: string,
+): RecreateRuntimeSnapshot | undefined {
+  return getGlobalValue<CoreTurnRuntime>(
+    CORE_TURN_RUNTIME_READY_KEY,
+  )?.host.configuration(conversationId);
+}
+
+/** The configuration a core conversation stands at now, for its runtime's own needs. */
+export async function readCoreDesiredRuntimeConfiguration(
+  conversationId: string,
+  current: DesiredRuntimeConfiguration,
+): Promise<DesiredRuntimeConfiguration> {
+  const runtime = getGlobalValue<CoreTurnRuntime>(CORE_TURN_RUNTIME_READY_KEY);
+  return runtime === undefined
+    ? current
+    : runtime.host.desiredConfiguration(conversationId, current);
+}
+
+/** A collaboration lets go of a core conversation's idle runtime before its agent resumes the session elsewhere. */
+export async function releaseCoreIdleRuntime(
+  conversationId: string,
+): Promise<"released" | "not_hosted" | "busy"> {
+  const core = composedSupervision()?.core;
+  const runtime = loadedCoreTurnRuntime();
+  if (core === undefined || runtime === undefined) return "not_hosted";
+  return releaseIdleCoreRuntime(
+    { core, host: (await runtime).host },
+    conversationId,
+  );
+}
+
 /** Whether a core conversation's running turn takes a queued message now. */
 export async function coreAcceptsLive(
   conversationId: string,
@@ -239,6 +292,61 @@ export function currentRuns(
   sessionName?: string,
 ): CurrentRun[] {
   return currentRunsIn(runsRepo(), projectPath, sessionName);
+}
+
+let cachedConversations:
+  | { db: ReturnType<typeof getStateDb>; repo: ConversationsRepo }
+  | undefined;
+function conversationsRepo(): ConversationsRepo {
+  const db = getStateDb();
+  if (cachedConversations?.db !== db)
+    cachedConversations = { db, repo: createConversationsRepo(db) };
+  return cachedConversations.repo;
+}
+
+/**
+ * The conversations of a session whose background work a merge must not pass
+ * (design C5b §5): custody holds it, or an ended custody's processes are still
+ * unconfirmed. None before supervision is composed: custody exists only
+ * inside it.
+ */
+export function sessionBackgroundWork(
+  projectPath: string,
+  sessionName: string,
+): SessionBackgroundWork[] {
+  const core = composedSupervision()?.core;
+  if (core === undefined) return [];
+  return core
+    .backgroundWorkIn({ projectPath, sessionName })
+    .map(({ conversationId, unconfirmed }) => ({
+      conversationId,
+      conversationName:
+        conversationsRepo().findById(conversationId)?.name ?? null,
+      unconfirmed,
+    }));
+}
+
+/** Whether custody holds a core conversation's runtime between turns: background work its Stop ends. */
+export function coreHoldsCustody(conversationId: string): boolean {
+  return composedSupervision()?.core.holdsCustody(conversationId) ?? false;
+}
+
+/**
+ * Runs `commit` (an archive, a deletion, marking merged) with the scope closed
+ * to background work: see `ConversationCore.closeBackgroundWork`. Rejects with
+ * `BackgroundWorkUnstoppedError` when stopping finds processes it cannot
+ * confirm collected. Before supervision is composed nothing can hold custody,
+ * so the commit simply runs.
+ */
+export function closeCoreBackgroundWork<T>(
+  scope: CustodyScope,
+  commit: () => Promise<T>,
+  options: { end: CustodyRefusedEnd; stop: boolean },
+): Promise<T> {
+  const core = composedSupervision()?.core;
+  return core === undefined
+    ? commit()
+    : core.closeBackgroundWork(scope, commit, options);
 }
 
 /** A core conversation that has not run takes the backend its first input chose. */

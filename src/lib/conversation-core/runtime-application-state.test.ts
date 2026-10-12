@@ -497,6 +497,11 @@ describe("core runtimes in the shared registry", () => {
         alignmentVersion: null,
         alignmentEligible: false,
       }),
+      readInstructions: async () => ({
+        sessionInstructions: [],
+        alignmentVersion: null,
+        alignmentEligible: false,
+      }),
       tooling: async () => ({ overrides: { portableMcp: H1 } }),
       beginSeed: async () => ({ commit: async () => {} }),
       callbacks: () => ({}),

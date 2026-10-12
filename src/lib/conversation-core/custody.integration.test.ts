@@ -288,6 +288,11 @@ function compose(
       alignmentVersion: null,
       alignmentEligible: false,
     }),
+    readInstructions: async () => ({
+      sessionInstructions: [...instructions.lines],
+      alignmentVersion: null,
+      alignmentEligible: false,
+    }),
     tooling: async () => ({ overrides: {} }),
     beginSeed: async () => ({ async commit() {} }),
     callbacks: (conversation, track) =>

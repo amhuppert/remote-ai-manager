@@ -4,6 +4,7 @@ import {
   type ProjectConversationServiceDeps,
 } from "./service";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 
 /**
  * In-memory persistence fake so the service's real orchestration (title
@@ -150,5 +151,55 @@ describe("ProjectConversationService", () => {
     await service.setProjectConversationOpen("/repo", a.id, false); // closed
     await service.setProjectConversationArchived("/repo", b.id, true); // archived
     expect(await service.getOpenProjectConversationCount("/repo")).toBe(1);
+  });
+});
+
+describe("archiving a project conversation that keeps background work (design C5b §5)", () => {
+  it("archives inside a closing of the conversation, and closes nothing to unarchive", async () => {
+    const log: string[] = [];
+    const deps = makeDeps({
+      async closeBackgroundWork(scope, commit, options) {
+        log.push(
+          `close ${JSON.stringify(scope)} ${options.end} stop=${options.stop}`,
+        );
+        const value = await commit();
+        log.push("closed");
+        return value;
+      },
+    });
+    const service = createProjectConversationService(deps);
+    const c = await service.createProjectConversation("/repo");
+
+    await service.setProjectConversationArchived("/repo", c.id, true);
+    expect(log).toEqual([
+      `close ${JSON.stringify({ projectPath: "/repo", conversationId: c.id })} archived stop=true`,
+      "closed",
+    ]);
+    expect(
+      (await service.getProjectConversation("/repo", c.id))?.archived,
+    ).toBe(true);
+
+    await service.setProjectConversationArchived("/repo", c.id, false);
+    expect(log).toHaveLength(2);
+  });
+
+  it("refuses the archive, leaving it unarchived, when its background work cannot be confirmed stopped", async () => {
+    const deps = makeDeps({
+      async closeBackgroundWork(scope) {
+        throw new BackgroundWorkUnstoppedError(
+          scope.conversationId ?? "",
+          "the CLI did not exit",
+        );
+      },
+    });
+    const service = createProjectConversationService(deps);
+    const c = await service.createProjectConversation("/repo");
+
+    await expect(
+      service.setProjectConversationArchived("/repo", c.id, true),
+    ).rejects.toBeInstanceOf(BackgroundWorkUnstoppedError);
+    expect(
+      (await service.getProjectConversation("/repo", c.id))?.archived,
+    ).toBe(false);
   });
 });

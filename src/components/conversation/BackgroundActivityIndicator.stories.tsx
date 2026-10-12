@@ -96,3 +96,14 @@ export const HiddenWhileResponding: Story = {
     visible: false,
   },
 };
+
+/**
+ * Custody holds the agent's runtime between turns with no visible task (a
+ * continuation or a reply still owed): the chip still says work is going on.
+ */
+export const CustodyWithoutTasks: Story = {
+  args: {
+    activity: null,
+    custody: true,
+  },
+};

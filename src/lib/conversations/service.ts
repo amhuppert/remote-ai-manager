@@ -111,6 +111,17 @@ export interface ConversationsDeps {
     conversationId: string,
     reason: string,
   ): Promise<void>;
+  /**
+   * Runs an archive or a deletion with the conversation closed to background
+   * work (design C5b §5): what it kept running is stopped first, and none
+   * opens until the act is done. Rejects with `BackgroundWorkUnstoppedError`
+   * when that work could not be confirmed stopped.
+   */
+  closeBackgroundWork?<T>(
+    scope: { projectPath: string; sessionName: string; conversationId: string },
+    commit: () => Promise<T>,
+    options: { end: "archived" | "deleted"; stop: true },
+  ): Promise<T>;
   removeTranscript?(transcriptPath: string): Promise<void>;
   /**
    * Override config dir for transcript path resolution. When omitted, the
@@ -168,6 +179,11 @@ const defaultConversationsDeps: ConversationsDeps = {
       reason,
     );
   },
+  closeBackgroundWork: async (scope, commit, options) => {
+    const { closeCoreBackgroundWork } =
+      await import("@/lib/supervision/handles");
+    return closeCoreBackgroundWork(scope, commit, options);
+  },
   removeTranscript: async (transcriptPath) => {
     await rm(transcriptPath, { force: true });
   },
@@ -203,6 +219,7 @@ export function createConversationService(
     getSessionConversations,
     setConversationPendingPromptText: setPendingPromptTextDep,
     stopConversationActor = defaultConversationsDeps.stopConversationActor!,
+    closeBackgroundWork = defaultConversationsDeps.closeBackgroundWork!,
     removeTranscript = defaultConversationsDeps.removeTranscript!,
     configDir,
     getContinuityAdapter = defaultGetContinuityAdapter,
@@ -328,34 +345,42 @@ export function createConversationService(
       );
     }
 
-    await stopConversationActor(
-      projectPath,
-      sessionName,
-      conversationId,
-      "conversation deleted",
-    );
-    await mutateSession(
-      projectPath,
-      sessionName,
-      "deleteConversation",
-      (session) => {
-        const index = session.conversations.findIndex(
-          (candidate) => candidate.id === conversationId,
+    // Retired and removed with the conversation closed to background work: nothing it
+    // left running outlives it, and a refusal leaves it as it was.
+    await closeBackgroundWork(
+      { projectPath, sessionName, conversationId },
+      async () => {
+        await stopConversationActor(
+          projectPath,
+          sessionName,
+          conversationId,
+          "conversation deleted",
         );
-        if (index < 0) {
-          throw new Error(
-            `Conversation "${conversationId}" not found in session "${sessionName}"`,
-          );
-        }
-        const current = session.conversations[index]!;
-        if (current.status !== "new" && current.status !== "awaiting") {
-          throw new ConversationDeletionConflictError(
-            conversationId,
-            current.status,
-          );
-        }
-        session.conversations.splice(index, 1);
+        await mutateSession(
+          projectPath,
+          sessionName,
+          "deleteConversation",
+          (session) => {
+            const index = session.conversations.findIndex(
+              (candidate) => candidate.id === conversationId,
+            );
+            if (index < 0) {
+              throw new Error(
+                `Conversation "${conversationId}" not found in session "${sessionName}"`,
+              );
+            }
+            const current = session.conversations[index]!;
+            if (current.status !== "new" && current.status !== "awaiting") {
+              throw new ConversationDeletionConflictError(
+                conversationId,
+                current.status,
+              );
+            }
+            session.conversations.splice(index, 1);
+          },
+        );
       },
+      { end: "deleted", stop: true },
     );
 
     let transcriptCleanup: "absent" | "removed" | "failed" = "absent";
@@ -431,22 +456,30 @@ export function createConversationService(
     conversationId: string,
     archived: boolean,
   ): Promise<void> {
-    await mutateSession(
-      projectPath,
-      sessionName,
-      "setConversationArchived",
-      (session) => {
-        const conversation = session.conversations.find(
-          (c) => c.id === conversationId,
-        );
-        if (!conversation) {
-          throw new Error(
-            `Conversation "${conversationId}" not found in session "${sessionName}"`,
+    const write = () =>
+      mutateSession(
+        projectPath,
+        sessionName,
+        "setConversationArchived",
+        (session) => {
+          const conversation = session.conversations.find(
+            (c) => c.id === conversationId,
           );
-        }
+          if (!conversation) {
+            throw new Error(
+              `Conversation "${conversationId}" not found in session "${sessionName}"`,
+            );
+          }
 
-        conversation.archived = archived;
-      },
+          conversation.archived = archived;
+        },
+      );
+    if (!archived) return write();
+    // Archived work is out of sight: none may keep running behind it.
+    await closeBackgroundWork(
+      { projectPath, sessionName, conversationId },
+      write,
+      { end: "archived", stop: true },
     );
   }
 

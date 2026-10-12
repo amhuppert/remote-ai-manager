@@ -98,6 +98,10 @@ export interface SupervisionPorts {
   custodyLoss: ConversationCoreDeps["custodyLoss"];
   /** How long this server has been running. */
   uptimeMs(): number;
+  /** Why no custody may open for a conversation now (its session is merging or finished, or it is archived). */
+  custodyFence?: ConversationCoreDeps["custodyFence"];
+  /** Custody of a conversation's runtime began or ended, for the clients that show it. */
+  custodyChanged?: ConversationCoreDeps["custodyChanged"];
   /** The conversation message queue (the rows clients show) that feeds interactive conversations. */
   queue: Omit<ConversationQueueDeps, "submitTurn">;
   getProjectDisplayName(projectPath: string): string;
@@ -256,6 +260,12 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
     records: ports.records,
     custodyLoss: ports.custodyLoss,
     uptimeMs: ports.uptimeMs,
+    ...(ports.custodyFence !== undefined
+      ? { custodyFence: ports.custodyFence }
+      : {}),
+    ...(ports.custodyChanged !== undefined
+      ? { custodyChanged: ports.custodyChanged }
+      : {}),
     slots: ports.slots,
     questions: requests,
     touchRequester,

@@ -110,6 +110,7 @@ function makeDeps(overrides: Partial<GitRouteDeps> = {}): GitRouteDeps {
     getSession: vi.fn().mockResolvedValue(makeSession()),
     getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue(null),
     currentRuns: () => [],
+    sessionBackgroundWork: () => [],
     computeDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
     getCommitLog: vi.fn().mockResolvedValue([]),
     getCommitDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
@@ -506,6 +507,38 @@ describe("mergeSession", () => {
     expect(await res.json()).toMatchObject({
       code: "RUN_CURRENT",
       details: { runId: "run-1", progress: "running" },
+    });
+    expect(dispatchMergeJob).not.toHaveBeenCalled();
+  });
+
+  it("refuses the merge while a conversation of the session keeps background work running, naming the conversation", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob,
+        sessionBackgroundWork: () => [
+          {
+            conversationId: "conv-1",
+            conversationName: "Suite runner",
+            unconfirmed: null,
+          },
+        ],
+      }),
+    );
+
+    const res = await handlers.mergeSession(
+      postRequest({ autoResolve: true }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    const body: unknown = await res.json();
+    expect(body).toMatchObject({
+      code: "BACKGROUND_WORK_RUNNING",
+      details: { conversationId: "conv-1" },
+      error: expect.stringContaining('conversation "Suite runner"'),
     });
     expect(dispatchMergeJob).not.toHaveBeenCalled();
   });
@@ -1140,6 +1173,111 @@ describe("landSession", () => {
         skipMarkMerged: true,
       }),
     );
+  });
+});
+
+describe("re-entering a finalizing merge while background work holds the session (design C5b §5)", () => {
+  const holding = [
+    {
+      conversationId: "conv-1",
+      conversationName: "Suite runner",
+      unconfirmed: null,
+    },
+  ];
+
+  it("refuses Land without dispatching, keeping the candidate, and lands the same candidate once the work is stopped", async () => {
+    let held = true;
+    const candidate = makeJob();
+    const getJob = vi.fn().mockReturnValue(candidate);
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-6" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob,
+        getJob,
+        sessionBackgroundWork: () => (held ? holding : []),
+      }),
+    );
+
+    const refused = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      code: "BACKGROUND_WORK_RUNNING",
+      details: { conversationId: "conv-1" },
+    });
+    expect(dispatchMergeJob).not.toHaveBeenCalled();
+    expect(candidate.status).toBe("ready-to-land");
+
+    held = false;
+    const landed = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+    expect(landed.status).toBe(202);
+    expect(dispatchMergeJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entryMode: "land",
+        preparedSha: "prepared-sha",
+        parkedRef: "refs/cc-merges/job-1",
+      }),
+    );
+  });
+
+  it("lands a graph lane's non-finalizing candidate whatever the session's background work", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-7" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob,
+        getJob: vi
+          .fn()
+          .mockReturnValue(makeJob({ finalizeSessionOnPublish: false })),
+        sessionBackgroundWork: () => holding,
+      }),
+    );
+
+    const res = await handlers.landSession(
+      new Request("http://cc.test"),
+      routeContext(sessionParams),
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it("refuses a finalizing conflict retry without dispatching, and lets a non-finalizing one through", async () => {
+    const dispatchResolveConflictsJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-8" } });
+    let job = makeJob({ status: "conflicts" });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchResolveConflictsJob,
+        getJob: vi.fn(() => job),
+        sessionBackgroundWork: () => holding,
+      }),
+    );
+    const decisions = [{ file: "a.txt", decision: "approved" as const }];
+
+    const refused = await handlers.resolveSessionConflicts(
+      postRequest({ decisions }),
+      routeContext(sessionParams),
+    );
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      code: "BACKGROUND_WORK_RUNNING",
+    });
+    expect(dispatchResolveConflictsJob).not.toHaveBeenCalled();
+
+    job = makeJob({ status: "conflicts", finalizeSessionOnPublish: false });
+    const lane = await handlers.resolveSessionConflicts(
+      postRequest({ decisions }),
+      routeContext(sessionParams),
+    );
+    expect(lane.status).toBe(202);
   });
 });
 

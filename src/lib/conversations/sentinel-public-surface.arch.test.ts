@@ -138,6 +138,11 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // a project conversation's activity event has no `sessionName` field at all.
   // Its own warn carries only `conversationId`.
   ["lib/conversations/background-activity.ts", "scope-derivation"],
+  // The custody publisher (design C5b §5) is handed the core's store session
+  // name and derives the SSE scope variant from it, as the background-activity
+  // channel does: a project conversation's custody event has no `sessionName`.
+  // Its failure warn carries only `conversationId` and the custody flag.
+  ["lib/conversations/background-custody.ts", "scope-derivation"],
   // The queue is session-keyed storage serving both scopes, so its two SSE
   // producers derive the scope variant from the store key: a project
   // conversation's queue events have no `sessionName` field at all.

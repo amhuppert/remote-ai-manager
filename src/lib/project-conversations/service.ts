@@ -50,6 +50,17 @@ export interface ProjectConversationServiceDeps {
   ): Promise<void>;
   readConfig(): Promise<{ defaultAgentBackend?: AgentBackendId }>;
   getProjectDisplayName(projectPath: string): string;
+  /**
+   * Runs an archive with the conversation closed to background work (design
+   * C5b §5): what it kept running is stopped first, and none opens until the
+   * flag is set. Rejects with `BackgroundWorkUnstoppedError` when that work
+   * could not be confirmed stopped.
+   */
+  closeBackgroundWork?<T>(
+    scope: { projectPath: string; conversationId: string },
+    commit: () => Promise<T>,
+    options: { end: "archived"; stop: true },
+  ): Promise<T>;
   newId(): string;
   now(): string;
   /** See the session service's counterpart: resolved before the row exists. */
@@ -114,6 +125,11 @@ const defaultDeps: ProjectConversationServiceDeps = {
   setProjectConversationOpen,
   readConfig,
   getProjectDisplayName,
+  async closeBackgroundWork(scope, commit, options) {
+    const { closeCoreBackgroundWork } =
+      await import("@/lib/supervision/handles");
+    return closeCoreBackgroundWork(scope, commit, options);
+  },
   newId: () => randomUUID(),
   now: () => new Date().toISOString(),
   resolveProfileSnapshot: resolveConversationProfileSnapshot,
@@ -213,12 +229,24 @@ export function createProjectConversationService(
     listProjectConversations: (projectPath) =>
       deps.getProjectConversations(projectPath),
     renameProjectConversation,
-    setProjectConversationArchived: (projectPath, conversationId, archived) =>
-      deps.setProjectConversationArchived(
-        projectPath,
-        conversationId,
-        archived,
-      ),
+    async setProjectConversationArchived(
+      projectPath,
+      conversationId,
+      archived,
+    ) {
+      const write = () =>
+        deps.setProjectConversationArchived(
+          projectPath,
+          conversationId,
+          archived,
+        );
+      // Archived work is out of sight: none may keep running behind it.
+      if (!archived || deps.closeBackgroundWork === undefined) return write();
+      await deps.closeBackgroundWork({ projectPath, conversationId }, write, {
+        end: "archived",
+        stop: true,
+      });
+    },
     setProjectConversationOpen: (projectPath, conversationId, open) =>
       deps.setProjectConversationOpen(projectPath, conversationId, open),
     markProjectConversationRead,

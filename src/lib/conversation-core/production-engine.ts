@@ -25,7 +25,7 @@ import {
   resolveTurnModelSelection,
 } from "@/lib/conversation-core/contributions/resolve-model-effort";
 import { loadConversationTurnDependencies } from "@/lib/conversation-core/production-turn-dependencies";
-import { prepareRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
+import { createRuntimeInstructionReaders } from "@/lib/conversation-core/turn/runtime-instructions";
 import { createQueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
 import { persistTurnImages } from "@/lib/conversation-core/contributions/image-persistence";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
@@ -104,23 +104,7 @@ export async function createProductionTurnRuntime(options: {
   const records = createProductionConversationRecords();
   const host = createRuntimeHost({
     factory: (backend) => deps.execution.getConversationBackendFactory(backend),
-    async instructions(conversation, selection) {
-      const prepared = await prepareRuntimeInstructions(
-        deps,
-        {
-          projectPath: conversation.projectPath,
-          worktreePath: conversation.worktreePath,
-          target: conversation.target,
-          turn: selection,
-        },
-        conversation.profile,
-      );
-      return {
-        sessionInstructions: prepared.sessionInstructions,
-        alignmentVersion: prepared.alignmentVersion,
-        alignmentEligible: prepared.alignmentEligible,
-      };
-    },
+    ...createRuntimeInstructionReaders(deps),
     async tooling(conversation) {
       const portableMcp = await deps.policy.composePortableMcp({
         backend: conversation.backend,

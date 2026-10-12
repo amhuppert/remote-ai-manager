@@ -14,6 +14,8 @@ import {
   setProjectArchived as defaultSetProjectArchived,
 } from "@/lib/state-store";
 import { stopAllForSession as defaultStopAllForSession } from "@/lib/dev-server/registry";
+import { closeCoreBackgroundWork } from "@/lib/supervision/handles";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 
@@ -32,6 +34,17 @@ export interface ArchiveRouteDeps {
     projectPath: string;
     sessionName: string;
   }) => Promise<void>;
+  /**
+   * Runs the archive with the project closed to background work (design C5b
+   * §5): what its conversations kept running is stopped first, and none opens
+   * until the flag is set. Rejects with `BackgroundWorkUnstoppedError` when it
+   * could not be confirmed stopped, which refuses the archive.
+   */
+  closeBackgroundWork<T>(
+    scope: { projectPath: string },
+    commit: () => Promise<T>,
+    options: { end: "archived"; stop: true },
+  ): Promise<T>;
 }
 
 const defaultDeps: ArchiveRouteDeps = {
@@ -39,6 +52,7 @@ const defaultDeps: ArchiveRouteDeps = {
   setProjectArchived: defaultSetProjectArchived,
   getProjectSessionListItems: defaultGetProjectSessionListItems,
   stopAllForSession: defaultStopAllForSession,
+  closeBackgroundWork: closeCoreBackgroundWork,
 };
 
 // ---------------------------------------------------------------------------
@@ -82,34 +96,52 @@ export function createArchiveRouteHandlers(
     }
 
     try {
-      // Archiving a project is a lifecycle event: stop every session's dev
-      // servers so none keep running in the background. Best-effort per session
-      // — failures never block archival. Unarchive does not restart them.
-      if (body.archived) {
-        try {
-          const sessions = await deps.getProjectSessionListItems(projectPath);
-          for (const session of sessions) {
+      if (!body.archived) await deps.setProjectArchived(projectPath, false);
+      // Archived work is out of sight: none may keep running behind it, so the
+      // project is closed to background work around the write.
+      else
+        await deps.closeBackgroundWork(
+          { projectPath },
+          async () => {
+            // Archiving a project is a lifecycle event: stop every session's dev
+            // servers so none keep running in the background, once its agents'
+            // background work is stopped. Best-effort per session — failures
+            // never block archival. Unarchive does not restart them.
             try {
-              await deps.stopAllForSession({
+              const sessions =
+                await deps.getProjectSessionListItems(projectPath);
+              for (const session of sessions) {
+                try {
+                  await deps.stopAllForSession({
+                    projectPath,
+                    sessionName: session.sessionName,
+                  });
+                } catch {
+                  // best-effort: don't block archival
+                }
+              }
+              logger.info("project.archive.dev_servers_stopped", {
                 projectPath,
-                sessionName: session.sessionName,
+                sessionCount: sessions.length,
               });
             } catch {
               // best-effort: don't block archival
             }
-          }
-          logger.info("project.archive.dev_servers_stopped", {
-            projectPath,
-            sessionCount: sessions.length,
-          });
-        } catch {
-          // best-effort: don't block archival
-        }
-      }
-
-      await deps.setProjectArchived(projectPath, body.archived);
+            await deps.setProjectArchived(projectPath, true);
+          },
+          { end: "archived", stop: true },
+        );
       return NextResponse.json({ ok: true });
     } catch (err) {
+      if (BackgroundWorkUnstoppedError.is(err))
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: err.code,
+            details: err.details,
+          } satisfies ApiError,
+          { status: err.statusCode },
+        );
       const message =
         err instanceof Error ? err.message : "Failed to update archive state";
       return NextResponse.json({ error: message } satisfies ApiError, {

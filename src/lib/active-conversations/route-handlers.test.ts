@@ -789,3 +789,49 @@ describe("GET /api/conversations/active background activity", () => {
     expect(body.conversations[0]?.backgroundActivity).toEqual(ACTIVITY);
   });
 });
+
+describe("GET /api/conversations/active background work custody holds (design C5b §5)", () => {
+  it("marks the rows whose background work custody holds between turns, so Stop is offered with no task visible", async () => {
+    const rows = await listRows(
+      [
+        makeConversation({ id: "conv-1", status: "awaiting" }),
+        makeConversation({ id: "conv-2", status: "awaiting" }),
+      ],
+      null,
+      { holdsCustody: (id) => id === "conv-1" },
+    );
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get("conv-1")?.custody).toBe(true);
+    expect(byId.get("conv-2")?.custody).toBe(false);
+  });
+
+  it("marks a project-scope row too", async () => {
+    const deps: ActiveConversationsRouteDeps = {
+      ...stateToActiveDeps(makeState([])),
+      getProjectDisplayName: vi.fn().mockReturnValue("project"),
+      readLastAssistantContent: vi.fn().mockResolvedValue(null),
+      listProjectConversations: vi.fn().mockResolvedValue([
+        {
+          projectPath: "/repo/project",
+          conversation: makeConversation({
+            id: "proj-conv",
+            status: "awaiting",
+          }),
+        },
+      ]),
+      listActiveGraphWorkflowExecutions: vi
+        .fn()
+        .mockResolvedValue(activeExecutionsMap(null)),
+      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
+      getBackgroundActivity: () => null,
+      holdsCustody: (id) => id === "proj-conv",
+    };
+    const handlers = createActiveConversationsRouteHandlers(deps);
+    const body = activeConversationsResponseSchema.parse(
+      await (await handlers.GET()).json(),
+    );
+
+    expect(body.conversations[0]?.custody).toBe(true);
+  });
+});

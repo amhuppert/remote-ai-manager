@@ -41,6 +41,7 @@ import {
   PLANNER_SESSION_NAME,
   type SessionDeps,
 } from "./service";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 // ---------------------------------------------------------------------------
 // Test dep factory – replaces all vi.mock() calls
 // ---------------------------------------------------------------------------
@@ -232,6 +233,8 @@ function createTestDeps() {
     sweepLaneWorktrees: sweepLaneWorktreesMock,
     copyAlignmentCharterFromParent: copyAlignmentCharterFromParentMock,
     currentRuns: () => [],
+    closeBackgroundWork: (_scope, commit) => commit(),
+    getProjectConversationIds: vi.fn().mockResolvedValue([]),
   };
   return {
     deps,
@@ -1345,6 +1348,341 @@ describe("deleting while a run works in the session", () => {
     });
     expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
     expect(writeStateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleting while a conversation keeps background work (design C5b §5)", () => {
+  const unstopped = (conversationId: string) =>
+    new BackgroundWorkUnstoppedError(conversationId, "the CLI did not exit");
+
+  it("refuses to delete a session whose conversation's background work could not be confirmed stopped, and removes nothing", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "busy", {
+        conversations: [{ id: "conv-kept", transcriptPath: null }],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    const retired: string[] = [];
+    service = createSessionService({
+      ...deps,
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        retired.push(conversationId);
+        throw unstopped(conversationId);
+      },
+    });
+
+    const refused = await service
+      .deleteSession("/projects/repo", "busy")
+      .catch((error: unknown) => error);
+
+    expect(refused).toBeInstanceOf(BackgroundWorkUnstoppedError);
+    expect(refused).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      statusCode: 409,
+      details: { conversationId: "conv-kept" },
+    });
+    expect(retired).toEqual(["conv-kept"]);
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes the other sessions of a batch and reports the one whose background work could not be stopped", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "busy", {
+        conversations: [{ id: "conv-kept", transcriptPath: null }],
+      }),
+    );
+    const state = await readStateMock();
+    state.projects["/projects/repo"].sessions["idle"] = {
+      ...state.projects["/projects/repo"].sessions["busy"],
+      sessionName: "idle",
+      worktreePath: "/projects/repo/.worktrees/idle",
+      branchName: "csm/idle",
+      conversations: [],
+    };
+    readStateMock.mockResolvedValue(state);
+    service = createSessionService({
+      ...deps,
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        throw unstopped(conversationId);
+      },
+    });
+
+    const results = await service.bulkDeleteSessions("/projects/repo", [
+      "busy",
+      "idle",
+    ]);
+
+    expect(results).toEqual([
+      {
+        sessionName: "busy",
+        success: false,
+        error: expect.stringContaining("could not be confirmed stopped"),
+      },
+      { sessionName: "idle", success: true },
+    ]);
+  });
+
+  it("deletes a session inside a closing of the session, and refuses with nothing retired or removed when its background work cannot be confirmed stopped", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "busy", {
+        conversations: [{ id: "conv-kept", transcriptPath: null }],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    const log: string[] = [];
+    service = createSessionService({
+      ...deps,
+      async closeBackgroundWork(scope, _commit, options) {
+        log.push(
+          `close:${JSON.stringify(scope)}:${options.end}:${options.stop}`,
+        );
+        throw unstopped("conv-kept");
+      },
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        log.push(`retire:${conversationId}`);
+      },
+    });
+
+    await expect(
+      service.deleteSession("/projects/repo", "busy"),
+    ).rejects.toMatchObject({ code: "BACKGROUND_WORK_UNSTOPPED" });
+    expect(log).toEqual([
+      `close:${JSON.stringify({ projectPath: "/projects/repo", sessionName: "busy" })}:deleted:true`,
+    ]);
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps each bulk item's session closed to background work until its rows are gone, however slow a later item is", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "first"),
+    );
+    const state = await readStateMock();
+    state.projects["/projects/repo"].sessions["second"] = {
+      ...state.projects["/projects/repo"].sessions["first"],
+      sessionName: "second",
+      worktreePath: "/projects/repo/.worktrees/second",
+      branchName: "csm/second",
+    };
+    readStateMock.mockResolvedValue(state);
+    existsSyncMock.mockReturnValue(true);
+    const log: string[] = [];
+    let releaseSecond: () => void = () => {};
+    const fused = deps.applyFusedSessionDelete;
+    service = createSessionService({
+      ...deps,
+      async closeBackgroundWork(scope, commit) {
+        log.push(`close:${scope.sessionName}`);
+        try {
+          return await commit();
+        } finally {
+          log.push(`open:${scope.sessionName}`);
+        }
+      },
+      fastRemoveWorktree: vi.fn(
+        async ({ worktreePath }: { worktreePath: string }) => {
+          if (worktreePath.endsWith("/second")) {
+            log.push("second:slow");
+            await new Promise<void>((resolve) => (releaseSecond = resolve));
+          }
+          return { status: "moved", trashPath: "/trash/x" };
+        },
+      ) as unknown as SessionDeps["fastRemoveWorktree"],
+      applyFusedSessionDelete: vi.fn(
+        async (...args: Parameters<SessionDeps["applyFusedSessionDelete"]>) => {
+          log.push(`rows:${[...args[1]].join(",")}`);
+          return fused(...args);
+        },
+      ) as unknown as SessionDeps["applyFusedSessionDelete"],
+    });
+
+    const deleting = service.bulkDeleteSessions("/projects/repo", [
+      "first",
+      "second",
+    ]);
+    for (let i = 0; i < 200 && !log.includes("second:slow"); i += 1)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    // The first session's work is done, its rows not yet gone: its fence stays up.
+    expect(log).not.toContain("open:first");
+
+    releaseSecond();
+    expect(await deleting).toEqual([
+      { sessionName: "first", success: true },
+      { sessionName: "second", success: true },
+    ]);
+    const rows = log.indexOf("rows:first,second");
+    expect(rows).toBeGreaterThan(-1);
+    expect(log.indexOf("open:first")).toBeGreaterThan(rows);
+    expect(log.indexOf("open:second")).toBeGreaterThan(rows);
+  });
+
+  it("closes the whole project to background work and retires every conversation, its sessions' and its own, before removing anything", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "alpha", {
+        conversations: [{ id: "conv-a", transcriptPath: null }],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    const log: string[] = [];
+    service = createSessionService({
+      ...deps,
+      getProjectConversationIds: vi.fn().mockResolvedValue(["proj-1"]),
+      async closeBackgroundWork(scope, commit, options) {
+        log.push(
+          `close:${JSON.stringify(scope)}:${options.end}:${options.stop}`,
+        );
+        return commit();
+      },
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        log.push(`retire:${conversationId}`);
+      },
+      fastRemoveWorktree: vi.fn(async () => {
+        log.push("remove-worktree");
+        return { status: "moved", trashPath: "/trash/x" };
+      }) as unknown as SessionDeps["fastRemoveWorktree"],
+    });
+
+    await service.deleteProject("/projects/repo");
+
+    const removal = log.indexOf("remove-worktree");
+    expect(log[0]).toBe(
+      `close:${JSON.stringify({ projectPath: "/projects/repo" })}:deleted:true`,
+    );
+    expect(log.indexOf("retire:conv-a")).toBeLessThan(removal);
+    expect(log.indexOf("retire:proj-1")).toBeLessThan(removal);
+  });
+
+  it("refuses the project deletion with nothing removed when a conversation of a later session cannot have its background work stopped", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "alpha", {
+        conversations: [{ id: "conv-a", transcriptPath: null }],
+      }),
+    );
+    const state = await readStateMock();
+    state.projects["/projects/repo"].sessions["busy"] = {
+      ...state.projects["/projects/repo"].sessions["alpha"],
+      sessionName: "busy",
+      worktreePath: "/projects/repo/.worktrees/busy",
+      branchName: "csm/busy",
+      conversations: [{ id: "conv-late", transcriptPath: null }],
+    };
+    readStateMock.mockResolvedValue(state);
+    existsSyncMock.mockReturnValue(true);
+    const deleteProjectRow = vi.fn();
+    service = createSessionService({
+      ...deps,
+      getProjectConversationIds: vi.fn().mockResolvedValue(["proj-1"]),
+      // A turn that was running at the preflight ended owing work, and its runtime would not close.
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        if (conversationId === "conv-late") throw unstopped(conversationId);
+      },
+      deleteProjectRow:
+        deleteProjectRow as unknown as SessionDeps["deleteProjectRow"],
+    });
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toMatchObject(
+      {
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        details: { conversationId: "conv-late" },
+      },
+    );
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
+    expect(deleteProjectRow).not.toHaveBeenCalled();
+  });
+
+  it("retires each project conversation before the project row goes", async () => {
+    readStateMock.mockResolvedValue({
+      projects: {
+        "/projects/repo": { rootPath: "/projects/repo", sessions: {} },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    });
+    const order: string[] = [];
+    service = createSessionService({
+      ...deps,
+      getProjectConversationIds: vi
+        .fn()
+        .mockResolvedValue(["proj-1", "proj-2"]),
+      async stopConversationActor(_projectPath, sessionName, conversationId) {
+        order.push(`retire:${sessionName}:${conversationId}`);
+      },
+      deleteProjectRow: vi.fn(async () => {
+        order.push("project-row");
+      }) as unknown as SessionDeps["deleteProjectRow"],
+    });
+
+    await service.deleteProject("/projects/repo");
+
+    expect(order).toEqual([
+      `retire:${PROJECT_CONVERSATION_SESSION_SENTINEL}:proj-1`,
+      `retire:${PROJECT_CONVERSATION_SESSION_SENTINEL}:proj-2`,
+      "project-row",
+    ]);
+  });
+
+  it("refuses the project deletion when the refusal comes from another bundle's copy of the error class", async () => {
+    readStateMock.mockResolvedValue({
+      projects: {
+        "/projects/repo": { rootPath: "/projects/repo", sessions: {} },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    });
+    const deleteProjectRow = vi.fn();
+    service = createSessionService({
+      ...deps,
+      getProjectConversationIds: vi.fn().mockResolvedValue(["proj-1"]),
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        // The core runs in the bundle composed at startup: its error is not this module's class.
+        throw Object.assign(new Error("could not be confirmed stopped"), {
+          name: "BackgroundWorkUnstoppedError",
+          code: "BACKGROUND_WORK_UNSTOPPED",
+          statusCode: 409,
+          details: { conversationId },
+        });
+      },
+      deleteProjectRow:
+        deleteProjectRow as unknown as SessionDeps["deleteProjectRow"],
+    });
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toMatchObject(
+      {
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        details: { conversationId: "proj-1" },
+      },
+    );
+    expect(deleteProjectRow).not.toHaveBeenCalled();
+  });
+
+  it("refuses the project deletion, keeping its row, when a project conversation's background work cannot be stopped", async () => {
+    readStateMock.mockResolvedValue({
+      projects: {
+        "/projects/repo": { rootPath: "/projects/repo", sessions: {} },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    });
+    const deleteProjectRow = vi.fn();
+    service = createSessionService({
+      ...deps,
+      getProjectConversationIds: vi.fn().mockResolvedValue(["proj-1"]),
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        throw unstopped(conversationId);
+      },
+      deleteProjectRow:
+        deleteProjectRow as unknown as SessionDeps["deleteProjectRow"],
+    });
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toMatchObject(
+      {
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        details: { conversationId: "proj-1" },
+      },
+    );
+    expect(deleteProjectRow).not.toHaveBeenCalled();
   });
 });
 

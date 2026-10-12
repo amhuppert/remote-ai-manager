@@ -5,6 +5,7 @@ import { StopIcon } from "@/components/icons";
 import { SubscriptionEntry } from "@/components/subscriptions/SubscriptionEntry";
 import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
 import { canStopTurn } from "@/lib/conversations/turn-activity";
+import { useConversationCustody } from "@/lib/active-conversations/queries";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useSendingFor } from "@/stores/session-detail.store";
@@ -126,12 +127,14 @@ export default function Pane({
     conversation.projectName,
     conversation.sessionName,
   );
+  const custody = useConversationCustody(conversation.id);
   const canStop = canStopTurn({
     sending,
     status: conversation.status,
     drivenByWorkflow:
       sessionQuery.data?.conversations.find((c) => c.id === conversation.id)
         ?.activeTurnSource === "workflow",
+    custody,
   });
   // A background pane must not clear the active conversation's question panel.
   const abortPrompt = useAbortPrompt(

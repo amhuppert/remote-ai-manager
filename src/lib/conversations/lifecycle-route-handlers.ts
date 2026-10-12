@@ -85,6 +85,7 @@ import {
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import {
   classifyRoutePrincipal,
   invalidTokenResponse,
@@ -92,6 +93,11 @@ import {
 } from "@/lib/agent-gateway/request-principal";
 
 const logger = createLogger("conversation-route-handlers");
+
+/** A deletion or archive refused because a conversation's background work could not be confirmed stopped. */
+function backgroundWorkRefused(error: BackgroundWorkUnstoppedError): Response {
+  return jsonError(error.message, error.statusCode, error.code, error.details);
+}
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -390,6 +396,8 @@ export function createConversationRouteHandlers(
       if (error instanceof ConversationDeletionConflictError) {
         return jsonError(error.message, 409);
       }
+      if (BackgroundWorkUnstoppedError.is(error))
+        return backgroundWorkRefused(error);
       const message =
         error instanceof Error
           ? error.message
@@ -513,6 +521,8 @@ export function createConversationRouteHandlers(
         parsed.value.archived,
       );
     } catch (err) {
+      if (BackgroundWorkUnstoppedError.is(err))
+        return backgroundWorkRefused(err);
       const message =
         err instanceof Error ? err.message : "Failed to update archive state";
       return jsonError(message, 500);
@@ -567,6 +577,8 @@ export function createConversationRouteHandlers(
           true,
         );
       } catch (err) {
+        if (BackgroundWorkUnstoppedError.is(err))
+          return backgroundWorkRefused(err);
         const message =
           err instanceof Error ? err.message : "Failed to archive conversation";
         return jsonError(message, 500);

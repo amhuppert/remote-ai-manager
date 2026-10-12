@@ -102,6 +102,19 @@ describe("custody loss", () => {
     expect(briefing.block?.match(/it was stopped/g)).toHaveLength(1);
   });
 
+  it("says a merge of the session stopped work that custody could not keep (design C5b §3.3)", async () => {
+    const { record, service } = recorderOverFixture();
+    await record({ identity, key: "turn-1", end: "merging", collected: true });
+
+    const briefing = await service.prepareRuntimeLossNotice({
+      recipient,
+      attemptId: "turn-2",
+    });
+    expect(briefing.block).toContain(
+      "cut short because the session is being merged",
+    );
+  });
+
   it("claims no termination it did not see: when the processes could not be confirmed stopped, only the person hears it, and nothing is re-run", async () => {
     const { record, service, transcript } = recorderOverFixture();
     await record({

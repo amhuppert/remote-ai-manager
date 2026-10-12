@@ -184,6 +184,8 @@ export const custodyEndSchema = z.enum([
   "timed_out",
   "interrupted",
   "handed_over",
+  /** Never opened: its session or conversation was closing to background work, so the runtime was released. */
+  "refused",
 ]);
 export type CustodyEnd = z.infer<typeof custodyEndSchema>;
 

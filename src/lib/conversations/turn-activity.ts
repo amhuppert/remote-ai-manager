@@ -13,12 +13,18 @@ import type { ConversationState } from "@/lib/conversations/schemas";
  * streaming in THIS tab (`sending`): the status has already flipped but a live
  * turn exists to abort. Workflow-driven turns are never stoppable from the
  * conversation header.
+ *
+ * Custody (background work the agent's runtime keeps between turns, design
+ * C5b §5) is stoppable whatever the row shows: it can hold with no turn
+ * running and no visible task, such as a continuation still owed.
  */
 export function canStopTurn(input: {
   sending: boolean;
   status: ConversationState["status"] | undefined;
   drivenByWorkflow: boolean;
+  /** Custody holds the conversation's runtime between turns. */
+  custody: boolean;
 }): boolean {
   if (input.drivenByWorkflow) return false;
-  return input.sending || input.status === "running";
+  return input.sending || input.status === "running" || input.custody;
 }

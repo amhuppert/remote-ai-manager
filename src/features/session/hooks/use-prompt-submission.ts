@@ -58,6 +58,8 @@ export interface UsePromptSubmissionArgs {
   sessionName: string;
   conversationId: string;
   conversations: SessionState["conversations"] | undefined;
+  /** Conversations whose runtime custody holds between turns: busy, though their rows read awaiting. */
+  custodyConversationIds?: readonly string[];
   sending: boolean;
   pendingImages: ImageAttachment[];
   promptTextRef: MutableRefObject<string>;
@@ -136,11 +138,14 @@ export interface UsePromptSubmissionResult {
   } | null;
 }
 
+const NO_CUSTODY: readonly string[] = [];
+
 export function usePromptSubmission({
   projectName,
   sessionName,
   conversationId,
   conversations,
+  custodyConversationIds = NO_CUSTODY,
   sending,
   pendingImages,
   promptTextRef,
@@ -303,6 +308,7 @@ export function usePromptSubmission({
     const busyOthers = findBusyOtherConversations(
       conversations,
       conversationId,
+      custodyConversationIds,
     );
     if (busyOthers.length > 0) {
       setPendingConcurrentSubmission({
@@ -333,6 +339,7 @@ export function usePromptSubmission({
     projectName,
     sessionName,
     conversations,
+    custodyConversationIds,
     checkpointMaintenanceHold,
     dispatchPrompt,
     suppressPendingPromptAutosaveAfterSubmit,

@@ -72,6 +72,20 @@ describe("findBusyOtherConversations", () => {
 
     expect(findBusyOtherConversations(conversations, "conv-1")).toEqual([]);
   });
+
+  it("counts a conversation whose background work custody holds between turns as busy (design C5b §5)", () => {
+    // Between turns its row reads awaiting, but the agent's background work may still edit files.
+    const kept = makeConversation({ id: "conv-2", status: "awaiting" });
+    const conversations = [
+      makeConversation({ id: "conv-1", status: "awaiting" }),
+      kept,
+      makeConversation({ id: "conv-3", status: "awaiting" }),
+    ];
+
+    expect(
+      findBusyOtherConversations(conversations, "conv-1", ["conv-2", "conv-1"]),
+    ).toEqual([kept]);
+  });
 });
 
 describe("deriveSessionStatusFromParts", () => {

@@ -12,6 +12,7 @@ import { useTddToggleMutation } from "@/lib/sessions/mutations";
 import { useSessionPageHandlers } from "@/features/session/hooks/use-session-page-handlers";
 import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecycle";
 import { canStopTurn } from "@/lib/conversations/turn-activity";
+import { useConversationCustody } from "@/lib/active-conversations/queries";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import { isWorkflowLaneRole } from "@/lib/conversations/schemas";
@@ -250,13 +251,16 @@ export default function ConversationWorkspace({
     clearQuestions: store.clearQuestions,
   });
 
-  // Suppress Stop when the active turn is workflow-driven (e.g. smart-merge's
-  // validation-fix task_run) so users can't abort background work from the
-  // conversation header — that button only stops the panel's user turn.
+  // Stop ends the conversation's own work: its running turn, or the background
+  // work custody keeps between turns. It is suppressed while a workflow drives
+  // the turn (e.g. smart-merge's validation-fix task_run), which the
+  // conversation header must not abort.
+  const custody = useConversationCustody(conversationId);
   const canStop = canStopTurn({
     sending: store.sending,
     status: activeConversation?.status,
     drivenByWorkflow: activeConversation?.activeTurnSource === "workflow",
+    custody,
   });
   const handleStopPrompt = useCallback(() => {
     if (store.sending) abortClient();

@@ -72,6 +72,7 @@ import {
 import { resolveProjectConversationRoute } from "./route-resolution";
 import { readConversationMessagesWithSeq as defaultReadConversationMessagesWithSeq } from "@/lib/prompt/transcript";
 import { createLogger, withTracing } from "@/lib/logging";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import {
   createProjectConversationRequestSchema,
   projectConversationOpenRequestSchema,
@@ -602,6 +603,8 @@ export function createProjectConversationRouteHandlers(
         parsed.value.archived,
       );
     } catch (err) {
+      if (BackgroundWorkUnstoppedError.is(err))
+        return jsonError(err.message, err.statusCode, err.code, err.details);
       const message =
         err instanceof Error ? err.message : "Failed to update archive state";
       return jsonError(message, 500);

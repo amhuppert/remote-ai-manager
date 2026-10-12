@@ -32,7 +32,10 @@ import {
   retargetChildrenToMain,
   applyFusedSessionDelete,
   deleteProjectRow,
+  getProjectConversations,
 } from "../state-store";
+import { storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import { createLogger, timed } from "../logging";
 import type { BulkSessionResult } from "@/lib/sessions/schemas";
 import { readRepoConfig } from "../projects/repo-config";
@@ -47,7 +50,10 @@ import { executeOptimisticWorkflow } from "./optimistic";
 import { defaultOptimisticDeps } from "./optimistic-production";
 import { stopConversationActor } from "@/lib/workflows/conversation/lifecycle";
 import { assertNoCurrentRun, type CurrentRun } from "@/lib/runs/session-guard";
-import { currentRuns } from "@/lib/supervision/handles";
+import {
+  closeCoreBackgroundWork,
+  currentRuns,
+} from "@/lib/supervision/handles";
 import {
   getTaskRunner as registryGetTaskRunner,
   prepareManagedSkillsCheckout as registryPrepareManagedSkillsCheckout,
@@ -268,6 +274,20 @@ export interface SessionDeps {
   }): Promise<void>;
   /** The runs working in a project, or in one of its sessions, that have not finished. */
   currentRuns(projectPath: string, sessionName?: string): readonly CurrentRun[];
+  /**
+   * Runs a deletion with its session or project closed to background work
+   * (design C5b §5): what its conversations kept running is stopped and
+   * confirmed collected first, and none opens until the deletion is done.
+   * Rejects with `BackgroundWorkUnstoppedError`, before the deletion runs,
+   * when that work could not be confirmed stopped.
+   */
+  closeBackgroundWork<T>(
+    scope: { projectPath: string; sessionName?: string },
+    commit: () => Promise<T>,
+    options: { end: "deleted"; stop: true },
+  ): Promise<T>;
+  /** The project's own conversations, which belong to no session. */
+  getProjectConversationIds(projectPath: string): Promise<string[]>;
 }
 
 // Built lazily so importing this module never opens the DB; the alignment
@@ -383,6 +403,12 @@ const defaultSessionDeps: SessionDeps = {
     await getAlignmentService().copyActiveCharter(input);
   },
   currentRuns,
+  closeBackgroundWork: closeCoreBackgroundWork,
+  async getProjectConversationIds(projectPath) {
+    return (await getProjectConversations(projectPath)).map(
+      (conversation) => conversation.id,
+    );
+  },
 };
 
 // ============================================================
@@ -436,6 +462,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     sweepLaneWorktrees,
     copyAlignmentCharterFromParent,
     currentRuns,
+    closeBackgroundWork,
+    getProjectConversationIds,
   } = deps;
 
   function assertProjectWasNotDeleted(
@@ -1156,6 +1184,21 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       "deleting this session",
     );
 
+    // Closed to background work until the session is gone: its conversations' work is
+    // confirmed stopped before anything is removed, and none starts meanwhile.
+    return closeBackgroundWork(
+      { projectPath, sessionName },
+      () => removeSession(projectPath, sessionName, session, expected),
+      { end: "deleted", stop: true },
+    );
+  }
+
+  async function removeSession(
+    projectPath: string,
+    sessionName: string,
+    session: SessionState,
+    expected: ExpectedSessionIncarnation | undefined,
+  ): Promise<DeleteSessionIfCurrentResult> {
     const result = await performSessionDeletionSideEffects(
       projectPath,
       sessionName,
@@ -1239,54 +1282,96 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
     const results: BulkSessionResult[] = [];
     const succeeded: string[] = [];
+    // Each removed session stays closed to background work until its rows are gone,
+    // which the batch's fused deletes do after every item's side effects.
+    let rowsGone: () => void = () => {};
+    const removed = new Promise<void>((resolve) => (rowsGone = resolve));
+    const closings: Promise<unknown>[] = [];
 
-    for (const sessionName of sessionNames) {
-      const session = await getSession(projectPath, sessionName);
-      if (!session) {
-        results.push({
-          sessionName,
-          success: false,
-          error: `Session "${sessionName}" not found in project`,
-        });
-        continue;
+    try {
+      for (const sessionName of sessionNames) {
+        const session = await getSession(projectPath, sessionName);
+        if (!session) {
+          results.push({
+            sessionName,
+            success: false,
+            error: `Session "${sessionName}" not found in project`,
+          });
+          continue;
+        }
+        try {
+          assertNoCurrentRun(
+            currentRuns(projectPath, sessionName),
+            "deleting this session",
+          );
+          await closedUntil(
+            { projectPath, sessionName },
+            () =>
+              performSessionDeletionSideEffects(
+                projectPath,
+                sessionName,
+                session,
+              ),
+            removed,
+            closings,
+          );
+          succeeded.push(sessionName);
+          results.push({ sessionName, success: true });
+        } catch (err) {
+          results.push({
+            sessionName,
+            success: false,
+            error: getErrorMessage(err),
+          });
+        }
       }
-      try {
-        assertNoCurrentRun(
-          currentRuns(projectPath, sessionName),
-          "deleting this session",
-        );
-        await performSessionDeletionSideEffects(
+
+      for (
+        let offset = 0;
+        offset < succeeded.length;
+        offset += FUSED_DELETE_SLICE_SIZE
+      ) {
+        await applyFusedDeleteMutation(
+          "bulkDeleteSessions",
           projectPath,
-          sessionName,
-          session,
+          succeeded.slice(offset, offset + FUSED_DELETE_SLICE_SIZE),
         );
-        succeeded.push(sessionName);
-        results.push({ sessionName, success: true });
-      } catch (err) {
-        results.push({
-          sessionName,
-          success: false,
-          error: getErrorMessage(err),
-        });
       }
-    }
-
-    for (
-      let offset = 0;
-      offset < succeeded.length;
-      offset += FUSED_DELETE_SLICE_SIZE
-    ) {
-      await applyFusedDeleteMutation(
-        "bulkDeleteSessions",
-        projectPath,
-        succeeded.slice(offset, offset + FUSED_DELETE_SLICE_SIZE),
-      );
+    } finally {
+      rowsGone();
+      await Promise.allSettled(closings);
     }
     for (const sessionName of succeeded) {
       await reconcileDeletedTicketSession(projectPath, sessionName);
     }
 
     return results;
+  }
+
+  /**
+   * Runs `work` with the scope closed to background work, and keeps it closed
+   * until `until` resolves: resolves once `work` is done (the closing still
+   * held, added to `held`), or rejects with the closing's refusal or the
+   * work's failure.
+   */
+  function closedUntil<T>(
+    scope: { projectPath: string; sessionName: string },
+    work: () => Promise<T>,
+    until: Promise<void>,
+    held: Promise<unknown>[],
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      held.push(
+        closeBackgroundWork(
+          scope,
+          async () => {
+            resolve(await work());
+            await until;
+          },
+          { end: "deleted", stop: true },
+        ).catch(reject),
+      );
+    });
   }
 
   function bulkDeleteSessions(
@@ -1316,6 +1401,64 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     }
     // Checked once, up front: the per-session deletions below log and carry on.
     assertNoCurrentRun(currentRuns(projectPath), "deleting this project");
+    // Closed to background work for the whole deletion: its conversations' work is
+    // confirmed stopped before anything is removed, and none starts meanwhile.
+    return closeBackgroundWork(
+      { projectPath },
+      () => removeProject(projectPath),
+      { end: "deleted", stop: true },
+    );
+  }
+
+  /**
+   * Retires a conversation the project's deletion removes. Background work it
+   * could not confirm stopped refuses the deletion; any other failure is
+   * logged, as a session's removal failure is.
+   */
+  async function retireForProjectDeletion(
+    projectPath: string,
+    storeSessionName: string,
+    conversationId: string,
+  ): Promise<void> {
+    try {
+      await deps.stopConversationActor(
+        projectPath,
+        storeSessionName,
+        conversationId,
+        "project_deletion",
+      );
+    } catch (err) {
+      if (BackgroundWorkUnstoppedError.is(err)) throw err;
+      logger.warn("project.delete.conversation_retire_failure", {
+        projectPath,
+        conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function removeProject(
+    projectPath: string,
+  ): Promise<DeleteProjectResult> {
+    // Every conversation of the project, its sessions' and its own, is retired before
+    // anything of it is removed, so a refusal leaves the project whole.
+    for (const { sessionName } of await getProjectSessionListItems(
+      projectPath,
+    )) {
+      const session = await getSession(projectPath, sessionName);
+      for (const conversation of session?.conversations ?? [])
+        await retireForProjectDeletion(
+          projectPath,
+          sessionName,
+          conversation.id,
+        );
+    }
+    for (const conversationId of await getProjectConversationIds(projectPath))
+      await retireForProjectDeletion(
+        projectPath,
+        storeSessionNameFromScopeRef({ scope: "project" }),
+        conversationId,
+      );
 
     const ticketDeletionSnapshot: TicketProjectDeletionSnapshot =
       await captureTicketProjectDeletion(projectPath);
@@ -1358,6 +1501,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         }
         sessionsRemoved += 1;
       } catch (err) {
+        // Processes that may still write: nothing more of the project may go.
+        if (BackgroundWorkUnstoppedError.is(err)) throw err;
         logger.warn("project.delete.session_remove_failure", {
           projectPath,
           sessionName,

@@ -1,3 +1,4 @@
+import { backgroundWorkRefusal } from "@/lib/workflows/merge/background-work-guard";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 import { createConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
@@ -760,6 +761,93 @@ describe("custody of a conversation's runtime between turns (design C5b)", () =>
       createConversationCoreRepo(fixture.db).getAttempt(lease.attemptId)
         ?.outcome,
     ).toEqual({ kind: "custody", end: "handed_over" });
+  });
+
+  it("tells the custody observer as custody opens and as Stop ends it", async () => {
+    const s = h.compose();
+    await keptAfterTurn(s);
+    expect(h.custodyChanges).toEqual([`${chat}:true`]);
+    expect(s.core.holdsCustody(chat)).toBe(true);
+
+    await s.core.stopConversation(chat).settled;
+    expect(h.custodyChanges).toEqual([`${chat}:true`, `${chat}:false`]);
+    expect(s.core.holdsCustody(chat)).toBe(false);
+  });
+
+  it("opens no custody while a merge delivers the session: the turn's runtime is released and the agent hears a merge stopped its work", async () => {
+    const s = h.compose();
+    h.custodyFence = "merging";
+    let opened: CustodyLease | null | undefined;
+    h.userTurn = async (input) => {
+      opened = input.custody.open(retained().runtime);
+      return done("Started the suite in the background.");
+    };
+    const sent = await s.core.sendUserMessage({
+      conversationId: chat,
+      text: "Run the suite in the background",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await quiesce(s);
+
+    expect(opened).toBeNull();
+    expect(h.custodyChanges).toEqual([]);
+    expect(h.custodyLosses).toEqual([expect.stringMatching(/:merging$/)]);
+  });
+
+  it("keeps refusing archive, merge and project deletion after a Stop that could not confirm the runtime collected, changing nothing", async () => {
+    const s = h.compose();
+    const held = retained();
+    held.runtime.close = async () => {
+      held.told.push("close");
+      throw new Error("the CLI did not exit");
+    };
+    held.runtime.closeFailure = () => "the CLI did not exit";
+    h.userTurn = async (input) => {
+      input.custody.open(held.runtime);
+      return done("Started the suite in the background.");
+    };
+    const sent = await s.core.sendUserMessage({
+      conversationId: chat,
+      text: "Run the suite in the background",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await sent.settled;
+    await quiesce(s);
+    await expect(s.core.stopConversation(chat).settled).rejects.toThrow();
+
+    const committed: string[] = [];
+    for (const scope of [
+      { projectPath: "/repo", sessionName: "session" },
+      { projectPath: "/repo", sessionName: "session" },
+      { projectPath: "/repo" },
+    ])
+      await expect(
+        s.core.closeBackgroundWork(
+          scope,
+          async () => {
+            committed.push(JSON.stringify(scope));
+          },
+          { end: "deleted", stop: true },
+        ),
+      ).rejects.toMatchObject({
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        details: { conversationId: chat },
+      });
+    expect(committed).toEqual([]);
+    expect(
+      backgroundWorkRefusal(
+        s.core
+          .backgroundWorkIn({ projectPath: "/repo", sessionName: "session" })
+          .map((work) => ({ ...work, conversationName: null })),
+        "merging this session",
+      ),
+    ).toMatchObject({
+      conversationId: chat,
+      message: expect.stringContaining("could not be confirmed stopped"),
+    });
   });
 
   it("after a crash during custody, boot records the runtime loss and settles custody interrupted; a second boot adds nothing", async () => {

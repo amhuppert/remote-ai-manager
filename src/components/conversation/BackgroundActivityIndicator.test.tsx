@@ -186,4 +186,33 @@ describe("BackgroundActivityIndicator", () => {
       screen.getByTestId("background-activity-indicator"),
     ).toHaveTextContent("last activity 3m ago");
   });
+
+  describe("background work custody holds with no visible task (design C5b §5)", () => {
+    it("still shows that the agent is working between turns", () => {
+      renderAt(<BackgroundActivityIndicator activity={null} custody visible />);
+      expect(
+        screen.getByTestId("background-activity-indicator").textContent,
+      ).toContain("agent still working between turns");
+    });
+
+    it("names the visible tasks when custody has them", () => {
+      renderAt(
+        <BackgroundActivityIndicator
+          activity={activity([task()])}
+          custody
+          visible
+        />,
+      );
+      expect(
+        screen.getByTestId("background-activity-indicator").textContent,
+      ).toContain("full regression suite");
+    });
+
+    it("renders nothing while a turn streams", () => {
+      const { container } = renderAt(
+        <BackgroundActivityIndicator activity={null} custody visible={false} />,
+      );
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
 });

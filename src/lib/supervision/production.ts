@@ -69,6 +69,13 @@ import { requestSubscriptionWakePass } from "@/lib/subscriptions/active-wait-pro
 import { composeSupervision, type Supervision } from "./supervision";
 import { publishEvent } from "@/lib/events/publication";
 import { createRunChangePublisher } from "@/lib/runs/events";
+import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
+import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
+import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
+import { createProjectConversationsRepo } from "@/lib/state-store/project-conversations-repo";
+import { createProjectsRepo } from "@/lib/state-store/projects-repo";
+import { publishConversationCustody } from "@/lib/conversations/background-custody";
+import { custodyFence } from "./custody-fence";
 
 /** A burst of commits within this window reaches clients as one change. */
 const RUN_CHANGE_COALESCE_MS = 200;
@@ -292,6 +299,33 @@ function productionCheckpointPorts(): CoreCheckpointPorts {
   };
 }
 
+let fenceReposCache:
+  | {
+      db: ReturnType<typeof getStateDb>;
+      repos: {
+        sessions: ReturnType<typeof createSessionsRepo>;
+        conversations: ReturnType<typeof createConversationsRepo>;
+        projectConversations: ReturnType<typeof createProjectConversationsRepo>;
+        projects: ReturnType<typeof createProjectsRepo>;
+      };
+    }
+  | undefined;
+/** The rows the custody fence reads synchronously, prepared once per database handle. */
+function fenceRepos() {
+  const db = getStateDb();
+  if (fenceReposCache?.db !== db)
+    fenceReposCache = {
+      db,
+      repos: {
+        sessions: createSessionsRepo(db),
+        conversations: createConversationsRepo(db),
+        projectConversations: createProjectConversationsRepo(db),
+        projects: createProjectsRepo(db),
+      },
+    };
+  return fenceReposCache.repos;
+}
+
 function composeProductionSupervision(): Supervision {
   const laneGit = createLaneGit({
     git: defaultGitClient,
@@ -340,6 +374,29 @@ function composeProductionSupervision(): Supervision {
       });
     },
     uptimeMs: () => process.uptime() * 1000,
+    custodyFence: (place) =>
+      custodyFence(place, {
+        session: (projectPath, sessionName) =>
+          fenceRepos().sessions.findByKey(projectPath, sessionName),
+        finalizingMerge: getFinalizingSessionMergeJob,
+        conversationArchived: ({ projectPath, sessionName, conversationId }) =>
+          (scopeRefFromStoreSessionName(sessionName).scope === "project"
+            ? fenceRepos().projectConversations.findByKey(
+                projectPath,
+                conversationId,
+              )
+            : fenceRepos().conversations.findById(conversationId)
+          )?.archived === true,
+        projectArchived: (projectPath) =>
+          fenceRepos().projects.findByRootPath(projectPath)?.archived === true,
+      }),
+    custodyChanged: (place, held) =>
+      publishConversationCustody({
+        projectName: getProjectDisplayName(place.projectPath),
+        sessionName: place.sessionName,
+        conversationId: place.conversationId,
+        custody: held,
+      }),
     queue: {
       // The core holds a debug session's queue; the conversation actor holds its own by state.
       claimNextTurnBatch: (input) =>

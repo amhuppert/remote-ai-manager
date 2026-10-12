@@ -37,6 +37,7 @@ import { createDirectLaneIntegrator } from "@/lib/workspace/testing/direct-lane-
 import type { WorkspaceExecutorDeps } from "@/lib/workspace/executor";
 import type { RunBoundary } from "@/lib/runs/schemas";
 import type { CustodyRow } from "@/lib/conversation-core/conversation-record";
+import type { CustodyRefusedEnd } from "@/lib/conversation-core/executor";
 import { composeSupervision, type Supervision } from "../supervision";
 
 const silent = {
@@ -185,6 +186,10 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     custodyRows: [] as Array<CustodyRow | null>,
     /** Runtime losses recorded for custodies, as `attempt:end`. */
     custodyLosses: [] as string[],
+    /** Why no custody may open now (a merge delivers the session); null when it may. */
+    custodyFence: null as CustodyRefusedEnd | null,
+    /** Custody beginning and ending, as `conversation:held`. */
+    custodyChanges: [] as string[],
     /** How long the server has been up, which bounds the restart fence. */
     uptimeMs: 60_000,
     /** How many evidence captures fail before they succeed again. */
@@ -288,6 +293,9 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
         async custodyLoss({ attemptId, end }) {
           harness.custodyLosses.push(`${attemptId}:${end}`);
         },
+        custodyFence: () => harness.custodyFence,
+        custodyChanged: (place, held) =>
+          harness.custodyChanges.push(`${place.conversationId}:${held}`),
         uptimeMs: () => harness.uptimeMs,
         userTurns: {
           async run(input) {

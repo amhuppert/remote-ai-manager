@@ -27,6 +27,9 @@ import {
   runCoreTask,
   retireCoreConversation,
   stopCoreConversation,
+  coreRuntimeConfiguration,
+  readCoreDesiredRuntimeConfiguration,
+  releaseCoreIdleRuntime,
 } from "@/lib/supervision/handles";
 
 type ProductionActorDependencies = Omit<
@@ -150,6 +153,9 @@ export function createProductionConversationManagerDependencies(): ConversationM
     isCoreOwnedConversation: coreOwnsConversation,
     stopCoreConversation,
     retireCoreConversation,
+    coreRuntimeConfiguration,
+    readCoreDesiredRuntimeConfiguration,
+    releaseCoreIdleRuntime,
     drainCoreConversation,
     coreQuestionCommand,
     coreDebugCommand,

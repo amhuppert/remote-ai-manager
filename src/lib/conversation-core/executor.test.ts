@@ -29,6 +29,7 @@ import {
   type RetainedRuntime,
   BACKGROUND_WORK_RUNNING,
 } from "./executor";
+import { BackgroundWorkUnstoppedError } from "./background-work";
 import type { CustodyRow } from "./conversation-record";
 import type { CustodyEnd } from "./schemas";
 import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
@@ -2129,6 +2130,14 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       segment(active: boolean) {
         segment = active;
       },
+      /** A later close collected its processes. */
+      confirmCollected() {
+        closeFailure = null;
+      },
+      /** Its processes are not confirmed stopped, as a release that could not close it leaves them. */
+      failCollection(failure: string) {
+        closeFailure = failure;
+      },
     };
   }
 
@@ -2966,6 +2975,642 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     uptime = 6_000;
     await newCore({ interactiveWorktree: worktreeOf }).recover();
     expect(admission.held()).toEqual([]);
+  });
+
+  describe("guards outside the conversation (design C5b §5)", () => {
+    const session = { projectPath: "/repo", sessionName: "session" };
+
+    /** A second conversation the core runs, in another session of the project. */
+    function otherSessionConversation(): void {
+      fixture.seedSession("/repo", "other");
+      createConversationsRepo(fixture.db).upsert(
+        "/repo",
+        "other",
+        makeConversationState({ id: "conv-o", role: null }),
+      );
+    }
+
+    /** A second conversation in the same session as `conv-u`. */
+    function sibling(conversationId = "conv-b"): void {
+      createConversationsRepo(fixture.db).upsert(
+        "/repo",
+        "session",
+        makeConversationState({ id: conversationId, role: null }),
+      );
+    }
+
+    /**
+     * A message to `conversationId` whose turn ends owing work: custody's answer
+     * at the turn's end, and the turn's own result (a runtime it released and
+     * could not collect, when `uncollected`).
+     */
+    async function turnOwing(
+      core: ConversationCore,
+      conversationId: string,
+      options: {
+        held?: ReturnType<typeof retained>;
+        uncollected?: string;
+        atEnd?: () => void;
+      } = {},
+    ) {
+      const held = options.held ?? retained();
+      const outcome: { lease: CustodyLease | null; turnAttempt: string } = {
+        lease: null,
+        turnAttempt: "",
+      };
+      nextUserResult = async (input) => {
+        outcome.turnAttempt = input.attemptId;
+        options.atEnd?.();
+        outcome.lease = input.custody.open(held.runtime);
+        return options.uncollected === undefined
+          ? ok()
+          : { ...ok(), runtimeUncollected: options.uncollected };
+      };
+      const sent = await core.sendUserMessage({
+        conversationId,
+        text: "Run the suite in the background",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      await sent.settled;
+      await core.conversationIdle(conversationId);
+      nextUserResult = async () => ok("Hi.");
+      return { ...outcome, held };
+    }
+
+    /** The attempt that owes a custody's loss, by the turn whose custody it was. */
+    const custodyOf = (turnAttempt: string) =>
+      repo().latestAttemptFor(`custody:${turnAttempt}`);
+
+    it("names the conversations of a project or session whose background work custody holds, and none whose turn only runs", async () => {
+      interactiveConversation();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      let finish: () => void = () => {};
+      nextUserResult = () =>
+        new Promise((resolve) => (finish = () => resolve(ok())));
+      const running = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Edit the file",
+        inputOrigin: "user",
+      });
+      if (running.kind !== "accepted") throw new Error(running.message);
+      await eventually(() => userCalls.length === 1);
+      // A running turn is not background work: a merge refuses only custody.
+      expect(core.backgroundWorkIn({ projectPath: "/repo" })).toEqual([]);
+      expect(core.holdsCustody("conv-u")).toBe(false);
+      finish();
+      await running.settled;
+      await core.conversationIdle("conv-u");
+
+      const { lease } = await custodyAfterTurn(core);
+      const held = [{ conversationId: "conv-u", unconfirmed: null }];
+      expect(core.backgroundWorkIn(session)).toEqual(held);
+      expect(core.backgroundWorkIn({ projectPath: "/repo" })).toEqual(held);
+      expect(
+        core.backgroundWorkIn({
+          ...session,
+          conversationId: "conv-u",
+        }),
+      ).toEqual(held);
+      expect(
+        core.backgroundWorkIn({ projectPath: "/repo", sessionName: "other" }),
+      ).toEqual([]);
+      expect(core.backgroundWorkIn({ projectPath: "/elsewhere" })).toEqual([]);
+      expect(core.holdsCustody("conv-u")).toBe(true);
+
+      lease.settled();
+      await eventually(() => !core.holdsCustody("conv-u"));
+      expect(core.backgroundWorkIn({ projectPath: "/repo" })).toEqual([]);
+    });
+
+    it("keeps naming background work whose Stop could not confirm its runtime collected, until a later close collects it", async () => {
+      interactiveConversation();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const { held } = await custodyAfterTurn(
+        core,
+        retained(async () => {
+          throw new Error("the CLI did not exit");
+        }),
+      );
+
+      await expect(core.stopConversation("conv-u").settled).rejects.toThrow();
+      // Stop is over, so nothing shows custody; what guards the session still sees it.
+      expect(core.holdsCustody("conv-u")).toBe(false);
+      expect(core.backgroundWorkIn(session)).toEqual([
+        { conversationId: "conv-u", unconfirmed: "the CLI did not exit" },
+      ]);
+
+      held.confirmCollected();
+      expect(core.backgroundWorkIn(session)).toEqual([]);
+    });
+
+    it("refuses archive and deletion again on every retry while that runtime stays unconfirmed, changing nothing", async () => {
+      interactiveConversation();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      await custodyAfterTurn(
+        core,
+        retained(async () => {
+          throw new Error("the CLI did not exit");
+        }),
+      );
+      await expect(core.stopConversation("conv-u").settled).rejects.toThrow();
+
+      const commits: string[] = [];
+      for (const attempt of [1, 2]) {
+        const archived = core.closeBackgroundWork(
+          session,
+          async () => {
+            commits.push(`archive:${attempt}`);
+          },
+          { end: "archived", stop: true },
+        );
+        await expect(archived).rejects.toBeInstanceOf(
+          BackgroundWorkUnstoppedError,
+        );
+        await expect(archived).rejects.toMatchObject({
+          details: { conversationId: "conv-u" },
+        });
+      }
+      const disposed: string[] = [];
+      await expect(
+        core.retireConversation("conv-u", async () => {
+          disposed.push("dispose");
+        }),
+      ).rejects.toBeInstanceOf(BackgroundWorkUnstoppedError);
+      expect(commits).toEqual([]);
+      expect(disposed).toEqual([]);
+    });
+
+    it("opens no custody once a merge delivers the session: the runtime is released, then the agent and the person hear a merge stopped the work, and custody's attempt settles refused", async () => {
+      interactiveConversation();
+      let closed: "merging" | null = null;
+      const asked: string[] = [];
+      const order: string[] = [];
+      const core = newCore({
+        interactiveWorktree: worktreeOf,
+        custodyFence(place) {
+          asked.push(`${place.projectPath}:${place.sessionName}`);
+          return closed;
+        },
+        async custodyLoss({ attemptId, end, collected }) {
+          order.push("loss");
+          losses.push(`${attemptId}:${end}${collected ? "" : ":unconfirmed"}`);
+        },
+      });
+      const { lease, turnAttempt } = await turnOwing(core, "conv-u", {
+        // The merge starts delivering while the turn runs: read at custody's insert.
+        atEnd: () => {
+          closed = "merging";
+          order.push("released");
+        },
+      });
+
+      expect(lease).toBeNull();
+      expect(asked).toEqual(["/repo:session"]);
+      expect(order).toEqual(["released", "loss"]);
+      const owed = custodyOf(turnAttempt);
+      expect(losses).toEqual([`${owed?.attemptId}:merging`]);
+      expect(owed).toMatchObject({
+        state: "settled",
+        outcome: { kind: "custody", end: "refused" },
+      });
+      expect(core.holdsCustody("conv-u")).toBe(false);
+      expect(admission.held()).toEqual([]);
+    });
+
+    it("owes a merge-refused custody's loss while its runtime is unconfirmed, keeps it as background work, and records it once collection is confirmed", async () => {
+      interactiveConversation();
+      const real = realLossRecorder();
+      const core = newCore({
+        custodyFence: () => "merging",
+        custodyLoss: async (input) => {
+          losses.push(
+            `${input.attemptId}:${input.end}${input.collected ? "" : ":unconfirmed"}`,
+          );
+          await real.custodyLoss(input);
+        },
+      });
+      const { held, turnAttempt } = await turnOwing(core, "conv-u", {
+        uncollected: "the CLI did not exit",
+      });
+      const owedId = custodyOf(turnAttempt)?.attemptId;
+      held.failCollection("the CLI did not exit");
+
+      expect(losses).toEqual([`${owedId}:merging:unconfirmed`]);
+      expect(custodyOf(turnAttempt)?.state).toBe("admitted");
+      expect(await real.recovery()).toBeNull();
+      expect(core.backgroundWorkIn(session)).toEqual([
+        { conversationId: "conv-u", unconfirmed: "the CLI did not exit" },
+      ]);
+
+      held.confirmCollected();
+      const next = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Carry on",
+        inputOrigin: "user",
+      });
+      if (next.kind !== "accepted") throw new Error(next.message);
+      expect(await next.settled).toMatchObject({ status: "succeeded" });
+      expect(losses).toEqual([
+        `${owedId}:merging:unconfirmed`,
+        `${owedId}:merging`,
+      ]);
+      expect(custodyOf(turnAttempt)).toMatchObject({
+        state: "settled",
+        outcome: { kind: "custody", end: "refused" },
+      });
+      expect(
+        (await real.recovery())?.match(/the session is being merged/g),
+      ).toHaveLength(1);
+    });
+
+    it("records a merge-refused custody's loss whose write failed at the next message, or else at the next boot, once", async () => {
+      interactiveConversation();
+      const core = newCore({ custodyFence: () => "merging" });
+      lossFailures = 1;
+      const { turnAttempt } = await turnOwing(core, "conv-u");
+      const owedId = custodyOf(turnAttempt)?.attemptId;
+      expect(losses).toEqual([]);
+      expect(custodyOf(turnAttempt)?.state).toBe("admitted");
+
+      // Without a next message, the next boot records it.
+      await newCore().recover();
+      expect(losses).toEqual([`${owedId}:interrupted`]);
+      expect(custodyOf(turnAttempt)?.state).toBe("settled");
+
+      lossFailures = 1;
+      const second = await turnOwing(core, "conv-u");
+      const secondId = custodyOf(second.turnAttempt)?.attemptId;
+      const next = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Carry on",
+        inputOrigin: "user",
+      });
+      if (next.kind !== "accepted") throw new Error(next.message);
+      await next.settled;
+      expect(losses).toEqual([`${owedId}:interrupted`, `${secondId}:merging`]);
+      expect(custodyOf(second.turnAttempt)).toMatchObject({
+        state: "settled",
+        outcome: { kind: "custody", end: "refused" },
+      });
+    });
+
+    it("closes a session to background work: stops its custody, refuses custody that tries to open meanwhile, commits, and opens again afterwards", async () => {
+      interactiveConversation();
+      sibling();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      let collect: () => void = () => {};
+      const a = await custodyAfterTurn(
+        core,
+        retained(() => new Promise((resolve) => (collect = resolve))),
+      );
+
+      const seen: string[] = [];
+      const closing = core.closeBackgroundWork(
+        session,
+        async () => {
+          seen.push(
+            `commit a=${core.holdsCustody("conv-u")} b=${core.holdsCustody("conv-b")}`,
+          );
+          return "archived";
+        },
+        { end: "archived", stop: true },
+      );
+      await tick();
+      expect(a.held.told).toEqual(["close"]);
+      // B's turn ends owing work while A's close is pending: no custody escapes the archive.
+      const b = await turnOwing(core, "conv-b");
+      expect(b.lease).toBeNull();
+      const bOwed = custodyOf(b.turnAttempt)?.attemptId;
+      expect(losses).toContain(`${bOwed}:archived`);
+
+      collect();
+      expect(await closing).toBe("archived");
+      expect(seen).toEqual(["commit a=false b=false"]);
+      expect(core.backgroundWorkIn(session)).toEqual([]);
+
+      // Released once the commit is over.
+      expect((await turnOwing(core, "conv-b")).lease).not.toBeNull();
+    });
+
+    /**
+     * A's custody closes on demand while B's turn ends owing work: refused by the
+     * closing, B's runtime is still being released when A's close completes.
+     */
+    async function closingWithPendingRelease(
+      core: ConversationCore,
+      bRelease: CoreTurnResult,
+    ) {
+      let collectA: () => void = () => {};
+      await custodyAfterTurn(
+        core,
+        retained(() => new Promise((resolve) => (collectA = resolve))),
+      );
+      const commits: string[] = [];
+      const closing = core.closeBackgroundWork(
+        session,
+        async () => {
+          commits.push(
+            `commit ${JSON.stringify(core.backgroundWorkIn(session))}`,
+          );
+        },
+        { end: "archived", stop: true },
+      );
+      await tick();
+      let releaseB: () => void = () => {};
+      let refused: CustodyLease | null | undefined;
+      const heldB = retained();
+      nextUserResult = async (input) => {
+        refused = input.custody.open(heldB.runtime);
+        await new Promise<void>((resolve) => (releaseB = resolve));
+        // A release that could not close the runtime leaves the host's failure behind.
+        if (bRelease.runtimeUncollected !== undefined)
+          heldB.failCollection(bRelease.runtimeUncollected);
+        return bRelease;
+      };
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-b",
+        text: "Run the suite in the background",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      await eventually(() => refused !== undefined);
+      expect(refused).toBeNull();
+      // Refused, its collection still pending: background work for every guard meanwhile.
+      expect(core.backgroundWorkIn(session)).toContainEqual({
+        conversationId: "conv-b",
+        unconfirmed: null,
+      });
+      collectA();
+      await tick();
+      expect(commits).toEqual([]);
+      releaseB();
+      await sent.settled;
+      return { closing, commits };
+    }
+
+    it("waits for a refused custody's release before an archive commits, and refuses when that release cannot be collected", async () => {
+      interactiveConversation();
+      sibling();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const { closing, commits } = await closingWithPendingRelease(core, {
+        ...ok(),
+        runtimeUncollected: "the CLI did not exit",
+      });
+
+      await expect(closing).rejects.toMatchObject({
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        details: { conversationId: "conv-b" },
+      });
+      expect(commits).toEqual([]);
+    });
+
+    it("commits the archive once a refused custody's release is collected", async () => {
+      interactiveConversation();
+      sibling();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const { closing, commits } = await closingWithPendingRelease(core, ok());
+
+      await closing;
+      expect(commits).toEqual(["commit []"]);
+      expect(core.backgroundWorkIn(session)).toEqual([]);
+    });
+
+    it("lets marking merged read a refused custody's release only once it settled, so the read sees it unconfirmed", async () => {
+      interactiveConversation();
+      const core = newCore({
+        interactiveWorktree: worktreeOf,
+        // A merge is delivering the session: the turn's custody is refused at its end.
+        custodyFence: () => "merging",
+      });
+      const held = retained();
+      let release: () => void = () => {};
+      let opened = false;
+      nextUserResult = async (input) => {
+        input.custody.open(held.runtime);
+        opened = true;
+        await new Promise<void>((resolve) => (release = resolve));
+        held.failCollection("the CLI did not exit");
+        return { ...ok(), runtimeUncollected: "the CLI did not exit" };
+      };
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Run the suite in the background",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      await eventually(() => opened);
+
+      const reads: string[] = [];
+      const marking = core.closeBackgroundWork(
+        session,
+        async () => {
+          reads.push(JSON.stringify(core.backgroundWorkIn(session)));
+        },
+        { end: "merged", stop: false },
+      );
+      await tick();
+      expect(reads).toEqual([]);
+      release();
+      await sent.settled;
+      await marking;
+      expect(reads).toEqual([
+        JSON.stringify([
+          { conversationId: "conv-u", unconfirmed: "the CLI did not exit" },
+        ]),
+      ]);
+    });
+
+    it("fences only new custody through a commit that keeps existing custody (marking a session merged), and releases the fence even when the commit fails", async () => {
+      interactiveConversation();
+      sibling();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const a = await custodyAfterTurn(core);
+
+      let write: () => void = () => {};
+      const marking = core.closeBackgroundWork(
+        session,
+        async () => {
+          // The caller reads what holds inside its commit, under the fence.
+          expect(core.backgroundWorkIn(session)).toEqual([
+            { conversationId: "conv-u", unconfirmed: null },
+          ]);
+          await new Promise<void>((resolve) => (write = resolve));
+          throw new Error("the finished flag could not be written");
+        },
+        { end: "merged", stop: false },
+      );
+      await tick();
+      // Existing custody is the caller's to refuse, not the fence's to stop.
+      expect(a.held.told).toEqual([]);
+      const b = await turnOwing(core, "conv-b");
+      expect(b.lease).toBeNull();
+      expect(losses).toContain(`${custodyOf(b.turnAttempt)?.attemptId}:merged`);
+
+      write();
+      await expect(marking).rejects.toThrow("could not be written");
+      expect((await turnOwing(core, "conv-b")).lease).not.toBeNull();
+    });
+
+    it("refuses the closing before its commit when a stopped custody cannot be collected, and releases the fence", async () => {
+      interactiveConversation();
+      sibling();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      await custodyAfterTurn(
+        core,
+        retained(async () => {
+          throw new Error("the CLI did not exit");
+        }),
+      );
+      const commits: string[] = [];
+
+      await expect(
+        core.closeBackgroundWork(
+          session,
+          async () => {
+            commits.push("commit");
+          },
+          { end: "deleted", stop: true },
+        ),
+      ).rejects.toMatchObject({
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        details: { conversationId: "conv-u" },
+        message: expect.stringContaining("the CLI did not exit"),
+      });
+      expect(commits).toEqual([]);
+      expect((await turnOwing(core, "conv-b")).lease).not.toBeNull();
+    });
+
+    it("refuses a session's deletion before retiring any of its conversations when the second's collection fails, so the first still takes a message", async () => {
+      interactiveConversation();
+      sibling();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const a = await custodyAfterTurn(core);
+      await turnOwing(core, "conv-b", {
+        held: retained(async () => {
+          throw new Error("the CLI did not exit");
+        }),
+      });
+
+      await expect(
+        core.closeBackgroundWork(
+          session,
+          async () => {
+            await core.retireConversation("conv-u");
+            await core.retireConversation("conv-b");
+          },
+          { end: "deleted", stop: true },
+        ),
+      ).rejects.toMatchObject({ details: { conversationId: "conv-b" } });
+      expect(a.held.told).toEqual(["close", "released:stopped"]);
+
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Still here?",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    });
+
+    it("refuses the retirement without withdrawing queued input or retiring the conversation, when custody cannot be collected", async () => {
+      interactiveConversation();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const { held } = await custodyAfterTurn(
+        core,
+        retained(async () => {
+          throw new Error("the CLI did not exit");
+        }),
+      );
+      repo().insertMailboxIfAbsent({
+        cause: "queued-1",
+        conversationId: "conv-u",
+        requester: null,
+        request: {
+          kind: "user_message",
+          text: "Queued meanwhile",
+          inputOrigin: "user",
+        },
+        permit: null,
+        state: "queued",
+        attemptId: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const retiring = core.retireConversation("conv-u", async () => {
+        held.told.push("dispose");
+      });
+      await expect(retiring).rejects.toBeInstanceOf(
+        BackgroundWorkUnstoppedError,
+      );
+      await expect(retiring).rejects.toMatchObject({
+        details: { conversationId: "conv-u" },
+        message: expect.stringContaining("the CLI did not exit"),
+      });
+      expect(held.told).toEqual(["close", "released:stopped"]);
+      expect(repo().getMailbox("queued-1")?.state).toBe("queued");
+      expect(notStarted).toEqual([]);
+      // Its processes may still write: the worktree stays held for them.
+      expect(
+        admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
+      ).toBeNull();
+    });
+
+    it("refuses the retirement with the typed refusal when disposing of the runtime cannot close it", async () => {
+      interactiveConversation();
+      const core = newCore();
+      await expect(
+        core.retireConversation("conv-u", async () => {
+          throw new Error("the runtime could not be closed");
+        }),
+      ).rejects.toBeInstanceOf(BackgroundWorkUnstoppedError);
+    });
+
+    it("tells observers custody holds as it opens, and no longer as it ends or hands the runtime over", async () => {
+      interactiveConversation();
+      const changes: string[] = [];
+      const core = newCore({
+        interactiveWorktree: worktreeOf,
+        custodyChanged: (place, held) =>
+          changes.push(
+            `${place.projectPath}:${place.sessionName}:${place.conversationId}:${held}`,
+          ),
+      });
+      const first = await custodyAfterTurn(core);
+      expect(changes).toEqual(["/repo:session:conv-u:true"]);
+      first.lease.settled();
+      await eventually(() => changes.length === 2);
+      expect(changes[1]).toBe("/repo:session:conv-u:false");
+
+      changes.length = 0;
+      await custodyAfterTurn(core);
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "And then?",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      await sent.settled;
+      expect(changes).toEqual([
+        "/repo:session:conv-u:true",
+        "/repo:session:conv-u:false",
+      ]);
+    });
+
+    it("leaves custody elsewhere alone", async () => {
+      interactiveConversation();
+      otherSessionConversation();
+      const core = newCore({ interactiveWorktree: worktreeOf });
+      const { held } = await custodyAfterTurn(core);
+      await core.closeBackgroundWork(
+        { projectPath: "/repo", sessionName: "other" },
+        async () => {},
+        { end: "archived", stop: true },
+      );
+      expect(held.told).toEqual([]);
+      expect(core.holdsCustody("conv-u")).toBe(true);
+    });
   });
 });
 

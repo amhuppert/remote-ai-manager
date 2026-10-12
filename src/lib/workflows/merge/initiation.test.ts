@@ -10,6 +10,7 @@ describe("merge initiation", () => {
       surface: "merge-command",
       readActiveExecution: async () => null,
       readCurrentRuns: () => [],
+      readBackgroundWork: () => [],
       association: {
         resolve: () => ({
           kind: "linked",
@@ -63,6 +64,7 @@ it("links an unlaunched execution directly to its delivery continuation review",
     surface: "merge-command",
     readActiveExecution: async () => null,
     readCurrentRuns: () => [],
+    readBackgroundWork: () => [],
     association: {
       resolve: () => ({
         kind: "refused",
@@ -122,6 +124,7 @@ describe("a session one of whose runs is not finished", () => {
         projectPath === "/project" && sessionName === "session"
           ? [{ runId: "run-1", sessionName: "session", progress: "paused" }]
           : [],
+      readBackgroundWork: () => [],
       ...noDelivery,
     });
 
@@ -140,9 +143,107 @@ describe("a session one of whose runs is not finished", () => {
       surface: "merge-route",
       readActiveExecution: async () => null,
       readCurrentRuns: () => [],
+      readBackgroundWork: () => [],
       ...noDelivery,
     });
 
     expect(result).toEqual({ admitted: true });
+  });
+});
+
+describe("a session one of whose conversations keeps background work running (design C5b §5)", () => {
+  const noDelivery = {
+    association: { resolve: () => ({ kind: "none" as const }) },
+    gate: {
+      async evaluate(): Promise<never> {
+        throw new Error("no delivery is associated");
+      },
+    },
+  };
+
+  it("refuses the merge, naming the conversation and saying to stop it or wait", async () => {
+    const result = await evaluateMergeInitiation({
+      projectPath: "/project",
+      sessionName: "session",
+      surface: "merge-route",
+      readActiveExecution: async () => null,
+      readCurrentRuns: () => [],
+      readBackgroundWork: (projectPath, sessionName) =>
+        projectPath === "/project" && sessionName === "session"
+          ? [
+              {
+                conversationId: "conv-1",
+                conversationName: "Suite runner",
+                unconfirmed: null,
+              },
+              {
+                conversationId: "conv-2",
+                conversationName: null,
+                unconfirmed: null,
+              },
+            ]
+          : [],
+      ...noDelivery,
+    });
+
+    expect(result).toMatchObject({
+      admitted: false,
+      refusal: { code: "BACKGROUND_WORK_RUNNING", conversationId: "conv-1" },
+    });
+    if (result.admitted) return;
+    expect(result.refusal.message).toContain('conversation "Suite runner"');
+    expect(result.refusal.message).toContain("1 other conversation");
+    expect(result.refusal.message).toMatch(/stop it .* or wait/i);
+  });
+
+  it("names a conversation without a name by its id", async () => {
+    const result = await evaluateMergeInitiation({
+      projectPath: "/project",
+      sessionName: "session",
+      surface: "merge-command",
+      readActiveExecution: async () => null,
+      readCurrentRuns: () => [],
+      readBackgroundWork: () => [
+        { conversationId: "conv-2", conversationName: null, unconfirmed: null },
+      ],
+      ...noDelivery,
+    });
+
+    if (result.admitted) throw new Error("admitted");
+    expect(result.refusal.message).toContain("conversation conv-2");
+  });
+});
+
+describe("a session whose conversation's background work could not be confirmed stopped (design C5b §5)", () => {
+  it("refuses the merge, saying the processes are unconfirmed and how to collect them", async () => {
+    const result = await evaluateMergeInitiation({
+      projectPath: "/project",
+      sessionName: "session",
+      surface: "merge-route",
+      readActiveExecution: async () => null,
+      readCurrentRuns: () => [],
+      readBackgroundWork: () => [
+        {
+          conversationId: "conv-1",
+          conversationName: "Suite runner",
+          unconfirmed: "the CLI did not exit",
+        },
+      ],
+      association: { resolve: () => ({ kind: "none" as const }) },
+      gate: {
+        async evaluate(): Promise<never> {
+          throw new Error("no delivery is associated");
+        },
+      },
+    });
+
+    if (result.admitted) throw new Error("admitted");
+    expect(result.refusal).toMatchObject({
+      code: "BACKGROUND_WORK_RUNNING",
+      conversationId: "conv-1",
+    });
+    expect(result.refusal.message).toContain("could not be confirmed stopped");
+    expect(result.refusal.message).toContain("the CLI did not exit");
+    expect(result.refusal.message).toMatch(/restart the server/i);
   });
 });

@@ -49,6 +49,7 @@ import type {
 } from "../composer/UnifiedComposer";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
 import { canStopTurn } from "@/lib/conversations/turn-activity";
+import { useConversationCustody } from "@/lib/active-conversations/queries";
 import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/useConversationSpawnCards";
 import { useOrderedConversationHotkeys } from "@/hooks/use-ordered-conversation-hotkeys";
 import {
@@ -663,6 +664,7 @@ export default function ProjectCockpit({
     () => (activeTabId !== null ? conversationTurnKey(activeTabId) : null),
     [activeTabId],
   );
+  const custody = useConversationCustody(activeTabId ?? "");
   const canStop = canStopTurn({
     sending: sender.isSending(activeTurnKey),
     status: activeConversation?.status,
@@ -670,6 +672,7 @@ export default function ProjectCockpit({
     // project turn is workflow-driven; reading the field keeps the gate shared
     // rather than forking a project-only rule.
     drivenByWorkflow: activeConversation?.activeTurnSource === "workflow",
+    custody: activeTabId !== null && custody,
   });
   const abortTurn = sender.abort;
   const handleStop = useCallback(() => {

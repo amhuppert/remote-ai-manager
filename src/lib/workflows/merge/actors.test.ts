@@ -193,6 +193,7 @@ function makePublishDeps(
     getActiveGraphWorkflowExecution:
       overrides.getActiveGraphWorkflowExecution ?? vi.fn(async () => null),
     currentRuns: overrides.currentRuns ?? (() => []),
+    backgroundWork: overrides.backgroundWork ?? (() => []),
     reconcileTicketSessionLifecycle:
       overrides.reconcileTicketSessionLifecycle ?? vi.fn(async () => {}),
     finalizeSessionMemory:
@@ -314,6 +315,47 @@ describe("runPublish", () => {
     expect(events).toEqual([
       "lock-acquired",
       `runs:${basePublishInput.projectPath}:${basePublishInput.sessionName}`,
+      "lock-released",
+    ]);
+  });
+
+  it("does not publish a session while one of its conversations keeps background work running, deciding inside the project lock", async () => {
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const setFinished = vi.fn(async () => {});
+    const events: string[] = [];
+    const deps = makePublishDeps({
+      publishPreparedMerge: publish,
+      setSessionFinished: setFinished,
+      backgroundWork: (projectPath, sessionName) => {
+        events.push(`background:${projectPath}:${sessionName}`);
+        return [
+          {
+            conversationId: "conv-1",
+            conversationName: "Suite runner",
+            unconfirmed: null,
+          },
+        ];
+      },
+      acquireProjectLock: vi.fn(() => {
+        events.push("lock-acquired");
+        return () => events.push("lock-released");
+      }),
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toMatchObject({ status: "failed" });
+    const error = out.status === "failed" ? out.error : "";
+    expect(error).toContain('conversation "Suite runner"');
+    expect(error).toMatch(/stop it .* or wait/i);
+    expect(publish).not.toHaveBeenCalled();
+    expect(setFinished).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      "lock-acquired",
+      `background:${basePublishInput.projectPath}:${basePublishInput.sessionName}`,
       "lock-released",
     ]);
   });

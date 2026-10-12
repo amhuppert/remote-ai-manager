@@ -1,3 +1,8 @@
+import type {
+  HostedConversation,
+  RuntimeHostDeps,
+  RuntimeRequirements,
+} from "../runtime-host";
 import type { ConversationTurnDependencies } from "./dependencies";
 import type { ExecutePromptInput } from "./types";
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
@@ -242,5 +247,51 @@ export async function prepareRuntimeInstructions(
   return {
     ...projection,
     sessionInstructions: projection.repeatableInstructions,
+  };
+}
+
+/**
+ * The runtime host's two instruction readers: `instructions` prepares a
+ * turn's runtime (registering the session's focus memory first), and
+ * `readInstructions` reads the same composition at rest for a reader outside
+ * a turn, the memory index preview (design C5b §5), writing nothing.
+ */
+export function createRuntimeInstructionReaders(
+  deps: RuntimeInstructionDependencies,
+): Pick<RuntimeHostDeps, "instructions" | "readInstructions"> {
+  const inputOf = (
+    conversation: HostedConversation,
+    selection: RuntimeRequirements["instructionSelection"],
+  ) => ({
+    projectPath: conversation.projectPath,
+    worktreePath: conversation.worktreePath,
+    target: conversation.target,
+    turn: selection,
+  });
+  return {
+    async instructions(conversation, selection) {
+      const prepared = await prepareRuntimeInstructions(
+        deps,
+        inputOf(conversation, selection),
+        conversation.profile,
+      );
+      return {
+        sessionInstructions: prepared.sessionInstructions,
+        alignmentVersion: prepared.alignmentVersion,
+        alignmentEligible: prepared.alignmentEligible,
+      };
+    },
+    async readInstructions(conversation, selection) {
+      const read = await readRuntimeInstructions(
+        deps,
+        inputOf(conversation, selection),
+        conversation.profile,
+      );
+      return {
+        sessionInstructions: read.repeatableInstructions,
+        alignmentVersion: read.alignmentVersion,
+        alignmentEligible: read.alignmentEligible,
+      };
+    },
   };
 }

@@ -165,6 +165,13 @@ function harness(options: { owedWork?: boolean } = {}) {
         alignmentEligible: false,
       };
     },
+    async readInstructions() {
+      return {
+        sessionInstructions: [],
+        alignmentVersion: null,
+        alignmentEligible: false,
+      };
+    },
     async tooling() {
       return { overrides: {} };
     },

@@ -966,6 +966,31 @@ export type ConversationBackgroundActivityEvent = z.infer<
   typeof conversationBackgroundActivityEventSchema
 >;
 
+/**
+ * Custody of a conversation's runtime began (`custody: true`) or ended (design
+ * C5b §5): background work Stop ends, which may hold with no visible task.
+ * Never persisted: custody does not outlive the server.
+ */
+export const conversationCustodyEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("conversation-custody"),
+    ...sessionEventIdentity,
+    conversationId: z.string().min(1),
+    custody: z.boolean(),
+  }),
+  z
+    .object({
+      type: z.literal("conversation-custody"),
+      ...projectEventIdentity,
+      conversationId: z.string().min(1),
+      custody: z.boolean(),
+    })
+    .strict(),
+]);
+export type ConversationCustodyEvent = z.infer<
+  typeof conversationCustodyEventSchema
+>;
+
 export const messageAppendedEventSchema = z.discriminatedUnion("scope", [
   z.object({
     type: z.literal("message-appended"),

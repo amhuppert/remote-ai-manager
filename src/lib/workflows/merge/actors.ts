@@ -31,6 +31,10 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { evaluateGraphWorkflowSessionDelivery } from "@/lib/workflow-graph/lifecycle-classifier";
 import { currentRunRefusal, type CurrentRun } from "@/lib/runs/session-guard";
+import {
+  backgroundWorkRefusal,
+  type SessionBackgroundWork,
+} from "./background-work-guard";
 
 const logger = createLogger("smart-merge-actors");
 
@@ -591,6 +595,11 @@ export interface PublishActorDeps {
   > | null>;
   /** The session's runs that have not finished; finishing the session waits for every one. */
   currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
+  /** The session's conversations whose background work custody holds between turns; finishing the session waits for each. */
+  backgroundWork(
+    projectPath: string,
+    sessionName: string,
+  ): readonly SessionBackgroundWork[];
   reconcileTicketSessionLifecycle(input: {
     projectPath: string;
     sessionName: string;
@@ -729,6 +738,18 @@ export async function runPublish(
           runProgress: runRefusal.progress,
         });
         return { status: "failed", error: runRefusal.message };
+      }
+      const workRefusal = backgroundWorkRefusal(
+        deps.backgroundWork(input.projectPath, input.sessionName),
+        "merging this session",
+      );
+      if (workRefusal !== null) {
+        logger.warn("publishActor.background_work_refused", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: workRefusal.conversationId,
+        });
+        return { status: "failed", error: workRefusal.message };
       }
     }
 
@@ -924,7 +945,8 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
     const { reconcileTicketSessionLifecycle } =
       await import("@/lib/tickets/lifecycle");
     const { finalizeSessionMemory } = await import("@/lib/memory/session-end");
-    const { currentRuns } = await import("@/lib/supervision/handles");
+    const { currentRuns, sessionBackgroundWork } =
+      await import("@/lib/supervision/handles");
 
     return runPublish(
       {
@@ -941,6 +963,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
         setSessionFinished,
         getActiveGraphWorkflowExecution,
         currentRuns,
+        backgroundWork: sessionBackgroundWork,
         reconcileTicketSessionLifecycle,
         finalizeSessionMemory,
         retargetOrphanedChildren,

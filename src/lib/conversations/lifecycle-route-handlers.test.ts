@@ -14,6 +14,7 @@ import { makeConversationState } from "@/lib/conversations/testing/conversation-
 import type { SessionState } from "@/lib/sessions/schemas";
 import { ConversationDeletionConflictError } from "@/lib/conversations/service";
 import { conversationDeletedEventSchema } from "@/lib/conversations/schemas";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
@@ -780,5 +781,115 @@ describe("PATCH_ARCHIVE — conversation-archived broadcast", () => {
     expect(response.status).toBe(400);
     expect(deps.broadcast).not.toHaveBeenCalled();
     expect(deps.setConversationArchived).not.toHaveBeenCalled();
+  });
+});
+
+describe("refusals for background work that could not be confirmed stopped (design C5b §5)", () => {
+  const unstopped = () =>
+    new BackgroundWorkUnstoppedError("conv-1", "the CLI did not exit");
+
+  it("recognises the refusal thrown by another bundle's copy of the error class", async () => {
+    // The core runs in the bundle composed at startup: its error is not this module's class.
+    const foreign = Object.assign(
+      new Error(
+        "Background work in conversation conv-1 could not be confirmed stopped",
+      ),
+      {
+        name: "BackgroundWorkUnstoppedError",
+        code: "BACKGROUND_WORK_UNSTOPPED",
+        statusCode: 409,
+        details: { conversationId: "conv-1" },
+      },
+    );
+    expect(foreign).not.toBeInstanceOf(BackgroundWorkUnstoppedError);
+    const { deps } = makeDeps({
+      deleteConversation: vi.fn(async () => {
+        throw foreign;
+      }),
+    });
+    const { DELETE_CONVERSATION } = createConversationRouteHandlers(deps);
+
+    const response = await DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: "conv-1" },
+    });
+  });
+
+  it("answers a refused deletion with 409 and the conversation, broadcasting nothing", async () => {
+    const { deps } = makeDeps({
+      deleteConversation: vi.fn(async () => {
+        throw unstopped();
+      }),
+    });
+    const { DELETE_CONVERSATION } = createConversationRouteHandlers(deps);
+
+    const response = await DELETE_CONVERSATION(
+      new Request("http://cc.test/conv", { method: "DELETE" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: "conv-1" },
+    });
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("answers a refused archive with 409, broadcasting nothing", async () => {
+    const { deps } = makeDeps({
+      setConversationArchived: vi.fn(async () => {
+        throw unstopped();
+      }),
+    });
+    const { PATCH_ARCHIVE } = createConversationRouteHandlers(deps);
+
+    const response = await PATCH_ARCHIVE(
+      jsonRequest({ archived: true }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+    });
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("stops archiving the others at a sibling whose background work cannot be stopped, answering 409", async () => {
+    const kept = makeConversation({ id: "conv-keep" });
+    const { deps } = makeDeps({
+      getSession: vi.fn(async () =>
+        makeSession([
+          kept,
+          makeConversation({ id: "conv-a" }),
+          makeConversation({ id: "conv-b" }),
+        ]),
+      ),
+      setConversationArchived: vi
+        .fn(async () => {})
+        .mockImplementationOnce(async () => {
+          throw unstopped();
+        }),
+    });
+    const { POST_ARCHIVE_OTHERS } = createConversationRouteHandlers(deps);
+
+    const response = await POST_ARCHIVE_OTHERS(
+      jsonRequest(),
+      context({ name: "demo", session: "s1", conversationId: "conv-keep" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+    });
+    expect(deps.setConversationArchived).toHaveBeenCalledTimes(1);
+    expect(deps.broadcast).not.toHaveBeenCalled();
   });
 });

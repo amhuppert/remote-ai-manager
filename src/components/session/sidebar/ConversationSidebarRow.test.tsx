@@ -532,6 +532,20 @@ describe("ConversationSidebarRow", () => {
       ).toBeDefined();
     });
 
+    it("marks an idle-looking row whose background work custody holds, with no visible task (design C5b §5)", () => {
+      render(
+        <ConversationSidebarRow
+          conversation={{ ...BASE, status: "awaiting", custody: true }}
+        />,
+      );
+
+      expect(
+        screen.getByLabelText(
+          "Some conversation \u2014 awaiting \u2014 background activity",
+        ),
+      ).toBeDefined();
+    });
+
     it("leaves the label alone when nothing is running in the background", () => {
       render(
         <ConversationSidebarRow

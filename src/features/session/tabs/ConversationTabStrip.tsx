@@ -238,7 +238,7 @@ export default function ConversationTabStrip({
       <ConfirmDialog
         open={pendingArchiveSession !== null}
         title="Archive session"
-        message="This hides the session and all its conversations, and stops any running dev servers. You can unarchive it later to restore."
+        message="This hides the session and all its conversations, and stops any running dev servers and any background work its agents are still running. You can unarchive it later to restore."
         confirmLabel="Archive session"
         onConfirm={() => {
           if (pendingArchiveSession === null) return;

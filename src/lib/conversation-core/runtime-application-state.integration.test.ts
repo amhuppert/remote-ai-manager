@@ -136,6 +136,11 @@ async function compose() {
       alignmentVersion: null,
       alignmentEligible: false,
     }),
+    readInstructions: async () => ({
+      sessionInstructions: ["Work carefully."],
+      alignmentVersion: null,
+      alignmentEligible: false,
+    }),
     tooling: async () => ({
       overrides: { portableMcp: DOCS_MCP, capabilities: SKILLS },
       capabilityState: seedRuntimeApplicationState([

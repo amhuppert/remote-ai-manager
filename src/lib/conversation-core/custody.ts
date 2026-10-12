@@ -16,19 +16,15 @@ import {
   type CustodyRecordPort,
   type TurnSource,
 } from "./conversation-record";
-import type { CustodyLease, CustodyOpener } from "./executor";
+import type { CustodyLease, CustodyLossEnd, CustodyOpener } from "./executor";
 import type { RunningTurnDescription } from "./interactive-turns";
 import type {
   HostedConversation,
   RuntimeHost,
   RuntimeRequirements,
 } from "./runtime-host";
-import type { CustodyEnd } from "./schemas";
 
-/** How a custody's runtime ended with work cut short, for the loss its next turn hears about. */
-export type CustodyLossEnd = Exclude<CustodyEnd, "settled" | "handed_over">;
-
-/** Why work kept between turns was cut short: how its custody ended, or a handover whose turn needed a fresh process. */
+/** Why work kept between turns was cut short: how its custody ended (or never opened), or a handover whose turn needed a fresh process. */
 export type CustodyLossReason = CustodyLossEnd | "reconfigured";
 
 export interface RuntimeCustodyDeps {

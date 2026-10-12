@@ -65,6 +65,12 @@ const activeConversationSharedFields = {
   backgroundActivity: conversationBackgroundActivitySchema
     .nullable()
     .default(null),
+  // Whether custody holds the runtime between turns (design C5b §5): background
+  // work Stop ends, which may hold with no visible task. Read from the core at
+  // assembly time and patched live by the `conversation-custody` SSE event;
+  // never persisted. Optionality only spares the many row fixtures from
+  // restating it; the assembler always sets it.
+  custody: z.boolean().optional(),
   // Human-review-gate standing: present when the conversation's workflow
   // context is parked awaiting approval with no recorded decision. Always
   // null for project-scope rows (gates exist only on session executions).

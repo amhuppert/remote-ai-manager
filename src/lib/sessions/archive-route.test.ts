@@ -4,6 +4,7 @@ import {
   createArchiveRouteHandlers,
   type ArchiveRouteDeps,
 } from "./archive-route-handlers";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 
 // ---------------------------------------------------------------------------
 // Mock deps (no vi.mock needed)
@@ -15,6 +16,7 @@ function createTestDeps(): ArchiveRouteDeps {
     setProjectArchived: vi.fn().mockResolvedValue(undefined),
     getProjectSessionListItems: vi.fn().mockResolvedValue([]),
     stopAllForSession: vi.fn().mockResolvedValue(undefined),
+    closeBackgroundWork: vi.fn(async (_scope, commit) => commit()),
   };
 }
 
@@ -130,5 +132,76 @@ describe("POST /api/projects/[name]/archive", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toContain("archived");
+  });
+});
+
+describe("archiving a project whose conversations keep background work (design C5b §5)", () => {
+  it("archives the project inside its closing, stopping dev servers only after its background work stopped", async () => {
+    const order: string[] = [];
+    const deps = createTestDeps();
+    deps.getProjectSessionListItems = vi
+      .fn()
+      .mockResolvedValue([{ sessionName: "s1" }]);
+    deps.closeBackgroundWork = vi.fn(async (scope, commit, options) => {
+      order.push(
+        `close:${JSON.stringify(scope)}:${options.end}:${options.stop}`,
+      );
+      const value = await commit();
+      order.push("closed");
+      return value;
+    });
+    deps.stopAllForSession = vi.fn(async ({ sessionName }) => {
+      order.push(`dev-servers:${sessionName}`);
+    });
+    deps.setProjectArchived = vi.fn(async () => {
+      order.push("archive");
+    });
+
+    const res = await createArchiveRouteHandlers(deps).POST(
+      makeRequest({ archived: true }),
+      makeParams(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(order).toEqual([
+      `close:${JSON.stringify({ projectPath: "/home/projects/test-proj" })}:archived:true`,
+      "dev-servers:s1",
+      "archive",
+      "closed",
+    ]);
+  });
+
+  it("refuses the archive with 409, changing nothing, when the background work cannot be confirmed stopped", async () => {
+    const deps = createTestDeps();
+    deps.closeBackgroundWork = vi.fn(async () => {
+      throw new BackgroundWorkUnstoppedError(
+        "conv-kept",
+        "the CLI did not exit",
+      );
+    });
+
+    const res = await createArchiveRouteHandlers(deps).POST(
+      makeRequest({ archived: true }),
+      makeParams(),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: "conv-kept" },
+    });
+    expect(deps.setProjectArchived).not.toHaveBeenCalled();
+    expect(deps.stopAllForSession).not.toHaveBeenCalled();
+  });
+
+  it("closes nothing to unarchive a project", async () => {
+    const deps = createTestDeps();
+
+    await createArchiveRouteHandlers(deps).POST(
+      makeRequest({ archived: false }),
+      makeParams(),
+    );
+
+    expect(deps.closeBackgroundWork).not.toHaveBeenCalled();
   });
 });

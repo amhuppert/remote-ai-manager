@@ -8,6 +8,7 @@ describe("canStopTurn", () => {
         sending: false,
         status: "running",
         drivenByWorkflow: false,
+        custody: false,
       }),
     ).toBe(true);
   });
@@ -18,6 +19,7 @@ describe("canStopTurn", () => {
         sending: false,
         status: "waiting_for_input",
         drivenByWorkflow: false,
+        custody: false,
       }),
     ).toBe(false);
   });
@@ -30,6 +32,7 @@ describe("canStopTurn", () => {
         sending: true,
         status: "waiting_for_input",
         drivenByWorkflow: false,
+        custody: false,
       }),
     ).toBe(true);
   });
@@ -40,6 +43,7 @@ describe("canStopTurn", () => {
         sending: false,
         status: "running",
         drivenByWorkflow: true,
+        custody: false,
       }),
     ).toBe(false);
   });
@@ -50,6 +54,7 @@ describe("canStopTurn", () => {
         sending: false,
         status: "awaiting",
         drivenByWorkflow: false,
+        custody: false,
       }),
     ).toBe(false);
     expect(
@@ -57,6 +62,37 @@ describe("canStopTurn", () => {
         sending: false,
         status: undefined,
         drivenByWorkflow: false,
+        custody: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("offers stop while custody holds background work between turns, though no turn runs (design C5b §5)", () => {
+    expect(
+      canStopTurn({
+        sending: false,
+        status: "awaiting",
+        drivenByWorkflow: false,
+        custody: true,
+      }),
+    ).toBe(true);
+    expect(
+      canStopTurn({
+        sending: false,
+        status: "waiting_for_input",
+        drivenByWorkflow: false,
+        custody: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("still suppresses stop while a workflow drives the provider turn custody runs", () => {
+    expect(
+      canStopTurn({
+        sending: false,
+        status: "running",
+        drivenByWorkflow: true,
+        custody: true,
       }),
     ).toBe(false);
   });

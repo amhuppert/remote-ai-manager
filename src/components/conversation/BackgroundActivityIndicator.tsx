@@ -10,6 +10,12 @@ interface BackgroundActivityIndicatorProps {
   /** The conversation's live background-task set; null when nothing is running. */
   activity: ConversationBackgroundActivity | null;
   /**
+   * Custody holds the agent's runtime between turns (design C5b §5): work is
+   * owed even when no task is visible, such as a continuation or a reply to a
+   * message sent while the agent worked.
+   */
+  custody?: boolean;
+  /**
    * Whether the indicator may show at all. The parent suppresses it while a
    * turn streams — the typing indicator already says the agent is working, and
    * two "busy" affordances at once read as two separate activities.
@@ -63,6 +69,9 @@ function freshnessLabel(activity: ConversationBackgroundActivity): string {
   return `started ${formatRelativeTime(earliest)}`;
 }
 
+/** What custody owes when no task is visible. */
+const CUSTODY_LABEL = "agent still working between turns";
+
 /**
  * "Something is still running in the background" for a conversation between
  * turns. Without it, harness background work (a Workflow-tool run, a
@@ -71,18 +80,23 @@ function freshnessLabel(activity: ConversationBackgroundActivity): string {
  */
 function BackgroundActivityIndicator({
   activity,
+  custody = false,
   visible,
 }: BackgroundActivityIndicatorProps): React.JSX.Element | null {
-  const showing = visible && activity !== null && activity.tasks.length > 0;
+  const tasks =
+    activity !== null && activity.tasks.length > 0 ? activity : null;
+  const showing = visible && (tasks !== null || custody);
   // The snapshot's timestamps are fixed; only their distance from "now" moves,
   // so the tick just forces a re-render and the clock is read at render time.
+  // The custody-only label has no time in it, so it needs no tick.
+  const ticking = visible && tasks !== null;
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    if (!showing) return;
+    if (!ticking) return;
     const timer = setInterval(() => setTick((tick) => tick + 1), TICK_MS);
     return () => clearInterval(timer);
-  }, [showing]);
+  }, [ticking]);
 
   if (!showing) return null;
 
@@ -94,7 +108,9 @@ function BackgroundActivityIndicator({
         icon={<span className={cn(dotClass)} aria-hidden="true" />}
         data-testid="background-activity-indicator"
       >
-        {primaryLabel(activity)} · {freshnessLabel(activity)}
+        {tasks !== null
+          ? `${primaryLabel(tasks)} · ${freshnessLabel(tasks)}`
+          : CUSTODY_LABEL}
       </StatusChip>
     </div>
   );

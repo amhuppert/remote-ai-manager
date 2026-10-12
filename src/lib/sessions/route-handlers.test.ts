@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 import {
+  createArchiveSessionRouteHandler,
   createBulkSessionsRouteHandlers,
   createSessionRouteHandlers,
+  type ArchiveSessionRouteDeps,
   type BulkSessionsRouteDeps,
   type CreateSessionRouteDeps,
 } from "./route-handlers";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import { sessionStateSchema, type SessionState } from "./schemas";
 
 function createTestDeps(): BulkSessionsRouteDeps {
@@ -18,6 +21,7 @@ function createTestDeps(): BulkSessionsRouteDeps {
         names.map((sessionName) => ({ sessionName, success: true })),
       ),
     stopAllForSession: vi.fn().mockResolvedValue(undefined),
+    closeBackgroundWork: vi.fn(async (_scope, commit) => commit()),
   };
 }
 
@@ -293,5 +297,151 @@ describe("POST /api/projects/[name]/sessions (creation dispatch)", () => {
     );
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe("Project not found");
+  });
+});
+
+describe("archiving sessions that keep background work (design C5b §5)", () => {
+  const unstopped = () =>
+    new BackgroundWorkUnstoppedError("conv-kept", "the CLI did not exit");
+
+  /** A closing that records how it was asked and when its commit ran, refusing the scopes `refuse` names. */
+  function closing(
+    log: string[],
+    refuse: (sessionName: string | undefined) => boolean = () => false,
+  ): ArchiveSessionRouteDeps["closeBackgroundWork"] {
+    return async (scope, commit, options) => {
+      log.push(`close:${scope.sessionName}:${options.end}:${options.stop}`);
+      if (refuse(scope.sessionName)) throw unstopped();
+      try {
+        return await commit();
+      } finally {
+        log.push(`closed:${scope.sessionName}`);
+      }
+    };
+  }
+
+  it("archives each session inside its closing, stopping dev servers only after its background work stopped, and reports one that cannot be stopped", async () => {
+    const order: string[] = [];
+    const bulk = createBulkSessionsRouteHandlers({
+      ...createTestDeps(),
+      stopAllForSession: vi.fn(async ({ sessionName }) => {
+        order.push(`dev-servers:${sessionName}`);
+      }),
+      setSessionArchived: vi.fn(async (_projectPath, sessionName: string) => {
+        order.push(`archive:${sessionName}`);
+      }),
+      closeBackgroundWork: closing(order, (name) => name === "busy"),
+    });
+
+    const res = await bulk.POST(
+      makeRequest({ op: "archive", sessionNames: ["busy", "idle"] }),
+      makeParams(),
+    );
+
+    expect(await res.json()).toEqual({
+      results: [
+        {
+          sessionName: "busy",
+          success: false,
+          error: expect.stringContaining("could not be confirmed stopped"),
+        },
+        { sessionName: "idle", success: true },
+      ],
+    });
+    expect(order).toEqual([
+      "close:busy:archived:true",
+      "close:idle:archived:true",
+      "dev-servers:idle",
+      "archive:idle",
+      "closed:idle",
+    ]);
+  });
+
+  function archiveDeps(
+    overrides: Partial<ArchiveSessionRouteDeps> = {},
+  ): ArchiveSessionRouteDeps {
+    return {
+      resolveProjectPath: vi.fn().mockResolvedValue("/home/projects/test-proj"),
+      getSession: vi.fn().mockResolvedValue({ sessionName: "busy" }),
+      setSessionArchived: vi.fn().mockResolvedValue(undefined),
+      stopAllForSession: vi.fn().mockResolvedValue(undefined),
+      closeBackgroundWork: vi.fn(async (_scope, commit) => commit()),
+      ...overrides,
+    };
+  }
+
+  function archiveRequest(archived: boolean): NextRequest {
+    return new Request(
+      "http://localhost/api/projects/test-proj/sessions/busy/archive",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+      },
+    ) as unknown as NextRequest;
+  }
+  const sessionParams = {
+    params: Promise.resolve({ name: "test-proj", session: "busy" }),
+  };
+
+  it("archives the session inside its closing, stopping dev servers only after its background work stopped", async () => {
+    const order: string[] = [];
+    const deps = archiveDeps({
+      closeBackgroundWork: closing(order),
+      stopAllForSession: vi.fn(async () => {
+        order.push("dev-servers");
+      }),
+      setSessionArchived: vi.fn(async () => {
+        order.push("archive");
+      }),
+    });
+
+    const res = await createArchiveSessionRouteHandler(deps)(
+      archiveRequest(true),
+      sessionParams,
+    );
+
+    expect(res.status).toBe(200);
+    expect(order).toEqual([
+      "close:busy:archived:true",
+      "dev-servers",
+      "archive",
+      "closed:busy",
+    ]);
+  });
+
+  it("refuses the archive with 409, changing nothing, when the session's background work cannot be confirmed stopped", async () => {
+    const deps = archiveDeps({
+      closeBackgroundWork: closing([], () => true),
+    });
+
+    const res = await createArchiveSessionRouteHandler(deps)(
+      archiveRequest(true),
+      sessionParams,
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: "conv-kept" },
+    });
+    expect(deps.setSessionArchived).not.toHaveBeenCalled();
+    expect(deps.stopAllForSession).not.toHaveBeenCalled();
+  });
+
+  it("closes nothing to unarchive a session", async () => {
+    const deps = archiveDeps();
+
+    await createArchiveSessionRouteHandler(deps)(
+      archiveRequest(false),
+      sessionParams,
+    );
+
+    expect(deps.closeBackgroundWork).not.toHaveBeenCalled();
+    expect(deps.setSessionArchived).toHaveBeenCalledWith(
+      "/home/projects/test-proj",
+      "busy",
+      false,
+    );
   });
 });

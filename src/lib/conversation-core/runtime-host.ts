@@ -15,6 +15,7 @@ import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import {
   runtimeConfigurationChanges,
   type DesiredRuntimeConfiguration,
+  type RecreateRuntimeSnapshot,
 } from "@/lib/conversation-core/turn/runtime-recreate";
 import {
   ManagedConversationRuntime,
@@ -66,6 +67,14 @@ export interface RuntimeHostDeps {
     /** Whether the session charter applies to this runtime's turn (an attended session turn). */
     alignmentEligible: boolean;
   }>;
+  /**
+   * The same instructions read at rest, writing nothing: what a reader
+   * outside a turn (the memory index preview) compares a live runtime with.
+   */
+  readInstructions(
+    conversation: HostedConversation,
+    selection: RuntimeRequirements["instructionSelection"],
+  ): ReturnType<RuntimeHostDeps["instructions"]>;
   tooling(conversation: HostedConversation): Promise<ComposedTooling>;
   /** Every runtime created for turns is seeded before it is handed out; a failure fails the creation. A capture runtime is not. */
   beginSeed: RuntimeApplicationState["beginSeed"];
@@ -127,6 +136,22 @@ export interface RuntimeHost {
   closeFailure(conversationId: string): string | null;
   /** Whether the conversation's next turn would reuse a live runtime rather than create one. */
   isLive(conversationId: string): boolean;
+  /**
+   * What the conversation's latest runtime was created with, and its status,
+   * for a reader outside a turn such as the memory index preview (design C5b
+   * §5: custody keeps a runtime between turns); undefined when it has none.
+   */
+  configuration(conversationId: string): RecreateRuntimeSnapshot | undefined;
+  /**
+   * The configuration the conversation stands at now for that runtime's own
+   * needs: `current` with the repeatable instructions and charter read again.
+   * The model selection and write policy are a turn's to supply, so they stay
+   * as `current` has them; `current` when the conversation has no runtime.
+   */
+  desiredConfiguration(
+    conversationId: string,
+    current: DesiredRuntimeConfiguration,
+  ): Promise<DesiredRuntimeConfiguration>;
   /** The live runtime the conversation's running turn holds, or null. */
   runtime(conversationId: string): ConversationBackendRuntime | null;
   /** The session charter the conversation's latest runtime was created with, and whether it applied to that runtime's turn. */
@@ -180,13 +205,14 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
   async function desiredFor(
     conversation: HostedConversation,
     requirements: RuntimeRequirements,
+    read: RuntimeHostDeps["instructions"] = deps.instructions,
   ): Promise<{
     desired: DesiredRuntimeConfiguration;
     sessionInstructions: string[];
     alignment: { version: number | null; eligible: boolean };
   }> {
     const { sessionInstructions, alignmentVersion, alignmentEligible } =
-      await deps.instructions(conversation, requirements.instructionSelection);
+      await read(conversation, requirements.instructionSelection);
     return {
       sessionInstructions,
       alignment: { version: alignmentVersion, eligible: alignmentEligible },
@@ -385,6 +411,28 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
     },
     isLive(conversationId) {
       return hosted.get(conversationId)?.managed.backend?.status === "alive";
+    },
+    configuration(conversationId) {
+      return hosted.get(conversationId)?.managed.configurationSnapshot;
+    },
+    async desiredConfiguration(conversationId, current) {
+      const entry = hosted.get(conversationId);
+      if (entry === undefined) return current;
+      // A reader outside a turn: the instructions read at rest, never prepared.
+      const { desired } = await desiredFor(
+        entry.conversation,
+        {
+          ...entry.requirements,
+          instructionSelection: current.instructionSelection,
+        },
+        (conversation, selection) =>
+          deps.readInstructions(conversation, selection),
+      );
+      return {
+        ...current,
+        repeatableInstructions: desired.repeatableInstructions,
+        alignmentVersion: desired.alignmentVersion,
+      };
     },
 
     recordCleanupFailure(conversationId, failure) {

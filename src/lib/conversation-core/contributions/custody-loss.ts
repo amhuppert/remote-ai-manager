@@ -26,6 +26,10 @@ const WHY: Record<CustodyLossReason, string> = {
   interrupted: "the server stopped",
   reconfigured:
     "the conversation's configuration changed and its next turn needed a fresh agent process",
+  merging: "the session is being merged",
+  merged: "the session has been merged",
+  archived: "the conversation was archived",
+  deleted: "the conversation is being deleted",
 };
 
 /**

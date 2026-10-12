@@ -34,7 +34,10 @@ import type {
 } from "@/lib/conversation-core/turn/types";
 import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
 import type { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
-import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
+import type {
+  DesiredRuntimeConfiguration,
+  RecreateRuntimeSnapshot,
+} from "@/lib/conversation-core/turn/runtime-recreate";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
 import {
@@ -340,6 +343,21 @@ export interface ConversationManagerDependencies {
   };
   /** The conversation is going away: the core runs nothing more in it and closes its runtime. */
   retireCoreConversation?(conversationId: string): Promise<void>;
+  /**
+   * What a core conversation's runtime (kept between turns by custody, design
+   * C5b §5) was created with, for readers outside a turn such as the memory
+   * index preview; undefined when it has none.
+   */
+  coreRuntimeConfiguration?(
+    conversationId: string,
+  ): Readonly<RecreateRuntimeSnapshot> | undefined;
+  /** The configuration a core conversation stands at now, for its runtime's own needs. */
+  readCoreDesiredRuntimeConfiguration?(
+    conversationId: string,
+    current: DesiredRuntimeConfiguration,
+  ): Promise<DesiredRuntimeConfiguration>;
+  /** Closes a core conversation's idle runtime for a collaboration; see `releaseIdleConversationRuntime`. */
+  releaseCoreIdleRuntime?(conversationId: string): Promise<IdleRuntimeRelease>;
   /** The core takes the conversation's next queued message when it is idle. */
   drainCoreConversation?(conversationId: string): Promise<void>;
   /** A workflow's task turn on a core conversation, run in its turn order; resolves with the outcome. */
@@ -1919,6 +1937,11 @@ export function createConversationManager(
     sessionName: string,
     conversationId: string,
   ): Promise<IdleRuntimeRelease> {
+    // A core conversation's runtime lives in the core's host, never in an actor.
+    if (deps.isCoreOwnedConversation?.(conversationId) === true)
+      return (
+        (await deps.releaseCoreIdleRuntime?.(conversationId)) ?? "not_hosted"
+      );
     const key = conversationRuntimeKey(
       projectPath,
       sessionName,
@@ -4255,6 +4278,8 @@ export function createConversationManager(
         import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot
       >
     | undefined {
+    if (deps.isCoreOwnedConversation?.(conversationId) === true)
+      return deps.coreRuntimeConfiguration?.(conversationId);
     for (const [key, actor] of host.entries()) {
       if (
         readUsableSnapshot(actor)?.context.target.conversationId !==
@@ -4269,6 +4294,13 @@ export function createConversationManager(
     conversationId: string,
     current: DesiredRuntimeConfiguration,
   ): Promise<DesiredRuntimeConfiguration> {
+    if (deps.isCoreOwnedConversation?.(conversationId) === true)
+      return (
+        (await deps.readCoreDesiredRuntimeConfiguration?.(
+          conversationId,
+          current,
+        )) ?? current
+      );
     for (const [, actor] of host.entries()) {
       const context = readUsableSnapshot(actor)?.context;
       if (context?.target.conversationId !== conversationId) continue;

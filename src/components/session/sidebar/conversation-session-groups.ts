@@ -38,7 +38,9 @@ export function isRunning(row: ActiveConversation): boolean {
   return (
     !row.archived &&
     !isClosedProjectConversation(row) &&
-    (row.status === "running" || row.backgroundActivity !== null)
+    (row.status === "running" ||
+      row.backgroundActivity !== null ||
+      row.custody === true)
   );
 }
 

@@ -46,3 +46,33 @@ export function useConversationBackgroundActivity(
   });
   return data ?? null;
 }
+
+/**
+ * Whether custody holds this conversation's runtime between turns (design C5b
+ * §5): background work Stop ends, which may hold with no visible task. Selected
+ * like {@link useConversationBackgroundActivity}.
+ */
+export function useConversationCustody(conversationId: string): boolean {
+  const { data } = useQuery({
+    ...activeConversationsQueryOptions(),
+    select: (response) =>
+      response.conversations.find(
+        (conversation) => conversation.id === conversationId,
+      )?.custody === true,
+  });
+  return data ?? false;
+}
+
+/** The conversations whose runtime custody holds between turns, as the concurrent-prompt warning counts them. */
+export function useConversationsInCustody(): string[] {
+  const { data } = useQuery({
+    ...activeConversationsQueryOptions(),
+    select: (response) =>
+      response.conversations
+        .filter((conversation) => conversation.custody === true)
+        .map((conversation) => conversation.id),
+  });
+  return data ?? EMPTY_IDS;
+}
+
+const EMPTY_IDS: string[] = [];

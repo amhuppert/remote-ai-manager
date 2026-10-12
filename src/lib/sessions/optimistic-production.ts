@@ -1,5 +1,5 @@
 import { executePromptStream } from "../prompt/sdk-driver";
-import { currentRuns } from "@/lib/supervision/handles";
+import { currentRuns, sessionBackgroundWork } from "@/lib/supervision/handles";
 import { dispatchMergeJob } from "../jobs/queue";
 import { createJobNotification } from "../notifications/service";
 import { getProductionWorkflowComposition } from "@/lib/workflows/production";
@@ -20,6 +20,7 @@ export const defaultOptimisticDeps: OptimisticDeps = {
       association: policy.mergeAssociation,
       gate: policy.deliveryGate,
       readCurrentRuns: currentRuns,
+      readBackgroundWork: sessionBackgroundWork,
     });
   },
 };

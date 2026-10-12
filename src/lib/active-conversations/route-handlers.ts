@@ -27,6 +27,7 @@ import type {
   ActiveConversationForkedFrom,
 } from "@/lib/active-conversations/schemas";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
+import { coreHoldsCustody } from "@/lib/supervision/handles";
 import { redactedConversationProfile } from "@/lib/conversations/conversation-profile";
 import type {
   AskQuestionItem,
@@ -87,6 +88,12 @@ export interface ActiveConversationsRouteDeps {
   getBackgroundActivity(
     conversationId: string,
   ): ConversationBackgroundActivity | null;
+  /**
+   * Whether custody holds the conversation's runtime between turns, read from
+   * the core synchronously. Not persisted: custody does not outlive the
+   * server. Absent, no row shows custody.
+   */
+  holdsCustody?(conversationId: string): boolean;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
@@ -99,6 +106,7 @@ const defaultDeps: ActiveConversationsRouteDeps = {
   listActiveSpecExecutions: defaultListActiveSpecExecutions,
   getBackgroundActivity: (conversationId) =>
     getBackgroundActivityChannel().get(conversationId),
+  holdsCustody: coreHoldsCustody,
 };
 
 /** Map key for {@link ActiveConversationsRouteDeps.listActiveGraphWorkflowExecutions}. */
@@ -665,6 +673,7 @@ export function createActiveConversationsRouteHandlers(
               unread: convo.unread === true,
               pendingApproval,
               backgroundActivity: deps.getBackgroundActivity(convo.id),
+              custody: deps.holdsCustody?.(convo.id) ?? false,
               // Already redacted by the store's list-item projection: the
               // snapshot blob never leaves SQLite for this feed.
               redactedProfileSnapshot: convo.redactedProfileSnapshot,
@@ -844,6 +853,7 @@ export function createActiveConversationsRouteHandlers(
           unread: conversation.unread === true,
           pendingApproval: null,
           backgroundActivity: deps.getBackgroundActivity(conversation.id),
+          custody: deps.holdsCustody?.(conversation.id) ?? false,
           // The project walk reads whole rows, so redaction happens here.
           redactedProfileSnapshot: redactedConversationProfile(conversation),
         });

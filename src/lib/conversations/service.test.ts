@@ -22,7 +22,8 @@ import {
   _resetForTesting as _resetStateDb,
 } from "../state-store/state-db";
 import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
-import { createConversationService } from "./service";
+import { createConversationService, type ConversationsDeps } from "./service";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
 import {
   ContinuityForkError,
   type BackendContinuityAdapter,
@@ -110,6 +111,8 @@ function createTestServices(
     claudeFork?: FakeForkImpl;
     removeTranscript?(transcriptPath: string): Promise<void>;
     codexFork?: FakeForkImpl;
+    stopConversationActor?: ConversationsDeps["stopConversationActor"];
+    closeBackgroundWork?: ConversationsDeps["closeBackgroundWork"];
   } = {},
 ) {
   const configReader = createConfigReader(TEST_DIR);
@@ -140,7 +143,10 @@ function createTestServices(
     getConversation: state.getConversation,
     getSessionConversations: state.getSessionConversations,
     setConversationPendingPromptText: state.setConversationPendingPromptText,
-    stopConversationActor: async () => {},
+    stopConversationActor: overrides.stopConversationActor ?? (async () => {}),
+    ...(overrides.closeBackgroundWork !== undefined
+      ? { closeBackgroundWork: overrides.closeBackgroundWork }
+      : {}),
     configDir: TEST_DIR,
     removeTranscript: overrides.removeTranscript,
     getContinuityAdapter: (backend) =>
@@ -536,6 +542,138 @@ describe("setConversationArchived", () => {
         true,
       ),
     ).rejects.toThrow('Session "test" not found');
+  });
+});
+
+describe("archiving or deleting a conversation that keeps background work (design C5b §5)", () => {
+  const unstopped = (conversationId: string) =>
+    new BackgroundWorkUnstoppedError(conversationId, "the CLI did not exit");
+
+  /** A closing that records how it was asked and when its commit ran, or refuses as a failed collection does. */
+  function closing(
+    log: string[],
+    refusal?: Error,
+  ): NonNullable<ConversationsDeps["closeBackgroundWork"]> {
+    return async (scope, commit, options) => {
+      log.push(
+        `close ${JSON.stringify(scope)} ${options.end} stop=${options.stop}`,
+      );
+      if (refusal !== undefined) throw refusal;
+      try {
+        return await commit();
+      } finally {
+        log.push("closed");
+      }
+    };
+  }
+
+  it("archives inside a closing of the conversation: its background work stopped first, and none opening until the flag is set", async () => {
+    const convoId = crypto.randomUUID();
+    const log: string[] = [];
+    const { state, conversations } = createTestServices({
+      closeBackgroundWork: closing(log),
+    });
+    await seedSession(state, {
+      conversations: [makeConvo({ id: convoId })],
+      source: "cc" as const,
+    });
+    const flag = async () =>
+      (await state.getSession("/proj", "test"))?.conversations[0]?.archived;
+
+    await conversations.setConversationArchived("/proj", "test", convoId, true);
+
+    expect(log).toEqual([
+      `close ${JSON.stringify({ projectPath: "/proj", sessionName: "test", conversationId: convoId })} archived stop=true`,
+      "closed",
+    ]);
+    expect(await flag()).toBe(true);
+  });
+
+  it("refuses the archive, leaving the conversation as it was, when its background work cannot be confirmed stopped", async () => {
+    const convoId = crypto.randomUUID();
+    const { state, conversations } = createTestServices({
+      closeBackgroundWork: closing([], unstopped(convoId)),
+    });
+    await seedSession(state, {
+      conversations: [makeConvo({ id: convoId })],
+      source: "cc" as const,
+    });
+
+    await expect(
+      conversations.setConversationArchived("/proj", "test", convoId, true),
+    ).rejects.toBeInstanceOf(BackgroundWorkUnstoppedError);
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations[0]!.archived).toBe(false);
+  });
+
+  it("closes nothing to unarchive a conversation", async () => {
+    const convoId = crypto.randomUUID();
+    const log: string[] = [];
+    const { state, conversations } = createTestServices({
+      closeBackgroundWork: closing(log),
+    });
+    await seedSession(state, {
+      conversations: [makeConvo({ id: convoId, archived: true })],
+      source: "cc" as const,
+    });
+
+    await conversations.setConversationArchived(
+      "/proj",
+      "test",
+      convoId,
+      false,
+    );
+    expect(log).toEqual([]);
+  });
+
+  it("deletes inside a closing of the conversation, retiring it there before its row goes", async () => {
+    const convoId = crypto.randomUUID();
+    const log: string[] = [];
+    const { state, conversations } = createTestServices({
+      closeBackgroundWork: closing(log),
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        log.push(`retire ${conversationId === convoId}`);
+      },
+    });
+    await seedSession(state, {
+      conversations: [makeConvo({ id: convoId, status: "awaiting" })],
+      source: "cc" as const,
+    });
+
+    await conversations.deleteConversation("/proj", "test", convoId);
+
+    expect(log).toEqual([
+      `close ${JSON.stringify({ projectPath: "/proj", sessionName: "test", conversationId: convoId })} deleted stop=true`,
+      "retire true",
+      "closed",
+    ]);
+    expect(await state.getConversation("/proj", "test", convoId)).toBeNull();
+  });
+
+  it("refuses the deletion, keeping the conversation and retiring nothing, when its background work cannot be confirmed stopped", async () => {
+    const convoId = crypto.randomUUID();
+    const retired: string[] = [];
+    const { state, conversations } = createTestServices({
+      closeBackgroundWork: closing([], unstopped(convoId)),
+      async stopConversationActor(_projectPath, _sessionName, conversationId) {
+        retired.push(conversationId);
+      },
+    });
+    await seedSession(state, {
+      conversations: [makeConvo({ id: convoId, status: "awaiting" })],
+      source: "cc" as const,
+    });
+
+    await expect(
+      conversations.deleteConversation("/proj", "test", convoId),
+    ).rejects.toMatchObject({
+      code: "BACKGROUND_WORK_UNSTOPPED",
+      details: { conversationId: convoId },
+    });
+    expect(retired).toEqual([]);
+    expect(
+      await state.getConversation("/proj", "test", convoId),
+    ).not.toBeNull();
   });
 });
 

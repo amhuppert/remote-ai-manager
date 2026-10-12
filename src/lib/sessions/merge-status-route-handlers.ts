@@ -11,7 +11,16 @@ import {
   CurrentRunError,
   type CurrentRun,
 } from "@/lib/runs/session-guard";
-import { currentRuns } from "@/lib/supervision/handles";
+import {
+  closeCoreBackgroundWork,
+  currentRuns,
+  sessionBackgroundWork,
+} from "@/lib/supervision/handles";
+import {
+  backgroundWorkRefusal,
+  type BackgroundWorkRefusal,
+  type SessionBackgroundWork,
+} from "@/lib/workflows/merge/background-work-guard";
 import { getSessionLifecycleGate } from "./lifecycle-gate";
 import { sessionMergeStatusRequestSchema, type SessionState } from "./schemas";
 
@@ -31,6 +40,20 @@ interface MergeStatusDeps {
   ): Promise<void>;
   /** The session's runs that have not finished; marking it merged waits for every one. */
   currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
+  /** The session's conversations whose background work marking it merged must not pass (design C5b §5). */
+  sessionBackgroundWork(
+    projectPath: string,
+    sessionName: string,
+  ): readonly SessionBackgroundWork[];
+  /**
+   * Runs the mark with the session closed to new background work until the
+   * finished flag is written; existing work is the mark's to refuse.
+   */
+  closeBackgroundWork<T>(
+    scope: { projectPath: string; sessionName: string },
+    commit: () => Promise<T>,
+    options: { end: "merged"; stop: false },
+  ): Promise<T>;
 }
 
 export function createMergeStatusHandler(deps: MergeStatusDeps) {
@@ -47,25 +70,58 @@ export function createMergeStatusHandler(deps: MergeStatusDeps) {
     const { projectPath } = resolved.value;
     const sessionName = resolved.value.session.sessionName;
     try {
-      await getSessionLifecycleGate().runExclusive(
+      const write = () =>
+        deps.mutateSession(
+          projectPath,
+          sessionName,
+          "setSessionMergeStatus",
+          (row) => {
+            row.finished = parsed.data.merged;
+          },
+        );
+      const refusal = await getSessionLifecycleGate().runExclusive(
         projectPath,
         sessionName,
-        async () => {
-          if (parsed.data.merged)
-            assertNoCurrentRun(
-              deps.currentRuns(projectPath, sessionName),
-              "marking this session merged",
-            );
-          await deps.mutateSession(
-            projectPath,
-            sessionName,
-            "setSessionMergeStatus",
-            (row) => {
-              row.finished = parsed.data.merged;
+        async (): Promise<BackgroundWorkRefusal | null> => {
+          if (!parsed.data.merged) {
+            await write();
+            return null;
+          }
+          assertNoCurrentRun(
+            deps.currentRuns(projectPath, sessionName),
+            "marking this session merged",
+          );
+          // Like a merge, a mark refuses background work; and none may start between
+          // this read and the finished flag, which keeps any later custody out.
+          return deps.closeBackgroundWork(
+            { projectPath, sessionName },
+            async () => {
+              const refused = backgroundWorkRefusal(
+                deps.sessionBackgroundWork(projectPath, sessionName),
+                "marking this session merged",
+              );
+              if (refused === null) await write();
+              return refused;
             },
+            { end: "merged", stop: false },
           );
         },
       );
+      if (refusal !== null) {
+        logger.warn("session.merge_status_background_work_refused", {
+          projectPath,
+          sessionName,
+          conversationId: refusal.conversationId,
+        });
+        return NextResponse.json(
+          {
+            error: refusal.message,
+            code: refusal.code,
+            details: { conversationId: refusal.conversationId },
+          },
+          { status: 409 },
+        );
+      }
       logger.info("session.merge_status_changed", {
         projectPath,
         sessionName,
@@ -96,5 +152,7 @@ export const PATCH = withTracing(
     getSession,
     mutateSession,
     currentRuns,
+    sessionBackgroundWork,
+    closeBackgroundWork: closeCoreBackgroundWork,
   }),
 );

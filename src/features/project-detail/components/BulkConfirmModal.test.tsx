@@ -20,7 +20,7 @@ describe("BulkConfirmModal", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Archive 4 sessions. They stay accessible via "Include archived".',
+        'Archive 4 sessions, stopping their dev servers and any background work their agents are still running. They stay accessible via "Include archived".',
       ),
     ).toBeInTheDocument();
     expect(
@@ -41,7 +41,7 @@ describe("BulkConfirmModal", () => {
     );
     expect(
       screen.getByText(
-        'Archive 1 session. They stay accessible via "Include archived".',
+        'Archive 1 session, stopping its dev servers and any background work its agents are still running. It stays accessible via "Include archived".',
       ),
     ).toBeInTheDocument();
     expect(

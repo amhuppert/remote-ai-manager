@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { CurrentRunError } from "@/lib/runs/session-guard";
+import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
+import { closeCoreBackgroundWork } from "@/lib/supervision/handles";
 import {
   notFound,
   resolveProjectOr404,
@@ -247,6 +249,8 @@ export const deleteSessionRoute = withTracing(
       const { worktreeRemoved } = await deleteSession(projectPath, sessionName);
       return NextResponse.json({ success: true, worktreeRemoved });
     } catch (err) {
+      if (BackgroundWorkUnstoppedError.is(err))
+        return backgroundWorkRefused(err);
       if (err instanceof CurrentRunError)
         return NextResponse.json(
           {
@@ -280,19 +284,90 @@ export const getSessionRoute = withTracing(
   },
 );
 
-/** PATCH /api/projects/[name]/sessions/[session]/archive — archive/unarchive session */
-export const archiveSession = withTracing(
-  async (request, { params }: RouteContext) => {
+export interface ArchiveSessionRouteDeps {
+  resolveProjectPath(name: string): Promise<string | null>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{ sessionName: string } | null>;
+  setSessionArchived(
+    projectPath: string,
+    sessionName: string,
+    archived: boolean,
+  ): Promise<void>;
+  stopAllForSession(params: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<void>;
+  /**
+   * Runs the archive with the session closed to background work (design C5b
+   * §5): what its conversations kept running is stopped first, and none opens
+   * until the flag is set. Rejects with `BackgroundWorkUnstoppedError` when it
+   * could not be confirmed stopped, which refuses the archive.
+   */
+  closeBackgroundWork<T>(
+    scope: { projectPath: string; sessionName: string },
+    commit: () => Promise<T>,
+    options: { end: "archived"; stop: true },
+  ): Promise<T>;
+}
+
+/**
+ * Sets a session's archived flag. Archiving closes the session to background
+ * work around the write, and stops its dev servers (best effort) only once
+ * that work is stopped, so a refusal changes nothing.
+ */
+async function writeSessionArchive(
+  deps: Pick<
+    ArchiveSessionRouteDeps,
+    "setSessionArchived" | "stopAllForSession" | "closeBackgroundWork"
+  >,
+  projectPath: string,
+  sessionName: string,
+  archived: boolean,
+): Promise<void> {
+  if (!archived)
+    return deps.setSessionArchived(projectPath, sessionName, false);
+  await deps.closeBackgroundWork(
+    { projectPath, sessionName },
+    async () => {
+      try {
+        await deps.stopAllForSession({ projectPath, sessionName });
+      } catch {
+        // best-effort: don't block archival
+      }
+      await deps.setSessionArchived(projectPath, sessionName, true);
+    },
+    { end: "archived", stop: true },
+  );
+}
+
+/** A refusal for background work that could not be confirmed stopped, as every session route answers it. */
+function backgroundWorkRefused(error: BackgroundWorkUnstoppedError): Response {
+  return NextResponse.json(
+    {
+      error: error.message,
+      code: error.code,
+      details: error.details,
+    } satisfies ApiError,
+    { status: error.statusCode },
+  );
+}
+
+export function createArchiveSessionRouteHandler(
+  deps: ArchiveSessionRouteDeps,
+) {
+  return async (request: Request, { params }: RouteContext) => {
     const resolvedParams = await params;
     const name = resolvedParams["name"] ?? "";
     const sessionSlug = resolvedParams["session"] ?? "";
     const sessionName = decodeURIComponent(sessionSlug);
 
-    const project = await resolveProjectOr404({ resolveProjectPath }, name);
+    const project = await resolveProjectOr404(deps, name);
     if (!project.ok) return project.response;
     const projectPath = project.value;
 
-    const session = await getSession(projectPath, sessionName);
+    const session = await deps.getSession(projectPath, sessionName);
     if (!session) {
       return notFound("Session not found");
     }
@@ -308,24 +383,29 @@ export const archiveSession = withTracing(
     }
 
     try {
-      if (body.archived) {
-        try {
-          await stopAllForSession({ projectPath, sessionName });
-        } catch {
-          // best-effort: don't block archival
-        }
-      }
-
-      await setSessionArchived(projectPath, sessionName, body.archived);
+      await writeSessionArchive(deps, projectPath, sessionName, body.archived);
       return NextResponse.json({ ok: true });
     } catch (err) {
+      if (BackgroundWorkUnstoppedError.is(err))
+        return backgroundWorkRefused(err);
       const message =
         err instanceof Error ? err.message : "Failed to update archive state";
       return NextResponse.json({ error: message } satisfies ApiError, {
         status: 500,
       });
     }
-  },
+  };
+}
+
+/** PATCH /api/projects/[name]/sessions/[session]/archive — archive/unarchive session */
+export const archiveSession = withTracing(
+  createArchiveSessionRouteHandler({
+    resolveProjectPath,
+    getSession,
+    setSessionArchived,
+    stopAllForSession,
+    closeBackgroundWork: closeCoreBackgroundWork,
+  }),
 );
 
 /** PATCH /api/projects/[name]/sessions/[session]/tdd — toggle TDD mode */
@@ -421,6 +501,12 @@ export interface BulkSessionsRouteDeps {
     projectPath: string;
     sessionName: string;
   }): Promise<void>;
+  /** Runs a session's archive closed to background work; a refusal fails that session's archive. */
+  closeBackgroundWork<T>(
+    scope: { projectPath: string; sessionName: string },
+    commit: () => Promise<T>,
+    options: { end: "archived"; stop: true },
+  ): Promise<T>;
 }
 
 const defaultBulkDeps: BulkSessionsRouteDeps = {
@@ -428,6 +514,7 @@ const defaultBulkDeps: BulkSessionsRouteDeps = {
   setSessionArchived,
   bulkDeleteSessions,
   stopAllForSession,
+  closeBackgroundWork: closeCoreBackgroundWork,
 };
 
 export function createBulkSessionsRouteHandlers(
@@ -485,14 +572,8 @@ export function createBulkSessionsRouteHandlers(
       results = [];
       for (const sessionName of sessionNames) {
         try {
-          if (op === "archive") {
-            try {
-              await deps.stopAllForSession({ projectPath, sessionName });
-            } catch {
-              // best-effort: don't block archival
-            }
-          }
-          await deps.setSessionArchived(
+          await writeSessionArchive(
+            deps,
             projectPath,
             sessionName,
             op === "archive",

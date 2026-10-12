@@ -12,7 +12,10 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import { useThinkingBlockExpansionHotkeys } from "@/hooks/use-thinking-block-expansion-hotkeys";
-import { useConversationBackgroundActivity } from "@/lib/active-conversations/queries";
+import {
+  useConversationBackgroundActivity,
+  useConversationCustody,
+} from "@/lib/active-conversations/queries";
 import { stripProposalFencesFromContent } from "@/features/project-detail/spawn-card/derive-spawn-cards";
 import {
   noopRenderSpawnCardRow,
@@ -74,6 +77,7 @@ export default function ProjectTranscriptHost({
 }: ProjectTranscriptHostProps): React.JSX.Element {
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
+  const custody = useConversationCustody(conversationId);
   const extensionRows = useMemo<SpawnExtensionRow[]>(
     () =>
       (spawnCards ?? []).map((card) => ({
@@ -133,6 +137,7 @@ export default function ProjectTranscriptHost({
         status={status}
         pendingQueue={pendingQueue}
         backgroundActivity={backgroundActivity}
+        custody={custody}
         worktreePath={worktreePath}
         renderMessageRow={renderMessageRow}
         extensions={extensions}

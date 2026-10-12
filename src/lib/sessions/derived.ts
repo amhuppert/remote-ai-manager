@@ -150,20 +150,25 @@ export function deriveSessionPromptCount(session: SessionState): number {
 }
 
 /**
- * Return conversations other than `currentConversationId` that are currently
- * executing a prompt. Used by the prompt-submit flow to warn the user before
+ * Return conversations other than `currentConversationId` whose agent may be
+ * editing files now. Used by the prompt-submit flow to warn the user before
  * launching a concurrent agent in the same session.
  *
- * "Busy" here means status === "running"; awaiting / waiting_for_input are
- * paused states where no agent is actively editing files.
+ * "Busy" means a running turn (status === "running") or background work the
+ * agent's runtime keeps between turns (`custody`, the ids of conversations
+ * whose custody holds; design C5b §5), whose row reads awaiting meanwhile.
+ * Otherwise awaiting / waiting_for_input are paused states.
  */
 export function findBusyOtherConversations(
   conversations: ConversationState[] | undefined,
   currentConversationId: string,
+  custody: readonly string[] = [],
 ): ConversationState[] {
   if (!conversations) return [];
   return conversations.filter(
-    (c) => c.id !== currentConversationId && c.status === "running",
+    (c) =>
+      c.id !== currentConversationId &&
+      (c.status === "running" || custody.includes(c.id)),
   );
 }
 

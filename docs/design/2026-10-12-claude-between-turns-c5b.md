@@ -8,8 +8,9 @@ it had on the actor:
 - Claude's own continuations when that work finishes;
 - messages sent while Claude is working.
 
-**Status.** Slices 2 (the adapter), 3 (custody in the core, with its review fixes) and 4 (live input on the
-retaining runtime) are implemented; slice 5 is not. Revision 3: after the Opus and Astra reviews
+**Status.** Slices 2 (the adapter), 3 (custody in the core, with its review fixes), 4 (live input on the
+retaining runtime) and 5 (guards outside the conversation, the Stop affordance and the core-host readers;
+`.cc/temp/overhaul/c5b-slice5-report.md`, with its review fixes) are implemented. Revision 3: after the Opus and Astra reviews
 (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and Astra's verification of revision 2
 (`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on). The slice 3 amendments below follow its
 reviews (`.cc/temp/reviews/c5b-s3-{codex,opus}.md`) and the report `.cc/temp/overhaul/c5b-slice3-report.md`.
@@ -114,8 +115,10 @@ At the end of an ordinary turn, inside today's `runRecordedTurn` boundary, in th
        autonomy);
      - take custody's grant (§3.2).
 
-     Custody opening is refused if the session is being merged (§5). In that case the runtime is released as in the
-     "no" case, with a loss notice saying the merge stopped the background work.
+     Custody opening is refused if the session is being merged, merged, deleted or archived, or a closing act holds
+     its scope (§5). In that case the runtime is released as in the "no" case, with a loss notice saying why. The
+     refused custody is still an admitted attempt that owes its loss (§6), settled `refused` once the loss is recorded
+     with the runtime seen collected.
 2. Settle the turn's **accounting**: cost, duration, turn count and the attempt's terminal. Release its slot and grant.
 3. **Project the row from the surviving owner's actual state**, not from the ending turn (V-4):
    - `running` while a segment is active;
@@ -218,12 +221,17 @@ Probe 1 confirms it for folded and queued prompts. There is no order-based attri
 | Path | Rule |
 |---|---|
 | Lane publication into the session worktree | Waits on the grant conflict (Workspace admission, unchanged) |
-| Session merge | Refused, advisory and in the in-lock check, while any conversation of the session holds custody. Ordinary turns are untouched, including the merge's own resolver and repair task turns, so there is no new refusal for them on any backend (V-3). Custody opening (§3.3 step 1) consults the session's finished state and A4's finalizing-merge job check at the insert boundary, after every await. So no custody starts once a merge is finalizing, and a turn that ends then releases its runtime with a loss notice. A project conversation's custody on the project checkout is a stated limit, the same exposure the actor had (O-F12) |
-| Session or conversation deletion | Retirement stops custody and collects the runtime before disposal; failed collection refuses the deletion |
-| Archive (conversation, session, bulk, project) | Stops custody before setting the flag; failed collection refuses the archive. Archive does not retire today, so this is new wiring (A-smaller 3, O-F12) |
+| Session merge | Refused, advisory and in the in-lock check, while any conversation of the session holds custody, or an ended custody's runtime is still not confirmed collected (the core's one background-work safety read). Land and a finalizing conflict retry apply the advisory refusal before dispatch, so a parked candidate is kept; a graph lane's own non-finalizing merge is not refused. Marking a session merged refuses the same way, reading and writing `finished` with the session closed to new custody. Ordinary turns are untouched, including the merge's own resolver and repair task turns, so there is no new refusal for them on any backend (V-3). Custody opening (§3.3 step 1) consults the session's finished state and A4's finalizing-merge job check at the insert boundary, after every await. So no custody starts once a merge is finalizing, and a turn that ends then releases its runtime with a loss notice. A project conversation's custody on the project checkout is a stated limit, the same exposure the actor had (O-F12) |
+| Session or conversation deletion | Runs with its scope closed to background work: custody there is stopped and every runtime confirmed collected (an earlier unconfirmed one included) before anything is retired or removed, no custody opens until the deletion is done, and unconfirmed collection refuses it. Retirement confirms collection before it withdraws queued input. Project deletion retires every conversation, its sessions' and its own, before removing anything |
+| Archive (conversation, session, bulk, project) | Runs the same closing around the flag's write; failed collection refuses the archive, and dev servers stop only after the custody stop succeeded. Custody opening also refuses for an archived conversation, session or project, so a turn finishing after an archive releases its runtime with a notice (A-smaller 3, O-F12) |
 | Stop in the UI | Offered while custody holds, not only while the row is `running`: the conversation observation exposes custody, and Stop appears with the background-activity indicator. `findBusyOtherConversations` counts custody as busy (O-F6) |
 | MCP and capability saves from routes | MCP applies live as today. During a turn or segment Claude answers `skipped-turn-active` and the capability change is staged; it applies at the next provider-turn boundary (§4.1 step 2) |
 | Memory preview, collaboration's runtime release | Read the core host. Collaboration claims are refused during custody, so its release only needs the core path for completeness (R§2.5) |
+
+Stated limits of these guards:
+- A conversation created while a project deletion captures content can escape its teardown snapshot: the deletion then refuses after earlier sessions were removed, the project survives, and retrying the deletion completes it.
+- A runtime close that fails during deletion teardown, after siblings retired, leaves them retired until restart, and the failing conversation's queued input is withdrawn.
+- A turn refused and left uncollected between Land's dispatch and its in-lock check makes that prepared candidate unlandable through Land; re-running the merge recovers.
 
 ## 6. Stop, bound, death, shutdown, restart
 

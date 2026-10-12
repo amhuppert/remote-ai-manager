@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import type { CurrentRun } from "@/lib/runs/session-guard";
-import { currentRuns as defaultCurrentRuns } from "@/lib/supervision/handles";
+import {
+  backgroundWorkRefusal,
+  type SessionBackgroundWork,
+} from "@/lib/workflows/merge/background-work-guard";
+import {
+  currentRuns as defaultCurrentRuns,
+  sessionBackgroundWork as defaultSessionBackgroundWork,
+} from "@/lib/supervision/handles";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
@@ -90,6 +97,11 @@ export interface GitRouteDeps {
   > | null>;
   /** The session's runs that have not finished; a merge waits for every one. */
   currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
+  /** The session's conversations whose background work custody holds between turns; a merge waits for each. */
+  sessionBackgroundWork(
+    projectPath: string,
+    sessionName: string,
+  ): readonly SessionBackgroundWork[];
   computeDiff(worktreePath: string): Promise<SessionDiff>;
   getCommitLog(
     worktreePath: string,
@@ -180,6 +192,7 @@ function defaultDeps(): GitRouteDeps {
     getSession: defaultGetSession,
     getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
     currentRuns: defaultCurrentRuns,
+    sessionBackgroundWork: defaultSessionBackgroundWork,
     computeDiff: defaultComputeDiff,
     getCommitLog: defaultGetCommitLog,
     getCommitDiff: defaultGetCommitDiff,
@@ -283,6 +296,38 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
    * refusing there would strand the session showing a candidate no act can
    * clear — so discard tolerates its absence and skips the probe.
    */
+  /**
+   * A re-entered merge (Land, a conflict retry) that will finish the session
+   * is refused while background work holds it, as a new merge is (design C5b
+   * §5), before anything is dispatched: the prior job or candidate stays as it
+   * was. A graph lane's own merge, which finishes nothing, is not refused.
+   */
+  function finalizingBackgroundWorkRefusal(
+    finalizeSessionOnPublish: boolean | undefined,
+    projectPath: string,
+    sessionName: string,
+  ): Response | null {
+    if (finalizeSessionOnPublish === false) return null;
+    const refusal = backgroundWorkRefusal(
+      deps.sessionBackgroundWork(projectPath, sessionName),
+      "merging this session",
+    );
+    if (refusal === null) return null;
+    mergeLogger.warn("merge.reentry_background_work_refused", {
+      projectPath,
+      sessionName,
+      conversationId: refusal.conversationId,
+    });
+    return NextResponse.json(
+      {
+        error: refusal.message,
+        code: refusal.code,
+        details: { conversationId: refusal.conversationId },
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+
   async function resolvePreparedJob(
     route: { projectPath: string; projectName: string; sessionName: string },
     parkedRefPolicy: "require" | "tolerate-missing",
@@ -518,6 +563,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       surface: "merge-route",
       readActiveExecution: deps.getActiveGraphWorkflowExecution,
       readCurrentRuns: deps.currentRuns,
+      readBackgroundWork: deps.sessionBackgroundWork,
       association: policy.mergeAssociation,
       gate: policy.deliveryGate,
     });
@@ -536,7 +582,12 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
                 }
               : refusal.code === "RUN_CURRENT"
                 ? { runId: refusal.runId, progress: refusal.progress }
-                : { reviewUrl: refusal.reviewUrl, blockers: refusal.blockers },
+                : refusal.code === "BACKGROUND_WORK_RUNNING"
+                  ? { conversationId: refusal.conversationId }
+                  : {
+                      reviewUrl: refusal.reviewUrl,
+                      blockers: refusal.blockers,
+                    },
         } satisfies ApiError,
         { status: 409 },
       );
@@ -615,6 +666,13 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       });
     }
 
+    // Last, after every await: the resumed merge finishes the session unless it says otherwise.
+    const refused = finalizingBackgroundWorkRefusal(
+      priorJob?.finalizeSessionOnPublish,
+      projectPath,
+      sessionName,
+    );
+    if (refused !== null) return refused;
     const result = deps.dispatchResolveConflictsJob({
       projectPath,
       projectName,
@@ -732,6 +790,13 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     );
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
 
+    // Last, after every await, so a refusal leaves the parked candidate as it was.
+    const refused = finalizingBackgroundWorkRefusal(
+      job.finalizeSessionOnPublish,
+      projectPath,
+      sessionName,
+    );
+    if (refused !== null) return refused;
     const result = deps.dispatchMergeJob({
       projectPath,
       projectName,
