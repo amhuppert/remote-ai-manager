@@ -16,9 +16,11 @@ import type Database from "better-sqlite3";
 import { _createTestDb } from "../../src/lib/state-store/state-db";
 import { buildAuditReport } from "./core";
 import {
+  collectConversationReferences,
   listExecutions,
   loadAuditInput,
   parseAuditCliArgs,
+  readonlyDatabaseLocation,
   resolveFinalPublish,
   type AuditDb,
 } from "./run";
@@ -275,6 +277,150 @@ describe("parseAuditCliArgs", () => {
   it("rejects unknown flags", () => {
     expect(() => parseAuditCliArgs(["--bogus"])).toThrow();
   });
+
+  it("takes a database path, so it can read an archive's snapshot", () => {
+    const options = parseAuditCliArgs([
+      "--list",
+      "--config-dir",
+      "/archive",
+      "--db",
+      "/archive/command-center.db.backup",
+    ]);
+    expect(options.db).toBe("/archive/command-center.db.backup");
+    expect(parseAuditCliArgs(["--list"]).db).toBeUndefined();
+  });
+});
+
+describe("collectConversationReferences", () => {
+  it("finds the run's participants in every stored reference form, at any depth", () => {
+    const { participants } = collectConversationReferences([
+      {
+        taskStates: { t1: { lastConversationId: "conv-task" } },
+        laneStates: {
+          impl: { implementer: { workflowConversationId: "conv-lane" } },
+        },
+        contextStates: {
+          impl: { pendingApproval: { conversationId: "conv-approval" } },
+        },
+      },
+      {
+        type: "graph-workflow-validation-result",
+        sessionRef: {
+          backend: "claude",
+          ref: "conv-validator",
+          workflowConversationId: "conv-validator",
+        },
+        reviewArtifact: { kind: "conversation", ref: "conv-artifact" },
+        specialists: [
+          { sessionRef: { workflowConversationId: "conv-specialist" } },
+          { reviewArtifact: { kind: "file", ref: "/tmp/report.json" } },
+        ],
+      },
+      { specialist: { sessionRef: { conversationId: "conv-legacy" } } },
+      { conversationId: "conv-iteration" },
+      { conversationId: "" },
+    ]);
+    expect(participants).toEqual([
+      "conv-approval",
+      "conv-artifact",
+      "conv-iteration",
+      "conv-lane",
+      "conv-legacy",
+      "conv-specialist",
+      "conv-task",
+      "conv-validator",
+    ]);
+  });
+
+  it("keeps the conversations that launched, received or abandoned the run apart from its participants", () => {
+    const references = collectConversationReferences([
+      {
+        ownerConversationId: "conv-owner",
+        abandonment: {
+          actor: { kind: "conversation", conversationId: "conv-abandoner" },
+        },
+        taskStates: { t1: { lastConversationId: "conv-task" } },
+      },
+      {
+        type: "graph-workflow-result-recorded",
+        originConversationId: "conv-owner",
+      },
+    ]);
+    expect(references).toEqual({
+      participants: ["conv-task"],
+      provenance: ["conv-abandoner", "conv-owner"],
+    });
+  });
+
+  it("ignores application data that happens to name a conversation", () => {
+    const references = collectConversationReferences([
+      {
+        boundInputs: { conversationId: "external-input" },
+        contextOutputs: {
+          capture: { value: { conversationId: "external-chat-123" } },
+        },
+        launchDocument: { inputs: { conversationId: "external-launch" } },
+      },
+      {
+        type: "graph-workflow-validation-result",
+        reviewedOutput: { conversationId: "external-reviewed" },
+        reviewedCandidate: { value: { conversationId: "external-candidate" } },
+      },
+    ]);
+    expect(references).toEqual({ participants: [], provenance: [] });
+  });
+});
+
+describe("readonlyDatabaseLocation", () => {
+  const probe = (files: Record<string, number>) => ({
+    exists: (filePath: string) => filePath in files,
+    size: (filePath: string) => files[filePath] ?? 0,
+  });
+
+  it("opens through the shared index while one exists", () => {
+    expect(
+      readonlyDatabaseLocation(
+        "/cfg/command-center.db",
+        probe({
+          "/cfg/command-center.db-shm": 32768,
+          "/cfg/command-center.db-wal": 4096,
+        }),
+      ),
+    ).toEqual({ ok: true, location: "/cfg/command-center.db" });
+  });
+
+  it("opens a database with no pending log as immutable, since a read-only connection cannot create the index", () => {
+    expect(
+      readonlyDatabaseLocation(
+        "/Application Support/cc/command-center.db",
+        probe({ "/Application Support/cc/command-center.db-wal": 0 }),
+      ),
+    ).toEqual({
+      ok: true,
+      location:
+        "file:///Application%20Support/cc/command-center.db?immutable=1",
+    });
+  });
+
+  it("opens an index left without its log as immutable, since there is nothing pending", () => {
+    expect(
+      readonlyDatabaseLocation(
+        "/cfg/command-center.db",
+        probe({ "/cfg/command-center.db-shm": 32768 }),
+      ),
+    ).toEqual({
+      ok: true,
+      location: "file:///cfg/command-center.db?immutable=1",
+    });
+  });
+
+  it("refuses a pending log without its index, which an immutable open would ignore", () => {
+    const result = readonlyDatabaseLocation(
+      "/cfg/command-center.db",
+      probe({ "/cfg/command-center.db-wal": 4096 }),
+    );
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("loadAuditInput", () => {
@@ -494,6 +640,45 @@ describe("loadAuditInput", () => {
     expect(report.time.operatorRecoveryWaitMsTotal).toBe(15 * 60 * 1000);
   });
 
+  it("costs only the run's participants, not the conversation that launched it", () => {
+    const row = db
+      .prepare(
+        `SELECT runtime_json FROM graph_workflow_executions WHERE execution_id = ?`,
+      )
+      .get(ACTIVE_ID) as { runtime_json: string };
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ? WHERE execution_id = ?`,
+    ).run(
+      JSON.stringify({
+        ...JSON.parse(row.runtime_json),
+        ownerConversationId: "conv-owner",
+      }),
+      ACTIVE_ID,
+    );
+    db.prepare(
+      `INSERT INTO conversations
+         (id, project_path, session_name, status, created_at, last_activity_at,
+          total_cost_usd, total_turns, transcript_path)
+       VALUES ('conv-owner', ?, ?, 'completed', ?, ?, 20, 40, NULL)`,
+    ).run(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "2026-07-04T09:00:00Z",
+      "2026-07-04T12:00:00Z",
+    );
+
+    const input = loadAuditInput(
+      { db, logsBaseDir, transcriptsDir: null },
+      { executionId: ACTIVE_ID },
+    );
+    expect(input?.conversations.map((c) => c.id).sort()).toEqual([
+      "conv-1",
+      "conv-2",
+    ]);
+    if (input === null) return;
+    expect(buildAuditReport(input).cost.recordedTotalUsd).toBeCloseTo(4.75);
+  });
+
   it("feeds buildAuditReport end to end", () => {
     const input = loadAuditInput(
       { db, logsBaseDir, transcriptsDir: "/transcripts" },
@@ -549,6 +734,30 @@ describe("transcript scanning in the loader", () => {
     expect(conv1?.transcriptScan?.apiTurns).toBe(7);
     const conv2 = input.conversations.find((c) => c.id === "conv-2");
     expect(conv2?.transcriptScan ?? null).toBeNull();
+  });
+
+  it("reads transcripts from the directory it is given, not the path a row stored", () => {
+    // An archive carries its own transcripts; the stored absolute path names
+    // the live config directory, which may be gone or must not be read.
+    const transcriptsDir = path.join(logsBaseDir, "archived-transcripts");
+    mkdirSync(transcriptsDir);
+    writeFileSync(
+      path.join(transcriptsDir, "conv-1.jsonl"),
+      JSON.stringify({
+        type: "result",
+        raw: { total_cost_usd: 0.75, num_turns: 2, session_id: "s1" },
+      }),
+    );
+
+    const input = loadAuditInput(
+      { db, logsBaseDir, transcriptsDir },
+      { executionId: ACTIVE_ID },
+    );
+    const conv1 = input?.conversations.find((c) => c.id === "conv-1");
+    expect(conv1?.transcriptPath).toBe(
+      path.join(transcriptsDir, "conv-1.jsonl"),
+    );
+    expect(conv1?.transcriptScan?.costUsd).toBeCloseTo(0.75);
   });
 });
 

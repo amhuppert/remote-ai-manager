@@ -1,7 +1,7 @@
 /**
  * Minimal declaration for Bun's built-in sqlite driver, used only by the
  * workflow-audit CLI entry point. The repo does not depend on bun-types;
- * this covers the tiny surface `run.ts` touches.
+ * this covers the tiny surface `run.ts` and `archive.ts` touch.
  */
 declare module "bun:sqlite" {
   export class Database {
@@ -9,6 +9,7 @@ declare module "bun:sqlite" {
     prepare(sql: string): {
       get(...params: unknown[]): unknown;
       all(...params: unknown[]): unknown[];
+      run(...params: unknown[]): unknown;
     };
     close(): void;
   }

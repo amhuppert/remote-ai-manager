@@ -36,6 +36,7 @@
     "logs:analyze": "bun scripts/analyze-logs.ts",
     "logs:duckdb": "scripts/duckdb-logs/run.sh",
     "workflow:audit": "bun scripts/workflow-audit/run.ts",
+    "workflow:archive": "bun scripts/workflow-audit/archive.ts",
     "trace:speedscope": "bun scripts/speedscope-export.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

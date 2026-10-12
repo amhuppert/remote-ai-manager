@@ -387,6 +387,19 @@ describe("parseExecutionProjection", () => {
     const result = parseExecutionProjection({ startedAt: T("10:00:00") });
     expect(result.ok).toBe(false);
   });
+
+  it("reads a one-off run, which records no seed definition", () => {
+    const result = parseExecutionProjection({
+      id: "one-off",
+      startedAt: T("10:00:00"),
+      seedDefinitionId: null,
+      seedDefinitionRevision: null,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.execution.seedDefinitionId).toBe("one-off");
+    expect(result.execution.seedDefinitionRevision).toBe(0);
+  });
 });
 
 describe("classifyHaltReason", () => {

@@ -62,6 +62,15 @@ approval gates, ask-user-question pauses, charter, shared documents.
   newest first, with project/session.
 - A live run in the current session: `cctl workflow status` (add `--full`
   for the whole execution record).
+- A run kept only in the graph workflow archive
+  (`<config-dir>/archive/graph-workflows/`, written by
+  `bun run workflow:archive`): point the extractor at the archive and its
+  database snapshot, then use the same flags —
+  `bun run workflow:audit -- --config-dir <archive> --db <archive>/command-center.db.backup --list`.
+  Its `manifest.json` lists every run, the transcripts it holds, the
+  `refs/cc-archive/graph-workflows/<executionId>/<laneId>/<sha>` refs that
+  keep lane commits in the project repository, the script logs copied from
+  worktrees (`worktree-logs/`), and the gaps it could not fill.
 
 ## Step 2 — Run the extractor
 

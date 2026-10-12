@@ -12,6 +12,8 @@
  *   bun run workflow:audit -- --execution <executionId>
  *   bun run workflow:audit -- --project /abs/path --session my-session
  *   bun run workflow:audit -- --execution <id> --json
+ *   bun run workflow:audit -- --config-dir <cfg>/archive/graph-workflows \
+ *     --db <cfg>/archive/graph-workflows/command-center.db.backup --list
  *
  * The database is opened with `readonly: true` on purpose: this tool must be
  * safe to point at the live instance's config dir while the server runs.
@@ -26,11 +28,14 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  statSync,
 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { homedir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import type { Database as BunDatabase } from "bun:sqlite";
 import { resolveConfigDirFrom } from "../../src/lib/config/config-dir";
 import {
   buildAuditReport,
@@ -45,6 +50,7 @@ import {
   type AuditExecution,
   type AuditInput,
   type ContextLogs,
+  type JsonlRecord,
   type RuntimeAdmissionEvent,
 } from "./core";
 
@@ -65,6 +71,7 @@ export interface AuditCliOptions {
   project?: string;
   session?: string;
   configDir?: string;
+  db?: string;
   json: boolean;
   list: boolean;
 }
@@ -77,6 +84,7 @@ export function parseAuditCliArgs(argv: string[]): AuditCliOptions {
       project: { type: "string" },
       session: { type: "string" },
       "config-dir": { type: "string" },
+      db: { type: "string" },
       json: { type: "boolean", default: false },
       list: { type: "boolean", default: false },
     },
@@ -88,9 +96,50 @@ export function parseAuditCliArgs(argv: string[]): AuditCliOptions {
     project: values.project,
     session: values.session,
     configDir: values["config-dir"],
+    db: values.db,
     json: values.json === true,
     list: values.list === true,
   };
+}
+
+/**
+ * Where to open a WAL-mode database read-only. A read-only connection can use
+ * an existing `-shm` index and `-wal` log but cannot create them, so without
+ * both the file is opened immutable. That is complete only while no log is
+ * pending, so a pending log without its index is refused rather than ignored.
+ */
+export function readonlyDatabaseLocation(
+  dbPath: string,
+  probe: { exists(filePath: string): boolean; size(filePath: string): number },
+): { ok: true; location: string } | { ok: false; reason: string } {
+  const wal = `${dbPath}-wal`;
+  if (probe.exists(`${dbPath}-shm`) && probe.exists(wal)) {
+    return { ok: true, location: dbPath };
+  }
+  if (probe.exists(wal) && probe.size(wal) > 0) {
+    return {
+      ok: false,
+      reason: `${wal} holds writes not yet merged into the database, and its index is gone; start Command Center once, stop it, then rerun`,
+    };
+  }
+  return { ok: true, location: `${pathToFileURL(dbPath).href}?immutable=1` };
+}
+
+/** Opens a database read-only under bun, the CLI's runtime. */
+export async function openReadonlyDatabase(
+  dbPath: string,
+): Promise<{ ok: true; db: BunDatabase } | { ok: false; reason: string }> {
+  if (!existsSync(dbPath))
+    return { ok: false, reason: `no database at ${dbPath}` };
+  const location = readonlyDatabaseLocation(dbPath, {
+    exists: existsSync,
+    size: (filePath) => statSync(filePath).size,
+  });
+  if (!location.ok) return location;
+  // better-sqlite3's native addon cannot load under bun, which ships its own
+  // sqlite driver instead.
+  const { Database } = await import("bun:sqlite");
+  return { ok: true, db: new Database(location.location, { readonly: true }) };
 }
 
 export interface ExecutionListRow {
@@ -148,7 +197,7 @@ export function listExecutions(db: AuditDb): ExecutionListRow[] {
   return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
-interface RawExecutionHit {
+export interface RawExecutionHit {
   source: "active" | "archived";
   raw: Record<string, unknown>;
   projectPath: string | null;
@@ -286,45 +335,82 @@ function loadEvents(db: AuditDb, executionId: string): AuditEvent[] {
   return events;
 }
 
-function collectConversationIds(
-  execution: AuditInput["execution"],
-  events: AuditEvent[],
-  contextLogs: AuditInput["contextLogs"],
-): string[] {
-  const ids = new Set<string>();
-  for (const logs of Object.values(contextLogs)) {
-    for (const record of logs.iterations) {
-      if (record.event !== "iteration.conversation_resolved") continue;
-      const id = record.fields.conversationId;
-      if (typeof id === "string" && id.length > 0) ids.add(id);
+/** Fields naming a conversation that worked in the run. */
+const PARTICIPANT_KEYS = new Set([
+  "conversationId",
+  "workflowConversationId",
+  "lastConversationId",
+  "initiatorConversationId",
+]);
+/** Fields naming a conversation that launched or received the run. */
+const PROVENANCE_KEYS = new Set([
+  "ownerConversationId",
+  "originConversationId",
+]);
+/**
+ * Agent, author and launch data: a `conversationId` inside is the
+ * application's own value, not a reference to a CC conversation.
+ */
+const PAYLOAD_KEYS = new Set([
+  "boundInputs",
+  "charter",
+  "contextOutputs",
+  "launchDocument",
+  "machineSnapshot",
+  "outputCandidate",
+  "payload",
+  "pendingActions",
+  "rejectedOutput",
+  "reviewedCandidate",
+  "reviewedOutput",
+  "sharedDocuments",
+  "structuredOutput",
+  "value",
+  "workingDefinition",
+]);
+
+export interface ConversationReferences {
+  /** Lane, task, validator, approval and question conversations. */
+  participants: string[];
+  /** The owner, a result's origin and an abandoning actor. */
+  provenance: string[];
+}
+
+/**
+ * The conversations a run's stored records name, in any of the shapes its
+ * writers used (task, lane, session-ref, approval and log fields, and the
+ * `ref` of a conversation-kind review artifact), at any depth outside payload
+ * data: validation specialists nest theirs.
+ */
+export function collectConversationReferences(
+  sources: unknown[],
+): ConversationReferences {
+  const participants = new Set<string>();
+  const provenance = new Set<string>();
+  const visit = (value: unknown, asProvenance: boolean): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, asProvenance);
+      return;
     }
-  }
-  for (const task of Object.values(execution.taskStates)) {
-    if (task.lastConversationId !== null) ids.add(task.lastConversationId);
-  }
-  for (const lanes of Object.values(execution.laneStates)) {
-    for (const lane of Object.values(lanes)) {
-      const fromRef = lane.sessionRef?.conversationId;
-      if (typeof fromRef === "string" && fromRef.length > 0) ids.add(fromRef);
-      if (lane.workflowConversationId !== null) {
-        ids.add(lane.workflowConversationId);
-      }
+    if (typeof value !== "object" || value === null) return;
+    const record = value as Record<string, unknown>;
+    const add = (id: unknown, isProvenance: boolean) => {
+      if (typeof id !== "string" || id.length === 0) return;
+      (isProvenance ? provenance : participants).add(id);
+    };
+    for (const [key, field] of Object.entries(record)) {
+      if (PAYLOAD_KEYS.has(key)) continue;
+      if (PROVENANCE_KEYS.has(key)) add(field, true);
+      else if (PARTICIPANT_KEYS.has(key)) add(field, asProvenance);
+      else visit(field, asProvenance || key === "abandonment");
     }
-  }
-  for (const event of events) {
-    const direct = event.fields.conversationId;
-    if (typeof direct === "string" && direct.length > 0) ids.add(direct);
-    const sessionRef = event.fields.sessionRef;
-    if (
-      typeof sessionRef === "object" &&
-      sessionRef !== null &&
-      !Array.isArray(sessionRef)
-    ) {
-      const nested = (sessionRef as Record<string, unknown>).conversationId;
-      if (typeof nested === "string" && nested.length > 0) ids.add(nested);
-    }
-  }
-  return [...ids];
+    if (record.kind === "conversation") add(record.ref, asProvenance);
+  };
+  for (const source of sources) visit(source, false);
+  return {
+    participants: [...participants].sort(),
+    provenance: [...provenance].filter((id) => !participants.has(id)).sort(),
+  };
 }
 
 function loadConversations(
@@ -351,11 +437,12 @@ function loadConversations(
     transcript_path: string | null;
   }>;
   return rows.map((row) => {
+    // The given directory wins over the stored absolute path, which names the
+    // live config directory: an archive must read its own copies.
     const transcriptPath =
-      row.transcript_path ??
-      (transcriptsDir !== null
+      transcriptsDir !== null
         ? path.join(transcriptsDir, `${row.id}.jsonl`)
-        : null);
+        : row.transcript_path;
     return {
       id: row.id,
       role: row.role,
@@ -573,6 +660,64 @@ export interface LoadDeps {
   runGit?(args: string[], cwd: string): string | null;
 }
 
+/** A run's event log and `workflow-logs/<executionId>/` records. */
+export interface ExecutionLogs {
+  events: AuditEvent[];
+  contextLogs: Record<string, ContextLogs>;
+  lifecycle: JsonlRecord[];
+  decisions: JsonlRecord[];
+  workflowLogsDir: string | null;
+}
+
+export function loadExecutionLogs(
+  db: AuditDb,
+  logsBaseDir: string,
+  executionId: string,
+): ExecutionLogs {
+  const executionLogsDir = path.join(logsBaseDir, executionId);
+  const logsDirExists = existsSync(executionLogsDir);
+  return {
+    events: loadEvents(db, executionId),
+    contextLogs: logsDirExists ? loadContextLogs(executionLogsDir) : {},
+    lifecycle: logsDirExists
+      ? readJsonlFile(path.join(executionLogsDir, "lifecycle.jsonl"))
+      : [],
+    decisions: logsDirExists
+      ? readJsonlFile(path.join(executionLogsDir, "decisions.jsonl"))
+      : [],
+    workflowLogsDir: logsDirExists ? executionLogsDir : null,
+  };
+}
+
+/** The conversations a run names across its record, events and logs. */
+export function namedConversations(
+  record: Record<string, unknown> | null,
+  logs: ExecutionLogs,
+): ConversationReferences {
+  const logRecords = [
+    ...logs.lifecycle,
+    ...logs.decisions,
+    ...Object.values(logs.contextLogs).flatMap((context) => [
+      ...context.iterations,
+      ...context.tasks,
+      ...context.validation,
+    ]),
+  ];
+  return collectConversationReferences([
+    record,
+    ...logs.events.map((event) => event.fields),
+    ...logRecords.map((entry) => entry.fields),
+  ]);
+}
+
+/** A run's stored record by id; null when absent or not readable JSON. */
+export function readExecutionRecord(
+  db: AuditDb,
+  executionId: string,
+): RawExecutionHit | null {
+  return findExecutionRaw(db, { executionId });
+}
+
 export function loadAuditInput(
   deps: LoadDeps,
   selector: {
@@ -588,35 +733,30 @@ export function loadAuditInput(
     throw new Error(`stored execution failed to parse: ${parsed.error}`);
   }
   const execution = parsed.execution;
-  const events = loadEvents(deps.db, execution.id);
-  const executionLogsDir = path.join(deps.logsBaseDir, execution.id);
-  const logsDirExists = existsSync(executionLogsDir);
-  const contextLogs = logsDirExists ? loadContextLogs(executionLogsDir) : {};
+  const logs = loadExecutionLogs(deps.db, deps.logsBaseDir, execution.id);
+  // Cost and timing cover the run's participants; the conversation that
+  // launched it carries its own, unrelated history.
   const conversations = loadConversations(
     deps.db,
-    collectConversationIds(execution, events, contextLogs),
+    namedConversations(hit.raw, logs).participants,
     deps.transcriptsDir,
   );
   const runGit = deps.runGit;
   return {
     source: hit.source,
     execution,
-    events,
+    events: logs.events,
     conversations,
-    contextLogs,
+    contextLogs: logs.contextLogs,
     runtimeAdmissionEvents: loadRuntimeAdmissionEvents(
       deps.runtimeLogPath,
       execution,
       new Set(conversations.map((conversation) => conversation.id)),
     ),
-    lifecycle: logsDirExists
-      ? readJsonlFile(path.join(executionLogsDir, "lifecycle.jsonl"))
-      : [],
-    decisions: logsDirExists
-      ? readJsonlFile(path.join(executionLogsDir, "decisions.jsonl"))
-      : [],
+    lifecycle: logs.lifecycle,
+    decisions: logs.decisions,
     paths: {
-      workflowLogsDir: logsDirExists ? executionLogsDir : null,
+      workflowLogsDir: logs.workflowLogsDir,
       transcriptsDir: deps.transcriptsDir,
     },
     finalPublish:
@@ -645,15 +785,14 @@ if (import.meta.main) {
       platform: process.platform,
       homedir: homedir(),
     });
-  const dbPath = path.join(configDir, "command-center.db");
-  if (!existsSync(dbPath)) {
-    console.error(`workflow-audit: no database at ${dbPath}`);
+  const opened = await openReadonlyDatabase(
+    options.db ?? path.join(configDir, "command-center.db"),
+  );
+  if (!opened.ok) {
+    console.error(`workflow-audit: ${opened.reason}`);
     process.exit(1);
   }
-  // The CLI runs under bun (see package.json), where better-sqlite3's native
-  // addon cannot load; bun ships its own sqlite driver instead.
-  const { Database } = await import("bun:sqlite");
-  const db = new Database(dbPath, { readonly: true });
+  const db = opened.db;
   try {
     if (options.list) {
       for (const row of listExecutions(db)) {

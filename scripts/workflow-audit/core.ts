@@ -189,8 +189,15 @@ const auditDefinitionContextSchema = z.object({
 
 const auditExecutionProjectionSchema = z.object({
   id: z.string(),
-  seedDefinitionId: z.string().default("unknown"),
-  seedDefinitionRevision: z.number().default(0),
+  // A one-off run records no seed definition (null).
+  seedDefinitionId: z
+    .string()
+    .nullish()
+    .transform((id) => (id === null ? "one-off" : (id ?? "unknown"))),
+  seedDefinitionRevision: z
+    .number()
+    .nullish()
+    .transform((revision) => revision ?? 0),
   boundInputs: z.record(z.string(), z.string()).default({}),
   launchedTier: z.string().default("project"),
   status: z.string().default("unknown"),
