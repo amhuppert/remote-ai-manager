@@ -1,5 +1,6 @@
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import {
+  conversationTargetStoreSessionName,
   targetFromStoreSessionName,
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
@@ -55,6 +56,7 @@ import {
   settlementOf,
   type ConversationIdentity,
   type ConversationRecordPort,
+  type LiveInputRecordPort,
 } from "./conversation-record";
 import type { TurnStream, UserTurnPort } from "./executor";
 import type { UserTurnRequest } from "./schemas";
@@ -64,7 +66,7 @@ import {
   turnResultOf,
   recordedResult,
 } from "./recorded-turn";
-import type { RuntimeCustody } from "./custody";
+import type { CustodySegment, RuntimeCustody } from "./custody";
 import type {
   HostedConversation,
   RuntimeHost,
@@ -90,10 +92,10 @@ export interface DebugVerificationStart {
 
 export interface InteractiveTurnDeps {
   engine: Pick<TurnEngine, "runTurn">;
-  records: ConversationRecordPort;
+  records: ConversationRecordPort & LiveInputRecordPort;
   host: Pick<RuntimeHost, "release" | "isLive" | "runtime" | "alignment">;
   /** The runtime side of custody: what keeps a runtime that still owes provider work between turns. */
-  custody: Pick<RuntimeCustody, "keep" | "takeOver" | "describe">;
+  custody: Pick<RuntimeCustody, "keep" | "takeOver" | "describe" | "segment">;
   /** Where the conversation's agent works: its session's worktree, or the project root for a project conversation. */
   worktreeOf(projectPath: string, target: ConversationTarget): Promise<string>;
   /**
@@ -273,14 +275,51 @@ async function renderMessage(
   };
 }
 
-/** A turn that is running now, as live input reaches it. */
-interface RunningTurn {
+/** What live input joins: a running turn, or a provider turn custody holds between turns. */
+interface LiveTarget {
   identity: ConversationIdentity;
-  execution: TurnInputRequest["execution"];
+  execution: Omit<TurnInputRequest["execution"], "turn">;
   broadcast: TranscriptBroadcastMeta;
+}
+
+/** A turn that is running now, as live input reaches it. */
+interface RunningTurn extends LiveTarget {
   /** Set once the turn ended: it takes no more live input. */
   settling: boolean;
   deliveries: Set<Promise<DeliveryClass>>;
+}
+
+type LiveOwner =
+  | { kind: "turn"; turn: RunningTurn }
+  | { kind: "segment"; segment: CustodySegment };
+
+/** A provider turn custody holds, as live input reaches it: custody's provider turns run outside debug mode. */
+function segmentTarget(segment: CustodySegment): LiveTarget {
+  const { conversation } = segment;
+  const storeSessionName = conversationTargetStoreSessionName(
+    conversation.target,
+  );
+  return {
+    identity: {
+      projectPath: conversation.projectPath,
+      storeSessionName,
+      conversationId: conversation.conversationId,
+    },
+    execution: {
+      projectPath: conversation.projectPath,
+      target: conversation.target,
+      worktreePath: conversation.worktreePath,
+      role: null,
+      persistence: "durable",
+      executionAttemptId: segment.attemptId,
+      debugMode: null,
+    },
+    broadcast: { projectName: conversation.projectName, storeSessionName },
+  };
+}
+
+function targetOf(owner: LiveOwner): LiveTarget {
+  return owner.kind === "turn" ? owner.turn : segmentTarget(owner.segment);
 }
 
 function asError(error: unknown): Error {
@@ -296,14 +335,15 @@ export interface RunningTurnDescription {
 
 export interface InteractiveTurns extends UserTurnPort {
   describeRunning(conversationId: string): RunningTurnDescription | null;
-  /** Whether the conversation's running turn could take a queued message now. */
+  /** Whether the conversation's running turn, or a provider turn custody holds, could take a queued message now. */
   acceptsLive(conversationId: string): Promise<boolean>;
   /**
    * Delivers a queued message the queue claimed into the running turn (design
-   * §4.4 live input), through the same turn input and acceptance order as a
-   * turn's own. The queue's rows are settled here: `not_sent` returns them for
-   * the next turn; `uncertain`, and `accepted` input the queue could not
-   * release, hold them for review.
+   * §4.4 live input), or into a provider turn custody holds when the runtime
+   * may answer input after its turn (design C5b §4.2), through the same turn
+   * input and acceptance order as a turn's own. The queue's rows are settled
+   * here: `not_sent` returns them for the next turn; `uncertain`, and
+   * `accepted` input the queue could not release, hold them for review.
    */
   deliverLive(
     identity: ConversationIdentity,
@@ -346,21 +386,32 @@ export function createInteractiveTurns(
     ]);
   }
 
-  /** Why the running turn cannot take a queued message now; null when it can. */
-  async function liveRefusal(conversationId: string): Promise<string | null> {
-    const turn = running.get(conversationId);
-    if (turn === undefined) return "no_running_turn";
-    if (turn.settling) return "turn_settling";
+  /** What a queued message would join now, or why nothing can take it. */
+  function liveOwner(conversationId: string): LiveOwner | string {
     const runtime = deps.host.runtime(conversationId);
-    // Only input that joins this turn, or is refused once it ends.
-    // TODO(C5b slice 4): a runtime custody may keep takes input the provider answers after the turn's
-    // result, during a turn or a provider turn custody holds; idle custody keeps refusing it.
-    if (
-      runtime?.queueUserInput === undefined ||
-      runtime.liveInput !== "running_turn"
-    )
-      return "runtime_not_turn_bound";
-    const row = await deps.records.read(turn.identity);
+    const declared =
+      runtime?.queueUserInput === undefined ? undefined : runtime.liveInput;
+    const turn = running.get(conversationId);
+    if (turn !== undefined) {
+      if (turn.settling) return "turn_settling";
+      return declared === undefined
+        ? "live_input_undeclared"
+        : { kind: "turn", turn };
+    }
+    // Input the provider may answer after a turn's result also joins a provider turn custody holds
+    // (design C5b §4.2); idle custody refuses it, so it drains as the turn that takes the runtime over.
+    const segment = deps.custody.segment(conversationId);
+    if (segment === null) return "no_running_turn";
+    return declared === "until_answered"
+      ? { kind: "segment", segment }
+      : "live_input_turn_bound";
+  }
+
+  /** Why the conversation cannot take a queued message now; null when it can. */
+  async function liveRefusal(conversationId: string): Promise<string | null> {
+    const owner = liveOwner(conversationId);
+    if (typeof owner === "string") return owner;
+    const row = await deps.records.read(targetOf(owner).identity);
     if (row === null) return "no_conversation";
     // A question waits for its answer, debug mode takes no queued input, a collaboration holds the conversation.
     if (row.pendingQuestionId !== null) return "question_pending";
@@ -380,11 +431,12 @@ export function createInteractiveTurns(
   }
 
   async function deliverInto(
-    turn: RunningTurn,
+    target: LiveTarget,
     request: UserTurnRequest,
     delivery: QueuedDeliveryMetadata,
+    joined: LiveOwner["kind"],
   ): Promise<DeliveryClass> {
-    const { identity } = turn;
+    const { identity } = target;
     const conversationId = identity.conversationId;
     const runtime = deps.host.runtime(conversationId);
     if (runtime?.queueUserInput === undefined) {
@@ -395,6 +447,7 @@ export function createInteractiveTurns(
       });
       return "not_sent";
     }
+    const answeredLater = runtime.liveInput === "until_answered";
     const message = await renderMessage(deps, conversationId, request);
     const messageId = delivery.messageIds[0] ?? delivery.deliveryAttemptId;
     const entry: TranscriptEntry & { id: string } = {
@@ -411,13 +464,13 @@ export function createInteractiveTurns(
         deps.transcript.appendTranscriptEntryOnce(
           conversationId,
           entry,
-          turn.broadcast,
+          target.broadcast,
         ),
     });
     const prepared = await deps.prepareInput({
       mode: "live",
       execution: {
-        ...turn.execution,
+        ...target.execution,
         turn: { inputOrigin: request.inputOrigin, promptText: request.text },
       },
       promptText: message.promptText,
@@ -467,10 +520,19 @@ export function createInteractiveTurns(
         error: "Not sent into the running turn; it goes with the next turn",
       });
     else await accounting.settleAfterTurn();
+    // Its answer may come in a provider turn of its own, which counts no prompt: the input counts as one.
+    if (outcome === "accepted" && answeredLater)
+      await deps.records.recordLiveInput(identity).catch((error: unknown) =>
+        deps.log.warn("conversation_core.live_input_count_failed", {
+          conversationId,
+          error: getErrorMessage(error),
+        }),
+      );
     deps.log.info("conversation_core.live_delivery", {
       conversationId,
       deliveryAttemptId: delivery.deliveryAttemptId,
       outcome,
+      joined,
     });
     return outcome;
   }
@@ -519,13 +581,11 @@ export function createInteractiveTurns(
       const delivery = request.queuedDelivery;
       if (delivery === undefined)
         throw new Error("Live input is a queued message the queue claimed");
-      const turn = running.get(identity.conversationId);
-      // Checked again after the row read: a turn that began settling meanwhile waits for no new delivery.
-      if (
-        turn === undefined ||
-        !(await acceptsLive(identity.conversationId)) ||
-        turn.settling
-      ) {
+      const accepts = await acceptsLive(identity.conversationId);
+      // Read after the row read: a turn that began settling, or a provider turn that ended, meanwhile takes no
+      // new delivery.
+      const owner = liveOwner(identity.conversationId);
+      if (!accepts || typeof owner === "string") {
         await deps.returnQueued({
           identity,
           delivery,
@@ -533,12 +593,17 @@ export function createInteractiveTurns(
         });
         return "not_sent";
       }
-      const work = deliverInto(turn, request, delivery);
-      turn.deliveries.add(work);
+      const work = deliverInto(targetOf(owner), request, delivery, owner.kind);
+      // Custody owns what joins its provider turn: that turn's end is told once the delivery has settled.
+      if (owner.kind === "segment") {
+        owner.segment.own(work);
+        return work;
+      }
+      owner.turn.deliveries.add(work);
       try {
         return await work;
       } finally {
-        turn.deliveries.delete(work);
+        owner.turn.deliveries.delete(work);
       }
     },
     async notStarted({ conversationId, place, request, reason, endedBy }) {

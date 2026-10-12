@@ -13,7 +13,10 @@ import { CONVERSATION_IDENTITY_ENV_VAR } from "@/lib/agent-gateway/conversation-
 import { storeSessionNameFromScopeRef } from "@/lib/conversations/conversation-target";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { ConversationRecordPort } from "./conversation-record";
+import type {
+  ConversationRecordPort,
+  LiveInputRecordPort,
+} from "./conversation-record";
 import { createInteractiveTurns } from "./interactive-turns";
 import { noCustody, noCustodyOpener } from "./testing/no-custody";
 import { createRuntimeHost } from "./runtime-host";
@@ -25,7 +28,8 @@ vi.mock("@/lib/shared/sdk-env", () => ({}));
 const PROJECT = mkdtempSync(path.join(tmpdir(), "cc-core-project-root-"));
 const log = createCapturingLogger();
 
-const records: ConversationRecordPort = {
+const records: ConversationRecordPort & LiveInputRecordPort = {
+  async recordLiveInput() {},
   async recordSeenAlignment() {},
   async read() {
     return {

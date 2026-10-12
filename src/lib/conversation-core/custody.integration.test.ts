@@ -9,7 +9,11 @@ import type {
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
 import { getConversationTranscriptProjection } from "@/lib/agent-backends/conversation-policy";
-import { FAKE_CLAUDE_HANGING_PROMPT } from "@/lib/agent-backends/testing/fake-claude-sdk-port";
+import {
+  FAKE_CLAUDE_HANGING_PROMPT,
+  FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
+  FAKE_CLAUDE_QUEUE_LATER_PROMPT,
+} from "@/lib/agent-backends/testing/fake-claude-sdk-port";
 import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
 import { createControlPermits } from "@/lib/control/permits";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
@@ -26,11 +30,13 @@ import {
   type WorkspaceAdmission,
 } from "@/lib/workspace/admission";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
+import { createQueuedDeliveryAccounting } from "./contributions/queued-delivery-accounting";
 import { createProductionConversationRecords } from "./production-records";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import {
   applyClaimEnded,
   applyCustodyRow,
+  applyLiveInputAccepted,
   applySegmentUsage,
   applyTurnBegin,
   applyTurnClaimed,
@@ -38,12 +44,14 @@ import {
   type ConversationRecordPort,
   type ConversationRow,
   type CustodyRecordPort,
+  type LiveInputRecordPort,
 } from "./conversation-record";
 import { createRuntimeCustody } from "./custody";
 import { createConversationCore, type ConversationCore } from "./executor";
 import { createInteractiveTurns } from "./interactive-turns";
 import { createConversationRequests } from "./requests";
 import { createRuntimeHost } from "./runtime-host";
+import type { UserTurnRequest } from "./schemas";
 import { passthroughTurnInput } from "./testing/passthrough-input";
 import { createTurnEngine } from "./turn-engine";
 
@@ -92,7 +100,12 @@ function memoryRow() {
     change();
     if (row.status !== before) statuses.push(row.status);
   };
-  const records: ConversationRecordPort & CustodyRecordPort = {
+  const records: ConversationRecordPort &
+    CustodyRecordPort &
+    LiveInputRecordPort = {
+    async recordLiveInput() {
+      write(() => applyLiveInputAccepted(row, now));
+    },
     async read() {
       return {
         agentBackend: row.agentBackend,
@@ -192,7 +205,7 @@ function compose(
     begin() {},
     afterSettleTurn() {},
   };
-  const base: ConversationRecordPort & CustodyRecordPort =
+  const base: ConversationRecordPort & CustodyRecordPort & LiveInputRecordPort =
     options.rows === "production"
       ? {
           ...createProductionConversationRecords({
@@ -215,7 +228,9 @@ function compose(
           }),
         }
       : memory.records;
-  const records: ConversationRecordPort & CustodyRecordPort = {
+  const records: ConversationRecordPort &
+    CustodyRecordPort &
+    LiveInputRecordPort = {
     ...base,
     async read(identity) {
       await turnHooks.read();
@@ -241,6 +256,23 @@ function compose(
     persistence.recreateStore().getConversation(PROJECT, SESSION, CHAT);
   const frames: string[] = [];
   const losses: string[] = [];
+  /** The conversation's message queue, which live input is claimed from and released to. */
+  let queuedIds = 0;
+  const liveQueue = createMessageQueueService({
+    mutateConversation: persistence.store.mutateConversation,
+    getConversation: persistence.store.getConversation,
+    getProjectDisplayName: () => "repo",
+    broadcast: () => {},
+    now: () => now,
+    newId: () => `live-${++queuedIds}`,
+  });
+  const queueKey = {
+    projectPath: PROJECT,
+    sessionName: SESSION,
+    conversationId: CHAT,
+  };
+  /** User entries the transcript archived for queued input, once each. */
+  const userEntries: TranscriptEntry[] = [];
   const instructions = { lines: ["Work carefully."] };
   const slots = { free: 2, waiting: [] as Array<() => void> };
   const releaseSlot = () => {
@@ -325,12 +357,34 @@ function compose(
       answers: {},
     }),
     persistImages: async ({ promptText }) => ({ promptText, imageRefs: [] }),
-    queuedDelivery: () => {
-      throw new Error("a direct message has no queued delivery");
+    queuedDelivery: ({ delivery, appendUserEntry }) =>
+      createQueuedDeliveryAccounting(
+        {
+          markQueuedUncertain: (input) => liveQueue.markUncertain(input),
+          confirmQueuedDelivery: (input) => liveQueue.confirmDelivery(input),
+        },
+        { ...queueKey, queuedDelivery: delivery, appendUserEntry },
+      ),
+    failQueued: ({ delivery, error }) =>
+      liveQueue.markFailed({
+        ...queueKey,
+        ids: delivery.messageIds,
+        deliveryAttemptId: delivery.deliveryAttemptId,
+        error,
+      }),
+    returnQueued: ({ delivery, error }) =>
+      liveQueue.markPending({
+        ...queueKey,
+        ids: delivery.messageIds,
+        deliveryAttemptId: delivery.deliveryAttemptId,
+        error,
+      }),
+    transcript: {
+      async appendTranscriptEntryOnce(_conversationId, entry) {
+        if (!userEntries.some((kept) => kept.id === entry.id))
+          userEntries.push(entry);
+      },
     },
-    failQueued: async () => {},
-    returnQueued: async () => {},
-    transcript: { async appendTranscriptEntryOnce() {} },
     getProjectDisplayName: () => "repo",
     startDebugVerification: () => {},
     log,
@@ -425,6 +479,43 @@ function compose(
     slots,
     releaseSlot,
     custodyAttempts,
+    interactiveTurns,
+    liveQueue,
+    userEntries,
+    identity: {
+      projectPath: PROJECT,
+      storeSessionName: SESSION,
+      conversationId: CHAT,
+    },
+    /** The rows the conversation's queue still holds, as the store keeps them. */
+    async pendingQueue() {
+      return (await persistence.store.getConversation(PROJECT, SESSION, CHAT))
+        ?.pendingQueue;
+    },
+    /** A message queued while the agent works, claimed for live delivery as the queue claims it. */
+    async queueLive(text: string): Promise<UserTurnRequest> {
+      await seeded;
+      const entry = await liveQueue.enqueue({
+        ...queueKey,
+        inputOrigin: "user",
+        content: [{ type: "text", text }],
+      });
+      const claimed = await liveQueue.claimLiveDelivery({
+        ...queueKey,
+        id: entry.id,
+      });
+      if (claimed?.deliveryAttemptId == null)
+        throw new Error("the queue did not claim the message");
+      return {
+        kind: "user_message",
+        text,
+        inputOrigin: "user",
+        queuedDelivery: {
+          messageIds: [entry.id],
+          deliveryAttemptId: claimed.deliveryAttemptId,
+        },
+      };
+    },
     async send(text: string) {
       await seeded;
       const sent = await core.sendUserMessage({
@@ -968,5 +1059,232 @@ describe("custody on the conversation core (design C5b, slice 3)", () => {
       expect(h.losses).toEqual([`${custody?.attemptId}:lost`]);
       expect(h.host.runtime(CHAT)).toBeNull();
     });
+  });
+});
+
+describe("live input into a retaining Claude runtime (design C5b §4.2, slice 4)", () => {
+  /** The real Claude adapter over the scripted SDK port, as production composes it. */
+  function claude() {
+    const provider = createScriptedConversationBackend({
+      backend: "claude",
+      responseText: JSON.stringify({ done: true }),
+    });
+    cleanups.push(() => provider.close());
+    return { factory: provider.factory, sdk: provider.claudeSdk };
+  }
+
+  it("folds live input into the running turn: one result names both inputs, the input counts as a prompt, and nothing is kept (Claude adapter)", async () => {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Check the build. ${FAKE_CLAUDE_QUEUE_HOLD_PROMPT}`,
+    );
+    await vi.waitFor(async () =>
+      expect(await h.interactiveTurns.acceptsLive(CHAT)).toBe(true),
+    );
+
+    const live = await h.queueLive("Also check the docs.");
+    expect(await h.interactiveTurns.deliverLive(h.identity, live)).toBe(
+      "accepted",
+    );
+    expect(sdk.lastPromptText).toContain("Also check the docs.");
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await h.core.conversationIdle(CHAT);
+
+    expect(h.custodyAttempts()).toEqual([]);
+    expect(h.host.runtime(CHAT)).toBeNull();
+    expect(h.row).toMatchObject({ status: "awaiting", promptCount: 3 });
+    expect(h.userEntries.map((entry) => entry.id)).toEqual(
+      live.queuedDelivery?.messageIds,
+    );
+    expect(await h.pendingQueue()).toEqual([]);
+  });
+
+  it("answers live input the turn's result left unanswered in custody's first provider turn: the turn ends without waiting, the row shows the answer running, and its frames and cost are recorded (Claude adapter)", async () => {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Check the build. ${FAKE_CLAUDE_QUEUE_LATER_PROMPT}`,
+    );
+    await vi.waitFor(async () =>
+      expect(await h.interactiveTurns.acceptsLive(CHAT)).toBe(true),
+    );
+    const live = await h.queueLive("Also check the docs.");
+    expect(await h.interactiveTurns.deliverLive(h.identity, live)).toBe(
+      "accepted",
+    );
+
+    // The turn's own result names only its prompt: the turn ends on it.
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await h.core.conversationIdle(CHAT);
+    expect(h.custodyAttempts()).toMatchObject([{ state: "admitted" }]);
+    expect(h.host.runtime(CHAT)?.status).toBe("alive");
+    expect(h.row).toMatchObject({ status: "awaiting", promptCount: 3 });
+    expect(await h.pendingQueue()).toEqual([]);
+    const costBefore = h.row.totalCostUsd ?? 0;
+    const turnsBefore = h.row.totalTurns ?? 0;
+    h.statuses.length = 0;
+
+    sdk.answerQueuedInputs({ totalCostUsd: 0.05 });
+    await vi.waitFor(() =>
+      expect(h.custodyAttempts()).toMatchObject([
+        { state: "settled", outcome: { kind: "custody", end: "settled" } },
+      ]),
+    );
+
+    expect(h.statuses).toEqual(["running", "awaiting"]);
+    expect(h.frames).toContain("Answered the queued input.");
+    expect(h.row.totalCostUsd).toBeCloseTo(costBefore + 0.04);
+    expect(h.row.totalTurns).toBe(turnsBefore + 1);
+    // The answer is no prompt of its own: the input was counted when it was accepted.
+    expect(h.row).toMatchObject({
+      status: "awaiting",
+      unread: true,
+      promptCount: 3,
+    });
+    expect(h.host.runtime(CHAT)).toBeNull();
+    expect(h.admission.held()).toEqual([]);
+    expect(h.losses).toEqual([]);
+  });
+
+  it("takes live input into the provider turn custody holds, which owns it until the provider turn's result answers it (Claude adapter)", async () => {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Run the suite in the background. ${FAKE_CLAUDE_HANGING_PROMPT}`,
+    );
+    await vi.waitFor(() =>
+      expect(sdk.lastPromptText).toContain(FAKE_CLAUDE_HANGING_PROMPT),
+    );
+    sdk.startBackgroundTask();
+    sdk.pushExternalTurn();
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await h.core.conversationIdle(CHAT);
+    expect(h.custodyAttempts()).toMatchObject([{ state: "admitted" }]);
+    expect(h.row.promptCount).toBe(2);
+
+    sdk.endBackgroundTask();
+    sdk.startContinuation();
+    await vi.waitFor(async () =>
+      expect(await h.interactiveTurns.acceptsLive(CHAT)).toBe(true),
+    );
+    expect(h.row.status).toBe("running");
+    const live = await h.queueLive("Also rerun the flaky test.");
+    expect(await h.interactiveTurns.deliverLive(h.identity, live)).toBe(
+      "accepted",
+    );
+    // Receipts settle at acceptance, before the provider turn's result.
+    expect(h.userEntries.map((entry) => entry.id)).toEqual(
+      live.queuedDelivery?.messageIds,
+    );
+    expect(await h.pendingQueue()).toEqual([]);
+    expect(h.row.promptCount).toBe(3);
+
+    sdk.finishContinuation({ totalCostUsd: 0.03 });
+    await vi.waitFor(() =>
+      expect(h.custodyAttempts()).toMatchObject([
+        { state: "settled", outcome: { kind: "custody", end: "settled" } },
+      ]),
+    );
+    expect(h.row).toMatchObject({ status: "awaiting", promptCount: 3 });
+    expect(h.host.runtime(CHAT)).toBeNull();
+    expect(h.losses).toEqual([]);
+  });
+
+  it("keeps custody for live input a provider turn's result left unanswered, until the CLI answers it in a provider turn of its own (Claude adapter)", async () => {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Run the suite in the background. ${FAKE_CLAUDE_HANGING_PROMPT}`,
+    );
+    await vi.waitFor(() =>
+      expect(sdk.lastPromptText).toContain(FAKE_CLAUDE_HANGING_PROMPT),
+    );
+    sdk.startBackgroundTask();
+    sdk.pushExternalTurn();
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await h.core.conversationIdle(CHAT);
+
+    sdk.endBackgroundTask();
+    sdk.startContinuation();
+    await vi.waitFor(async () =>
+      expect(await h.interactiveTurns.acceptsLive(CHAT)).toBe(true),
+    );
+    const live = await h.queueLive("Also rerun the flaky test.");
+    expect(await h.interactiveTurns.deliverLive(h.identity, live)).toBe(
+      "accepted",
+    );
+    expect(h.row.promptCount).toBe(3);
+
+    // The continuation's result names no input: the input is still owed.
+    sdk.finishContinuation({ totalCostUsd: 0.03, leaveInputs: true });
+    await vi.waitFor(() => expect(h.row.status).toBe("awaiting"));
+    expect(h.custodyAttempts()).toMatchObject([{ state: "admitted" }]);
+
+    sdk.answerQueuedInputs({ totalCostUsd: 0.04 });
+    await vi.waitFor(() =>
+      expect(h.custodyAttempts()).toMatchObject([
+        { state: "settled", outcome: { kind: "custody", end: "settled" } },
+      ]),
+    );
+    expect(h.row).toMatchObject({ status: "awaiting", promptCount: 3 });
+    expect(h.host.runtime(CHAT)).toBeNull();
+    expect(h.losses).toEqual([]);
+  });
+
+  it("refuses live input in idle custody: the message stays queued and drains as a turn that takes the runtime over (Claude adapter)", async () => {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Run the suite in the background. ${FAKE_CLAUDE_HANGING_PROMPT}`,
+    );
+    await vi.waitFor(() =>
+      expect(sdk.lastPromptText).toContain(FAKE_CLAUDE_HANGING_PROMPT),
+    );
+    sdk.startBackgroundTask();
+    sdk.pushExternalTurn();
+    await sent.settled;
+    await h.core.conversationIdle(CHAT);
+    const [custody] = h.custodyAttempts();
+
+    expect(await h.interactiveTurns.acceptsLive(CHAT)).toBe(false);
+    const live = await h.queueLive("Next, fix the lint.");
+    expect(await h.interactiveTurns.deliverLive(h.identity, live)).toBe(
+      "not_sent",
+    );
+    expect(sdk.lastPromptText).not.toContain("Next, fix the lint.");
+    expect(await h.pendingQueue()).toMatchObject([
+      { id: live.queuedDelivery?.messageIds[0], status: "pending" },
+    ]);
+    expect(h.row.promptCount).toBe(2);
+
+    // The queue drains it as the conversation's next turn.
+    const batch = await h.liveQueue.claimNextTurnBatch({
+      projectPath: PROJECT,
+      sessionName: SESSION,
+      conversationId: CHAT,
+    });
+    if (batch === null) throw new Error("nothing to drain");
+    const drained = await h.core.sendUserMessage({
+      conversationId: CHAT,
+      text: "Next, fix the lint.",
+      inputOrigin: "user",
+      queuedDelivery: {
+        messageIds: batch.messageIds,
+        deliveryAttemptId: batch.deliveryAttemptId,
+      },
+    });
+    if (drained.kind !== "accepted") throw new Error(drained.message);
+    expect(await drained.settled).toMatchObject({ status: "succeeded" });
+    await h.core.conversationIdle(CHAT);
+
+    expect(sdk.lastPromptText).toContain("Next, fix the lint.");
+    expect(
+      h
+        .custodyAttempts()
+        .find((attempt) => attempt.attemptId === custody?.attemptId),
+    ).toMatchObject({ outcome: { kind: "custody", end: "handed_over" } });
+    expect(await h.pendingQueue()).toEqual([]);
+    expect(h.row.promptCount).toBe(3);
   });
 });

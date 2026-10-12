@@ -517,6 +517,65 @@ describe("runtime custody", () => {
     expect(h.custody.describe("conv-1")).toBeNull();
   });
 
+  it("names the provider turn custody holds as the turn live input joins: none before custody, in idle custody, between provider turns or once handed over", async () => {
+    const h = harness();
+    const runtime = await h.obtain();
+    runtime.owe(true);
+    // A provider turn while the ending turn still owns the runtime is that turn's.
+    runtime.providerTurn([frame("a", "Checking.")], result());
+    expect(h.custody.segment("conv-1")).toBeNull();
+
+    const custody = h.opener();
+    h.custody.keep("conv-1", turn, custody.open);
+    expect(h.custody.segment("conv-1")).toBeNull();
+
+    runtime.providerTurn([frame("b", "Working.")]);
+    expect(h.custody.segment("conv-1")).toMatchObject({
+      attemptId: "custody-1",
+      conversation: {
+        conversationId: "conv-1",
+        worktreePath: "/repo/.worktrees/session",
+      },
+    });
+
+    runtime.input.onExternalTurnEvent?.({
+      type: "external_turn_completed",
+      result: result(),
+    });
+    expect(h.custody.segment("conv-1")).toBeNull();
+
+    runtime.providerTurn([frame("c", "Again.")]);
+    custody.release("handed_over");
+    expect(h.custody.segment("conv-1")).toBeNull();
+  });
+
+  it("tells a provider turn's end only once the live input custody took during it has settled", async () => {
+    const h = harness();
+    const runtime = await h.obtain();
+    runtime.owe(true);
+    const custody = h.opener();
+    h.custody.keep("conv-1", turn, custody.open);
+    runtime.providerTurn([frame("a", "Working.")]);
+    const delivery = Promise.withResolvers<string>();
+    h.custody.segment("conv-1")?.own(delivery.promise);
+    runtime.input.onExternalTurnEvent?.({
+      type: "external_turn_completed",
+      result: result(),
+    });
+    for (let i = 0; i < 5; i += 1)
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(custody.told).toEqual([]);
+    expect(h.writes.filter((write) => write.usage !== null)).toEqual([]);
+
+    delivery.resolve("accepted");
+    await h.settle();
+    expect(custody.told).toEqual(["segment-ended"]);
+    expect(h.writes.at(-1)).toEqual({
+      usage: expect.objectContaining({ costUsd: 0.25 }),
+      row: { status: "idle", notify: "user" },
+    });
+  });
+
   it("closes a handed-over runtime whose configuration drifted before the turn's input, recording the work it cut short", async () => {
     const h = harness();
     const runtime = await h.obtain();

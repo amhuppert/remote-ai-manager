@@ -299,6 +299,10 @@ class ClaudeConversationRuntime
   readonly backend: AgentBackendId = "claude";
   readonly mcpConfigDelivery = "input-accepted" as const;
   readonly capabilityConfigDelivery = "input-accepted" as const;
+  // The CLI folds live input into the running turn or answers it in a turn of its own after
+  // the result (design C5b §9.1, probe 1); either way the input is owed until the CLI completes or
+  // cancels it: a result naming it, or its terminal `command_lifecycle` acknowledgement.
+  readonly liveInput = "until_answered" as const;
   readonly capabilityWorkingDirectory: string;
   private currentPortableMcp: PortableMcpConfig;
   private readonly initialMcpToolExclusions: string[];

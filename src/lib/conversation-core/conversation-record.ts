@@ -169,6 +169,19 @@ export function applyCustodyRow(
   return row.status;
 }
 
+/**
+ * Pure over the row draft: live input the provider may answer after its
+ * turn's result was accepted. It counts as a prompt of its own: the provider
+ * turn that may answer it counts none (design C5b §4.2).
+ */
+export function applyLiveInputAccepted(
+  row: ConversationRow,
+  now: string,
+): void {
+  row.promptCount += 1;
+  row.lastActivityAt = now;
+}
+
 /** Pure: the row effect of one turn's normalized outcome. */
 export function settlementOf(outcome: TurnExecutionOutcome): TurnSettlement {
   if (outcome.kind === "not_started") {
@@ -581,6 +594,12 @@ export interface CustodyRecordPort {
     usage: SegmentUsage | null,
     project: () => CustodyRow | null,
   ): Promise<void>;
+}
+
+/** The conversation row as live input into a runtime that may answer it after its turn records it (design C5b §4.2). */
+export interface LiveInputRecordPort {
+  /** Such input was accepted: one more prompt. */
+  recordLiveInput(identity: ConversationIdentity): Promise<void>;
 }
 
 /** Why the conversation row holds work back. */

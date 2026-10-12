@@ -48,6 +48,14 @@ export const FAKE_CLAUDE_HANGING_PROMPT = "conformance: hang this turn";
  */
 export const FAKE_CLAUDE_QUEUE_HOLD_PROMPT =
   "conformance: hold until queued input arrives";
+/**
+ * Prompt the port holds open until it consumes ONE more user message, then
+ * completes with a result naming only this prompt: the queued input is left
+ * for a later turn of the CLI's own, run by `answerQueuedInputs` (the
+ * crossing and handover probes' shape).
+ */
+export const FAKE_CLAUDE_QUEUE_LATER_PROMPT =
+  "conformance: hold, then answer queued input in a later turn";
 
 export const FAKE_CLAUDE_INPUT_TOKENS = 1_000;
 export const FAKE_CLAUDE_CACHE_READ_TOKENS = 200;
@@ -257,6 +265,26 @@ export interface FakeClaudeSdkController {
   startBackgroundTask(): void;
   endBackgroundTask(): void;
   runContinuation(): void;
+  /**
+   * A continuation in two halves: `init` and its work, then its result. Input
+   * consumed in between is folded into it, and the result names it.
+   * `totalCostUsd` is the session's cumulative spend the result reports.
+   */
+  startContinuation(): void;
+  /**
+   * `leaveInputs` plays the CLI answering input consumed during the
+   * continuation in a turn of its own: the result names none of it, and
+   * `answerQueuedInputs` answers it later.
+   */
+  finishContinuation(options?: {
+    totalCostUsd?: number;
+    leaveInputs?: boolean;
+  }): void;
+  /**
+   * The CLI's own turn for input a `FAKE_CLAUDE_QUEUE_LATER_PROMPT` turn left
+   * unanswered: `init`, its work, and a result naming that input.
+   */
+  answerQueuedInputs(options?: { totalCostUsd?: number }): void;
   /** The provider process dies: its output stream ends without a close. */
   endProvider(): void;
 }
@@ -264,6 +292,35 @@ export interface FakeClaudeSdkController {
 interface FakePortState {
   emit(message: SDKMessage): void;
   end(): void;
+  /** Input consumed while a continuation ran, which its result names. */
+  startContinuation(): void;
+  takeFolded(): string[];
+  /** Input a queue-later turn left for a later turn. */
+  takeDeferred(): string[];
+  /** Input consumed during the continuation, left for a later turn instead. */
+  deferFolded(): void;
+}
+
+/** A provider turn's result: no caller origin unless given, naming the inputs it answered. */
+function namingResult(
+  text: string,
+  named: string[],
+  options: {
+    totalCostUsd?: number;
+    origin?: SDKResultSuccess["origin"];
+  } = {},
+): SDKResultSuccess {
+  return {
+    ...buildResultSuccess(undefined),
+    result: text,
+    ...(options.totalCostUsd !== undefined
+      ? { total_cost_usd: options.totalCostUsd }
+      : {}),
+    ...(options.origin !== undefined ? { origin: options.origin } : {}),
+    ...(named.length > 0
+      ? { user_message_uuid: named.at(-1), user_message_uuids: named }
+      : {}),
+  };
 }
 
 /**
@@ -290,8 +347,12 @@ export function createFakeClaudeSdkController(
     let wake: (() => void) | null = null;
     let closed = false;
     let holdingForQueuedInput = false;
+    let holdingForLaterInput = false;
     // The installed CLI names every input a turn consumed on its result.
     const consumedInputs: string[] = [];
+    let continuationRunning = false;
+    const foldedIntoContinuation: string[] = [];
+    const deferredInputs: string[] = [];
 
     const emit = (message: SDKMessage): void => {
       outgoing.push(message);
@@ -315,12 +376,30 @@ export function createFakeClaudeSdkController(
     const handleUserMessage = (msg: SDKUserMessage): void => {
       const text = extractUserText(msg);
       lastPromptText = text;
+      if (continuationRunning) {
+        if (msg.uuid !== undefined) foldedIntoContinuation.push(msg.uuid);
+        return;
+      }
+      if (holdingForLaterInput) {
+        // The held turn ends naming only its own prompt; this input waits for a later turn.
+        holdingForLaterInput = false;
+        if (msg.uuid !== undefined) deferredInputs.push(msg.uuid);
+        completeTurn();
+        return;
+      }
       if (msg.uuid !== undefined) consumedInputs.push(msg.uuid);
+      // A held turn has started, as the CLI's `init` shows, so its input is accepted.
+      if (text.includes(FAKE_CLAUDE_QUEUE_LATER_PROMPT)) {
+        holdingForLaterInput = true;
+        emit(buildInitMessage());
+        return;
+      }
       if (text.includes(FAKE_CLAUDE_HANGING_PROMPT)) {
         return;
       }
       if (text.includes(FAKE_CLAUDE_QUEUE_HOLD_PROMPT)) {
         holdingForQueuedInput = true;
+        emit(buildInitMessage());
         return;
       }
       if (holdingForQueuedInput) {
@@ -388,6 +467,20 @@ export function createFakeClaudeSdkController(
         wake?.();
         wake = null;
       },
+      startContinuation() {
+        continuationRunning = true;
+      },
+      takeFolded() {
+        continuationRunning = false;
+        return foldedIntoContinuation.splice(0);
+      },
+      takeDeferred() {
+        return deferredInputs.splice(0);
+      },
+      deferFolded() {
+        continuationRunning = false;
+        deferredInputs.push(...foldedIntoContinuation.splice(0));
+      },
     };
     return port;
   };
@@ -432,6 +525,35 @@ export function createFakeClaudeSdkController(
         result: "Background task completed.",
         origin: { kind: "task-notification" },
       });
+    },
+    startContinuation() {
+      const port = requirePort(lastPort);
+      port.startContinuation();
+      port.emit(buildInitMessage());
+      port.emit(buildAssistantMessage("Background task completed."));
+    },
+    finishContinuation({ leaveInputs = false, ...options } = {}) {
+      const port = requirePort(lastPort);
+      if (leaveInputs) port.deferFolded();
+      port.emit(
+        namingResult(
+          "Background task completed.",
+          leaveInputs ? [] : port.takeFolded(),
+          { ...options, origin: { kind: "task-notification" } },
+        ),
+      );
+    },
+    answerQueuedInputs(options = {}) {
+      const port = requirePort(lastPort);
+      port.emit(buildInitMessage());
+      port.emit(buildAssistantMessage("Answered the queued input."));
+      port.emit(
+        namingResult(
+          "Answered the queued input.",
+          port.takeDeferred(),
+          options,
+        ),
+      );
     },
   };
 }

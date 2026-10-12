@@ -122,6 +122,16 @@ export interface ConversationTurnConformanceHarness {
     /** The provider process dies (its output stream ends) without a close. */
     providerDies(): void | Promise<void>;
   };
+  /**
+   * Required when the runtime declares `liveInput: "until_answered"`: a
+   * prompt the fake provider holds until it consumes one more input, then
+   * answers without answering that input, and the drive that makes the
+   * provider answer the input in a later turn of its own.
+   */
+  liveInputAnsweredLater?: {
+    promptText: string;
+    answer(): void | Promise<void>;
+  };
 }
 
 /** Drives the real task runner through a fake provider port. */
@@ -257,8 +267,13 @@ export async function checkQueueCoherence(
       expect(result.aborted).toBe(false);
       if (runtime.liveInput === "running_turn")
         await checkLateInputRefused(runtime);
+      else if (runtime.liveInput !== "until_answered")
+        throw new Error(
+          "queue.deliveryTiming is 'in_turn' but the runtime does not declare where its live input lands (liveInput)",
+        );
     } else {
       expect(runtime.queueUserInput).toBeUndefined();
+      expect(runtime.liveInput).toBeUndefined();
     }
   } finally {
     await runtime.close();
@@ -298,6 +313,106 @@ async function checkLateInputRefused(
     throw new Error(
       `liveInput is "running_turn" but input sent after its turn was ${outcome}`,
     );
+  }
+}
+
+/**
+ * `liveInput: "until_answered"` ⇔ input taken while a turn runs is owed work
+ * until the provider completes or cancels it; this check drives the
+ * result-shaped cases. The backend declares `owedWork`. Input the
+ * turn's result answers (folded into the turn) is owed no more when the turn
+ * resolves; input the turn's result leaves unanswered stays owed after it,
+ * with no notice that nothing is owed, until a later provider turn answers
+ * it, and that notice follows the later turn's completion. Runtimes with any
+ * other declaration are checked by the queue check.
+ */
+export async function checkLiveInputCoherence(
+  facet: AgentBackendConversationFacet,
+  harness: ConversationTurnConformanceHarness,
+): Promise<void> {
+  const log: string[] = [];
+  const runtime = await createRuntimeFor(facet, harness, {
+    onExternalTurnEvent: (event) => {
+      log.push(event.type);
+    },
+    onOwedWorkChanged: (owes) => {
+      log.push(`owes:${owes}`);
+    },
+  });
+  try {
+    if (runtime.liveInput !== "until_answered") return;
+    if (!facet.capabilities.owedWork)
+      throw new Error(
+        'liveInput is "until_answered" but the backend does not declare owedWork',
+      );
+    const owesWork = runtime.owesWork?.bind(runtime);
+    const queueUserInput = runtime.queueUserInput?.bind(runtime);
+    if (owesWork === undefined || queueUserInput === undefined)
+      throw new Error(
+        'liveInput is "until_answered" but the runtime has no owesWork or no queueUserInput',
+      );
+    const later = harness.liveInputAnsweredLater;
+    if (harness.queueHoldPromptText === undefined || later === undefined)
+      throw new Error(
+        'liveInput is "until_answered" but the harness provides no queueHoldPromptText or liveInputAnsweredLater drive',
+      );
+    const notices = (from: number) =>
+      log.slice(from).filter((entry) => entry.startsWith("owes:"));
+
+    const folded = runtime.sendTurn(
+      buildTurnInput(harness.queueHoldPromptText, runtime.modelSelection),
+    );
+    await harness.waitUntilQueueReady?.();
+    await queueUserInput({
+      content: [{ type: "text", text: "conformance folded input" }],
+    });
+    expect((await folded).failure).toBeNull();
+    expect(
+      owesWork(),
+      "input the turn's result answered is owed no more when the turn resolves",
+    ).toBe(false);
+    await waitUntil(
+      () => notices(0).at(-1) === "owes:false",
+      "the folded turn's notice that nothing is owed",
+    );
+
+    const cursor = log.length;
+    const turn = runtime.sendTurn(
+      buildTurnInput(later.promptText, runtime.modelSelection),
+    );
+    await harness.waitUntilQueueReady?.();
+    await queueUserInput({
+      content: [{ type: "text", text: "conformance input answered later" }],
+    });
+    expect((await turn).failure).toBeNull();
+    expect(
+      owesWork(),
+      "input the turn's result left unanswered stays owed after the turn",
+    ).toBe(true);
+    await sleep(50);
+    expect(owesWork(), "unanswered input stays owed").toBe(true);
+    expect(
+      notices(cursor),
+      "no notice that nothing is owed while the input is unanswered",
+    ).not.toContain("owes:false");
+
+    await later.answer();
+    await waitUntil(
+      () => notices(cursor).at(-1) === "owes:false",
+      "a notice that nothing is owed once a later turn answered the input",
+    );
+    expect(owesWork()).toBe(false);
+    const completed = log.lastIndexOf("external_turn_completed");
+    expect(
+      completed,
+      "a later provider turn answered the input",
+    ).toBeGreaterThanOrEqual(cursor);
+    expect(
+      completed,
+      "the later turn's completion precedes the notice that nothing is owed",
+    ).toBeLessThan(log.lastIndexOf("owes:false"));
+  } finally {
+    await runtime.close();
   }
 }
 
@@ -986,6 +1101,9 @@ export function describeBackendConformance(
 
       it("owed-work coherence: declared owedWork matches the runtime's answer and termination report", () =>
         checkOwedWorkCoherence(conversationFacet, turnHarness));
+
+      it("live-input coherence: input a runtime may answer after its turn's result stays owed until answered", () =>
+        checkLiveInputCoherence(conversationFacet, turnHarness));
 
       if (
         conversationFacet.capabilities.structuredOutput === "backend_native"

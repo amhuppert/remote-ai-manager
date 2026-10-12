@@ -36,6 +36,7 @@ import {
   applyBackendAdoption,
   applyClaimEnded,
   applyCustodyRow,
+  applyLiveInputAccepted,
   applySegmentUsage,
   applyDebugCommandToRow,
   applyQuestionAsked,
@@ -50,6 +51,7 @@ import {
   type ConversationIdentity,
   type ConversationRecordPort,
   type CustodyRecordPort,
+  type LiveInputRecordPort,
   type QuestionBatch,
 } from "./conversation-record";
 import type { CoreDebugModeDeps } from "./debug-mode";
@@ -217,7 +219,7 @@ function publishUnread(identity: ConversationIdentity, unread: boolean): void {
 /** The conversation row written the way every client already reads it. */
 export function createProductionConversationRecords(
   rows: ConversationRowStore = productionRowStore,
-): ConversationRecordPort & CustodyRecordPort {
+): ConversationRecordPort & CustodyRecordPort & LiveInputRecordPort {
   /** The person gets control back: unread for a person's work, asked back, and a project conversation's notice. */
   function tellIdle(
     identity: ConversationIdentity,
@@ -237,6 +239,15 @@ export function createProductionConversationRecords(
   }
 
   return {
+    async recordLiveInput(identity) {
+      await rows.mutateConversation(
+        identity.projectPath,
+        identity.storeSessionName,
+        identity.conversationId,
+        "conversation-core.live_input.accepted",
+        (row) => applyLiveInputAccepted(row, new Date().toISOString()),
+      );
+    },
     async recordSegment(identity, usage, project) {
       const written = await rows.mutateConversation(
         identity.projectPath,

@@ -230,6 +230,29 @@ describe("createClaudeExternalTurnInterpreter", () => {
     expect(notices).toHaveLength(0);
   });
 
+  it("emits no autonomous-continuation marker for a turn that answers a person's message", async () => {
+    // The CLI answered a message sent while it worked in a turn of its own
+    // after the result: its first reply names that message.
+    const { events, onEvent } = collect();
+    const interpreter = createClaudeExternalTurnInterpreter({ onEvent });
+
+    interpreter.handleMessage({
+      type: "assistant",
+      uuid: "u1",
+      user_message_uuid: "input-1",
+      user_message_uuids: ["input-1"],
+      message: { content: [{ type: "text", text: "APPLE" }] },
+    } as never);
+    await interpreter.flush();
+
+    const notices = events.filter(
+      (e) =>
+        e.type === "transcript_entry" &&
+        (e.entry.raw as { role?: string }).role === "notice",
+    );
+    expect(notices).toHaveLength(0);
+  });
+
   it("tolerates a task_notification without a summary", async () => {
     const { events, onEvent } = collect();
     const interpreter = createClaudeExternalTurnInterpreter({ onEvent });

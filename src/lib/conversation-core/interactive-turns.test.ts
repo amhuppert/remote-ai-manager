@@ -16,8 +16,12 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
-import type { ConversationRecordPort, CustodyRow } from "./conversation-record";
-import type { CustodyTurn } from "./custody";
+import type {
+  ConversationRecordPort,
+  CustodyRow,
+  LiveInputRecordPort,
+} from "./conversation-record";
+import type { CustodySegment, CustodyTurn } from "./custody";
 import type { CustodyLease, CustodyOpener } from "./executor";
 import type { HostedConversation, RuntimeRequirements } from "./runtime-host";
 import type { UserTurnRequest } from "./schemas";
@@ -34,6 +38,7 @@ import {
 import type { TurnRequest } from "./turn-engine";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import {
+  sessionConversationTarget,
   storeSessionNameFromScopeRef,
   type ConversationTarget,
 } from "@/lib/conversations/conversation-target";
@@ -73,6 +78,11 @@ interface Row {
   promptCount: number;
   debugMode?: DebugModeState | null;
   pendingQuestionId?: string | null;
+  owner?: {
+    kind: "collaboration";
+    workflowId: string;
+    attemptEpoch: number;
+  } | null;
 }
 
 const debugSession = (phase: DebugModePhase): DebugModeState => ({
@@ -124,13 +134,18 @@ function harness(
     autonomous: boolean;
     originMessageId: string | null;
   } | null = null;
+  /** The provider turn custody holds now, which live input may join. */
+  let custodySegment: CustodySegment | null = null;
   const takenOver: Array<{
     conversation: HostedConversation;
     requirements: RuntimeRequirements;
     turnAttemptId: string;
   }> = [];
   const opener: CustodyOpener = { open: () => null };
-  const records: ConversationRecordPort = {
+  const records: ConversationRecordPort & LiveInputRecordPort = {
+    async recordLiveInput() {
+      events.push("live-input:counted");
+    },
     async read() {
       return row === null
         ? null
@@ -207,6 +222,7 @@ function harness(
         takenOver.push({ conversation, requirements, turnAttemptId });
       },
       describe: () => custodyRunning,
+      segment: () => custodySegment,
     },
     async worktreeOf(projectPath, target) {
       worktreeTargets.push(target);
@@ -379,20 +395,51 @@ function harness(
     custodyDescribes(running: typeof custodyRunning) {
       custodyRunning = running;
     },
+    /** Custody holds the runtime and runs a provider turn in it (null: no provider turn runs). */
+    custodyRuns(segment: CustodySegment | null) {
+      custodySegment = segment;
+    },
   };
 }
 
-/** A runtime that takes input into its running turn, recording what it was sent; `send` decides each delivery. */
+/** The provider turn custody holds, as live input joins it; records the deliveries custody is given to own. */
+function custodySegment() {
+  const owned: Promise<unknown>[] = [];
+  const segment: CustodySegment = {
+    conversation: {
+      conversationId: "conv-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      target: sessionConversationTarget("repo", "session", "conv-1"),
+      worktreePath: "/repo/.worktrees/session",
+      backend: "claude",
+      executionClass: "ordinary-conversation",
+      persistedRef: { backend: "claude", ref: "sdk-1" },
+    },
+    attemptId: "custody-1",
+    own(delivery) {
+      owned.push(delivery);
+    },
+  };
+  return { segment, owned };
+}
+
+/**
+ * A runtime that takes input into its running turn, recording what it was
+ * sent; `send` decides each delivery. Codex-like by default; Claude-like
+ * (`until_answered`) when its provider may answer input after the turn.
+ */
 function liveRuntime(
   send: (input: ConversationQueuedUserInput) => Promise<void> = (input) =>
     input.onAccepted?.() ?? Promise.resolve(),
+  liveInput: "running_turn" | "until_answered" = "running_turn",
 ) {
   const sent: ConversationQueuedUserInput[] = [];
   const runtime: ConversationBackendRuntime = {
-    backend: "codex",
+    backend: liveInput === "running_turn" ? "codex" : "claude",
     status: "alive",
     modelSelection: { modelId: "gpt", parameters: {} },
-    liveInput: "running_turn",
+    liveInput,
     sendTurn: async () => {
       throw new Error("not used");
     },
@@ -733,9 +780,11 @@ describe("interactive turns", () => {
         expect.arrayContaining(["archive:att-9", "release:att-9"]),
       );
       expect(h.archived.map((entry) => entry.id)).toContain("q-att-9");
+      // Input joined to the running turn is counted with that turn.
+      expect(h.events).not.toContain("live-input:counted");
     });
 
-    it("leaves a message for the next turn when no turn runs, the runtime may answer it after the turn, or the row holds it", async () => {
+    it("leaves a message for the next turn when no turn runs, the runtime declares no live input, or the row holds it", async () => {
       const seen: boolean[] = [];
       const h = harness(async (turn) => {
         // The turn's own input comes first.
@@ -896,6 +945,178 @@ describe("interactive turns", () => {
 
       expect(h.events).toContain("release:att-9");
       expect(await delivery).toBe("accepted");
+    });
+
+    describe("into a runtime whose provider may answer it after the turn's result (design C5b §4.2)", () => {
+      it("delivers it into the running turn, settling its receipts at acceptance and counting it as one prompt", async () => {
+        const live = liveRuntime(undefined, "until_answered");
+        let outcome: unknown;
+        const h = harness(async (turn) => {
+          await turn.onEvent?.({ type: "input_accepted" });
+          outcome = await h.port.deliverLive(identity, queued("Also this"));
+          return completed();
+        });
+        h.holdRuntime(live.runtime);
+        await h.run(message());
+
+        expect(outcome).toBe("accepted");
+        expect(live.sent).toEqual([
+          expect.objectContaining({ userPromptText: "Also this" }),
+        ]);
+        expect(h.archived.map((entry) => entry.id)).toContain("q-att-9");
+        expect(
+          h.events.filter((event) => event === "live-input:counted"),
+        ).toHaveLength(1);
+        expect(h.events.indexOf("live-input:counted")).toBeGreaterThan(
+          h.events.indexOf("release:att-9"),
+        );
+      });
+
+      it("delivers it into the provider turn custody holds between turns, which owns the delivery", async () => {
+        const live = liveRuntime(undefined, "until_answered");
+        const held = custodySegment();
+        const h = harness(async () => completed());
+        h.holdRuntime(live.runtime);
+        h.custodyRuns(held.segment);
+
+        expect(await h.port.acceptsLive("conv-1")).toBe(true);
+        const outcome = await h.port.deliverLive(
+          identity,
+          queued("While you work"),
+        );
+
+        expect(outcome).toBe("accepted");
+        expect(held.owned).toHaveLength(1);
+        expect(await held.owned[0]).toBe("accepted");
+        expect(h.contexts).toEqual([
+          expect.objectContaining({
+            mode: "live",
+            briefingAttemptId: "att-9",
+            execution: expect.objectContaining({
+              projectPath: "/repo",
+              target: sessionConversationTarget("repo", "session", "conv-1"),
+              worktreePath: "/repo/.worktrees/session",
+              executionAttemptId: "custody-1",
+              role: null,
+              persistence: "durable",
+              debugMode: null,
+              turn: { inputOrigin: "user", promptText: "While you work" },
+            }),
+          }),
+        ]);
+        expect(live.sent).toEqual([
+          expect.objectContaining({ userPromptText: "While you work" }),
+        ]);
+        expect(h.events).toEqual([
+          "dispatched",
+          "archive:att-9",
+          "release:att-9",
+          "receipts-finished",
+          "queue-settled",
+          "live-input:counted",
+        ]);
+        expect(h.archived.map((entry) => entry.id)).toEqual(["q-att-9"]);
+      });
+
+      it("refuses it in idle custody, so the message waits to hand over as the next turn", async () => {
+        const live = liveRuntime(undefined, "until_answered");
+        const h = harness(async () => completed());
+        h.holdRuntime(live.runtime);
+        h.custodyRuns(null);
+
+        expect(await h.port.acceptsLive("conv-1")).toBe(false);
+        expect(await h.port.deliverLive(identity, queued("Later"))).toBe(
+          "not_sent",
+        );
+        expect(live.sent).toEqual([]);
+        expect(h.events).toEqual([expect.stringMatching(/^pending:att-9:/)]);
+      });
+
+      it.each([
+        ["a question is pending", { pendingQuestionId: "question-1" }],
+        ["debug mode is on", { debugMode: debugSession("hypothesizing") }],
+        [
+          "a collaboration holds the conversation",
+          {
+            owner: {
+              kind: "collaboration" as const,
+              workflowId: "wf-1",
+              attemptEpoch: 1,
+            },
+          },
+        ],
+      ])(
+        "refuses it while %s, in a running turn and in custody's provider turn",
+        async (_reason, hold) => {
+          const seen: boolean[] = [];
+          const turnRow: Row = { backendRef: null, promptCount: 1 };
+          const inTurn = harness(async (turn) => {
+            await turn.onEvent?.({ type: "input_accepted" });
+            seen.push(await inTurn.port.acceptsLive("conv-1"));
+            Object.assign(turnRow, hold);
+            seen.push(await inTurn.port.acceptsLive("conv-1"));
+            return completed();
+          }, turnRow);
+          inTurn.holdRuntime(liveRuntime(undefined, "until_answered").runtime);
+          await inTurn.run(message());
+
+          const custodyRow: Row = { backendRef: null, promptCount: 1 };
+          const between = harness(async () => completed(), custodyRow);
+          between.holdRuntime(liveRuntime(undefined, "until_answered").runtime);
+          between.custodyRuns(custodySegment().segment);
+          seen.push(await between.port.acceptsLive("conv-1"));
+          Object.assign(custodyRow, hold);
+          seen.push(await between.port.acceptsLive("conv-1"));
+
+          expect(seen).toEqual([true, false, true, false]);
+        },
+      );
+
+      it("holds an uncertain delivery for review, as before, and counts no prompt", async () => {
+        const live = liveRuntime(async () => {
+          throw new InputDeliveryUncertainError("No acknowledgement");
+        }, "until_answered");
+        let outcome: unknown;
+        const h = harness(async (turn) => {
+          await turn.onEvent?.({ type: "input_accepted" });
+          outcome = await h.port.deliverLive(identity, queued("Also this"));
+          return completed();
+        });
+        h.holdRuntime(live.runtime);
+        await h.run(message());
+
+        expect(outcome).toBe("uncertain");
+        expect(h.events).toContain("review:att-9");
+        expect(h.events).not.toContain("live-input:counted");
+      });
+
+      it("returns a delivery whose provider turn ended while it was checked", async () => {
+        const live = liveRuntime(undefined, "until_answered");
+        const held = custodySegment();
+        const gate = Promise.withResolvers<void>();
+        const h = harness(async () => completed());
+        h.holdRuntime(live.runtime);
+        h.custodyRuns(held.segment);
+        const read = h.deps.records.read;
+        h.deps.records.read = async (identityRead) => {
+          await gate.promise;
+          return read(identityRead);
+        };
+        const delivery = h.port.deliverLive(identity, queued("Late"));
+        h.custodyRuns(null);
+        gate.resolve();
+
+        expect(await delivery).toBe("not_sent");
+        expect(live.sent).toEqual([]);
+        expect(held.owned).toEqual([]);
+      });
+
+      it("takes no input into custody's provider turn for a runtime whose input is bound to the running turn", async () => {
+        const h = harness(async () => completed());
+        h.holdRuntime(liveRuntime().runtime);
+        h.custodyRuns(custodySegment().segment);
+        expect(await h.port.acceptsLive("conv-1")).toBe(false);
+      });
     });
   });
 

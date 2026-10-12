@@ -19,7 +19,10 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { ConversationRecordPort } from "./conversation-record";
+import type {
+  ConversationRecordPort,
+  LiveInputRecordPort,
+} from "./conversation-record";
 import { createInteractiveTurns } from "./interactive-turns";
 import { noCustody, noCustodyOpener } from "./testing/no-custody";
 import { createNativeSeatTurns } from "./native-seat-turns";
@@ -63,7 +66,8 @@ afterEach(() => {
 });
 
 /** The row's own fields come from the store; only what a turn reads to start is answered here. */
-const records: ConversationRecordPort = {
+const records: ConversationRecordPort & LiveInputRecordPort = {
+  async recordLiveInput() {},
   async recordSeenAlignment() {},
   async read() {
     return {

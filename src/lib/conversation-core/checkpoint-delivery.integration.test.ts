@@ -51,9 +51,11 @@ import { createInteractiveTurns } from "./interactive-turns";
 import { noCustody, noCustodyOpener } from "./testing/no-custody";
 import {
   applyBackendAdoption,
+  applyLiveInputAccepted,
   applyTurnBegin,
   applyTurnSettlement,
   type ConversationRecordPort,
+  type LiveInputRecordPort,
   type TurnSettled,
 } from "./conversation-record";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -168,7 +170,7 @@ function reloaded() {
  */
 function rowRecords(
   failures: { continuity?: () => boolean } = {},
-): ConversationRecordPort {
+): ConversationRecordPort & LiveInputRecordPort {
   const mutate = (
     identity: { conversationId: string },
     label: string,
@@ -182,6 +184,11 @@ function rowRecords(
       change,
     );
   return {
+    async recordLiveInput(identity) {
+      await mutate(identity, "test.live_input", (row) =>
+        applyLiveInputAccepted(row, new Date().toISOString()),
+      );
+    },
     async recordSeenAlignment() {},
     async read(identity) {
       const row = await fixture.store.getConversation(

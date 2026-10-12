@@ -8,11 +8,11 @@ it had on the actor:
 - Claude's own continuations when that work finishes;
 - messages sent while Claude is working.
 
-**Status.** Slices 2 (the adapter) and 3 (custody in the core, with its review fixes) are implemented; slices 4–5
-are not. Revision 3: after the Opus and Astra reviews (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and Astra's
-verification of revision 2 (`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on). The slice 3
-amendments below follow its reviews (`.cc/temp/reviews/c5b-s3-{codex,opus}.md`) and the report
-`.cc/temp/overhaul/c5b-slice3-report.md`.
+**Status.** Slices 2 (the adapter), 3 (custody in the core, with its review fixes) and 4 (live input on the
+retaining runtime) are implemented; slice 5 is not. Revision 3: after the Opus and Astra reviews
+(`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and Astra's verification of revision 2
+(`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on). The slice 3 amendments below follow its
+reviews (`.cc/temp/reviews/c5b-s3-{codex,opus}.md`) and the report `.cc/temp/overhaul/c5b-slice3-report.md`.
 
 **Sources.** Facts and citations: `.cc/temp/overhaul/c5b-research.md` (cited "R§n"). Review findings are cited as
 "O-F1", "A-1" and so on.
@@ -64,8 +64,9 @@ authoritative:
    not as success.
 3. **An external turn is active** (O-F4).
 4. **An accepted input has not been answered.** Every prompt and live input carries the uuid the adapter stamped
-   (§4.1). An accepted input stays owed until a terminal result names it in `user_message_uuid(s)`, or until the
-   runtime is terminated or lost. An earlier result, a `queued_turn_count` of 0 or an `idle` event observed before the
+   (§4.1). An accepted input stays owed until the CLI completes or cancels it: a terminal result names it in
+   `user_message_uuid(s)`, or its `command_lifecycle` frame reaches `completed` or `cancelled` (§9.1). Termination or
+   loss also ends it. An earlier result, a `queued_turn_count` of 0 or an `idle` event observed before the
    input was consumed never clears it (V-2).
 
 Probe 5 showed that `session_state_changed: idle` does not mean "nothing is owed", so it discharges nothing (§9.1).
@@ -199,10 +200,15 @@ Probe 1 confirms it for folded and queued prompts. There is no order-based attri
 ### 4.2 Live input
 
 - **Retaining runtime.** A Claude runtime in a turn or segment accepts live input through the queue's live path. The
-  port gains a live-input declaration for "input the provider may answer after the turn's result", alongside
-  `running_turn` (seam S5), with its own conformance case.
+  port's live-input declaration gains `until_answered` ("the provider may answer input after the turn's result"),
+  alongside `running_turn` (seam S5). Claude's runtime declares it. Conformance requires every `in_turn` runtime to
+  declare one of the two, and for `until_answered` checks `owedWork`, that folded input is owed no more when the turn
+  resolves, and that input the result left unanswered stays owed until a later provider turn answers it.
+- **Owner.** Input taken during a turn belongs to that turn, whose settlement waits only for its acceptance. Input
+  taken during a segment belongs to custody: the segment's end is told once that delivery has settled.
 - **Receipts are unchanged** (A-6, O-F5). Archival, contribution receipts and queue release all settle at
-  acceptance, as r2 §4.4 requires. `promptCount` is bumped once per accepted input.
+  acceptance, as r2 §4.4 requires. `promptCount` is bumped once per accepted `until_answered` input; a `running_turn`
+  input still counts with its turn.
 - **Response debt is separate from delivery.** Whether an accepted input has been answered is owed work (§2.1 rule 4),
   never a receipt outcome. Death or the bound reports unanswered debt in the loss notice; it is never "uncertain
   delivery".

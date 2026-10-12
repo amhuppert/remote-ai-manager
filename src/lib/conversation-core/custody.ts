@@ -52,6 +52,15 @@ export interface RuntimeCustodyDeps {
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
+/** The provider turn custody holds now, as live input joins it (design C5b §4.2). */
+export interface CustodySegment {
+  conversation: HostedConversation;
+  /** The custody attempt that holds the runtime. */
+  attemptId: string;
+  /** Live input delivered into it is custody's: the provider turn's end is told once it has settled. */
+  own(delivery: Promise<unknown>): void;
+}
+
 /** The turn whose end a custody keeps the runtime for: what custody's provider turns inherit. */
 export interface CustodyTurn {
   source: TurnSource;
@@ -91,6 +100,8 @@ export interface RuntimeCustody {
   ): Promise<void>;
   /** The provider turn custody runs now, as the conversation's running turn. */
   describe(conversationId: string): RunningTurnDescription | null;
+  /** The provider turn custody holds now, which live input may join; null in idle custody or without one. */
+  segment(conversationId: string): CustodySegment | null;
 }
 
 /** One runtime's provider turns and the custody, if any, that holds it now. */
@@ -102,6 +113,8 @@ interface Retention {
   segment: boolean;
   lease: CustodyLease | null;
   turn: CustodyTurn | null;
+  /** Live input custody took during its provider turns, until each has settled. */
+  deliveries: Set<Promise<unknown>>;
   /** The runtime's events, handled one after another in the order it reported them. */
   chain: Promise<void>;
   track(work: Promise<void>): void;
@@ -178,6 +191,8 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
         const usage = segmentUsageOf(event.result);
         const lease = retention.lease;
         then(retention, async () => {
+          // Live input custody took meanwhile has its receipts settled before the end is told.
+          await Promise.allSettled([...retention.deliveries]);
           try {
             // Its usage is the conversation's whoever owns the runtime: a turn that took it over is charged only its own.
             await deps.records.recordSegment(
@@ -217,6 +232,7 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
         segment: false,
         lease: null,
         turn: null,
+        deliveries: new Set(),
         chain: Promise.resolve(),
         track,
       };
@@ -315,6 +331,25 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
       return {
         autonomous: retention.turn.autonomous,
         originMessageId: retention.turn.originMessageId,
+      };
+    },
+
+    segment(conversationId) {
+      const retention = retentions.get(conversationId);
+      if (
+        retention === undefined ||
+        retention.lease === null ||
+        !retention.segment
+      )
+        return null;
+      return {
+        conversation: retention.conversation,
+        attemptId: retention.lease.attemptId,
+        own(delivery) {
+          retention.deliveries.add(delivery);
+          const settled = () => retention.deliveries.delete(delivery);
+          void delivery.then(settled, settled);
+        },
       };
     },
   };

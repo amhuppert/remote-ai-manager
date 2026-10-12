@@ -285,13 +285,16 @@ export interface ConversationBackendRuntime {
   /** Resolves on acceptance; ambiguous delivery rejects with InputDeliveryUncertainError. */
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   /**
-   * Where `queueUserInput` lands: `running_turn` when the input joins the turn
-   * running when it is sent and is answered within it, or is refused once that
-   * turn has ended. Absent when the provider may take the input up after the
-   * turn's result and answer it separately, which only a host that keeps the
-   * runtime between turns can follow.
+   * Where `queueUserInput` lands, declared by every runtime that offers it:
+   * - `running_turn`: the input joins the turn running when it is sent and is
+   *   answered within it, or is refused once that turn has ended.
+   * - `until_answered`: the provider may fold the input into the running turn
+   *   or answer it in a later turn of its own, after the running turn's
+   *   result. Until the provider authoritatively completes or cancels it,
+   *   the input is owed work (`owesWork`), which only a host that keeps the
+   *   runtime between turns can follow; the backend declares `owedWork`.
    */
-  readonly liveInput?: "running_turn";
+  readonly liveInput?: "running_turn" | "until_answered";
   /**
    * Whether the provider still owes work this runtime started and may still
    * act on it without a new prompt: background work in flight, a continuation

@@ -21,6 +21,7 @@ import {
   checkConversationStructuredOutputPostValidation,
   checkConversationStructuredOutputForwarding,
   checkExternalTurnCoherence,
+  checkLiveInputCoherence,
   checkOwedWorkCoherence,
   checkQueueCoherence,
   describeBackendConformance,
@@ -72,6 +73,7 @@ import {
   createFakeClaudeTaskPort,
   FAKE_CLAUDE_HANGING_PROMPT,
   FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
+  FAKE_CLAUDE_QUEUE_LATER_PROMPT,
 } from "./testing/fake-claude-sdk-port";
 import {
   createFakeCodexProvider,
@@ -209,6 +211,11 @@ const claudeBackgroundWork = {
   providerDies: () => claudeSdk.endProvider(),
 };
 
+const claudeLiveInputAnsweredLater = {
+  promptText: FAKE_CLAUDE_QUEUE_LATER_PROMPT,
+  answer: () => claudeSdk.answerQueuedInputs(),
+};
+
 describeBackendConformance(claudeDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
@@ -218,6 +225,7 @@ describeBackendConformance(claudeDescriptor, {
     queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
     triggerExternalTurn: () => claudeSdk.pushExternalTurn(),
     backgroundWork: claudeBackgroundWork,
+    liveInputAnsweredLater: claudeLiveInputAnsweredLater,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -605,6 +613,72 @@ describe("conformance behavior checks reject lying descriptors", () => {
         },
       }),
     ).rejects.toThrow(/after its turn was uncertain/);
+  }, 10_000);
+
+  it("fails an in_turn runtime that does not declare where its live input lands", async () => {
+    await expect(
+      checkQueueCoherence(claudeConversation, {
+        buildCreateInput: () =>
+          buildCreateInput(
+            "conformance-claude-undeclared-live",
+            CLAUDE_MODEL_SELECTION,
+          ),
+        hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
+        queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
+        createRuntime: async (input) =>
+          Object.assign(
+            await claudeConversationBackendFactory.createRuntime(input),
+            { liveInput: undefined },
+          ),
+      }),
+    ).rejects.toThrow(/does not declare where its live input lands/);
+  }, 10_000);
+
+  const claudeLiveInputHarness = (
+    conversationId: string,
+    createRuntime?: ConversationTurnConformanceHarness["createRuntime"],
+  ): ConversationTurnConformanceHarness => ({
+    buildCreateInput: () =>
+      buildCreateInput(conversationId, CLAUDE_MODEL_SELECTION),
+    hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
+    queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
+    liveInputAnsweredLater: claudeLiveInputAnsweredLater,
+    ...(createRuntime !== undefined ? { createRuntime } : {}),
+  });
+
+  it("fails a runtime that may answer live input after its turn yet says nothing is owed while it is unanswered", async () => {
+    await expect(
+      checkLiveInputCoherence(
+        claudeConversation,
+        claudeLiveInputHarness(
+          "conformance-claude-forgets-live-input",
+          async (input) =>
+            Object.assign(
+              await claudeConversationBackendFactory.createRuntime(input),
+              { liveInput: "until_answered" as const, owesWork: () => false },
+            ),
+        ),
+      ),
+    ).rejects.toThrow(/stays owed/);
+  }, 10_000);
+
+  it("fails a backend whose runtime may answer live input after its turn but which declares no owed work", async () => {
+    await expect(
+      checkLiveInputCoherence(
+        {
+          ...claudeConversation,
+          capabilities: { ...claudeConversation.capabilities, owedWork: false },
+        },
+        claudeLiveInputHarness(
+          "conformance-claude-undeclared-owed",
+          async (input) =>
+            Object.assign(
+              await claudeConversationBackendFactory.createRuntime(input),
+              { liveInput: "until_answered" as const },
+            ),
+        ),
+      ),
+    ).rejects.toThrow(/does not declare owedWork/);
   }, 10_000);
 
   it("fails a descriptor that declares externalTurns but never emits one", async () => {

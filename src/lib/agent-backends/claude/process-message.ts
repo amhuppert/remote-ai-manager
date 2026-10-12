@@ -229,6 +229,12 @@ export function createClaudeExternalTurnInterpreter(opts: {
 
     if (message.type === "assistant" && !markerEmitted) {
       markerEmitted = true;
+      // A first reply naming a person's message answers what they sent while
+      // the agent worked; that turn did not continue on its own.
+      if (typeof Reflect.get(message, "user_message_uuid") === "string") {
+        inner.handleMessage(message);
+        return;
+      }
       const trigger = lastSettledTaskSummary
         ? ` after background-task activity (${lastSettledTaskSummary})`
         : " after background-task activity";
