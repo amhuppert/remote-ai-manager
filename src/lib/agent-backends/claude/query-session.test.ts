@@ -373,11 +373,13 @@ describe("QuerySession.sendPrompt", () => {
     session.close();
   });
 
-  it("lets a failed notification turn answer the prompt it may have absorbed, rather than leave it waiting", async () => {
+  it("does not answer the prompt with a failed notification turn that does not name it", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
     const session = createQuerySession(makeDefaultOptions());
     const turnPromise = session.sendPrompt("hi", vi.fn());
+    let settled = false;
+    void turnPromise.then(() => (settled = true));
     mock.pushMessage({
       type: "result",
       subtype: "error_during_execution",
@@ -391,7 +393,23 @@ describe("QuerySession.sendPrompt", () => {
       errors: ["the API is overloaded"],
       origin: { kind: "task-notification" },
     } as unknown as SDKMessage);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // A prompt the CLI absorbed would be named by the result; this one is
+    // still queued and gets a turn of its own.
+    expect(settled).toBe(false);
 
+    mock.pushMessage({
+      type: "result",
+      subtype: "error_during_execution",
+      session_id: "sess-abc",
+      uuid: "r1",
+      total_cost_usd: 0.1,
+      duration_ms: 5,
+      num_turns: 0,
+      result: "",
+      is_error: true,
+      errors: ["the API is overloaded"],
+    } as unknown as SDKMessage);
     expect((await turnPromise).error).toContain("overloaded");
     session.close();
   });
@@ -1113,6 +1131,12 @@ describe("External (virtual) turn rejection", () => {
       session_id: "sess-ext",
       uuid: "sys-1",
     } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-ext",
+      uuid: "asst-1",
+      message: { content: [{ type: "text", text: "continuing" }] },
+    } as unknown as SDKMessage);
     await new Promise((r) => setTimeout(r, 0));
 
     // close() rejects the in-flight virtual turn; a throwing onComplete must
@@ -1523,6 +1547,12 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
       subtype: "init",
       session_id: "sess-1",
       uuid: "sys-2",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u2",
+      message: { content: [{ type: "text", text: "The task finished." }] },
     } as unknown as SDKMessage);
     await new Promise((r) => setTimeout(r, 0));
 
@@ -3270,5 +3300,721 @@ describe("QuerySession onBackgroundActivity", () => {
 
     expect(onBackgroundActivity).not.toHaveBeenCalled();
     session.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Owed work, caller attribution and quiet notification turns. Frame sequences
+// follow the CLI timelines recorded in .cc/temp/c5b-probes/.
+// ---------------------------------------------------------------------------
+
+describe("QuerySession owed work and caller attribution", () => {
+  const SESSION = "sess-probe";
+  const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
+
+  function inputChannel(): AsyncGenerator<SDKUserMessage> {
+    return queryMock.mock.calls[0]![0].prompt;
+  }
+
+  /**
+   * Plays the CLI reading the input channel: each read returns the uuid
+   * stamped on the next input and acknowledges it, as the SDK does by asking
+   * for the following message.
+   */
+  function channelReader(channel: AsyncGenerator<SDKUserMessage>) {
+    let following: Promise<IteratorResult<SDKUserMessage>> | null = null;
+    return async (): Promise<string> => {
+      const { value } = await (following ?? channel.next());
+      following = channel.next();
+      const uuid: unknown = value?.uuid;
+      if (typeof uuid !== "string") throw new Error("input carried no uuid");
+      return uuid;
+    };
+  }
+
+  function cli(mock: ReturnType<typeof createControllableMockQuery>) {
+    let frame = 0;
+    // The level signal lists every live background task.
+    const live = new Set<string>();
+    const push = (fields: Record<string, unknown>) =>
+      mock.pushMessage({
+        session_id: SESSION,
+        uuid: `frame-${(frame += 1)}`,
+        ...fields,
+      } as unknown as SDKMessage);
+    const level = (tasks: string[]) =>
+      push({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: tasks.map((task_id) => ({
+          task_id,
+          task_type: "local_bash",
+          description: "sleep 10; echo done > bg.txt",
+        })),
+      });
+    return {
+      init: () => push({ type: "system", subtype: "init" }),
+      assistant: (text: string, answering?: string) =>
+        push({
+          type: "assistant",
+          message: { content: [{ type: "text", text }] },
+          ...(answering
+            ? { user_message_uuid: answering, user_message_uuids: [answering] }
+            : {}),
+        }),
+      result: (input: {
+        total: number;
+        text?: string;
+        names?: string[];
+        origin?: string;
+        numTurns?: number;
+        error?: string;
+      }) =>
+        push({
+          type: "result",
+          subtype: input.error ? "error_during_execution" : "success",
+          is_error: input.error !== undefined,
+          ...(input.error ? { errors: [input.error] } : {}),
+          total_cost_usd: input.total,
+          duration_ms: 10,
+          num_turns: input.numTurns ?? 1,
+          result: input.text ?? "",
+          queued_turn_count: 0,
+          ...(input.names
+            ? {
+                user_message_uuid: input.names.at(-1),
+                user_message_uuids: input.names,
+              }
+            : {}),
+          ...(input.origin ? { origin: { kind: input.origin } } : {}),
+        }),
+      lifecycle: (
+        commandUuid: string,
+        state: "queued" | "started" | "completed" | "cancelled",
+      ) =>
+        push({ type: "command_lifecycle", command_uuid: commandUuid, state }),
+      backgroundTaskStarted: (taskId: string) => {
+        live.add(taskId);
+        level([...live]);
+        push({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          tool_use_id: `tool-${taskId}`,
+          description: "sleep 10; echo done > bg.txt",
+        });
+      },
+      backgroundTaskEnded: (taskId: string) => {
+        live.delete(taskId);
+        level([...live]);
+        push({
+          type: "system",
+          subtype: "task_updated",
+          task_id: taskId,
+          patch: { status: "completed" },
+        });
+        push({
+          type: "system",
+          subtype: "task_notification",
+          task_id: taskId,
+          status: "completed",
+          output_file: "/tmp/out",
+          summary: "done",
+        });
+      },
+    };
+  }
+
+  function start(overrides: Partial<QuerySessionOptions> = {}) {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions(overrides));
+    return {
+      mock,
+      session,
+      read: channelReader(inputChannel()),
+      cli: cli(mock),
+    };
+  }
+
+  it("stamps a distinct uuid on every prompt and live input it sends", async () => {
+    const { session, read, cli: frames } = start();
+    const turn = session.sendPrompt("first", vi.fn());
+    const live = session.queueUserInput("also this");
+    const prompt = await read();
+    const input = await read();
+    await live;
+
+    expect(prompt).toMatch(/^[0-9a-f-]{36}$/);
+    expect(input).toMatch(/^[0-9a-f-]{36}$/);
+    expect(input).not.toBe(prompt);
+    frames.result({ total: 0.01, names: [prompt, input] });
+    await turn;
+    session.close();
+  });
+
+  it("answers a prompt sent as a background task ends with its own turn, not the continuation the CLI ran first", async () => {
+    // handover.jsonl: the CLI queued the prompt behind the continuation, whose
+    // result names no input, then ran the prompt as a turn whose result names it.
+    const { session, read, cli: frames } = start();
+    const first = session.sendPrompt("start it in the background", vi.fn());
+    const firstUuid = await read();
+    frames.backgroundTaskStarted("bg");
+    frames.result({ total: 0.0308888, names: [firstUuid], text: "STARTED" });
+    await first;
+
+    frames.backgroundTaskEnded("bg");
+    const followUp = session.sendPrompt("Reply with only BANANA.", vi.fn());
+    const followUpUuid = await read();
+    let settled = false;
+    void followUp.then(() => (settled = true));
+    frames.init();
+    frames.lifecycle(followUpUuid, "queued");
+    frames.assistant("Background task completed successfully (exit code 0).");
+    frames.result({
+      total: 0.0356028,
+      origin: "task-notification",
+      text: "Background task completed successfully (exit code 0).",
+    });
+    frames.lifecycle(followUpUuid, "started");
+    await tick();
+    expect(settled).toBe(false);
+
+    frames.init();
+    frames.assistant("BANANA", followUpUuid);
+    frames.result({ total: 0.0389285, names: [followUpUuid], text: "BANANA" });
+    const result = await followUp;
+    expect(result.finalText).toBe("BANANA");
+    // The continuation's spend is charged to the turn that owned the stream.
+    expect(result.costUsd).toBeCloseTo(0.0389285 - 0.0308888, 10);
+    session.close();
+  });
+
+  it("does not answer a prompt with a result that names another input", async () => {
+    const { session, read, cli: frames } = start();
+    const turn = session.sendPrompt("mine", vi.fn());
+    const mine = await read();
+    let settled = false;
+    void turn.then(() => (settled = true));
+
+    frames.result({ total: 0.01, names: ["someone-else"], text: "theirs" });
+    await tick();
+    expect(settled).toBe(false);
+
+    frames.result({ total: 0.02, names: ["someone-else", mine], text: "ok" });
+    expect((await turn).finalText).toBe("ok");
+    session.close();
+  });
+
+  it("treats a background task that ends during a turn as answered by that turn when no continuation follows", async () => {
+    // task-ends-in-turn.jsonl: the CLI folded the notification into the
+    // running turn; its ordinary result was the only answer.
+    const {
+      session,
+      read,
+      cli: frames,
+    } = start({
+      foldedNotificationGraceMs: 30,
+    });
+    const turn = session.sendPrompt("background, then foreground", vi.fn());
+    const uuid = await read();
+    frames.init();
+    frames.assistant("…", uuid);
+    frames.backgroundTaskStarted("bg");
+    frames.backgroundTaskEnded("bg");
+    await tick();
+    expect(session.owesWork()).toBe(true);
+
+    frames.result({ total: 0.02, names: [uuid], text: "DONE", numTurns: 3 });
+    await turn;
+    expect(session.owesWork()).toBe(true);
+    await tick(80);
+    expect(session.owesWork()).toBe(false);
+    session.close();
+  });
+
+  it("keeps a task's debt when the CLI starts a continuation within the grace after the turn", async () => {
+    const {
+      session,
+      read,
+      cli: frames,
+    } = start({
+      foldedNotificationGraceMs: 30,
+    });
+    const turn = session.sendPrompt("background, then reply", vi.fn());
+    const uuid = await read();
+    frames.init();
+    frames.assistant("…", uuid);
+    frames.backgroundTaskStarted("bg");
+    frames.backgroundTaskEnded("bg");
+    frames.result({ total: 0.02, names: [uuid], text: "DONE" });
+    await turn;
+    frames.init();
+    await tick(80);
+    expect(session.owesWork()).toBe(true);
+
+    frames.assistant("Background task completed.");
+    frames.result({ total: 0.03, origin: "task-notification" });
+    await tick();
+    expect(session.owesWork()).toBe(false);
+    session.close();
+  });
+
+  describe("two background tasks", () => {
+    const handlers = [
+      ["without", {}],
+      ["with", { externalTurnHandler: { emit: vi.fn(), onComplete: vi.fn() } }],
+    ] as const;
+
+    /** A caller turn that leaves tasks `a` and `b` running in the background. */
+    async function startTwoTasks(overrides: Partial<QuerySessionOptions>) {
+      const started = start({ foldedNotificationGraceMs: 30, ...overrides });
+      const turn = started.session.sendPrompt("start a and b", vi.fn());
+      const uuid = await started.read();
+      started.cli.init();
+      started.cli.assistant("…", uuid);
+      started.cli.backgroundTaskStarted("a");
+      started.cli.backgroundTaskStarted("b");
+      started.cli.result({ total: 0.01, names: [uuid], text: "STARTED" });
+      await turn;
+      // `a` ends between turns; its continuation begins, and `b` ends while
+      // that continuation runs.
+      started.cli.backgroundTaskEnded("a");
+      started.cli.init();
+      started.cli.backgroundTaskEnded("b");
+      return started;
+    }
+
+    it.each(handlers)(
+      "keeps a task that ends during another task's continuation owed until its own continuation answers it (%s a handler)",
+      async (_label, overrides) => {
+        const { session, cli: frames } = await startTwoTasks(overrides);
+        frames.assistant("a finished.");
+        frames.result({ total: 0.02, origin: "task-notification" });
+        await tick();
+        expect(session.owesWork()).toBe(true);
+
+        // The CLI queued b's notification: its continuation starts within the grace.
+        frames.init();
+        await tick(80);
+        expect(session.owesWork()).toBe(true);
+        frames.assistant("b finished.");
+        frames.result({ total: 0.03, origin: "task-notification" });
+        await tick();
+        expect(session.owesWork()).toBe(false);
+        session.close();
+      },
+    );
+
+    it.each(handlers)(
+      "treats a task folded into another task's continuation as answered after the grace (%s a handler)",
+      async (_label, overrides) => {
+        const { session, cli: frames } = await startTwoTasks(overrides);
+        frames.assistant("a and b finished.");
+        frames.result({ total: 0.02, origin: "task-notification" });
+        await tick();
+        expect(session.owesWork()).toBe(true);
+
+        await tick(80);
+        expect(session.owesWork()).toBe(false);
+        session.close();
+      },
+    );
+
+    it.each(handlers)(
+      "does not treat a caller taking over the CLI's turn as a new turn (%s a handler)",
+      async (_label, overrides) => {
+        const { session, read, cli: frames } = await startTwoTasks(overrides);
+        const followUp = session.sendPrompt("anything else?", vi.fn());
+        const uuid = await read();
+        // a's continuation, which began before the prompt, answers a only.
+        frames.assistant("a finished.");
+        frames.result({ total: 0.02, origin: "task-notification" });
+        frames.init();
+        frames.assistant("no", uuid);
+        frames.result({ total: 0.03, names: [uuid], text: "no" });
+        await followUp;
+        expect(session.owesWork()).toBe(true);
+
+        await tick(80);
+        expect(session.owesWork()).toBe(false);
+        session.close();
+      },
+    );
+  });
+
+  it("does not let the grace clear a task that ended between turns", async () => {
+    const {
+      session,
+      read,
+      cli: frames,
+    } = start({
+      foldedNotificationGraceMs: 30,
+    });
+    const turn = session.sendPrompt("start it in the background", vi.fn());
+    const uuid = await read();
+    frames.backgroundTaskStarted("bg");
+    frames.result({ total: 0.01, names: [uuid], text: "STARTED" });
+    await turn;
+    frames.backgroundTaskEnded("bg");
+    await tick(80);
+    expect(session.owesWork()).toBe(true);
+    session.close();
+  });
+
+  it.each(["peer", "channel", "coordinator", "observer"])(
+    "does not answer a prompt with a result that names no input and has %s origin",
+    async (origin) => {
+      const { session, read, cli: frames } = start();
+      const turn = session.sendPrompt("mine", vi.fn());
+      await read();
+      let settled = false;
+      void turn.then(() => (settled = true));
+
+      frames.result({ total: 0.01, origin, text: "someone else's turn" });
+      await tick();
+      expect(settled).toBe(false);
+
+      // A result with no single triggering send still answers the prompt.
+      frames.result({ total: 0, origin: "human", error: "the CLI exited" });
+      expect((await turn).error).toContain("the CLI exited");
+      session.close();
+    },
+  );
+
+  it("owes an accepted live input until the CLI completes or cancels it", async () => {
+    const { session, read, cli: frames } = start();
+    expect(session.owesWork()).toBe(false);
+
+    const live = session.queueUserInput("while you work");
+    const uuid = await read();
+    await live;
+    expect(session.owesWork()).toBe(true);
+
+    frames.lifecycle(uuid, "queued");
+    frames.lifecycle(uuid, "started");
+    // An unrelated result with an empty queue is not this input's answer.
+    frames.result({ total: 0.01, origin: "task-notification" });
+    await tick();
+    expect(session.owesWork()).toBe(true);
+
+    frames.lifecycle(uuid, "completed");
+    await tick();
+    expect(session.owesWork()).toBe(false);
+
+    const cancelled = session.queueUserInput("never mind");
+    const cancelledUuid = await read();
+    await cancelled;
+    expect(session.owesWork()).toBe(true);
+    frames.lifecycle(cancelledUuid, "cancelled");
+    await tick();
+    expect(session.owesWork()).toBe(false);
+    session.close();
+  });
+
+  it("settles every input a turn folded in by the result that names them", async () => {
+    // live-input.jsonl: two live inputs folded into the running turn; the
+    // prompt's own lifecycle completes only after the result.
+    const { session, read, cli: frames } = start();
+    const turn = session.sendPrompt("sleep 8, then reply DONE", vi.fn());
+    const prompt = await read();
+    const apple = session.queueUserInput("Also reply APPLE.");
+    const appleUuid = await read();
+    const cherry = session.queueUserInput("And CHERRY.");
+    const cherryUuid = await read();
+    await Promise.all([apple, cherry]);
+
+    frames.assistant("DONE\nAPPLE\nCHERRY", prompt);
+    frames.lifecycle(appleUuid, "completed");
+    frames.lifecycle(cherryUuid, "completed");
+    frames.result({
+      total: 0.03,
+      names: [prompt, appleUuid, cherryUuid],
+      text: "DONE\nAPPLE\nCHERRY",
+    });
+
+    expect((await turn).finalText).toBe("DONE\nAPPLE\nCHERRY");
+    expect(session.owesWork()).toBe(false);
+    session.close();
+  });
+
+  it.each([
+    ["without", false],
+    ["with", true],
+  ])(
+    "owes a background task's continuation until a notification result answers it (%s an external-turn handler)",
+    async (_label, withHandler) => {
+      // continuation.jsonl
+      const changes: boolean[] = [];
+      const {
+        session,
+        read,
+        cli: frames,
+      } = start({
+        onOwedWorkChanged: (owes) => changes.push(owes),
+        ...(withHandler
+          ? { externalTurnHandler: { emit: vi.fn(), onComplete: vi.fn() } }
+          : {}),
+      });
+      const turn = session.sendPrompt("start it in the background", vi.fn());
+      const uuid = await read();
+      frames.lifecycle(uuid, "queued");
+      frames.lifecycle(uuid, "started");
+      frames.init();
+      frames.assistant("…", uuid);
+      frames.backgroundTaskStarted("blzj17fui");
+      frames.assistant("STARTED");
+      frames.result({ total: 0.0524138, names: [uuid], text: "STARTED" });
+      frames.lifecycle(uuid, "completed");
+      await turn;
+      await tick();
+      expect(session.owesWork()).toBe(true);
+
+      frames.backgroundTaskEnded("blzj17fui");
+      await tick();
+      expect(session.owesWork()).toBe(true);
+
+      frames.init();
+      frames.assistant("Background task completed.");
+      frames.result({
+        total: 0.0566794,
+        origin: "task-notification",
+        text: "Background task completed.",
+      });
+      await tick();
+      expect(session.owesWork()).toBe(false);
+      // One change each way: the task's end turned in-flight work into a
+      // continuation owed without a moment of owing nothing.
+      expect(changes).toEqual([true, false]);
+      session.close();
+    },
+  );
+
+  it("keeps owing a continuation through a result that does not answer it", async () => {
+    const { session, read, cli: frames } = start();
+    const first = session.sendPrompt("start it in the background", vi.fn());
+    const firstUuid = await read();
+    frames.backgroundTaskStarted("bg");
+    frames.result({ total: 0.01, names: [firstUuid] });
+    await first;
+
+    const next = session.sendPrompt("anything else?", vi.fn());
+    const nextUuid = await read();
+    frames.backgroundTaskEnded("bg");
+    frames.result({ total: 0.02, names: [nextUuid], text: "no" });
+    await next;
+    expect(session.owesWork()).toBe(true);
+
+    frames.init();
+    frames.assistant("The task finished.");
+    frames.result({ total: 0.03, origin: "task-notification" });
+    await tick();
+    expect(session.owesWork()).toBe(false);
+    session.close();
+  });
+
+  it.each([
+    ["close", "closed"],
+    ["pump end", "pump_completed"],
+    ["pump error", "pump_error"],
+  ] as const)(
+    "reports termination exactly once on %s, even with no task in flight",
+    async (how, reason) => {
+      const onTerminated = vi.fn();
+      const changes: boolean[] = [];
+      const { mock, session } = start({
+        onTerminated,
+        onOwedWorkChanged: (owes) => changes.push(owes),
+      });
+      const live = session.queueUserInput("unanswered").catch(() => {});
+      expect(session.owesWork()).toBe(true);
+
+      if (how === "pump end") {
+        mock.endPump();
+        await tick();
+      }
+      if (how === "pump error") {
+        mock.crashPump(new Error("CLI crashed"));
+        await tick();
+      }
+      session.close();
+      session.close();
+      await live;
+
+      expect(onTerminated).toHaveBeenCalledTimes(1);
+      expect(onTerminated).toHaveBeenCalledWith({ reason });
+      // Death is reported as termination, never as the work settling.
+      expect(changes).toEqual([true]);
+      expect(session.owesWork()).toBe(false);
+    },
+  );
+
+  it("drops frames the SDK still delivers after the session is closed", async () => {
+    // The SDK drains frames it had queued before it reports the end of stream.
+    const emit = vi.fn();
+    const onComplete = vi.fn();
+    const onTerminated = vi.fn();
+    const { session, cli: frames } = start({
+      externalTurnHandler: { emit, onComplete },
+      onTerminated,
+    });
+    frames.init();
+    frames.assistant("after the end");
+    frames.result({ total: 0.01, origin: "task-notification" });
+    session.close();
+    await tick();
+
+    expect(emit).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onTerminated).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports termination after the completion of the provider turn it cut short", async () => {
+    const order: string[] = [];
+    const {
+      mock,
+      session,
+      cli: frames,
+    } = start({
+      externalTurnHandler: {
+        emit: vi.fn(),
+        onComplete: () => order.push("external_turn_completed"),
+      },
+      onTerminated: () => order.push("terminated"),
+    });
+    frames.init();
+    frames.assistant("continuing");
+    await tick();
+    mock.endPump();
+    await tick();
+
+    expect(order).toEqual(["external_turn_completed", "terminated"]);
+    session.close();
+  });
+
+  describe("provider turns", () => {
+    it.each([
+      ["after init", true],
+      ["alone", false],
+    ])(
+      "opens no turn for a notification answered without a model call (%s) and reports its spend as provider cost",
+      async (_label, withInit) => {
+        const emit = vi.fn();
+        const onComplete = vi.fn();
+        const onCostSettled = vi.fn();
+        const {
+          session,
+          read,
+          cli: frames,
+        } = start({
+          resume: SESSION,
+          costBaseline: { sessionId: SESSION, cumulativeCostUsd: 0.2 },
+          externalTurnHandler: { emit, onComplete },
+          onCostSettled,
+        });
+        if (withInit) frames.init();
+        frames.result({
+          total: 0.26,
+          numTurns: 0,
+          origin: "task-notification",
+        });
+        await tick();
+
+        expect(emit).not.toHaveBeenCalled();
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(session.owesWork()).toBe(false);
+        expect(onCostSettled).toHaveBeenCalledTimes(1);
+        const [settlement] = onCostSettled.mock.calls[0]!;
+        expect(settlement.costUsdDelta).toBeCloseTo(0.06, 10);
+        expect(settlement).toMatchObject({
+          lineageId: SESSION,
+          cumulativeCostUsd: 0.26,
+        });
+
+        const turn = session.sendPrompt("hi", vi.fn());
+        const uuid = await read();
+        frames.result({ total: 0.3, names: [uuid] });
+        expect((await turn).costUsd).toBeCloseTo(0.04, 10);
+        session.close();
+      },
+    );
+
+    it("leaves a quiet notification's spend to the next turn when nobody takes provider cost", async () => {
+      const {
+        session,
+        read,
+        cli: frames,
+      } = start({
+        resume: SESSION,
+        costBaseline: { sessionId: SESSION, cumulativeCostUsd: 0.2 },
+        externalTurnHandler: { emit: vi.fn(), onComplete: vi.fn() },
+      });
+      frames.init();
+      frames.result({ total: 0.26, numTurns: 0, origin: "task-notification" });
+      await tick();
+
+      const turn = session.sendPrompt("hi", vi.fn());
+      const uuid = await read();
+      frames.result({ total: 0.3, names: [uuid] });
+      expect((await turn).costUsd).toBeCloseTo(0.1, 10);
+      session.close();
+    });
+
+    it("announces a provider turn with its first frame after init, init first", async () => {
+      const shown: Array<[unknown, unknown]> = [];
+      const emit = vi.fn((_event: string, data: unknown) => {
+        const frame: object = Object(data);
+        shown.push([
+          Reflect.get(frame, "type"),
+          Reflect.get(frame, "subtype") ?? null,
+        ]);
+      });
+      const onComplete = vi.fn();
+      const { session, cli: frames } = start({
+        externalTurnHandler: { emit, onComplete },
+      });
+      frames.init();
+      await tick();
+      expect(emit).not.toHaveBeenCalled();
+      // The CLI has started a turn: work is owed before anything is shown.
+      expect(session.owesWork()).toBe(true);
+
+      frames.assistant("Background task completed.");
+      await tick();
+      expect(shown).toEqual([
+        ["system", "init"],
+        ["assistant", null],
+      ]);
+
+      frames.result({ total: 0.01, origin: "task-notification" });
+      await tick();
+      expect(onComplete).toHaveBeenCalledTimes(1);
+      expect(session.owesWork()).toBe(false);
+      session.close();
+    });
+
+    it("lets a prompt take over a provider turn that has shown nothing without reporting that turn", async () => {
+      const emit = vi.fn();
+      const onComplete = vi.fn();
+      const {
+        session,
+        read,
+        cli: frames,
+      } = start({
+        externalTurnHandler: { emit, onComplete },
+      });
+      frames.init();
+      await tick();
+
+      const turn = session.sendPrompt("hello", vi.fn());
+      const uuid = await read();
+      frames.assistant("hello back", uuid);
+      frames.result({ total: 0.01, names: [uuid], text: "hello back" });
+
+      expect((await turn).finalText).toBe("hello back");
+      expect(emit).not.toHaveBeenCalled();
+      expect(onComplete).not.toHaveBeenCalled();
+      session.close();
+    });
   });
 });

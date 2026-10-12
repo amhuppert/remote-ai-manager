@@ -64,6 +64,7 @@ export const backendConversationCapabilitiesIntegritySchema = z.object({
   contextWindowMetrics: z.boolean(),
   nativeMidTurnAskUser: z.boolean(),
   externalTurns: z.boolean(),
+  owedWork: z.boolean().optional(),
   checkpoint: z.boolean(),
   checkpointFork: z.boolean(),
   handoffCapture: captureAvailabilitySchema,

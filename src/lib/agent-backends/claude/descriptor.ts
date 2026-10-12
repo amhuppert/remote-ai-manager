@@ -80,6 +80,11 @@ export const claudeConversationCapabilities: BackendConversationCapabilities = {
   contextWindowMetrics: true,
   nativeMidTurnAskUser: true,
   externalTurns: true,
+  // Settled by the installed CLI's own evidence (design C5b §9.1): replies
+  // name the inputs they answer, a background task's end is answered by a
+  // result with a `task-notification` origin, and closing stops its work.
+  // scripts/probes/run-claude-between-turns.sh.
+  owedWork: true,
   // Enabled on this adapter's own passing continuation evidence (D9): three
   // checkpoint cycles with a queued delivery, in both scopes, clearing both
   // halves of the bar — no structural failure and every independently authored

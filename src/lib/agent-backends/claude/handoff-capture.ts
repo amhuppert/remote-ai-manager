@@ -175,12 +175,17 @@ export async function captureClaudeHandoff(
       return result;
     }
     try {
+      // Capture's session is a step of capture, not the runtime: the host
+      // hears nothing from it directly.
       session = createQuerySession({
         ...options,
         checkpointCapture: true,
         externalTurnHandler: undefined,
         onBackgroundActivity: undefined,
         onBackgroundTasksLost: undefined,
+        onOwedWorkChanged: undefined,
+        onTerminated: undefined,
+        onCostSettled: undefined,
       });
     } catch {
       return result;

@@ -51,6 +51,7 @@ import type {
   ConversationBackendEvent,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
+  RuntimeTerminatedInfo,
 } from "./conversation";
 import type { AgentTaskRequest } from "./task";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -106,6 +107,21 @@ export interface ConversationTurnConformanceHarness {
   triggerExternalTurn?(): void | Promise<void>;
   /** Drives native forwarding or prompted post-validation when supplied. */
   structuredOutput?: StructuredOutputConformanceDrive;
+  /**
+   * Required when `owedWork` is declared: walks the fake provider through one
+   * background task's life between turns, in the order the provider reports
+   * it.
+   */
+  backgroundWork?: {
+    /** The provider starts a background task. */
+    startTask(): void | Promise<void>;
+    /** The task ends; the provider has not answered it yet. */
+    endTask(): void | Promise<void>;
+    /** The provider runs its continuation for the ended task. */
+    runContinuation(): void | Promise<void>;
+    /** The provider process dies (its output stream ends) without a close. */
+    providerDies(): void | Promise<void>;
+  };
 }
 
 /** Drives the real task runner through a fake provider port. */
@@ -334,6 +350,155 @@ export async function checkExternalTurnCoherence(
     }
   } finally {
     await runtime.close();
+  }
+}
+
+/**
+ * `owedWork` ⇔ the runtime answers whether the provider still owes work.
+ * Declared:
+ * - a turn whose result has arrived owes nothing, read synchronously at its end;
+ * - an in-flight background task is owed, and a fresh change says so;
+ * - once it ends, its continuation stays owed, with no notice that nothing is;
+ * - after the continuation the answer clears, and that notice follows the
+ *   continuation's completion;
+ * - termination is reported exactly once, on close and when the provider dies,
+ *   and death is never reported as the work settling.
+ * Undeclared: the runtime exposes no answer.
+ */
+export async function checkOwedWorkCoherence(
+  facet: AgentBackendConversationFacet,
+  harness: ConversationTurnConformanceHarness,
+): Promise<void> {
+  const log: string[] = [];
+  const terminations: RuntimeTerminatedInfo[] = [];
+  const runtime = await createRuntimeFor(facet, harness, {
+    onExternalTurnEvent: (event) => {
+      log.push(event.type);
+    },
+    onOwedWorkChanged: (owes) => {
+      log.push(`owes:${owes}`);
+    },
+    onTerminated: (info) => {
+      terminations.push(info);
+    },
+  });
+  if (!facet.capabilities.owedWork) {
+    try {
+      expect(runtime.owesWork).toBeUndefined();
+    } finally {
+      await runtime.close();
+    }
+    return;
+  }
+  const drive = harness.backgroundWork;
+  if (!drive) {
+    await runtime.close();
+    throw new Error(
+      "owedWork is declared but the harness provides no backgroundWork drive",
+    );
+  }
+  try {
+    const owesWork = runtime.owesWork?.bind(runtime);
+    if (!owesWork) {
+      throw new Error("owedWork is declared but the runtime has no owesWork");
+    }
+    const result = await runtime.sendTurn(
+      buildTurnInput("conformance owed-work turn", runtime.modelSelection),
+    );
+    expect(result.failure).toBeNull();
+    expect(owesWork(), "a turn whose result has arrived owes nothing").toBe(
+      false,
+    );
+    // The setup turn owed its input until the result: wait for both of its
+    // notices, so only later ones count below, however late they arrive.
+    await waitUntil(() => {
+      const owed = log.filter((entry) => entry.startsWith("owes:"));
+      return owed.at(-1) === "owes:false" && owed.includes("owes:true");
+    }, "the setup turn's notices that its input was owed, then answered");
+    const cursor = log.length;
+    const notices = () =>
+      log.slice(cursor).filter((entry) => entry.startsWith("owes:"));
+
+    await drive.startTask();
+    await waitUntil(
+      () => notices().includes("owes:true"),
+      "a fresh owed-work notice for the in-flight background task",
+    );
+    expect(owesWork()).toBe(true);
+
+    await drive.endTask();
+    await sleep(50);
+    expect(owesWork(), "the ended task's continuation is owed").toBe(true);
+    expect(
+      notices(),
+      "no notice that nothing is owed when the task ends",
+    ).toEqual(["owes:true"]);
+
+    await drive.runContinuation();
+    await waitUntil(
+      () => notices().at(-1) === "owes:false",
+      "a fresh notice that nothing is owed after the continuation",
+    );
+    expect(owesWork()).toBe(false);
+    expect(notices()).toEqual(["owes:true", "owes:false"]);
+    expect(
+      log.lastIndexOf("external_turn_completed"),
+      "the continuation's completion precedes the notice that nothing is owed",
+    ).toBeGreaterThan(cursor - 1);
+    expect(log.lastIndexOf("external_turn_completed")).toBeLessThan(
+      log.lastIndexOf("owes:false"),
+    );
+  } finally {
+    await runtime.close();
+    await runtime.close();
+  }
+  if (terminations.length !== 1) {
+    throw new Error(
+      `owedWork is declared but closing reported termination ${terminations.length} times`,
+    );
+  }
+  await checkOwedWorkProviderDeath(facet, harness, drive);
+}
+
+async function checkOwedWorkProviderDeath(
+  facet: AgentBackendConversationFacet,
+  harness: ConversationTurnConformanceHarness,
+  drive: NonNullable<ConversationTurnConformanceHarness["backgroundWork"]>,
+): Promise<void> {
+  const notices: boolean[] = [];
+  const terminations: RuntimeTerminatedInfo[] = [];
+  const runtime = await createRuntimeFor(facet, harness, {
+    onExternalTurnEvent: () => {},
+    onOwedWorkChanged: (owes) => {
+      notices.push(owes);
+    },
+    onTerminated: (info) => {
+      terminations.push(info);
+    },
+  });
+  try {
+    await drive.startTask();
+    await waitUntil(
+      () => runtime.owesWork?.() === true,
+      "owed work before the provider dies",
+    );
+    await drive.providerDies();
+    await waitUntil(
+      () => terminations.length > 0,
+      "termination to be reported when the provider dies",
+    );
+    expect(runtime.owesWork?.()).toBe(false);
+    expect(notices, "death is never reported as the work settling").toEqual([
+      true,
+    ]);
+  } finally {
+    await runtime.close();
+    await runtime.close();
+  }
+  if (terminations.length !== 1) {
+    throw new Error(
+      `owedWork is declared but a provider death reported termination ${terminations.length} times`,
+    );
   }
 }
 
@@ -658,6 +823,13 @@ export function describeBackendConformance(
       }
     });
 
+    it("declares owed work only with the external turns that answer it", () => {
+      // A continuation the runtime owes runs as a provider turn between the
+      // caller's turns; a runtime that cannot surface one cannot be followed.
+      const caps = descriptor.conversation?.capabilities;
+      if (caps?.owedWork) expect(caps.externalTurns).toBe(true);
+    });
+
     it("declares managed-skills delivery for every execution facet it exposes", () => {
       expect(
         managedSkillsDeliverySchema.safeParse(
@@ -811,6 +983,9 @@ export function describeBackendConformance(
 
       it("external-turn coherence: declared externalTurns matches out-of-turn emission", () =>
         checkExternalTurnCoherence(conversationFacet, turnHarness));
+
+      it("owed-work coherence: declared owedWork matches the runtime's answer and termination report", () =>
+        checkOwedWorkCoherence(conversationFacet, turnHarness));
 
       if (
         conversationFacet.capabilities.structuredOutput === "backend_native"

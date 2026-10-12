@@ -39,6 +39,12 @@ export interface BackgroundTasksLostInfo {
   reason: string;
 }
 
+/** Payload for `onTerminated`: why the runtime died or was closed. */
+export interface RuntimeTerminatedInfo {
+  /** Opaque diagnostic text from the backend; never branch on it. */
+  reason: string;
+}
+
 /**
  * The conversation-visible view of a backend's live background work. The Zod
  * schema in the conversations domain is the source of truth for this shape;
@@ -286,6 +292,15 @@ export interface ConversationBackendRuntime {
    * runtime between turns can follow.
    */
   readonly liveInput?: "running_turn";
+  /**
+   * Whether the provider still owes work this runtime started and may still
+   * act on it without a new prompt: background work in flight, a continuation
+   * the provider has yet to run for finished background work, a provider turn
+   * in progress, or accepted input it has not answered. Present exactly when
+   * the descriptor declares `owedWork`; false once the runtime is dead.
+   * Changes are reported through the create input's `onOwedWorkChanged`.
+   */
+  owesWork?(): boolean;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
   supportedCommands?(): Promise<readonly { name: string }[]>;
   supportedAgents?(): Promise<readonly { name: string }[]>;
@@ -376,6 +391,24 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
    */
   onBackgroundTasksLost?: (info: BackgroundTasksLostInfo) => void;
   /**
+   * Invoked when the runtime's `owesWork()` answer changes, after every
+   * external-turn event emitted before the change has been delivered. Death
+   * is never reported here as the work settling: `onTerminated` reports it.
+   * Only runtimes of backends that declare `owedWork` call it.
+   */
+  onOwedWorkChanged?: (owesWork: boolean) => void;
+  /**
+   * Invoked exactly once when the runtime dies or is closed, whatever work it
+   * had in flight. It follows every other event and callback of the runtime:
+   * external-turn events, owed-work and cost notices, the events of a turn the
+   * death cut short (including those its failure emits), and the archival of
+   * accepted live input. Those callbacks therefore must not wait for the
+   * runtime's close. A checkpoint capture that retires the runtime reports it
+   * once the capture settles. Only runtimes of backends that declare
+   * `owedWork` call it.
+   */
+  onTerminated?: (info: RuntimeTerminatedInfo) => void;
+  /**
    * Optional callback invoked whenever the backend's live background-task set
    * changes — a task starting, settling, or reporting progress. `null` means
    * nothing is running. Backends without background-task lifecycle signals
@@ -389,10 +422,12 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
    * Optional callback invoked when provider billing settles cost for this
    * conversation OUTSIDE the turn result that would have carried it — a
    * charge the provider reported late, a pending settlement reconciled on
-   * resume, or agent-level cost no turn can be credited with. The caller adds
+   * resume, agent-level cost no turn can be credited with, or a provider
+   * turn the runtime reports no turn for. The caller adds
    * `costUsdDelta` to the conversation's totals; the runtime guarantees each
    * settled cent is reported exactly once across retries and restarts.
-   * Backends whose provider reports cost with the turn never call it.
+   * Backends whose provider reports all cost on turns the host sees never
+   * call it.
    */
   onCostSettled?: (settlement: ConversationCostSettlement) => void;
 }
@@ -401,7 +436,7 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
 export interface ConversationCostSettlement {
   /** Cost to add to the conversation total, in USD. Always positive. */
   costUsdDelta: number;
-  /** Provider lineage the settlement belongs to (the Cursor agent id). */
+  /** Provider lineage the settlement belongs to (the Cursor agent id, the Claude session id). */
   lineageId: string;
   /** The lineage's cumulative billed cost after this settlement, in USD. */
   cumulativeCostUsd: number;

@@ -116,6 +116,88 @@ describe("Claude capture preparation through registered factory", () => {
     await runtime.close();
   });
 
+  it("reports the runtime's death once, after capture settles, and nothing from capture's own sessions", async () => {
+    const sdk = createFakeClaudeSdkController();
+    _setSdkQueryForTesting((args) =>
+      args.options.tools
+        ? scriptedCaptureSdk((user, emit) => {
+            emit(captureInit());
+            emit(captureResult(user.uuid));
+          })(args)
+        : sdk.createSdkQuery(args),
+    );
+    const log: string[] = [];
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      ...input,
+      onTerminated: ({ reason }) => log.push(`terminated:${reason}`),
+      onOwedWorkChanged: (owes) => log.push(`owes:${owes}`),
+    });
+    const result = await runtime.captureHandoff?.({
+      captureId: "capture",
+      mode: "tool-disabled",
+      promptText: "Record working state only.",
+      outputSchema: { type: "object" },
+      limits: CHECKPOINT_CAPTURE_LIMITS,
+      signal: new AbortController().signal,
+      async onTranscript(entry) {
+        log.push(`transcript:${entry.type}`);
+      },
+    });
+    expect(result?.executionSettled).toBe(true);
+    await runtime.close();
+    await runtime.close();
+
+    expect(log.filter((entry) => entry.startsWith("owes"))).toEqual([]);
+    expect(log.filter((entry) => entry.startsWith("terminated"))).toEqual([
+      "terminated:captured",
+    ]);
+    expect(log.at(-1)).toBe("terminated:captured");
+    expect(log.some((entry) => entry.startsWith("transcript"))).toBe(true);
+  });
+
+  it("gives a capture-purpose runtime one death report, at capture or at close", async () => {
+    const script = scriptedCaptureSdk((user, emit) => {
+      emit(captureInit());
+      emit(captureResult(user.uuid));
+    });
+    const purpose = {
+      kind: "checkpoint_handoff",
+      captureId: "capture",
+      mode: "tool-disabled",
+    } as const;
+    _setSdkQueryForTesting(script);
+    const captured = vi.fn();
+    const capturing = await claudeConversationBackendFactory.createRuntime({
+      ...input,
+      initialPurpose: purpose,
+      onTerminated: captured,
+    });
+    await capturing.captureHandoff?.({
+      captureId: "capture",
+      mode: "tool-disabled",
+      promptText: "Record working state only.",
+      outputSchema: { type: "object" },
+      limits: CHECKPOINT_CAPTURE_LIMITS,
+      signal: new AbortController().signal,
+      async onTranscript() {},
+    });
+    await vi.waitFor(() =>
+      expect(captured.mock.calls).toEqual([[{ reason: "captured" }]]),
+    );
+    await capturing.close();
+    expect(captured).toHaveBeenCalledTimes(1);
+
+    const dormant = vi.fn();
+    const unused = await claudeConversationBackendFactory.createRuntime({
+      ...input,
+      initialPurpose: purpose,
+      onTerminated: dormant,
+    });
+    await unused.close();
+    await unused.close();
+    expect(dormant.mock.calls).toEqual([[{ reason: "closed" }]]);
+  });
+
   it("omits capture when restricted transport creation fails without downgrading", async () => {
     const sdk = createFakeClaudeSdkController();
     let launches = 0;

@@ -1054,6 +1054,12 @@ describe("ClaudeConversationRuntime — external turn events", () => {
       session_id: "sess-1",
       uuid: "sys-2",
     } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "a-2",
+      message: { content: [{ type: "text", text: "The task finished." }] },
+    } as unknown as SDKMessage);
     await new Promise((r) => setTimeout(r, 0));
     const followUp = sendTurn("follow-up");
     mock.pushMessage(result("u3", "Follow-up answer"));
@@ -1065,6 +1071,268 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     );
 
     runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — provider work between turns", () => {
+  const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+  const createInput = {
+    executionClass: "ordinary-conversation" as const,
+    conversationId: "conv-owed",
+    projectPath: "/project",
+    projectName: "proj",
+    sessionName: "sess",
+    worktreePath: "/project/.worktrees/sess",
+    persistedRef: null,
+    sessionInstructions: [],
+    tooling: {},
+  };
+  const frame = (fields: Record<string, unknown>) =>
+    ({
+      session_id: "sess-1",
+      uuid: "frame",
+      ...fields,
+    }) as unknown as SDKMessage;
+  const init = () => frame({ type: "system", subtype: "init" });
+  const assistant = (text: string) =>
+    frame({
+      type: "assistant",
+      message: { content: [{ type: "text", text }] },
+    });
+  const notificationResult = (total: number, numTurns = 1) =>
+    frame({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: total,
+      duration_ms: 10,
+      num_turns: numTurns,
+      result: "",
+      is_error: false,
+      origin: { kind: "task-notification" },
+    });
+  const texts = (events: ConversationBackendEvent[]) =>
+    events.flatMap((event) =>
+      event.type === "content" && event.block.type === "text"
+        ? [event.block.text]
+        : event.type.startsWith("external_turn")
+          ? [event.type]
+          : [],
+    );
+
+  it("reports owed-work changes and termination only after the provider events that preceded them", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const log: string[] = [];
+    const runtime = await createRuntimeWithFakeDeps({
+      ...createInput,
+      onExternalTurnEvent: (event) => log.push(event.type),
+      onOwedWorkChanged: (owes) => log.push(`owes:${owes}`),
+      onTerminated: ({ reason }) => log.push(`terminated:${reason}`),
+    });
+
+    // A continuation's frames arrive in one burst.
+    mock.pushMessage(init());
+    mock.pushMessage(assistant("Background task completed."));
+    mock.pushMessage(notificationResult(0.05));
+    await tick();
+    expect(runtime.owesWork?.()).toBe(false);
+    await runtime.close();
+    await runtime.close();
+
+    const owedTrue = log.indexOf("owes:true");
+    const started = log.indexOf("external_turn_started");
+    const completed = log.indexOf("external_turn_completed");
+    const owedFalse = log.indexOf("owes:false");
+    expect(owedTrue).toBeGreaterThanOrEqual(0);
+    expect(owedTrue).toBeLessThan(started);
+    expect(completed).toBeGreaterThan(started);
+    expect(owedFalse).toBeGreaterThan(completed);
+    expect(log.filter((entry) => entry.startsWith("terminated"))).toEqual([
+      "terminated:closed",
+    ]);
+    expect(log.at(-1)).toBe("terminated:closed");
+  });
+
+  it.each(["close", "pump end", "pump error"] as const)(
+    "reports termination only after an ordinary turn's held event callbacks finish (%s)",
+    async (death) => {
+      const mock = createControllableMockQuery();
+      queryMock.mockReturnValue(mock.query);
+      const log: string[] = [];
+      const held = Promise.withResolvers<void>();
+      const runtime = await createRuntimeWithFakeDeps({
+        ...createInput,
+        onTerminated: ({ reason }) => log.push(`terminated:${reason}`),
+      });
+      const turn = runtime
+        .sendTurn({
+          promptText: "hello",
+          imageRefs: [],
+          sessionInstructions: [],
+          autonomous: false,
+          signal: new AbortController().signal,
+          onEvent: async (event) => {
+            if (event.type === "input_accepted") await held.promise;
+            log.push(event.type);
+          },
+        })
+        .catch(() => undefined);
+      mock.pushMessage(assistant("partial work"));
+      await tick();
+
+      const closing =
+        death === "close" ? runtime.close() : Promise.resolve(undefined);
+      if (death === "pump end") mock.endPump();
+      if (death === "pump error") mock.failPump(new Error("CLI crashed"));
+      await tick();
+      expect(log).toEqual([]);
+
+      held.resolve();
+      await turn;
+      await closing;
+      await runtime.close();
+      expect(log[0]).toBe("input_accepted");
+      expect(log).toContain("content");
+      expect(
+        log.filter((entry) => entry.startsWith("terminated")),
+      ).toHaveLength(1);
+      expect(log.at(-1)).toMatch(/^terminated:/);
+    },
+  );
+
+  it("reports termination only after an accepted live input is archived", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const log: string[] = [];
+    const runtime = await createRuntimeWithFakeDeps({
+      ...createInput,
+      onTerminated: ({ reason }) => log.push(`terminated:${reason}`),
+    });
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+    const archive = Promise.withResolvers<void>();
+    const delivery = runtime.queueUserInput!({
+      content: [{ type: "text", text: "while you work" }],
+      onAccepted: async () => {
+        await archive.promise;
+        log.push("archived");
+      },
+    });
+    await channel.next();
+    void channel.next();
+    await tick();
+
+    const closing = runtime.close();
+    await tick();
+    expect(log).toEqual([]);
+    archive.resolve();
+    await delivery;
+    await closing;
+    expect(log).toEqual(["archived", "terminated:closed"]);
+  });
+
+  it("holds a provider turn's later frames and its completion until an accepted live input is archived", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const events: ConversationBackendEvent[] = [];
+    const runtime = await createRuntimeWithFakeDeps({
+      ...createInput,
+      onExternalTurnEvent: (event) => events.push(event),
+    });
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+    mock.pushMessage(init());
+    mock.pushMessage(assistant("before the input"));
+    await tick();
+
+    const archive = Promise.withResolvers<void>();
+    const delivery = runtime.queueUserInput!({
+      content: [{ type: "text", text: "and also this" }],
+      onAccepted: () => archive.promise,
+    });
+    await channel.next();
+    void channel.next();
+    mock.pushMessage(assistant("after the input"));
+    mock.pushMessage(notificationResult(0.05));
+    await tick();
+    expect(texts(events)).toEqual([
+      "external_turn_started",
+      "before the input",
+    ]);
+
+    archive.resolve();
+    await delivery;
+    await tick();
+    expect(texts(events)).toEqual([
+      "external_turn_started",
+      "before the input",
+      "after the input",
+      "external_turn_completed",
+    ]);
+    await runtime.close();
+  });
+
+  it("delivers a provider turn's completion before the next provider turn starts", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const events: ConversationBackendEvent[] = [];
+    const runtime = await createRuntimeWithFakeDeps({
+      ...createInput,
+      onExternalTurnEvent: (event) => events.push(event),
+    });
+    const channel: AsyncGenerator<SDKUserMessage> =
+      queryMock.mock.calls[0]![0].prompt;
+    const archive = Promise.withResolvers<void>();
+    const delivery = runtime.queueUserInput!({
+      content: [{ type: "text", text: "held" }],
+      onAccepted: () => archive.promise,
+    });
+    await channel.next();
+    void channel.next();
+
+    mock.pushMessage(assistant("first continuation"));
+    mock.pushMessage(notificationResult(0.05));
+    mock.pushMessage(assistant("second continuation"));
+    mock.pushMessage(notificationResult(0.06));
+    await tick();
+    archive.resolve();
+    await delivery;
+    await tick();
+
+    expect(texts(events)).toEqual([
+      "external_turn_started",
+      "first continuation",
+      "external_turn_completed",
+      "external_turn_started",
+      "second continuation",
+      "external_turn_completed",
+    ]);
+    await runtime.close();
+  });
+
+  it("reports a quiet notification turn's spend as provider cost instead of a turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const events: ConversationBackendEvent[] = [];
+    const onCostSettled = vi.fn();
+    const runtime = await createRuntimeWithFakeDeps({
+      ...createInput,
+      onExternalTurnEvent: (event) => events.push(event),
+      onCostSettled,
+    });
+
+    mock.pushMessage(init());
+    mock.pushMessage(notificationResult(0.26, 0));
+    await tick();
+
+    expect(events).toEqual([]);
+    expect(onCostSettled).toHaveBeenCalledTimes(1);
+    expect(onCostSettled.mock.calls[0]![0]).toMatchObject({
+      lineageId: "sess-1",
+      cumulativeCostUsd: 0.26,
+    });
+    expect(onCostSettled.mock.calls[0]![0].costUsdDelta).toBeCloseTo(0.26, 10);
+    await runtime.close();
   });
 });
 

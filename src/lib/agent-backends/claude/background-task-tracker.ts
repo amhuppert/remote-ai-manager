@@ -11,6 +11,10 @@
  * waitable. Anything whose originating tool is unknown/unavailable defaults to
  * `waitable`; the caller relies on a bounded wait to prevent an indefinite stall.
  *
+ * A task the SDK marks `ambient` (every `skip_transcript` task and every
+ * live-update watcher) is excluded too: it is not activity, so nothing may
+ * wait on it or stay alive for it.
+ *
  * A second path into `excluded` exists after classification: a waitable task
  * that survives a full settlement-wait timeout has empirically proven it is
  * not going to settle on its own (a dev server, a watcher), so the caller
@@ -44,6 +48,12 @@ export interface BackgroundTaskRecord {
   lastActivityAtMs: number;
   /** Ambient/housekeeping task the SDK asks consumers to hide inline. */
   skipTranscript: boolean;
+  /**
+   * Known to run in the background rather than block a tool call. Only a
+   * background task's end makes the CLI start a continuation; a foreground
+   * task's output returns inside the turn that ran it.
+   */
+  backgrounded: boolean;
   taskType: string | null;
   /** Workflow script `meta.name`; set only for `local_workflow` tasks. */
   workflowName: string | null;
@@ -106,10 +116,12 @@ export function applyTaskMessage(
       return addTask(state, {
         taskId: message.task_id,
         toolUseId: message.tool_use_id ?? null,
-        classification: classifyByToolName(toolName),
+        classification:
+          message.ambient === true ? "excluded" : classifyByToolName(toolName),
         description: message.description ?? null,
         nowMs,
         skipTranscript: message.skip_transcript ?? false,
+        backgrounded: message.is_backgrounded === true,
         taskType: message.task_type ?? null,
         workflowName: message.workflow_name ?? null,
         subagentType: message.subagent_type ?? null,
@@ -124,7 +136,12 @@ export function applyTaskMessage(
       }
       // A non-terminal patch (`paused`, `running`, a description edit) is still
       // proof the task exists and the harness is talking about it.
-      return touchTask(state, message.task_id, nowMs);
+      return touchTask(
+        state,
+        message.task_id,
+        nowMs,
+        message.patch.is_backgrounded === true,
+      );
     }
     case "task_progress": {
       const existing = state.tasks.get(message.task_id);
@@ -138,6 +155,7 @@ export function applyTaskMessage(
           description: message.description ?? null,
           nowMs,
           skipTranscript: false,
+          backgrounded: false,
           taskType: null,
           workflowName: null,
           subagentType: message.subagent_type ?? null,
@@ -169,7 +187,9 @@ export function applyTaskMessage(
  * is then a no-op), and a payload task we have never seen is adopted, but a
  * task we already settled is never resurrected. Ordering between this level
  * signal and the edge bookends for the same transition is unspecified, so any
- * rule that could move a task backwards would race.
+ * rule that could move a task backwards would race. The payload lists only
+ * background tasks, so membership proves a task is backgrounded; an `ambient`
+ * flag excludes the task and is never cleared again.
  */
 function reconcileWithLevelSignal(
   state: BackgroundTaskState,
@@ -177,6 +197,7 @@ function reconcileWithLevelSignal(
     task_id: string;
     task_type: string;
     description: string;
+    ambient?: boolean;
   }[],
   nowMs: number,
 ): BackgroundTaskState {
@@ -187,8 +208,15 @@ function reconcileWithLevelSignal(
 
   for (const record of state.tasks.values()) {
     if (record.status !== "running") continue;
-    if (live.has(record.taskId)) {
-      mutable().set(record.taskId, { ...record, lastActivityAtMs: nowMs });
+    const entry = live.get(record.taskId);
+    if (entry !== undefined) {
+      mutable().set(record.taskId, {
+        ...record,
+        backgrounded: true,
+        classification:
+          entry.ambient === true ? "excluded" : record.classification,
+        lastActivityAtMs: nowMs,
+      });
       continue;
     }
     mutable().set(record.taskId, {
@@ -203,12 +231,13 @@ function reconcileWithLevelSignal(
     mutable().set(task.task_id, {
       taskId: task.task_id,
       toolUseId: null,
-      classification: "waitable",
+      classification: task.ambient === true ? "excluded" : "waitable",
       status: "running",
       description: task.description,
       startedAtMs: nowMs,
       lastActivityAtMs: nowMs,
       skipTranscript: false,
+      backgrounded: true,
       taskType: task.task_type,
       workflowName: null,
       subagentType: null,
@@ -233,12 +262,7 @@ export function snapshotBackgroundActivity(
   nowMs: number,
 ): ConversationBackgroundActivity | null {
   const tasks = [...state.tasks.values()]
-    .filter(
-      (record) =>
-        record.classification === "waitable" &&
-        record.status === "running" &&
-        !record.skipTranscript,
-    )
+    .filter(isVisibleWaitableTask)
     .map((record) => ({
       taskId: record.taskId,
       description: record.description,
@@ -254,6 +278,44 @@ export function snapshotBackgroundActivity(
 
   if (tasks.length === 0) return null;
   return { tasks, updatedAt: new Date(nowMs).toISOString() };
+}
+
+/** Whether a task the conversation can see is still running. */
+export function hasVisibleTaskInFlight(state: BackgroundTaskState): boolean {
+  for (const record of state.tasks.values()) {
+    if (isVisibleWaitableTask(record)) return true;
+  }
+  return false;
+}
+
+/**
+ * Tasks whose end, between `before` and `after`, the CLI will answer with a
+ * continuation turn: visible waitable background tasks that just left
+ * `running`. Each task ends once, so whichever frame ends it (the level
+ * signal, a terminal `task_updated` or the notification) reports it and the
+ * later frames for the same task report nothing.
+ */
+export function continuationDebtCreated(
+  before: BackgroundTaskState,
+  after: BackgroundTaskState,
+): string[] {
+  if (before === after) return [];
+  const ended: string[] = [];
+  for (const record of after.tasks.values()) {
+    const prior = before.tasks.get(record.taskId);
+    if (prior === undefined || !isVisibleWaitableTask(prior)) continue;
+    if (record.status === "running" || !record.backgrounded) continue;
+    ended.push(record.taskId);
+  }
+  return ended;
+}
+
+function isVisibleWaitableTask(record: BackgroundTaskRecord): boolean {
+  return (
+    record.classification === "waitable" &&
+    record.status === "running" &&
+    !record.skipTranscript
+  );
 }
 
 export function getWaitableInFlightTaskIds(
@@ -310,6 +372,7 @@ function addTask(
     description: string | null;
     nowMs: number;
     skipTranscript: boolean;
+    backgrounded: boolean;
     taskType: string | null;
     workflowName: string | null;
     subagentType: string | null;
@@ -330,6 +393,7 @@ function addTask(
     startedAtMs: input.nowMs,
     lastActivityAtMs: input.nowMs,
     skipTranscript: input.skipTranscript,
+    backgrounded: input.backgrounded,
     taskType: input.taskType,
     workflowName: input.workflowName,
     subagentType: input.subagentType,
@@ -364,15 +428,23 @@ function settleTask(
   return replaceTask(state, { ...existing, status, lastActivityAtMs: nowMs });
 }
 
-/** Record liveness for a running task without changing set membership. */
+/**
+ * Record liveness for a running task without changing set membership, and
+ * whether the task has moved to the background.
+ */
 function touchTask(
   state: BackgroundTaskState,
   taskId: string,
   nowMs: number,
+  movedToBackground: boolean,
 ): BackgroundTaskState {
   const existing = state.tasks.get(taskId);
   if (existing === undefined || existing.status !== "running") {
     return state;
   }
-  return replaceTask(state, { ...existing, lastActivityAtMs: nowMs });
+  return replaceTask(state, {
+    ...existing,
+    backgrounded: existing.backgrounded || movedToBackground,
+    lastActivityAtMs: nowMs,
+  });
 }

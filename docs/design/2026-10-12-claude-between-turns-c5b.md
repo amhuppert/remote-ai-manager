@@ -8,7 +8,7 @@ it had on the actor:
 - Claude's own continuations when that work finishes;
 - messages sent while Claude is working.
 
-**Status.** Design only. Revision 3: after the Opus and Astra reviews (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and
+**Status.** Slice 2 (the adapter) is implemented; slices 3–5 are not. Revision 3: after the Opus and Astra reviews (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and
 Astra's verification of revision 2 (`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on).
 
 **Sources.** Facts and citations: `.cc/temp/overhaul/c5b-research.md` (cited "R§n"). Review findings are cited as
@@ -57,21 +57,15 @@ authoritative:
    `task_updated` or the notification. It is created before the owed-work change is published, and a later
    notification for the same task does not duplicate it (O-F1, A-1, V-1). The continuation starts after these frames,
    so an empty task set does not mean the work is done. The debt is discharged only by evidence that the CLI answered
-   it:
-   - a result whose `origin` is `task-notification` or `auto-continuation`, zero-work included; or
-   - the CLI's authoritative `idle` state (probe 5).
-
-   An unrelated result does not discharge it, such as a person's turn result produced before the notification was
-   processed. A bounded wait (§6) covers debt the CLI never answers; it ends custody as `lost`, not as success.
+   it; §9.1 gives the measured rule. A bounded wait (§6) covers debt the CLI never answers; it ends custody as `lost`,
+   not as success.
 3. **An external turn is active** (O-F4).
 4. **An accepted input has not been answered.** Every prompt and live input carries the uuid the adapter stamped
    (§4.1). An accepted input stays owed until a terminal result names it in `user_message_uuid(s)`, or until the
    runtime is terminated or lost. An earlier result, a `queued_turn_count` of 0 or an `idle` event observed before the
    input was consumed never clears it (V-2).
 
-If probe 5 shows that `session_state_changed: idle` (with `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`) is authoritative
-and ordered after every notification turn and queued input, it may replace rule 2's discharge. Rules 1, 3 and 4 stay.
-If probes 3 and 5 together establish no reliable discharge for rule 2, Claude is not declared retaining.
+Probe 5 showed that `session_state_changed: idle` does not mean "nothing is owed", so it discharges nothing (§9.1).
 
 ## 3. Custody
 
@@ -183,10 +177,11 @@ The queue bridge treats idle custody as not busy for draining, so a queued messa
    both.
 
 **Attribution is adapter-owned (A-3, O-F5).** The adapter stamps a uuid on every prompt and live input it sends. It
-resolves a caller turn only on a result whose `user_message_uuid(s)` names that prompt. Any other result is provider
-work, recorded under the current owner. Checkpoint capture already relies on uuid echo on the installed CLI
-(`query-session.ts:810-811`, `:1391-1396`). Probe 1 confirms it for folded and queued prompts. There is no FIFO
-fallback: if a CLI path omits the field, Claude is not declared retaining.
+resolves a caller turn on a result whose `user_message_uuid(s)` names that prompt. A result that names no input
+answers the waiting caller only when its origin is absent or `human` (zeroed crash and startup results carry no
+uuid). A result from a provider origin, or one that names other inputs, is provider work recorded under the current
+owner. Checkpoint capture already relies on uuid echo on the installed CLI (`query-session.ts:810-811`, `:1391-1396`).
+Probe 1 confirms it for folded and queued prompts. There is no order-based attribution.
 
 ### 4.2 Live input
 
@@ -222,7 +217,11 @@ fallback: if a CLI path omits the field, Claude is not declared retaining.
 - Custody ends after a constant 120 minutes (`timed_out`), with the loss notice. There is no new setting.
 - The adapter's 30-minute wait demotion does not apply during custody.
 - The bound is per custody attempt, so a handover starts a new one.
-- A pending terminal notification (§2.1 rule 2) has a short bound of its own, set by probe 3; it ends custody `lost`.
+- A pending terminal notification (§2.1 rule 2) has a bound of its own: 60 s after the task ended with no answering
+  turn started, custody ends `lost`. Continuations start within about 100 ms (§9.1), so this only catches a CLI that
+  never answers. The 2 s folded-notification grace is a separate, measured heuristic: one observed overlap does not
+  bound every continuation delay. A continuation that starts later than the grace after a turn that folded nothing is
+  the residual risk.
 
 **Death.**
 - The adapter's `onTerminated` fires on any runtime death, including an input-only custody with no tasks (A-smaller
@@ -297,6 +296,66 @@ design depends on:
    present on results?
 
 If probe 1 or probe 2 fails, Claude is not declared retaining until the stated remedy exists.
+
+### 9.1 Results (2026-10-12)
+
+**Setup.** Installed CLI through SDK 0.3.284, Haiku, the adapter's input shape (one persistent channel, stamped
+uuids, bypassed permissions), `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`. Probe: `scripts/probes/claude-between-turns.ts`.
+Evidence: `.cc/temp/c5b-probes/`.
+
+1. **Attribution (probe 1): passed.**
+   - **Folded.** Two live inputs sent during a foreground tool call were folded into the running turn. Its one result
+     named all three uuids in `user_message_uuids`.
+   - **Queued.** A prompt sent the instant a background task ended was **queued, not folded**. The CLI first ran the
+     continuation; its result had `origin: task-notification` and no uuid. Then it ran the prompt as its own turn,
+     whose result named it. The adapter's current takeover, which resolves the caller on the next result, would have
+     answered the person with the continuation's text. The uuid rule in §4.1 is required, and it works.
+   - **Crossing.** An input sent in the same tick as a result started its own turn 2 ms later, named by its result.
+   - **Per-send lifecycle.** Every send produces undocumented `command_lifecycle` frames (`queued` → `started` →
+     `completed`) carrying `command_uuid` = the stamped uuid. Coalesced sends complete together. This is the CLI's own
+     per-input acknowledgement; rule 4 below uses it.
+2. **Process lifetime (probe 2): passed, with a window.**
+   - `close()` stops background Bash at once.
+   - When the CLI's parent is killed (`SIGTERM` or `SIGKILL`), the CLI sees its stdin close. Background Bash keeps
+     writing for about 5 s (4.8 s and 5.0 s measured), then stops, and no process survives.
+   - A Command Center restart takes longer than that, so no durable cleanup hold is needed. **Slice 3 obligation:**
+     boot does not admit a turn or a publication into a worktree that a recovered custody attempt held until 5 s after
+     the server start. This check costs nothing on a normal restart and closes the window if a restart is ever faster.
+3. **Task end to continuation (probe 3): passed.**
+   - `background_tasks_changed: []`, the terminal `task_updated` and `task_notification` arrive in the same
+     millisecond.
+   - The CLI reports `session_state_changed: running` 75–90 ms later, then `init` and the continuation.
+   - The continuation's result carries `origin: {kind: "task-notification"}`.
+   - No zero-work result was observed. Replay on resume was not probed.
+   - **A task that ends while a turn is still running** (it ended during the same turn's foreground command) has its
+     notification **folded into that turn**. The turn's ordinary result is the only answer, and no continuation
+     follows, even 35 s later.
+   - **Two staggered background tasks** (A ends, then B ends while A's continuation is between tool rounds). B is
+     **not** folded into A's continuation: A's result even reports B as still running. B gets its own continuation,
+     starting 7 ms after A's result and carrying the `task-notification` origin.
+4. **Latency (probe 4).** Continuations started within 100 ms of the task's end, and queued inputs within 2 ms of the
+   previous result. A queued prompt waits for a running continuation to finish (about 3.5 s here).
+5. **Session state (probe 5).** `idle` follows every result, including while a background task is still running. So
+   `idle` means "no turn is running", not "nothing is owed", and it cannot replace rules 1 or 2. `queued_turn_count`
+   is present on results.
+
+**Rule refinements from the results.**
+- **Rule 2's discharge:**
+  - **Between turns.** Debt for a task that ended between turns is discharged by the result of a notification turn
+    (origin `task-notification` or `auto-continuation`) that began after the task ended. A notification result
+    discharges only the debt that was owed when its own turn began. Turn boundaries come from the CLI's own frames,
+    so a caller taking over the stream is not one. `idle` is not used.
+  - **During a turn.** Debt for a task that ended while any turn was running, a provider turn or a person's, gets a
+    2 s grace after that turn's result. Continuations start within about 100 ms. If no turn starts in that window,
+    the notification was folded in and the debt is discharged. If a turn starts, the debt is examined again after
+    that turn's result, under the same two rules.
+  - Only background tasks create debt: foreground Bash produces task frames but never a continuation.
+- **Rule 4's clearing:** an input is also cleared by a result that names it, not only by its `completed` lifecycle
+  frame. The caller's result arrives before that frame, and waiting for the frame would make every turn end owe work.
+- **Rule 4's discharge:** an accepted input is answered when its `command_lifecycle` frame reaches `completed` (or a
+  terminal `cancelled`). Caller attribution still uses `user_message_uuids` on results (§4.1).
+- **Limits.** Haiku only; the results describe CLI behaviour, which the model should not change. Re-run the probe
+  after a CLI upgrade.
 
 ## 10. Deliberately not done
 

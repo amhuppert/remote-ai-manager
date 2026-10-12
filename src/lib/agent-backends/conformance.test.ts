@@ -21,6 +21,7 @@ import {
   checkConversationStructuredOutputPostValidation,
   checkConversationStructuredOutputForwarding,
   checkExternalTurnCoherence,
+  checkOwedWorkCoherence,
   checkQueueCoherence,
   describeBackendConformance,
   type ContinuityConformanceHarness,
@@ -201,6 +202,13 @@ describe("Claude structured output capability declaration", () => {
   });
 });
 
+const claudeBackgroundWork = {
+  startTask: () => claudeSdk.startBackgroundTask(),
+  endTask: () => claudeSdk.endBackgroundTask(),
+  runContinuation: () => claudeSdk.runContinuation(),
+  providerDies: () => claudeSdk.endProvider(),
+};
+
 describeBackendConformance(claudeDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
@@ -209,6 +217,7 @@ describeBackendConformance(claudeDescriptor, {
     hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
     queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
     triggerExternalTurn: () => claudeSdk.pushExternalTurn(),
+    backgroundWork: claudeBackgroundWork,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -727,6 +736,132 @@ describe("conformance behavior checks reject lying descriptors", () => {
       ),
     ).rejects.toThrow();
   });
+
+  it("fails a descriptor that declares owedWork but whose runtime gives no answer", async () => {
+    const lying = createTestFakeBackend({
+      capabilities: { externalTurns: true, owedWork: true },
+    });
+    await expect(
+      checkOwedWorkCoherence(lying.descriptor.conversation!, {
+        ...testfakeTurnHarness,
+        backgroundWork: {
+          startTask: () => {},
+          endTask: () => {},
+          runContinuation: () => {},
+          providerDies: () => {},
+        },
+      }),
+    ).rejects.toThrow(/no owesWork/);
+  });
+
+  const claudeOwedWorkHarness = (
+    conversationId: string,
+    createRuntime: ConversationTurnConformanceHarness["createRuntime"],
+  ): ConversationTurnConformanceHarness => ({
+    buildCreateInput: () =>
+      buildCreateInput(conversationId, CLAUDE_MODEL_SELECTION),
+    hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
+    backgroundWork: claudeBackgroundWork,
+    createRuntime,
+  });
+
+  it("fails a runtime that stops owing work when its background task ends, before the continuation", async () => {
+    let taskEnded = false;
+    await expect(
+      checkOwedWorkCoherence(claudeConversation, {
+        ...claudeOwedWorkHarness(
+          "conformance-claude-forgets-continuation",
+          async (input) => {
+            const runtime =
+              await claudeConversationBackendFactory.createRuntime(input);
+            const answer = runtime.owesWork?.bind(runtime);
+            // Owes work only while the task itself runs.
+            return Object.assign(runtime, {
+              owesWork: () => !taskEnded && (answer?.() ?? false),
+            });
+          },
+        ),
+        backgroundWork: {
+          ...claudeBackgroundWork,
+          endTask: () => {
+            taskEnded = true;
+            claudeSdk.endBackgroundTask();
+          },
+        },
+      }),
+    ).rejects.toThrow(/continuation is owed/);
+  }, 10_000);
+
+  it("fails a runtime whose owed-work notices stop after its first turn", async () => {
+    await expect(
+      checkOwedWorkCoherence(
+        claudeConversation,
+        claudeOwedWorkHarness("conformance-claude-stale-notices", (input) => {
+          let forwarded = 0;
+          return claudeConversationBackendFactory.createRuntime({
+            ...input,
+            onOwedWorkChanged: (owes) => {
+              if (forwarded++ < 2) input.onOwedWorkChanged?.(owes);
+            },
+          });
+        }),
+      ),
+    ).rejects.toThrow(/fresh owed-work notice/);
+  }, 10_000);
+
+  it("fails a runtime that delays its first turn's owed-work notices and sends none after", async () => {
+    await expect(
+      checkOwedWorkCoherence(
+        claudeConversation,
+        claudeOwedWorkHarness(
+          "conformance-claude-delayed-stale-notices",
+          (input) => {
+            let forwarded = 0;
+            return claudeConversationBackendFactory.createRuntime({
+              ...input,
+              onOwedWorkChanged: (owes) => {
+                forwarded += 1;
+                if (forwarded > 2) return;
+                // Delivered late, so they land after a fixed settle delay.
+                setTimeout(
+                  () => input.onOwedWorkChanged?.(owes),
+                  forwarded === 1 ? 60 : 130,
+                );
+              },
+            });
+          },
+        ),
+      ),
+    ).rejects.toThrow(/fresh owed-work notice|nothing is owed/);
+  }, 10_000);
+
+  it("fails a runtime that reports its termination on close but not when its provider dies", async () => {
+    await expect(
+      checkOwedWorkCoherence(
+        claudeConversation,
+        claudeOwedWorkHarness(
+          "conformance-claude-silent-death",
+          async (input) => {
+            let closing = false;
+            const runtime =
+              await claudeConversationBackendFactory.createRuntime({
+                ...input,
+                onTerminated: (info) => {
+                  if (closing) input.onTerminated?.(info);
+                },
+              });
+            const close = runtime.close.bind(runtime);
+            return Object.assign(runtime, {
+              close: () => {
+                closing = true;
+                return close();
+              },
+            });
+          },
+        ),
+      ),
+    ).rejects.toThrow(/provider dies/);
+  }, 10_000);
 
   it("passes cancellation only when an aborted turn resolves as aborted (testfake control)", async () => {
     const truthful = createTestFakeBackend();

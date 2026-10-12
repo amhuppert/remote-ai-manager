@@ -13,9 +13,12 @@ import {
   getWaitableInFlightTaskIds,
   demoteTasksToExcluded,
   snapshotBackgroundActivity,
+  continuationDebtCreated,
+  hasVisibleTaskInFlight,
   WATCH_TOOL_NAMES,
   type BackgroundTaskState,
 } from "./background-task-tracker";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 const UUID = "00000000-0000-0000-0000-000000000000" as const;
 const SESSION = "session-1";
@@ -782,6 +785,200 @@ describe("background-task-tracker", () => {
       });
       const snapshot = snapshotBackgroundActivity(state, 3_000);
       expect(snapshot?.tasks.map((t) => t.taskId)).toEqual(["b"]);
+    });
+  });
+
+  describe("ambient tasks", () => {
+    it("excludes a task the SDK marks ambient when it starts", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "watch", ambient: true }),
+      );
+      expect(state.tasks.get("watch")?.classification).toBe("excluded");
+      expect(getWaitableInFlightTaskIds(state)).toEqual([]);
+      expect(snapshotBackgroundActivity(state, 0)).toBe(null);
+    });
+
+    it("excludes an ambient task first seen in the level signal", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        backgroundTasksChanged([
+          {
+            task_id: "watch",
+            task_type: "local_bash",
+            description: "tail the log",
+            ambient: true,
+          },
+        ]),
+      );
+      expect(state.tasks.get("watch")?.classification).toBe("excluded");
+      expect(hasVisibleTaskInFlight(state)).toBe(false);
+    });
+
+    it("excludes a running task once the level signal flags it ambient", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "watch" }),
+      );
+      state = applyTaskMessage(
+        state,
+        backgroundTasksChanged([
+          {
+            task_id: "watch",
+            task_type: "local_bash",
+            description: "tail the log",
+            ambient: true,
+          },
+        ]),
+      );
+      expect(state.tasks.get("watch")?.classification).toBe("excluded");
+      expect(state.tasks.get("watch")?.status).toBe("running");
+    });
+  });
+
+  describe("hasVisibleTaskInFlight", () => {
+    it("counts only running, waitable tasks the transcript shows", () => {
+      expect(hasVisibleTaskInFlight(emptyBackgroundTaskState())).toBe(false);
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "hidden", skip_transcript: true }),
+      );
+      state = applyTaskMessage(
+        state,
+        taskStarted({ task_id: "mon", tool_use_id: "tu-mon" }),
+        { toolNamesById: toolNames({ "tu-mon": "Monitor" }) },
+      );
+      expect(hasVisibleTaskInFlight(state)).toBe(false);
+
+      state = applyTaskMessage(state, taskStarted({ task_id: "build" }));
+      expect(hasVisibleTaskInFlight(state)).toBe(true);
+      state = applyTaskMessage(state, taskNotification("build", "completed"));
+      expect(hasVisibleTaskInFlight(state)).toBe(false);
+    });
+  });
+
+  describe("continuationDebtCreated", () => {
+    /** Applies `messages` in order and collects the debt each transition creates. */
+    function debtFrom(messages: SDKMessage[]): {
+      state: BackgroundTaskState;
+      debt: string[];
+    } {
+      let state = emptyBackgroundTaskState();
+      const debt: string[] = [];
+      for (const message of messages) {
+        const next = applyTaskMessage(state, message);
+        debt.push(...continuationDebtCreated(state, next));
+        state = next;
+      }
+      return { state, debt };
+    }
+
+    const level = (taskId: string) =>
+      backgroundTasksChanged([
+        { task_id: taskId, task_type: "local_bash", description: "sleep 12" },
+      ]);
+
+    it("owes a continuation once when a background task ends, on the first frame that ends it", () => {
+      // The probe's order: the level signal announces the task before its
+      // task_started, and all three end frames arrive in the same millisecond
+      // (.cc/temp/c5b-probes/*/continuation.jsonl).
+      const started = debtFrom([
+        level("bg"),
+        taskStarted({ task_id: "bg", tool_use_id: "tu-bg" }),
+      ]);
+      expect(started.debt).toEqual([]);
+
+      for (const [label, endFrames] of [
+        [
+          "level signal first",
+          [
+            backgroundTasksChanged([]),
+            taskUpdated("bg", { status: "completed" }),
+            taskNotification("bg", "completed"),
+          ],
+        ],
+        [
+          "terminal task_updated first",
+          [
+            taskUpdated("bg", { status: "failed" }),
+            backgroundTasksChanged([]),
+            taskNotification("bg", "failed"),
+          ],
+        ],
+        ["notification alone", [taskNotification("bg", "stopped")]],
+      ] as const) {
+        let state = started.state;
+        const debt: string[] = [];
+        for (const message of endFrames) {
+          const next = applyTaskMessage(state, message);
+          debt.push(...continuationDebtCreated(state, next));
+          state = next;
+        }
+        expect(debt, label).toEqual(["bg"]);
+      }
+    });
+
+    it("owes a continuation for a task backgrounded at start or moved to the background later", () => {
+      expect(
+        debtFrom([
+          taskStarted({ task_id: "agent", is_backgrounded: true }),
+          taskNotification("agent", "completed"),
+        ]).debt,
+      ).toEqual(["agent"]);
+      expect(
+        debtFrom([
+          taskStarted({ task_id: "build", is_backgrounded: false }),
+          taskUpdated("build", { is_backgrounded: true }),
+          taskNotification("build", "completed"),
+        ]).debt,
+      ).toEqual(["build"]);
+    });
+
+    it("owes nothing for a foreground task, whose result the turn itself carries", () => {
+      // A foreground `sleep 8` registers a task without a level signal; no
+      // continuation follows its notification (live-input.jsonl).
+      expect(
+        debtFrom([
+          taskStarted({ task_id: "fg", tool_use_id: "tu-fg" }),
+          taskNotification("fg", "completed"),
+        ]).debt,
+      ).toEqual([]);
+      expect(
+        debtFrom([
+          taskStarted({ task_id: "fg", is_backgrounded: false }),
+          taskNotification("fg", "completed"),
+        ]).debt,
+      ).toEqual([]);
+    });
+
+    it("owes nothing for work nobody can see", () => {
+      expect(
+        debtFrom([
+          backgroundTasksChanged([
+            {
+              task_id: "watch",
+              task_type: "local_bash",
+              description: "tail",
+              ambient: true,
+            },
+          ]),
+          backgroundTasksChanged([]),
+        ]).debt,
+      ).toEqual([]);
+      expect(
+        debtFrom([
+          taskStarted({
+            task_id: "hidden",
+            skip_transcript: true,
+            is_backgrounded: true,
+          }),
+          taskNotification("hidden", "completed"),
+        ]).debt,
+      ).toEqual([]);
+      const demoted = debtFrom([level("server")]);
+      const state = demoteTasksToExcluded(demoted.state, ["server"]);
+      const ended = applyTaskMessage(state, backgroundTasksChanged([]));
+      expect(continuationDebtCreated(state, ended)).toEqual([]);
     });
   });
 

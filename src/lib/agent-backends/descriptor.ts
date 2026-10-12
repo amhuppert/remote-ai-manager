@@ -123,6 +123,14 @@ export interface BackendConversationCapabilities {
   nativeMidTurnAskUser: boolean;
   externalTurns: boolean;
   /**
+   * Whether the runtime answers `owesWork()` (the provider still owes work it
+   * may act on without a new prompt), reports changes through
+   * `onOwedWorkChanged`, and reports its death once through `onTerminated`.
+   * A host may keep such a runtime between turns exactly while it owes work.
+   * Absent means no.
+   */
+  owedWork?: boolean;
+  /**
    * Whether Command Center may retire this backend's runtime through a manual
    * CC checkpoint and continue the same CC conversation in a fresh provider
    * session seeded from the frozen checkpoint. A claim about the ADAPTER's

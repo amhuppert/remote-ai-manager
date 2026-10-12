@@ -28,6 +28,7 @@ import type {
   ConversationBackendCreateInput,
   ConversationBackendFactory,
   ReadyResult,
+  RuntimeTerminatedInfo,
 } from "../conversation";
 import type { ResolvedCapabilityCascade } from "../runtime-config";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
@@ -194,6 +195,104 @@ function resolveClaudeContinuation(
 
 const RUNTIME_COLLECTION_GRACE_MS = 5000;
 
+/**
+ * Provider output waits here behind accepted live input, so an input's
+ * archive write lands before any frame that follows its acceptance. Shared by
+ * the runtime, which advances it, and the external-turn relay, which reads it.
+ */
+interface LiveInputOrder {
+  barrier: Promise<void>;
+}
+
+/**
+ * Notices the runtime gives its host outside a turn: owed-work changes,
+ * provider cost and, once, its termination. Each is delivered in the order
+ * raised and only after every external-turn event emitted before it, so a
+ * host that hears "nothing is owed" has already been handed the provider turn
+ * that led there. Termination also waits for callback work the host accepted
+ * (an ordinary turn's events, a live input's archival), so it is the last
+ * thing the host hears from the runtime.
+ */
+class RuntimeNotices {
+  private tail: Promise<void> = Promise.resolve();
+  private readonly accepted = new Set<Promise<void>>();
+  private terminated = false;
+  /**
+   * Set while checkpoint capture retires the runtime's session itself: that
+   * session's death is a step of capture, not the runtime's.
+   */
+  sessionDeathIsInternal = false;
+
+  constructor(
+    private readonly externalDelivered: () => Promise<void>,
+    private readonly onTerminated:
+      | ((info: RuntimeTerminatedInfo) => void)
+      | undefined,
+  ) {}
+
+  relay<T>(
+    name: string,
+    callback: ((value: T) => void) | undefined,
+  ): ((value: T) => void) | undefined {
+    if (!callback) return undefined;
+    return (value) => {
+      const prior = this.externalDelivered();
+      this.enqueue(name, async () => {
+        await prior;
+        callback(value);
+      });
+    };
+  }
+
+  /** Callback work the host accepted; termination is reported after it settles. */
+  track<T>(work: Promise<T>): Promise<T> {
+    const settled = work.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.accepted.add(settled);
+    void settled.finally(() => this.accepted.delete(settled));
+    return work;
+  }
+
+  sessionTerminated(info: RuntimeTerminatedInfo): void {
+    if (!this.sessionDeathIsInternal) this.terminate(info);
+  }
+
+  /** Report the runtime's death once, after everything handed over or accepted before it. */
+  terminate(info: RuntimeTerminatedInfo): void {
+    if (this.terminated) return;
+    this.terminated = true;
+    const callback = this.onTerminated;
+    if (!callback) return;
+    const prior = this.externalDelivered();
+    this.enqueue("terminated", async () => {
+      await prior;
+      for (
+        let pending = [...this.accepted];
+        pending.length > 0;
+        pending = [...this.accepted]
+      )
+        await Promise.all(pending);
+      callback(info);
+    });
+  }
+
+  /** Resolves once every notice raised so far has been delivered. */
+  delivered(): Promise<void> {
+    return this.tail;
+  }
+
+  private enqueue(name: string, deliver: () => Promise<void>): void {
+    this.tail = this.tail.then(deliver).catch((err: unknown) => {
+      logger.warn("claude-runtime.host_notice_failed", {
+        notice: name,
+        error: getErrorMessage(err),
+      });
+    });
+  }
+}
+
 class ClaudeConversationRuntime
   implements ConversationBackendRuntime, ClaudeCapabilityApplyTarget
 {
@@ -211,7 +310,8 @@ class ClaudeConversationRuntime
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
-  private liveInputBarrier: Promise<void> = Promise.resolve();
+  private readonly inputOrder: LiveInputOrder;
+  private readonly notices: RuntimeNotices;
   private liveInputArchiveFailure: Error | null = null;
   private querySession: QuerySession;
   private readonly sessionOptions: QuerySessionOptions;
@@ -233,6 +333,8 @@ class ClaudeConversationRuntime
       portableMcp: PortableMcpConfig;
       capabilities?: ResolvedCapabilityCascade;
       initialMcpErrors?: Record<string, string>;
+      inputOrder: LiveInputOrder;
+      notices: RuntimeNotices;
       /**
        * Mid-session capability apply hook. Production wires this to
        * `query.applyFlagSettings(...)` + `query.reloadPlugins()` so cascade
@@ -248,6 +350,8 @@ class ClaudeConversationRuntime
     this.querySession = querySession;
     this.sessionOptions = opts.sessionOptions;
     this.modelSelection = opts.resolvedModelSelection.modelSelection;
+    this.inputOrder = opts.inputOrder;
+    this.notices = opts.notices;
 
     this.fsWritePolicy = opts.fsWritePolicy;
     this.initialMcpToolExclusions = claudeMcpToolExclusions(opts.portableMcp);
@@ -282,6 +386,10 @@ class ClaudeConversationRuntime
 
   notifyTurnStarting(): void {
     this.querySession.notifyTurnStarting();
+  }
+
+  owesWork(): boolean {
+    return this.querySession.owesWork();
   }
 
   /**
@@ -346,6 +454,20 @@ class ClaudeConversationRuntime
     ) {
       throw new Error("Claude capture binding cannot run an ordinary turn");
     }
+    // Termination waits until this turn's events, including those its
+    // failure handling emits, have been handed to the host.
+    const delivered = Promise.withResolvers<void>();
+    this.notices.track(delivered.promise);
+    try {
+      return await this.deliverTurn(input);
+    } finally {
+      delivered.resolve();
+    }
+  }
+
+  private async deliverTurn(
+    input: ConversationBackendTurnInput,
+  ): Promise<ConversationBackendTurnResult> {
     this.captureAttempt = null;
     logger.info("claude-runtime.turn_start", {
       conversationId: this.querySession.conversationId,
@@ -408,7 +530,7 @@ class ClaudeConversationRuntime
 
     const interpreter = createClaudeMessageInterpreter({
       onEvent: async (event) => {
-        await this.liveInputBarrier;
+        await this.inputOrder.barrier;
         if (this.liveInputArchiveFailure === null) await input.onEvent(event);
       },
     });
@@ -475,7 +597,7 @@ class ClaudeConversationRuntime
       // Drain barrier: every emitted event's handler (queued-user acceptance,
       // transcript appends) must settle before the turn is reported complete,
       // so a reader observing completion sees the full ordered transcript.
-      await this.liveInputBarrier;
+      await this.inputOrder.barrier;
       await interpreter.flush();
       if (this.liveInputArchiveFailure !== null) {
         throw this.liveInputArchiveFailure;
@@ -594,9 +716,9 @@ class ClaudeConversationRuntime
     // consumed by the SDK: that is the live input-acceptance signal. A
     // rejection (tagged promptNotDelivered — the session died before
     // consuming it) propagates so the caller leaves the row pending.
-    const previous = this.liveInputBarrier;
+    const previous = this.inputOrder.barrier;
     const barrier = Promise.withResolvers<void>();
-    this.liveInputBarrier = previous.then(() => barrier.promise);
+    this.inputOrder.barrier = previous.then(() => barrier.promise);
     try {
       await previous;
       const hasImages = input.content.some((block) => block.type === "image");
@@ -609,11 +731,14 @@ class ClaudeConversationRuntime
         hasImages ? undefined : input.promptContext,
       );
       try {
-        await input.onAccepted?.();
+        const archival = input.onAccepted?.();
+        if (archival !== undefined) await this.notices.track(archival);
       } catch (error) {
         this.liveInputArchiveFailure = new InputDeliveryUncertainError(
           `Accepted input could not be archived: ${getErrorMessage(error)}`,
         );
+        // Close waits for provider events queued behind this barrier.
+        barrier.resolve();
         await this.close();
         throw this.liveInputArchiveFailure;
       }
@@ -791,6 +916,7 @@ class ClaudeConversationRuntime
     if (this.captureAttempt) return this.captureAttempt;
     this.captureGraceMs = input.limits.settlementMs;
     this.captureOwnedSessions.add(this.querySession);
+    this.notices.sessionDeathIsInternal = true;
     this.captureAttempt = captureClaudeHandoff(
       input,
       this.querySession,
@@ -807,6 +933,10 @@ class ClaudeConversationRuntime
       if (result.executionSettled) {
         this.captureOwnedSessions.clear();
         this.captureSettlement.clear();
+        this.notices.sessionDeathIsInternal = false;
+        // Capture retired the runtime's session: that is its death.
+        if (this.querySession.status === "dead")
+          this.notices.terminate({ reason: "captured" });
       }
       return result;
     });
@@ -830,6 +960,7 @@ class ClaudeConversationRuntime
       logger.info("claude-runtime.close", { conversationId });
     }
     this.querySession.close();
+    this.notices.terminate({ reason: "closed" });
     // Dead prevents admission; retirement additionally requires collection.
     // Inherited stdio can outlive the owned child. A timeout preserves the
     // session for later collection instead of leaving retirement pending forever.
@@ -851,6 +982,9 @@ class ClaudeConversationRuntime
       ]);
     } finally {
       clearTimeout(timer);
+      // Termination and any notice raised before it reach the host before
+      // close resolves.
+      await this.notices.delivered();
     }
   }
 }
@@ -859,58 +993,79 @@ class ClaudeConversationRuntime
 // Helpers
 // ============================================================
 
-function buildExternalTurnHandler(
+/**
+ * Relays provider-initiated (virtual) turns to the host. Every event waits
+ * behind accepted live input like an ordinary turn's, and a turn's events wait
+ * for the previous turn's, so the next turn's start never overtakes a
+ * completion.
+ */
+function createExternalTurnRelay(
   onExternalTurnEvent: (event: ConversationBackendEvent) => void,
+  liveInput: LiveInputOrder,
 ): {
-  emit: (event: string, data: unknown) => void;
-  onComplete: (result: TurnResult) => void;
+  handler: NonNullable<QuerySessionOptions["externalTurnHandler"]>;
+  /** Resolves once every event relayed so far has been handed to the host. */
+  delivered(): Promise<void>;
 } {
   let interpreter: ClaudeMessageInterpreter | null = null;
+  let delivered: Promise<void> = Promise.resolve();
+  const deliver = async (event: ConversationBackendEvent): Promise<void> => {
+    await liveInput.barrier;
+    onExternalTurnEvent(event);
+  };
   return {
-    emit(event, data) {
-      if (event !== "__raw_message") return;
-      if (!interpreter) {
-        // Fresh interpreter per virtual turn: wake-marker arming and the
-        // content-emitted flag reset at each external turn boundary.
-        interpreter = createClaudeExternalTurnInterpreter({
-          onEvent: onExternalTurnEvent,
-        });
-        interpreter.emitEvent({ type: "external_turn_started" });
-      }
-      // The pump only ever delivers SDK messages on this channel.
-      interpreter.handleMessage(data as SDKMessage);
-    },
-    onComplete(turnResult: TurnResult) {
-      const turnInterpreter = interpreter;
-      interpreter = null;
-      const backendRef: AgentSessionRef | null = turnResult.sessionId
-        ? { backend: "claude", ref: turnResult.sessionId }
-        : null;
-      const completedEvent: ConversationBackendEvent = {
-        type: "external_turn_completed",
-        result: {
-          ...resolveClaudeContinuation(backendRef, turnResult.error),
-          costUsd: turnResult.costUsd,
-          durationMs: turnResult.durationMs,
-          numTurns: turnResult.numTurns,
-          contextTokens: turnResult.contextTokens,
-          contextWindowMax: turnResult.contextWindow,
-          contentBlocks: turnResult.contentBlocks,
-          structuredOutput: turnResult.structuredOutput,
-          aborted: turnResult.aborted,
-          compacted: turnResult.compacted,
-          tokenUsage: null,
-        },
-      };
-      // Completion rides the turn's interpreter chain so it is delivered
-      // only after every interpreted frame of this virtual turn. A turn that
-      // completed without delivering any raw message has no interpreter (and
-      // no pending frames), so the event goes out directly.
-      if (turnInterpreter) {
+    delivered: () => delivered,
+    handler: {
+      emit(event, data) {
+        if (event !== "__raw_message") return;
+        if (!interpreter) {
+          const previousTurn = delivered;
+          // Fresh interpreter per virtual turn: wake-marker arming and the
+          // content-emitted flag reset at each external turn boundary.
+          interpreter = createClaudeExternalTurnInterpreter({
+            onEvent: async (turnEvent) => {
+              await previousTurn;
+              await deliver(turnEvent);
+            },
+          });
+          interpreter.emitEvent({ type: "external_turn_started" });
+        }
+        // The pump only ever delivers SDK messages on this channel.
+        interpreter.handleMessage(data as SDKMessage);
+        delivered = interpreter.flush();
+      },
+      onComplete(turnResult: TurnResult) {
+        const turnInterpreter = interpreter;
+        interpreter = null;
+        const backendRef: AgentSessionRef | null = turnResult.sessionId
+          ? { backend: "claude", ref: turnResult.sessionId }
+          : null;
+        const completedEvent: ConversationBackendEvent = {
+          type: "external_turn_completed",
+          result: {
+            ...resolveClaudeContinuation(backendRef, turnResult.error),
+            costUsd: turnResult.costUsd,
+            durationMs: turnResult.durationMs,
+            numTurns: turnResult.numTurns,
+            contextTokens: turnResult.contextTokens,
+            contextWindowMax: turnResult.contextWindow,
+            contentBlocks: turnResult.contentBlocks,
+            structuredOutput: turnResult.structuredOutput,
+            aborted: turnResult.aborted,
+            compacted: turnResult.compacted,
+            tokenUsage: null,
+          },
+        };
+        // Completion rides the turn's interpreter chain so it is delivered
+        // only after every interpreted frame of this virtual turn. The session
+        // completes only an announced turn, and announcing it emits a frame,
+        // so the interpreter exists.
+        if (!turnInterpreter) {
+          throw new Error("A virtual turn completed before any of its frames");
+        }
         turnInterpreter.emitEvent(completedEvent);
-      } else {
-        onExternalTurnEvent(completedEvent);
-      }
+        delivered = turnInterpreter.flush();
+      },
     },
   };
 }
@@ -1025,9 +1180,15 @@ const claudeConversationBackendFactory = {
       initialMcpErrors = errorsByServer;
     }
 
-    const externalTurnHandler = input.onExternalTurnEvent
-      ? buildExternalTurnHandler(input.onExternalTurnEvent)
-      : undefined;
+    const liveInput: LiveInputOrder = { barrier: Promise.resolve() };
+    const externalTurns =
+      input.onExternalTurnEvent && !input.initialPurpose
+        ? createExternalTurnRelay(input.onExternalTurnEvent, liveInput)
+        : undefined;
+    const notices = new RuntimeNotices(
+      () => externalTurns?.delivered() ?? Promise.resolve(),
+      input.onTerminated,
+    );
 
     const idleTtlMs = resolveIdleTtlMs(input.workflowExecutionId);
     const trustedServerUrl = getServerBaseUrl();
@@ -1099,9 +1260,13 @@ const claudeConversationBackendFactory = {
             trustedServerUrl,
           }
         : {}),
-      externalTurnHandler: input.initialPurpose
-        ? undefined
-        : externalTurnHandler,
+      externalTurnHandler: externalTurns?.handler,
+      onOwedWorkChanged: notices.relay(
+        "owed_work_changed",
+        input.onOwedWorkChanged,
+      ),
+      onTerminated: (info) => notices.sessionTerminated(info),
+      onCostSettled: notices.relay("cost_settled", input.onCostSettled),
       onBackgroundTasksLost: input.initialPurpose
         ? undefined
         : input.onBackgroundTasksLost,
@@ -1122,6 +1287,8 @@ const claudeConversationBackendFactory = {
           await querySession.query.setMcpServers(translatedServers);
         initialMcpErrors = { ...initialMcpErrors, ...result.errors };
       } catch (error) {
+        // The caller never receives this runtime, so it has no death to hear of.
+        notices.sessionDeathIsInternal = true;
         querySession.close();
         await querySession.awaitClosed();
         throw error;
@@ -1137,6 +1304,8 @@ const claudeConversationBackendFactory = {
         : {}),
       portableMcp: input.tooling.portableMcp ?? { servers: [] },
       initialMcpErrors,
+      inputOrder: liveInput,
+      notices,
       capabilities:
         capabilityConfig && input.tooling.capabilities
           ? claudeDeliveredCapabilities(input.tooling.capabilities)

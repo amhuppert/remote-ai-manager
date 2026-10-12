@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { CLAUDE_NATIVE_MEMORY_SETTINGS } from "./native-memory";
 /**
  * QuerySession — owns a single long-lived SDK subprocess and its message pump.
@@ -25,7 +26,11 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
-import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
+import type {
+  BackgroundTasksLostInfo,
+  ConversationCostSettlement,
+  RuntimeTerminatedInfo,
+} from "@/lib/agent-backends/conversation";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import {
   buildClaudeConversationFsWriteEnvelope,
@@ -56,6 +61,8 @@ import {
   getWaitableInFlightTaskIds,
   demoteTasksToExcluded,
   snapshotBackgroundActivity,
+  continuationDebtCreated,
+  hasVisibleTaskInFlight,
   type BackgroundTaskRecord,
   type BackgroundTaskState,
 } from "./background-task-tracker";
@@ -185,6 +192,14 @@ export interface QuerySession {
   /** True while a turn (caller-initiated or virtual) is currently in flight. */
   readonly isTurnActive: boolean;
 
+  /**
+   * Whether the CLI still owes work this session started: a visible
+   * background task is running, a finished one has not had its continuation,
+   * a provider turn is in progress, or an accepted input is unanswered.
+   * Always false once the session is dead.
+   */
+  owesWork(): boolean;
+
   /** Model this session was created with */
   readonly model: string | undefined;
 
@@ -300,6 +315,8 @@ export interface QuerySessionOptions {
   mcpServerKeys?: readonly string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
   idleTtlMs?: number;
+  /** Test seam for the folded-notification grace; see `FOLDED_NOTIFICATION_GRACE_MS`. */
+  foldedNotificationGraceMs?: number;
   /**
    * Initial SDK Settings object passed to `Options.settings`. The Claude
    * factory builds this from the translated capability config so the SDK
@@ -318,6 +335,19 @@ export interface QuerySessionOptions {
     emit: TurnEmit;
     onComplete: (result: TurnResult) => void;
   };
+  /**
+   * Invoked when `owesWork()` changes while the session lives. Death is
+   * reported by `onTerminated` instead, never as the work settling.
+   */
+  onOwedWorkChanged?: (owesWork: boolean) => void;
+  /** Invoked once when the session dies or closes, after its other callbacks. */
+  onTerminated?: (info: RuntimeTerminatedInfo) => void;
+  /**
+   * Receives the spend of a provider turn that opens no virtual turn: a
+   * notification the CLI answered without a model call. Without it, that
+   * spend rides into the next attributed turn.
+   */
+  onCostSettled?: (settlement: ConversationCostSettlement) => void;
   /**
    * Invoked at most once, when the session reaches `dead` with waitable
    * background tasks still in flight. Those task processes are children of
@@ -347,6 +377,17 @@ export interface QuerySessionOptions {
 interface PendingTurn {
   /** True for a virtual turn synthesized from an unsolicited SDK message. */
   external: boolean;
+  /** The uuid stamped on a caller's prompt; null for a virtual turn. */
+  inputUuid: string | null;
+  /**
+   * Whether the turn has been shown to its handler. A virtual turn stays
+   * unannounced, holding its frames, until a frame other than `init` proves
+   * the model is working, so a notification the CLI answers without a model
+   * call shows nothing.
+   */
+  announced: boolean;
+  /** Frames an unannounced virtual turn received, delivered on announcement. */
+  held: SDKMessage[];
   resolve: (result: TurnResult) => void;
   reject: (error: Error) => void;
   emit: TurnEmit;
@@ -413,6 +454,27 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let awaitingSubsequentPromptDelivery = false;
   let backgroundTaskState = emptyBackgroundTaskState();
   const backgroundWaiters = new Set<BackgroundWaiter>();
+  // Owed work beyond the task set and the pending turn: inputs the CLI has
+  // accepted but not answered, and background tasks whose end the CLI has not
+  // yet answered with a continuation turn.
+  const unansweredInputs = new Set<string>();
+  const owedContinuations = new Set<string>();
+  // A task that ends while a CLI turn runs may have its notification folded
+  // into that turn between tool rounds, and then no continuation follows. Its
+  // debt is answered by a turn's result unless the CLI starts another turn
+  // within the grace (continuations start within ~100 ms of their
+  // notification). Turn boundaries are the CLI's own frames, so a caller's
+  // prompt taking over a running turn is not one.
+  const foldableContinuations = new Set<string>();
+  const foldedNotificationGraceMs =
+    options.foldedNotificationGraceMs ?? FOLDED_NOTIFICATION_GRACE_MS;
+  let foldGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  let turnStartedSinceResult = false;
+  let cliTurnRunning = false;
+  // The debt a running CLI turn found when it began: all that a
+  // notification-origin result of that turn answers.
+  let continuationsAtTurnStart = new Set<string>();
+  let publishedOwesWork = false;
   // Per-task wall clock of the last emitted progress log. `task_progress` can
   // fire every few seconds per task; forensics only needs proof of liveness at
   // a coarse cadence, so each task logs at most once per
@@ -699,6 +761,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     get isTurnActive() {
       return pendingTurn !== null;
     },
+    owesWork,
     get model() {
       return options.model;
     },
@@ -774,6 +837,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
     if (pendingTurn?.external) supersedeExternalTurn(pendingTurn);
 
+    const inputUuid = turnOptions?.captureInputUuid ?? randomUUID();
     const callerTraceContext = captureTraceContext();
     const releaseContext = registerPromptContext(
       prompt,
@@ -782,6 +846,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     return new Promise<TurnResult>((resolve, reject) => {
       pendingTurn = {
         external: false,
+        inputUuid,
+        announced: true,
+        held: [],
         resolve,
         reject,
         emit,
@@ -807,8 +874,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         awaitingSubsequentPromptDelivery = true;
       }
       const message = buildUserMessage(prompt);
-      if (turnOptions?.captureInputUuid)
-        message.uuid = turnOptions.captureInputUuid;
+      message.uuid = inputUuid;
+      unansweredInputs.add(inputUuid);
+      publishOwedWork();
       pushInput(message).then(
         () => {
           awaitingSubsequentPromptDelivery = false;
@@ -833,8 +901,13 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       throw createPromptNotDeliveredError();
     }
     const releaseContext = registerPromptContext(content, promptContext);
+    const message = buildUserMessage(content);
+    const inputUuid = randomUUID();
+    message.uuid = inputUuid;
+    unansweredInputs.add(inputUuid);
+    publishOwedWork();
     try {
-      await pushInput(buildUserMessage(content));
+      await pushInput(message);
     } catch (error) {
       releaseContext();
       throw error;
@@ -989,6 +1062,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           // pump's own emission never fires for it.
           emitBackgroundActivity(Date.now());
           reconcileIdleTimer();
+          publishOwedWork();
         }
       }, timeoutMs);
     });
@@ -1076,6 +1150,107 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       toolUses: record.toolUses,
       sinceStartMs: nowMs - record.startedAtMs,
     });
+  }
+
+  // ------------------------------------------------------------------
+  // owed work
+  // ------------------------------------------------------------------
+
+  function owesWork(): boolean {
+    if (status === "dead") return false;
+    return (
+      hasVisibleTaskInFlight(backgroundTaskState) ||
+      owedContinuations.size > 0 ||
+      pendingTurn?.external === true ||
+      unansweredInputs.size > 0
+    );
+  }
+
+  /** Report a change of `owesWork()`; a dead session reports termination instead. */
+  function publishOwedWork(): void {
+    if (status === "dead") return;
+    const owes = owesWork();
+    if (owes === publishedOwesWork) return;
+    publishedOwesWork = owes;
+    logger.debug("query-session.owed_work_changed", {
+      conversationId: options.conversationId,
+      owesWork: owes,
+    });
+    try {
+      options.onOwedWorkChanged?.(owes);
+    } catch (err) {
+      logger.warn("query-session.owed_work_callback_failed", {
+        conversationId: options.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  /**
+   * Discharge what this frame answers: an input the CLI completed or
+   * cancelled, every input a result names, and, for a notification turn's
+   * result, the continuations owed when that turn began. Debt that arose
+   * during a turn waits out the fold grace after its result. Runs for every
+   * frame, including those a session without a virtual-turn handler discards.
+   */
+  function recordAnswers(message: SDKMessage): void {
+    const lifecycle = readCommandLifecycle(message);
+    if (lifecycle !== null) {
+      if (lifecycle.state === "completed" || lifecycle.state === "cancelled")
+        unansweredInputs.delete(lifecycle.commandUuid);
+      return;
+    }
+    if (!cliTurnRunning && startsCliTurn(message)) {
+      cliTurnRunning = true;
+      turnStartedSinceResult = true;
+      continuationsAtTurnStart = new Set(owedContinuations);
+    }
+    if (message.type !== "result") return;
+    for (const uuid of namedInputs(message)) unansweredInputs.delete(uuid);
+    // A result with no frame of its own turn before it started and ended at once.
+    const answerable = cliTurnRunning
+      ? continuationsAtTurnStart
+      : new Set(owedContinuations);
+    cliTurnRunning = false;
+    if (isProviderOrigin(message))
+      for (const taskId of answerable) {
+        owedContinuations.delete(taskId);
+        foldableContinuations.delete(taskId);
+      }
+    if (foldableContinuations.size > 0) armFoldGrace();
+  }
+
+  /** Clears the debt a just-finished turn folded in, unless another turn starts first. */
+  function armFoldGrace(): void {
+    if (foldGraceTimer !== null) clearTimeout(foldGraceTimer);
+    turnStartedSinceResult = false;
+    const folded = [...foldableContinuations];
+    foldGraceTimer = setTimeout(() => {
+      foldGraceTimer = null;
+      if (status === "dead" || turnStartedSinceResult) return;
+      for (const taskId of folded) {
+        owedContinuations.delete(taskId);
+        foldableContinuations.delete(taskId);
+      }
+      publishOwedWork();
+    }, foldedNotificationGraceMs);
+  }
+
+  /** Report death once, after every other callback of the dying session. */
+  function notifyTerminated(reason: string): void {
+    unansweredInputs.clear();
+    owedContinuations.clear();
+    foldableContinuations.clear();
+    if (foldGraceTimer !== null) clearTimeout(foldGraceTimer);
+    foldGraceTimer = null;
+    try {
+      options.onTerminated?.({ reason });
+    } catch (err) {
+      logger.error("query-session.terminated_callback_failed", {
+        conversationId: options.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1168,6 +1343,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     });
 
     notifyBackgroundTasksLostIfAny("closed");
+    notifyTerminated("closed");
 
     // Close the SDK subprocess
     try {
@@ -1235,6 +1411,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
           );
         }
         rejectPendingTurn(rejectError);
+        notifyTerminated("pump_completed");
       }
     } catch (err) {
       if (status === "alive") {
@@ -1264,6 +1441,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
                 QUERY_SESSION_ERROR_CODES.sessionDiedMidTurn,
               ),
         );
+        notifyTerminated("pump_error");
       }
     }
   }
@@ -1296,10 +1474,15 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     processMessageBody(message);
     checkBackgroundTaskWaiters();
     reconcileIdleTimer();
+    publishOwedWork();
   }
 
   function processMessageBody(message: SDKMessage): void {
     captureObserver?.(message);
+    // The SDK still drains frames it queued before the end of stream. Only
+    // capture's forensic observer sees them: after death nothing is owed,
+    // tracked or delivered.
+    if (status === "dead") return;
     // Ingest background-task lifecycle BEFORE the idle-discard branch so a task
     // started/settled between turns is still tracked. applyTaskMessage ignores
     // non-task messages by returning the state unchanged. The per-turn
@@ -1314,10 +1497,18 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       nowMs,
     });
     if (backgroundTaskState !== priorTaskState) {
+      for (const taskId of continuationDebtCreated(
+        priorTaskState,
+        backgroundTaskState,
+      )) {
+        owedContinuations.add(taskId);
+        if (cliTurnRunning) foldableContinuations.add(taskId);
+      }
       logBackgroundTaskTransitions(priorTaskState, backgroundTaskState, nowMs);
       logBackgroundTaskProgress(message, nowMs);
       emitBackgroundActivity(nowMs);
     }
+    recordAnswers(message);
 
     if (!pendingTurn) {
       if (!options.externalTurnHandler || !opensExternalTurn(message)) {
@@ -1328,63 +1519,122 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         });
         return;
       }
+      pendingTurn = createVirtualTurn(options.externalTurnHandler);
+    }
 
-      const handler = options.externalTurnHandler;
-      const externalTurn: PendingTurn = {
-        external: true,
-        resolve: handler.onComplete,
-        reject: (err: Error) => {
-          logger.warn("query-session.virtual_turn_rejected", {
-            conversationId: options.conversationId,
-            error: err.message,
-          });
-          // The machine is in `externalExecuting`; without a completion it
-          // wedges there with persisted status 'running'. Deliver the rejection
-          // as a terminal result through the same handler the `result` path
-          // uses so the external turn handler still emits
-          // EXTERNAL_TURN_COMPLETED and the conversation settles back to idle.
-          // The rejection fires inside session teardown (pump death, close);
-          // a throwing handler must not escape and skip the remaining cleanup
-          // (status = "dead", subprocess close).
-          try {
-            handler.onComplete(
-              buildTurnResult(externalTurn, {
-                error: err.message,
-                aborted: false,
-              }),
-            );
-          } catch (completionErr) {
-            logger.error("query-session.virtual_turn_completion_failed", {
-              conversationId: options.conversationId,
-              error:
-                completionErr instanceof Error
-                  ? completionErr.message
-                  : String(completionErr),
-            });
-          }
-        },
-        emit: handler.emit,
-        sessionId: null,
-        costUsd: null,
-        durationMs: null,
-        numTurns: null,
-        contextTokens: null,
-        contextWindow: null,
-        contentBlocks: [],
-        compacted: false,
-        toolNamesById: new Map(),
-        traceContext: null,
-      };
-      pendingTurn = externalTurn;
-
+    const turn = pendingTurn;
+    if (!turn.announced) {
+      if (message.type === "result" && isQuietNotificationResult(message)) {
+        settleQuietNotificationTurn(message);
+        return;
+      }
+      if (!announcesVirtualTurn(message)) {
+        turn.held.push(message);
+        return;
+      }
+      turn.announced = true;
       logger.info("query-session.external_turn_started", {
         conversationId: options.conversationId,
         firstMessageType: message.type,
       });
+      for (const held of turn.held.splice(0)) deliverToTurn(turn, held);
     }
+    deliverToTurn(turn, message);
+  }
 
-    const turn = pendingTurn;
+  /**
+   * A virtual turn for a provider turn that arrived while no caller turn is
+   * pending. Its completion and any rejection reach the handler only once the
+   * turn has been announced.
+   */
+  function createVirtualTurn(
+    handler: NonNullable<QuerySessionOptions["externalTurnHandler"]>,
+  ): PendingTurn {
+    const externalTurn: PendingTurn = {
+      external: true,
+      inputUuid: null,
+      announced: false,
+      held: [],
+      resolve: handler.onComplete,
+      reject: (err: Error) => {
+        logger.warn("query-session.virtual_turn_rejected", {
+          conversationId: options.conversationId,
+          error: err.message,
+          announced: externalTurn.announced,
+        });
+        if (!externalTurn.announced) return;
+        // The machine is in `externalExecuting`; without a completion it
+        // wedges there with persisted status 'running'. Deliver the rejection
+        // as a terminal result through the same handler the `result` path
+        // uses so the external turn handler still emits
+        // EXTERNAL_TURN_COMPLETED and the conversation settles back to idle.
+        // The rejection fires inside session teardown (pump death, close);
+        // a throwing handler must not escape and skip the remaining cleanup
+        // (status = "dead", subprocess close).
+        try {
+          handler.onComplete(
+            buildTurnResult(externalTurn, {
+              error: err.message,
+              aborted: false,
+            }),
+          );
+        } catch (completionErr) {
+          logger.error("query-session.virtual_turn_completion_failed", {
+            conversationId: options.conversationId,
+            error:
+              completionErr instanceof Error
+                ? completionErr.message
+                : String(completionErr),
+          });
+        }
+      },
+      emit: handler.emit,
+      sessionId: null,
+      costUsd: null,
+      durationMs: null,
+      numTurns: null,
+      contextTokens: null,
+      contextWindow: null,
+      contentBlocks: [],
+      compacted: false,
+      toolNamesById: new Map(),
+      traceContext: null,
+    };
+    return externalTurn;
+  }
 
+  /**
+   * The CLI answered its own notification without calling the model and
+   * showed nothing else: no virtual turn is reported. Its spend goes to the
+   * provider-cost callback; without one it rides into the next attributed
+   * turn, as a discarded segment's does.
+   */
+  function settleQuietNotificationTurn(
+    resultMsg: SDKResultSuccess | SDKResultError,
+  ): void {
+    pendingTurn = null;
+    logger.info("query-session.notification_turn_quiet", {
+      conversationId: options.conversationId,
+      origin: resultMsg.origin?.kind,
+    });
+    if (!options.onCostSettled) return;
+    const costUsdDelta = attributeCost(resultMsg);
+    if (costUsdDelta <= 0) return;
+    try {
+      options.onCostSettled({
+        costUsdDelta,
+        lineageId: resultMsg.session_id,
+        cumulativeCostUsd: resultMsg.total_cost_usd,
+      });
+    } catch (err) {
+      logger.warn("query-session.cost_settled_callback_failed", {
+        conversationId: options.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  function deliverToTurn(turn: PendingTurn, message: SDKMessage): void {
     // Forward to turn's emit callback
     turn.emit("__raw_message", message);
     if (pendingTurn !== turn) return;
@@ -1447,17 +1697,22 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
       case "result": {
         const resultMsg = message as SDKResultSuccess | SDKResultError;
-        if (!turn.external && answersProviderNotification(resultMsg)) {
-          // The CLI answered its own notification (a background task the
-          // previous process left behind, replayed on resume) without calling
-          // the model; the caller's prompt is still outstanding. The baseline
-          // stays put, so spend this result reports reaches the caller's turn.
-          logger.info("query-session.notification_result_skipped", {
+        if (
+          turn.inputUuid !== null &&
+          !answersInput(resultMsg, turn.inputUuid)
+        ) {
+          // Work the CLI did before reaching the caller's prompt, such as the
+          // continuation it runs when a background task ends: the prompt waits
+          // in its queue for a turn of its own. The baseline stays put, so the
+          // spend this result reports is charged to the caller's turn.
+          logger.info("query-session.result_for_other_work", {
             conversationId: options.conversationId,
             origin: resultMsg.origin?.kind,
+            numTurns: resultMsg.num_turns,
           });
           break;
         }
+        if (turn.inputUuid !== null) unansweredInputs.delete(turn.inputUuid);
         awaitingSubsequentPromptDelivery = false;
         turn.sessionId = resultMsg.session_id;
         turn.costUsd = attributeCost(resultMsg);
@@ -1533,17 +1788,20 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   /**
-   * A caller prompt that arrives while the CLI is in its own auto-continuation
-   * is folded into that turn, and the one `result` that follows answers the
-   * caller. The virtual turn completes here, on what it has streamed so far:
-   * nothing later can complete it, and the conversation host admits no further
-   * turn while one is in flight.
+   * A caller prompt sent while the CLI runs its own turn takes the stream
+   * over: every later frame belongs to the caller's turn, which only a result
+   * naming its prompt answers. The virtual turn completes here, on what it has
+   * streamed so far: nothing later can complete it, and the conversation host
+   * admits no further turn while one is in flight. A virtual turn that has
+   * shown nothing has nothing to complete.
    */
   function supersedeExternalTurn(turn: PendingTurn): void {
     pendingTurn = null;
     logger.info("query-session.external_turn_superseded", {
       conversationId: options.conversationId,
+      announced: turn.announced,
     });
+    if (!turn.announced) return;
     turn.resolve(buildTurnResult(turn, { error: null, aborted: false }));
   }
 
@@ -1568,21 +1826,90 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // Helpers
 // ============================================================
 
+/** How long after a turn's result its folded-in task notifications count as answered. */
+const FOLDED_NOTIFICATION_GRACE_MS = 2_000;
+
+/** A result of a turn the CLI started on its own, such as a continuation. */
+function isProviderOrigin(result: SDKResultSuccess | SDKResultError): boolean {
+  const origin = result.origin?.kind;
+  return origin === "task-notification" || origin === "auto-continuation";
+}
+
 /**
- * A result the CLI produced for its own notification without a model call. A
- * notification the model acts on is folded into the caller's turn and answered
- * by one result, so only a model-less one can be told apart from the answer.
+ * A notification the CLI answered without a model call, such as a background
+ * task the previous process left behind, replayed on resume. A failed one is
+ * shown: it may be the only report of the failure.
  */
-function answersProviderNotification(
+function isQuietNotificationResult(
   result: SDKResultSuccess | SDKResultError,
 ): boolean {
-  const origin = result.origin?.kind;
-  // A failure is never set aside: it may be the only answer the prompt gets.
   return (
-    (origin === "task-notification" || origin === "auto-continuation") &&
+    isProviderOrigin(result) &&
     result.num_turns === 0 &&
     result.subtype === "success" &&
     !result.is_error
+  );
+}
+
+/** Every input uuid a result says its turn consumed. */
+function namedInputs(result: SDKResultSuccess | SDKResultError): string[] {
+  const named = new Set<string>();
+  if (Array.isArray(result.user_message_uuids))
+    for (const uuid of result.user_message_uuids)
+      if (typeof uuid === "string") named.add(uuid);
+  if (typeof result.user_message_uuid === "string")
+    named.add(result.user_message_uuid);
+  return [...named];
+}
+
+/**
+ * Whether `result` answers the input stamped `inputUuid`. The CLI names every
+ * input a turn consumed, folded ones included. A result naming none answers
+ * the waiting input only when it has no origin or a human one: it has no
+ * single triggering send to name (a crashed process's zeroed result) or comes
+ * from a CLI that names none. Any other origin (a continuation, a peer, a
+ * channel) is someone else's turn.
+ */
+function answersInput(
+  result: SDKResultSuccess | SDKResultError,
+  inputUuid: string,
+): boolean {
+  const named = namedInputs(result);
+  if (named.length > 0) return named.includes(inputUuid);
+  const origin = result.origin?.kind;
+  return origin === undefined || origin === "human";
+}
+
+/**
+ * The CLI's per-input acknowledgement (`queued`, `started`, `completed` or
+ * `cancelled` for the uuid an input was stamped with). It is not in the SDK's
+ * public types, so it is read defensively and anything unexpected is ignored.
+ */
+function readCommandLifecycle(
+  message: SDKMessage,
+): { commandUuid: string; state: string } | null {
+  const type: unknown = Reflect.get(message, "type");
+  if (type !== "command_lifecycle") return null;
+  const commandUuid: unknown = Reflect.get(message, "command_uuid");
+  const state: unknown = Reflect.get(message, "state");
+  if (typeof commandUuid !== "string" || typeof state !== "string") return null;
+  return { commandUuid, state };
+}
+
+/** A frame only a running CLI turn emits. */
+function startsCliTurn(message: SDKMessage): boolean {
+  return (
+    message.type === "assistant" ||
+    message.type === "stream_event" ||
+    (message.type === "system" && message.subtype === "init")
+  );
+}
+
+/** A frame that proves a virtual turn is doing work and should be shown. */
+function announcesVirtualTurn(message: SDKMessage): boolean {
+  return (
+    opensExternalTurn(message) &&
+    !(message.type === "system" && message.subtype === "init")
   );
 }
 
@@ -1602,7 +1929,8 @@ function answersProviderNotification(
  * A real auto-continuation announces itself with `system`/`init` and then
  * streams assistant/user/stream_event frames before its `result`, so the turn
  * still opens on its first genuine frame; only the preceding notifications are
- * discarded.
+ * discarded. It is shown from its first frame other than `init`
+ * (`announcesVirtualTurn`).
  */
 function opensExternalTurn(message: SDKMessage): boolean {
   switch (message.type) {
