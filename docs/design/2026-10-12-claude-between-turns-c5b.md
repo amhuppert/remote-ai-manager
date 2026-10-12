@@ -8,8 +8,11 @@ it had on the actor:
 - Claude's own continuations when that work finishes;
 - messages sent while Claude is working.
 
-**Status.** Slice 2 (the adapter) is implemented; slices 3–5 are not. Revision 3: after the Opus and Astra reviews (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and
-Astra's verification of revision 2 (`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on).
+**Status.** Slices 2 (the adapter) and 3 (custody in the core, with its review fixes) are implemented; slices 4–5
+are not. Revision 3: after the Opus and Astra reviews (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and Astra's
+verification of revision 2 (`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on). The slice 3
+amendments below follow its reviews (`.cc/temp/reviews/c5b-s3-{codex,opus}.md`) and the report
+`.cc/temp/overhaul/c5b-slice3-report.md`.
 
 **Sources.** Facts and citations: `.cc/temp/overhaul/c5b-research.md` (cited "R§n"). Review findings are cited as
 "O-F1", "A-1" and so on.
@@ -118,7 +121,10 @@ At the end of an ordinary turn, inside today's `runRecordedTurn` boundary, in th
    - `waiting_for_input` while a durable question remains;
    - otherwise `awaiting`.
 
-   The same projection runs after a successor's failed or cancelled claim, which returns ownership to custody.
+   The same projection runs whenever a turn's claim ends while a custody survives: the ending turn's own claim and a
+   successor's failed or cancelled claim, which returns ownership to custody. The projection is read as the row is
+   written; a stored row keeps no turn source, so ending such a claim as an ordinary one would show idle during a
+   segment.
 
 Custody is inserted before the turn settles, so a crash in between leaves an admitted custody row for boot to see
 (O-F12). An external turn already active at the end becomes custody's first segment, and step 3 keeps the row
@@ -160,9 +166,13 @@ The queue bridge treats idle custody as not busy for draining, so a queued messa
 1. The message's turn opens its attempt, claims the row and acquires its slot and its own `interactive_write` as
    usual, while custody stays the runtime's owner and keeps its grant (O-F2, A-2).
 2. Before input preparation, the turn checks configuration drift against the retained runtime
-   (`runtimeConfigurationChanges`). On drift, custody is stopped first: settled `stopped`, closed, and the loss
-   notice recorded. The turn's own `<runtime_recovery>` then carries the loss (O-F11). A staged capability change is
-   not drift (O-F8).
+   (`runtimeConfigurationChanges`). The check needs the turn's model selection, profile and instructions, which exist
+   only after admission, so it runs after step 3: custody has already settled `handed_over`, and the admitted turn
+   owns the drift. On drift the turn closes the runtime and records the loss, saying the configuration changed. The
+   turn's own `<runtime_recovery>` then carries the loss (O-F11). Without drift, the check is the turn's reuse
+   decision: its later `obtain` reuses the runtime without comparing again, so a configuration saved while the input
+   is prepared applies at the next check rather than closing work the prompt was prepared for. A staged capability
+   change is not drift (O-F8).
    - **MCP saves** already apply live, during turns too (`setMcpServers`, `conversation-runtime.ts:625-665`).
    - **Staged capability changes** apply at the next real provider-turn boundary: whenever the retained runtime has
      no active turn or segment (a turn end, a segment end, or a handover with no active segment). A change still
@@ -174,7 +184,10 @@ The queue bridge treats idle custody as not busy for draining, so a queued messa
    - it makes no row transition, because the turn has claimed the row;
    - the turn's prompt then supersedes it through the adapter's takeover.
 4. If the turn fails or is cancelled before admission, custody remains the owner. Stop while the turn waits stops
-   both.
+   both. A turn that has taken the runtime over and fails before its recorded lifetime begins (its row cannot be read,
+   or its begin write fails) gives the runtime back to a new custody while it still owes work, and otherwise
+   collects it before its grant is released. Admission waits for a custody that has started ending, and never takes
+   one over.
 
 **Attribution is adapter-owned (A-3, O-F5).** The adapter stamps a uuid on every prompt and live input it sends. It
 resolves a caller turn on a result whose `user_message_uuid(s)` names that prompt. A result that names no input
@@ -212,16 +225,28 @@ Probe 1 confirms it for folded and queued prompts. There is no order-based attri
 - Stop closes the retained runtime, which ends background work and any segment.
 - Custody settles `stopped`, with a loss notice.
 - `settled` resolves when the process is confirmed collected. Failed collection keeps today's grant quarantine.
+- A turn that has been stopped never opens custody, whenever the stop reached it (before its engine started, or after
+  its result while its receipts settle): its runtime is closed while the turn still holds its grant.
+
+**Loss notices.**
+- A loss notice claims only a termination that was seen. When the runtime could not be confirmed collected, the
+  person is told the stop could not be confirmed, and the agent's notice waits until it can be.
+- Custody stays admitted until its loss is recorded for the agent. Its runtime, grant and busy-set entry are still
+  released once collected. The next message's admission records the owed loss before the turn prepares its input,
+  or refuses the message with the reason; boot records it otherwise (as `interrupted`, since the original end is
+  not stored).
 
 **Bound.**
 - Custody ends after a constant 120 minutes (`timed_out`), with the loss notice. There is no new setting.
 - The adapter's 30-minute wait demotion does not apply during custody.
 - The bound is per custody attempt, so a handover starts a new one.
-- A pending terminal notification (§2.1 rule 2) has a bound of its own: 60 s after the task ended with no answering
-  turn started, custody ends `lost`. Continuations start within about 100 ms (§9.1), so this only catches a CLI that
-  never answers. The 2 s folded-notification grace is a separate, measured heuristic: one observed overlap does not
-  bound every continuation delay. A continuation that starts later than the grace after a turn that folded nothing is
-  the residual risk.
+- A pending terminal notification (§2.1 rule 2) has a bound of its own, kept in the adapter, which alone knows task
+  ends and turn starts. Debt for a task that ended while no CLI turn ran, with no turn started or coming within
+  60 s, ends the session; the host hears it as death, so custody ends `lost` with its notice. Other tasks still
+  running do not hold it off. A turn's result gives debt it left unanswered a fresh 60 s. Continuations start within
+  about 100 ms (§9.1), so this only catches a CLI that never answers. The 2 s folded-notification grace is a separate,
+  measured heuristic: one observed overlap does not bound every continuation delay. A continuation that starts later
+  than the grace after a turn that folded nothing is the residual risk.
 
 **Death.**
 - The adapter's `onTerminated` fires on any runtime death, including an input-only custody with no tasks (A-smaller
@@ -235,6 +260,8 @@ Probe 1 confirms it for folded and queued prompts. There is no order-based attri
 
 **Restart after a crash.**
 - An admitted custody row is a crash.
+- Boot first closes the worktree the custody held to turns and publications until 5 s after the server started
+  (§9.1, probe 2), whether or not its notice can be recorded.
 - Boot records its runtime-loss notice, keyed by the custody attempt id and therefore idempotent. The notice is
   persisted before the attempt is settled, so a second crash retries it (A-10).
 - Boot then settles the attempt with the custody outcome. The domain outcome union and the repository's maximal

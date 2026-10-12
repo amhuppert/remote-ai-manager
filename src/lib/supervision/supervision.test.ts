@@ -6,7 +6,14 @@ import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-sch
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { fingerprintQueuedRows } from "@/lib/conversation-checkpoints/checkpoint-queue-repair";
-import type { CoreTurnResult } from "@/lib/conversation-core/executor";
+import {
+  BACKGROUND_WORK_RUNNING,
+  type CoreTurnResult,
+  type CustodyLease,
+  type RetainedRuntime,
+} from "@/lib/conversation-core/executor";
+import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -597,6 +604,185 @@ describe("a collaboration's claim on a conversation the core runs", () => {
     if (sent.kind !== "accepted") throw new Error(sent.message);
     await sent.settled;
     expect(h.userMessages).toEqual(["Now"]);
+  });
+});
+
+describe("custody of a conversation's runtime between turns (design C5b)", () => {
+  const chat = "chat-kept";
+  const address = {
+    projectPath: "/repo",
+    target: sessionConversationTarget("repo", "session", chat),
+  };
+
+  beforeEach(async () => {
+    fixture.seedProject("/repo");
+    fixture.seedSession("/repo", "session");
+    await fixture.seedConversation(
+      "/repo",
+      "session",
+      makeConversationState({
+        id: chat,
+        role: null,
+        promptCount: 2,
+        transcriptPath: "/transcripts/chat-kept.jsonl",
+        backendRef: { backend: "claude", ref: "sdk-live" },
+      }),
+    );
+  });
+
+  /** The runtime side of a custody: whether a provider turn runs in it, and what custody told it. */
+  function retained() {
+    const told: string[] = [];
+    let segment = false;
+    const runtime: RetainedRuntime = {
+      segmentActive: () => segment,
+      async close() {
+        told.push("close");
+      },
+      closeFailure: () => null,
+      released: (end) => told.push(`released:${end}`),
+    };
+    return {
+      runtime,
+      told,
+      segment(active: boolean) {
+        segment = active;
+      },
+    };
+  }
+
+  /** The conversation's turn ends with its runtime still owing work: custody keeps it. */
+  async function keptAfterTurn(s: Supervision) {
+    const held = retained();
+    const opened: { lease: CustodyLease | null } = { lease: null };
+    h.userTurn = async (input) => {
+      opened.lease = input.custody.open(held.runtime);
+      return done("Started the suite in the background.");
+    };
+    const sent = await s.core.sendUserMessage({
+      conversationId: chat,
+      text: "Run the suite in the background",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await sent.settled;
+    await quiesce(s);
+    h.userTurn = async () => done("Hello.");
+    if (opened.lease === null) throw new Error("custody did not open");
+    return { lease: opened.lease, held };
+  }
+
+  it("refuses a checkpoint, debug mode, a collaboration's claim and a workflow's task while custody holds the conversation", async () => {
+    h.checkpoint.entries = [
+      {
+        seq: 0,
+        entryId: "e-0",
+        role: "user",
+        timestamp: "2026-10-03T10:00:00.000Z",
+        content: [{ type: "text", text: "Run the suite" }],
+      },
+    ];
+    const s = h.compose();
+    await keptAfterTurn(s);
+
+    expect(
+      await s.checkpoints.start({
+        address,
+        requestId: "cp-1",
+        handoff: { mode: "tool-disabled" },
+      }),
+    ).toMatchObject({
+      kind: "refused",
+      refusal: { reason: BACKGROUND_WORK_RUNNING },
+    });
+    expect(
+      await s.debug.command(chat, {
+        kind: "enter",
+        logFilePath: "/repo/.cc/debug/chat-kept.ndjson",
+        debugSessionId: "dbg-1",
+      }),
+    ).toMatchObject({
+      kind: "refused",
+      code: "busy",
+      message: BACKGROUND_WORK_RUNNING,
+    });
+    // `/collab` asks the core's admission for a claim; the claim itself holds the conversation idle.
+    expect(await s.core.admission(chat, "claim")).toEqual({
+      code: "busy",
+      message: BACKGROUND_WORK_RUNNING,
+    });
+    expect(
+      await s.core.whileIdle(
+        chat,
+        async () => "claimed",
+        { kind: "collaboration_claim" },
+        { holds: "claim" },
+      ),
+    ).toEqual({ kind: "busy", reason: BACKGROUND_WORK_RUNNING });
+    expect(
+      await s.core.runTask({
+        conversationId: chat,
+        turn: taskTurnRequestSchema.parse({
+          kind: "task_run",
+          promptText: "Write a commit message",
+          executionClass: "nongoverned-task",
+        }),
+      }),
+    ).toMatchObject({ kind: "not_started", message: BACKGROUND_WORK_RUNNING });
+  });
+
+  it("keeps a queued message while custody's provider turn runs, and hands it the runtime once that turn ends", async () => {
+    const s = h.compose();
+    const { lease, held } = await keptAfterTurn(s);
+    held.segment(true);
+    h.claims.length = 0;
+    h.queued.push({
+      deliveryAttemptId: "att-2",
+      messageIds: ["q-2"],
+      content: [{ type: "text", text: "Also fix the lint" }],
+      command: null,
+    });
+
+    await s.drainConversationQueue(chat);
+    await quiesce(s);
+    expect(h.claims).toEqual([]);
+    expect(h.userMessages).toEqual(["Run the suite in the background"]);
+
+    held.segment(false);
+    lease.segmentEnded();
+    await quiesce(s);
+    expect(h.userMessages).toEqual([
+      "Run the suite in the background",
+      "Also fix the lint",
+    ]);
+    expect(held.told).toEqual(["released:handed_over"]);
+    expect(
+      createConversationCoreRepo(fixture.db).getAttempt(lease.attemptId)
+        ?.outcome,
+    ).toEqual({ kind: "custody", end: "handed_over" });
+  });
+
+  it("after a crash during custody, boot records the runtime loss and settles custody interrupted; a second boot adds nothing", async () => {
+    createConversationCoreRepo(fixture.db).insertAttempt({
+      attemptId: "custody-1",
+      conversationId: chat,
+      cause: "custody:turn-1",
+      state: "admitted",
+      outcome: null,
+      openedAt: "2026-10-03T10:00:00.000Z",
+      settledAt: null,
+    });
+
+    await h.compose().boot();
+    expect(h.custodyLosses).toEqual(["custody-1:interrupted"]);
+    expect(
+      createConversationCoreRepo(fixture.db).getAttempt("custody-1")?.outcome,
+    ).toEqual({ kind: "custody", end: "interrupted" });
+
+    const again = h.compose();
+    await again.boot();
+    await quiesce(again);
+    expect(h.custodyLosses).toEqual(["custody-1:interrupted"]);
   });
 });
 

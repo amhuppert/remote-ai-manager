@@ -25,7 +25,12 @@ import {
   type CoreTurnResult,
   type TaskTurn,
   type TaskTurnPort,
+  type CustodyLease,
+  type RetainedRuntime,
+  BACKGROUND_WORK_RUNNING,
 } from "./executor";
+import type { CustodyRow } from "./conversation-record";
+import type { CustodyEnd } from "./schemas";
 import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
 import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
@@ -34,6 +39,10 @@ import {
   type ConversationRequests,
 } from "./requests";
 import type { SeatTurnRequest } from "./schemas";
+import { createCustodyLossRecorder } from "./contributions/custody-loss";
+import { createSubscriptionService } from "@/lib/subscriptions/service";
+import { createConversationSubscriptionsRepo } from "@/lib/state-store/conversation-subscriptions-repo";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 const now = "2026-10-03T10:00:00.000Z";
 const worktree = "/repo/.worktrees/session";
@@ -110,7 +119,9 @@ let userCalls: Array<{
   signal: AbortSignal;
   streamed: boolean;
 }>;
-let nextUserResult: () => Promise<CoreTurnResult>;
+let nextUserResult: (
+  input: Parameters<UserTurnPort["run"]>[0],
+) => Promise<CoreTurnResult>;
 
 const taskTurns: TaskTurnPort = {
   async run(input) {
@@ -136,13 +147,19 @@ const userTurns: UserTurnPort = {
       streamed: input.stream !== null,
     });
     input.stream?.emit("content", { type: "text", text: "Hi." });
-    return nextUserResult();
+    return nextUserResult(input);
   },
 };
 
 let questionsPending: Set<string>;
 let questionWithdrawals: string[];
 let claims: string[];
+/** What custody showed on the row at each of its writes, as the write read it. */
+let rowWrites: Array<CustodyRow | null>;
+/** Runtime losses recorded for custody, as `attempt:end`. */
+let losses: string[];
+let lossFailures: number;
+let uptime: number;
 
 function records(): ConversationCoreDeps["records"] {
   return {
@@ -160,6 +177,9 @@ function records(): ConversationCoreDeps["records"] {
     },
     hasPendingQuestion: (identity) =>
       questionsPending.has(identity.conversationId),
+    async recordSegment(_identity, _usage, project) {
+      rowWrites.push(project());
+    },
     async withdrawQuestion(identity) {
       if (!questionsPending.delete(identity.conversationId)) return false;
       questionWithdrawals.push(identity.conversationId);
@@ -226,6 +246,14 @@ function newCore(
     },
     questions: requests,
     touchRequester: (owner) => touched.push(owner),
+    async custodyLoss({ attemptId, end, collected }) {
+      if (lossFailures > 0) {
+        lossFailures -= 1;
+        throw new Error("the inbox could not be written");
+      }
+      losses.push(`${attemptId}:${end}${collected ? "" : ":unconfirmed"}`);
+    },
+    uptimeMs: () => uptime,
     now: () => now,
     permitPollMs: 5,
     log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -296,6 +324,10 @@ beforeEach(() => {
   questionsPending = new Set();
   questionWithdrawals = [];
   claims = [];
+  rowWrites = [];
+  losses = [];
+  lossFailures = 0;
+  uptime = 60_000;
   queuedRequests = [];
   notStarted = [];
   taskCalls = [];
@@ -2055,6 +2087,885 @@ describe("conversation core for seats", () => {
     await core.idle();
     await core.withdraw(intent.cause);
     expect(core.outcome(intent.cause)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("custody of a runtime that still owes work (design C5b §3)", () => {
+  const worktreeOf = async () => worktree;
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+  async function eventually(check: () => boolean): Promise<void> {
+    for (let i = 0; i < 400; i += 1) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    throw new Error("it never happened");
+  }
+  const repo = () => createConversationCoreRepo(fixture.db);
+
+  /** The runtime side of a custody: whether a provider turn runs in it, how its close goes, and what custody told it. */
+  function retained(close: () => Promise<void> = async () => {}) {
+    const told: string[] = [];
+    let segment = false;
+    /** Why its last close failed, as the host keeps it until a later close collects it. */
+    let closeFailure: string | null = null;
+    const runtime: RetainedRuntime = {
+      segmentActive: () => segment,
+      async close() {
+        told.push("close");
+        try {
+          await close();
+          closeFailure = null;
+        } catch (error) {
+          closeFailure = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
+      },
+      closeFailure: () => closeFailure,
+      released: (end: CustodyEnd) => told.push(`released:${end}`),
+    };
+    return {
+      runtime,
+      told,
+      segment(active: boolean) {
+        segment = active;
+      },
+    };
+  }
+
+  /** A message whose turn ends with its runtime still owing work, which custody keeps. */
+  async function custodyAfterTurn(
+    core: ConversationCore,
+    held = retained(),
+    autonomous = false,
+  ) {
+    const opened: { lease: CustodyLease | null; turnAttempt: string } = {
+      lease: null,
+      turnAttempt: "",
+    };
+    nextUserResult = async (input) => {
+      opened.turnAttempt = input.attemptId;
+      opened.lease = input.custody.open(held.runtime);
+      return ok();
+    };
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Run the suite in the background",
+      inputOrigin: "user",
+      ...(autonomous ? { autonomous: true } : {}),
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await sent.settled;
+    await core.conversationIdle("conv-u");
+    nextUserResult = async () => ok("Hi.");
+    if (opened.lease === null) throw new Error("custody did not open");
+    return { lease: opened.lease, turnAttempt: opened.turnAttempt, held };
+  }
+
+  it("keeps a turn's runtime in custody when it still owes work, taking custody's own attempt and worktree grant before the turn lets go of its own", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const held = retained();
+    let grantsAtOpen: string[] = [];
+    const opened: { lease: CustodyLease | null; turnAttempt: string } = {
+      lease: null,
+      turnAttempt: "",
+    };
+    nextUserResult = async (input) => {
+      opened.turnAttempt = input.attemptId;
+      opened.lease = input.custody.open(held.runtime);
+      grantsAtOpen = admission.held().map((grant) => grant.holder);
+      return ok();
+    };
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Run the suite in the background",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await core.conversationIdle("conv-u");
+
+    const custody = `custody:${opened.turnAttempt}`;
+    expect(grantsAtOpen).toEqual([sent.cause, custody]);
+    expect(repo().getAttempt(opened.turnAttempt)).toMatchObject({
+      state: "settled",
+      outcome: { status: "succeeded" },
+    });
+    expect(repo().latestAttemptFor(custody)).toMatchObject({
+      attemptId: opened.lease?.attemptId,
+      conversationId: "conv-u",
+      state: "admitted",
+      outcome: null,
+    });
+    // Custody holds the worktree for its writes: a publication waits for it.
+    expect(admission.held().map((grant) => grant.holder)).toEqual([custody]);
+    expect(
+      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
+    ).toBeNull();
+    // Nothing runs: the queue may hand a message over.
+    expect(core.isBusy("conv-u")).toBe(false);
+    expect(core.runningAttempt("conv-u")).toBeNull();
+    expect(held.told).toEqual([]);
+  });
+
+  it("ends custody once the runtime owes nothing: it closes and collects the runtime first, then settles, lets the worktree go and leaves the busy set", async () => {
+    interactiveConversation();
+    const idle: string[] = [];
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      onConversationIdle: (conversationId) => idle.push(conversationId),
+    });
+    let collect: () => void = () => {};
+    const held = retained(() => new Promise((resolve) => (collect = resolve)));
+    const { lease } = await custodyAfterTurn(core, held);
+    idle.length = 0;
+
+    lease.settled();
+    await tick();
+    // Still closing: custody keeps its attempt, its grant and the conversation.
+    expect(held.told).toEqual(["close"]);
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+    expect(admission.held()).toHaveLength(1);
+    expect(await core.admission("conv-u", "task")).toMatchObject({
+      code: "busy",
+    });
+
+    collect();
+    await eventually(
+      () => repo().getAttempt(lease.attemptId)?.state === "settled",
+    );
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "settled",
+    });
+    expect(held.told).toEqual(["close", "released:settled"]);
+    expect(admission.held()).toEqual([]);
+    expect(await core.admission("conv-u", "task")).toBeNull();
+    // Nothing was cut short.
+    expect(losses).toEqual([]);
+    expect(idle).toEqual(["conv-u"]);
+
+    // What its runtime side reports afterwards changes nothing.
+    lease.lost();
+    lease.settled();
+    await tick();
+    expect(held.told).toEqual(["close", "released:settled"]);
+    expect(lease.row()).toBeNull();
+  });
+
+  it("refuses a task, a command, a claim and maintenance while custody holds the conversation, saying why, and admits a message", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    await custodyAfterTurn(core);
+
+    for (const turn of ["task", "command", "claim"] as const)
+      expect(await core.admission("conv-u", turn)).toEqual({
+        code: "busy",
+        message: BACKGROUND_WORK_RUNNING,
+      });
+    expect(await core.admission("conv-u", "message")).toBeNull();
+    expect(await core.admission("conv-u", "delivery")).toBeNull();
+    // A checkpoint, a debug command and a collaboration's claim all need the conversation idle.
+    expect(
+      core.hold("conv-u", { kind: "checkpoint", requestId: "cp-1" }),
+    ).toEqual({ kind: "busy", reason: BACKGROUND_WORK_RUNNING });
+    expect(await core.whileIdle("conv-u", async () => "entered")).toEqual({
+      kind: "busy",
+      reason: BACKGROUND_WORK_RUNNING,
+    });
+    expect(
+      await core.runTask({ conversationId: "conv-u", turn: commitTask() }),
+    ).toEqual({
+      kind: "not_started",
+      reason: "configuration",
+      message: BACKGROUND_WORK_RUNNING,
+    });
+    expect(taskCalls).toEqual([]);
+  });
+
+  it("answers a task already waiting behind the turn that left custody as not started, rather than leaving it waiting", async () => {
+    interactiveConversation();
+    const core = newCore();
+    const held = retained();
+    let finish: () => void = () => {};
+    nextUserResult = (input) =>
+      new Promise((resolve) => {
+        finish = () => {
+          input.custody.open(held.runtime);
+          resolve(ok());
+        };
+      });
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Start the build",
+      inputOrigin: "user",
+    });
+    await tick();
+    const task = core.runTask({ conversationId: "conv-u", turn: commitTask() });
+    await tick();
+    finish();
+
+    expect(await task).toEqual({
+      kind: "not_started",
+      reason: "configuration",
+      message: BACKGROUND_WORK_RUNNING,
+    });
+    expect(taskCalls).toEqual([]);
+    if (sent.kind === "accepted") await sent.settled;
+  });
+
+  it("shows custody's provider turns on the row under the handing turn's source, and offers the queue the conversation when one ends", async () => {
+    interactiveConversation();
+    const idle: string[] = [];
+    const core = newCore({
+      onConversationIdle: (conversationId) => idle.push(conversationId),
+    });
+    const { lease, held } = await custodyAfterTurn(core);
+    idle.length = 0;
+    expect(lease.row()).toEqual({ status: "idle", notify: null });
+
+    held.segment(true);
+    expect(lease.row()).toEqual({ status: "running", source: "user" });
+    // The queue keeps what arrives for the provider turn's end.
+    expect(core.isBusy("conv-u")).toBe(true);
+
+    held.segment(false);
+    expect(lease.row(true)).toEqual({ status: "idle", notify: "user" });
+    lease.segmentEnded();
+    expect(idle).toEqual(["conv-u"]);
+    expect(core.isBusy("conv-u")).toBe(false);
+  });
+
+  it("gives an unattended turn's custody the turn's workflow source", async () => {
+    interactiveConversation();
+    const core = newCore();
+    const { lease, held } = await custodyAfterTurn(core, retained(), true);
+    held.segment(true);
+    expect(lease.row()).toEqual({ status: "running", source: "workflow" });
+  });
+
+  it("hands the runtime over to a message at its admission: until then custody keeps it and its grant, then custody settles handed over and its grant goes", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease, held } = await custodyAfterTurn(core);
+    freeSlots = 0;
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "And then?",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await tick();
+
+    // Waiting for model capacity: custody still owns the runtime and the worktree.
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+    expect(held.told).toEqual([]);
+    expect(admission.held().map((grant) => grant.holder)).toEqual([
+      `custody:${repo().getAttempt(lease.attemptId)?.cause.slice("custody:".length)}`,
+    ]);
+    // The waiting turn holds the row: no provider turn's source is shown.
+    expect(lease.row()).toEqual({ status: "running", source: null });
+
+    let grantsAtRun: string[] = [];
+    nextUserResult = async () => {
+      grantsAtRun = admission.held().map((grant) => grant.holder);
+      return ok();
+    };
+    releaseSlot();
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "handed_over",
+    });
+    // Never closed: the turn runs on the runtime custody kept.
+    expect(held.told).toEqual(["released:handed_over"]);
+    expect(grantsAtRun).toEqual([sent.cause]);
+    expect(losses).toEqual([]);
+    expect(lease.row()).toBeNull();
+  });
+
+  it("starts a message that arrives while custody is closing its runtime only once the close is over, with nothing handed over", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    let collect: () => void = () => {};
+    const held = retained(() => new Promise((resolve) => (collect = resolve)));
+    const { lease } = await custodyAfterTurn(core, held);
+    lease.settled();
+    await tick();
+
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Next",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await tick();
+    expect(userCalls).toHaveLength(1);
+
+    collect();
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    expect(userCalls).toHaveLength(2);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "settled",
+    });
+    expect(held.told).toEqual(["close", "released:settled"]);
+  });
+
+  it("keeps custody the owner when the message waiting to take over is cancelled before admission, and shows the row as custody leaves it", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease, held } = await custodyAfterTurn(core);
+    freeSlots = 0;
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Never mind",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await tick();
+    rowWrites = [];
+    claims = [];
+
+    core.interrupt?.(sent.cause);
+    expect(await sent.settled).toMatchObject({ status: "cancelled" });
+    await core.conversationIdle("conv-u");
+
+    expect(rowWrites).toEqual([{ status: "idle", notify: null }]);
+    expect(claims).toEqual([]);
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+    expect(held.told).toEqual([]);
+    expect(admission.held()).toHaveLength(1);
+  });
+
+  it("while a message waits for model capacity, keeps a provider turn that starts meanwhile on the row, and Stop stops both", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease, held } = await custodyAfterTurn(core);
+    freeSlots = 0;
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Also fix the lint",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await tick();
+
+    held.segment(true);
+    expect(lease.row()).toEqual({ status: "running", source: "user" });
+
+    const stop = core.stopConversation("conv-u");
+    expect(stop.requested).toBe(true);
+    await stop.settled;
+    expect(await sent.settled).toMatchObject({ status: "cancelled" });
+    // Only the turn that left custody ran.
+    expect(userCalls).toHaveLength(1);
+    expect(held.told).toEqual(["close", "released:stopped"]);
+    expect(losses).toEqual([`${lease.attemptId}:stopped`]);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "stopped",
+    });
+    expect(admission.held()).toEqual([]);
+    expect(core.stopConversation("conv-u").requested).toBe(false);
+  });
+
+  it("stops custody on request, answering once its runtime is collected: the loss is recorded and custody settles stopped", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    let collect: () => void = () => {};
+    const held = retained(() => new Promise((resolve) => (collect = resolve)));
+    const { lease } = await custodyAfterTurn(core, held);
+
+    const stop = core.stopConversation("conv-u");
+    expect(stop.requested).toBe(true);
+    let stopped = false;
+    void stop.settled.then(() => (stopped = true));
+    await tick();
+    expect(stopped).toBe(false);
+
+    collect();
+    await stop.settled;
+    expect(held.told).toEqual(["close", "released:stopped"]);
+    expect(losses).toEqual([`${lease.attemptId}:stopped`]);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "stopped",
+    });
+    expect(admission.held()).toEqual([]);
+  });
+
+  it("fails the stop and keeps custody's worktree grant when its runtime cannot be confirmed collected", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const held = retained(async () => {
+      throw new Error("the CLI did not exit");
+    });
+    const { lease } = await custodyAfterTurn(core, held);
+
+    await expect(core.stopConversation("conv-u").settled).rejects.toThrow(
+      /could not be confirmed stopped: the CLI did not exit/,
+    );
+    // The person hears the stop was not confirmed; the agent's loss waits until it is.
+    expect(losses).toEqual([`${lease.attemptId}:stopped:unconfirmed`]);
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+    expect(
+      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
+    ).toBeNull();
+  });
+
+  /** The production loss recorder over the fixture's subscription store, and what it kept. */
+  function realLossRecorder() {
+    const service = createSubscriptionService({
+      repo: createConversationSubscriptionsRepo(fixture.db, createWriteQueue()),
+      isRecipientEligible: async () => true,
+      readSource: async () => ({ cursor: "0", facts: [], missing: false }),
+    });
+    const notices: string[] = [];
+    const record = createCustodyLossRecorder({
+      recordRuntimeLossNotice: (input) =>
+        service.recordRuntimeLossNotice(input),
+      async appendTranscriptEntryOnce(_identity, entry) {
+        const block = entry.content?.[0];
+        if (block?.type === "text") notices.push(block.text);
+      },
+      log: { warn: () => {} },
+    });
+    const custodyLoss: ConversationCoreDeps["custodyLoss"] = ({
+      place,
+      attemptId,
+      end,
+      collected,
+    }) =>
+      record({
+        identity: {
+          projectPath: place.projectPath,
+          storeSessionName: place.sessionName,
+          conversationId: place.conversationId,
+        },
+        key: attemptId,
+        end,
+        collected,
+      });
+    const recovery = async () =>
+      (
+        await service.prepareRuntimeLossNotice({
+          recipient: { projectPath: "/repo", conversationId: "conv-u" },
+          attemptId: "probe",
+        })
+      ).block;
+    return { custodyLoss, notices, recovery };
+  }
+
+  it("refuses the next message while custody's runtime could not be confirmed collected, and records no termination for it", async () => {
+    interactiveConversation();
+    const loss = realLossRecorder();
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      custodyLoss: loss.custodyLoss,
+    });
+    const held = retained(async () => {
+      throw new Error("the CLI did not exit");
+    });
+    const { lease } = await custodyAfterTurn(core, held);
+    await expect(core.stopConversation("conv-u").settled).rejects.toThrow(
+      /could not be confirmed stopped/,
+    );
+
+    expect(
+      await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Next",
+        inputOrigin: "user",
+      }),
+    ).toMatchObject({
+      kind: "refused",
+      code: "busy",
+      message: expect.stringContaining("the CLI did not exit"),
+    });
+    expect(await core.admission("conv-u", "task")).toMatchObject({
+      code: "busy",
+    });
+    expect(userCalls).toHaveLength(1);
+    expect(await loss.recovery()).toBeNull();
+    expect(loss.notices.join("\n")).not.toMatch(/were terminated/);
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+  });
+
+  it("refuses a message that was waiting for model capacity when custody ended and its runtime could not be collected", async () => {
+    interactiveConversation();
+    const loss = realLossRecorder();
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      custodyLoss: loss.custodyLoss,
+    });
+    const held = retained(async () => {
+      throw new Error("the CLI did not exit");
+    });
+    const { lease } = await custodyAfterTurn(core, held);
+    freeSlots = 0;
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Next",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await tick();
+
+    // The work finishes while the message waits; collecting the runtime fails.
+    lease.settled();
+    await eventually(() => held.told.includes("close"));
+    await tick();
+    releaseSlot();
+
+    expect(await sent.settled).toMatchObject({
+      status: "failed",
+      failure: expect.stringContaining("the CLI did not exit"),
+    });
+    await core.conversationIdle("conv-u");
+    expect(userCalls).toHaveLength(1);
+    expect(loss.notices.join("\n")).not.toMatch(/were terminated/);
+  });
+
+  it("refuses a message that waited for a closing custody whose runtime then could not be collected, and records no termination for it", async () => {
+    interactiveConversation();
+    const loss = realLossRecorder();
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      custodyLoss: loss.custodyLoss,
+    });
+    let fail: (error: Error) => void = () => {};
+    const held = retained(
+      () => new Promise<void>((_resolve, reject) => (fail = reject)),
+    );
+    const { lease } = await custodyAfterTurn(core, held);
+    lease.lost();
+    await tick();
+
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Next",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    await tick();
+    fail(new Error("the CLI did not exit"));
+
+    expect(await sent.settled).toMatchObject({
+      status: "failed",
+      failure: expect.stringContaining("the CLI did not exit"),
+    });
+    await core.conversationIdle("conv-u");
+    expect(userCalls).toHaveLength(1);
+    expect(await loss.recovery()).toBeNull();
+    expect(loss.notices.join("\n")).not.toMatch(/were terminated/);
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+  });
+
+  it.each([1, 2, 3, 4, 5])(
+    "never hands over a custody that starts ending just before the message's admission (custody's step %i microtasks later)",
+    async (depth) => {
+      interactiveConversation();
+      const base = createConversationCoreRepo(fixture.db);
+      let onRead: (() => void) | null = null;
+      const core = newCore({
+        interactiveWorktree: worktreeOf,
+        repo: {
+          ...base,
+          attemptsInState(state) {
+            const read = onRead;
+            onRead = null;
+            read?.();
+            return base.attemptsInState(state);
+          },
+        },
+      });
+      const { lease, held } = await custodyAfterTurn(core);
+      // As custody's event chain does: its step runs a few microtasks after the readiness read.
+      onRead = () => {
+        const later = (left: number): void =>
+          queueMicrotask(() => (left > 1 ? later(left - 1) : lease.settled()));
+        later(depth);
+      };
+
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "Next",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      expect(await sent.settled).toMatchObject({ status: "succeeded" });
+      await core.conversationIdle("conv-u");
+
+      // Either custody ended first and the turn started fresh, or the turn took it over first and its
+      // late end changed nothing; never a handover of a custody already closing.
+      const settledFirst = held.told[0] === "close";
+      expect(held.told).toEqual(
+        settledFirst ? ["close", "released:settled"] : ["released:handed_over"],
+      );
+      expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+        kind: "custody",
+        end: settledFirst ? "settled" : "handed_over",
+      });
+    },
+  );
+
+  it("ends custody at its bound as timed out, recording the loss", async () => {
+    interactiveConversation();
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      custodyBoundMs: 15,
+    });
+    const { lease, held } = await custodyAfterTurn(core);
+
+    await eventually(() => repo().getAttempt(lease.attemptId)?.outcome != null);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "timed_out",
+    });
+    expect(held.told).toEqual(["close", "released:timed_out"]);
+    expect(losses).toEqual([`${lease.attemptId}:timed_out`]);
+    expect(admission.held()).toEqual([]);
+  });
+
+  it("ends custody lost when its runtime dies, closing and collecting the dead runtime", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease, held } = await custodyAfterTurn(core);
+
+    lease.lost();
+    await eventually(() => repo().getAttempt(lease.attemptId)?.outcome != null);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "lost",
+    });
+    expect(held.told).toEqual(["close", "released:lost"]);
+    expect(losses).toEqual([`${lease.attemptId}:lost`]);
+  });
+
+  it("at server stop ends custody as interrupted once its runtime is closed, and keeps none for a turn ending meanwhile", async () => {
+    interactiveConversation();
+    interactiveConversation("conv-v");
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease, held } = await custodyAfterTurn(core);
+    let opened: CustodyLease | null | undefined;
+    nextUserResult = (input) =>
+      new Promise((resolve) =>
+        input.signal.addEventListener("abort", () => {
+          opened = input.custody.open(retained().runtime);
+          resolve({ ...ok(), status: "interrupted" });
+        }),
+      );
+    await core.sendUserMessage({
+      conversationId: "conv-v",
+      text: "Long",
+      inputOrigin: "user",
+    });
+    await tick();
+
+    await core.shutdown();
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "interrupted",
+    });
+    expect(held.told).toEqual(["close", "released:interrupted"]);
+    expect(losses).toEqual([`${lease.attemptId}:interrupted`]);
+    expect(opened).toBeNull();
+  });
+
+  it("keeps a custody admitted when its loss cannot be recorded as it ends, and records it before the conversation's next message runs", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease } = await custodyAfterTurn(core);
+    lossFailures = 1;
+
+    await core.stopConversation("conv-u").settled;
+    // Collected: the worktree and the conversation are free, but the loss is still owed.
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+    expect(admission.held()).toEqual([]);
+    expect(await core.admission("conv-u", "task")).toBeNull();
+
+    let lossesAtRun: string[] = [];
+    nextUserResult = async () => {
+      lossesAtRun = [...losses];
+      return ok();
+    };
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "What happened?",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    expect(await sent.settled).toMatchObject({ status: "succeeded" });
+    await core.conversationIdle("conv-u");
+    expect(lossesAtRun).toEqual([`${lease.attemptId}:stopped`]);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "stopped",
+    });
+  });
+
+  it("refuses the next message, saying why, while the loss a custody left still cannot be recorded", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease } = await custodyAfterTurn(core);
+    lossFailures = 2;
+    await core.stopConversation("conv-u").settled;
+
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "What happened?",
+      inputOrigin: "user",
+    });
+    if (sent.kind !== "accepted") throw new Error(sent.message);
+    expect(await sent.settled).toMatchObject({
+      status: "failed",
+      failure: expect.stringContaining("the inbox could not be written"),
+    });
+    await core.conversationIdle("conv-u");
+    expect(userCalls).toHaveLength(1);
+    expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+    expect(admission.held()).toEqual([]);
+  });
+
+  it("records at the next boot a loss the server could not record before it stopped", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease } = await custodyAfterTurn(core);
+    lossFailures = 1;
+    await core.stopConversation("conv-u").settled;
+
+    await newCore().recover();
+    expect(losses).toEqual([`${lease.attemptId}:interrupted`]);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "interrupted",
+    });
+  });
+
+  it("retiring the conversation stops its custody, collecting the runtime before disposing of it", async () => {
+    interactiveConversation();
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    const { lease, held } = await custodyAfterTurn(core);
+
+    await core.retireConversation("conv-u", async () => {
+      held.told.push("dispose");
+    });
+    expect(held.told).toEqual(["close", "released:stopped", "dispose"]);
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "stopped",
+    });
+    expect(admission.held()).toEqual([]);
+  });
+
+  it("after a restart fences a crashed custody's worktree even when its loss cannot be recorded yet", async () => {
+    interactiveConversation();
+    repo().insertAttempt({
+      attemptId: "custody-1",
+      conversationId: "conv-u",
+      cause: "custody:turn-1",
+      state: "admitted",
+      outcome: null,
+      openedAt: now,
+      settledAt: null,
+    });
+    uptime = 4_970;
+    lossFailures = 1;
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    await core.recover();
+
+    expect(
+      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
+    ).toBeNull();
+    expect(
+      admission.tryAcquire({
+        worktree,
+        kind: "interactive_write",
+        holder: "turn",
+      }),
+    ).toBeNull();
+    expect(
+      createConversationCoreRepo(fixture.db).getAttempt("custody-1")?.state,
+    ).toBe("admitted");
+  });
+
+  it("after a crash during custody, boot records the runtime loss before settling custody interrupted, and a later boot adds nothing", async () => {
+    interactiveConversation();
+    repo().insertAttempt({
+      attemptId: "custody-1",
+      conversationId: "conv-u",
+      cause: "custody:turn-1",
+      state: "admitted",
+      outcome: null,
+      openedAt: now,
+      settledAt: null,
+    });
+
+    // The loss could not be written: custody stays admitted for the next boot to try again.
+    lossFailures = 1;
+    await newCore().recover();
+    expect(repo().getAttempt("custody-1")?.state).toBe("admitted");
+    expect(losses).toEqual([]);
+
+    await newCore().recover();
+    expect(losses).toEqual(["custody-1:interrupted"]);
+    expect(repo().getAttempt("custody-1")?.outcome).toEqual({
+      kind: "custody",
+      end: "interrupted",
+    });
+
+    await newCore().recover();
+    expect(losses).toEqual(["custody-1:interrupted"]);
+  });
+
+  it("after a restart keeps a crashed custody's worktree closed to turns and publications until 5 s after the server started", async () => {
+    interactiveConversation();
+    repo().insertAttempt({
+      attemptId: "custody-1",
+      conversationId: "conv-u",
+      cause: "custody:turn-1",
+      state: "admitted",
+      outcome: null,
+      openedAt: now,
+      settledAt: null,
+    });
+    uptime = 4_970;
+    const core = newCore({ interactiveWorktree: worktreeOf });
+    await core.recover();
+
+    expect(
+      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
+    ).toBeNull();
+    const sent = await core.sendUserMessage({
+      conversationId: "conv-u",
+      text: "Where were we?",
+      inputOrigin: "user",
+    });
+    await tick();
+    expect(userCalls).toEqual([]);
+
+    if (sent.kind === "accepted") await sent.settled;
+    expect(userCalls).toHaveLength(1);
+    await core.conversationIdle("conv-u");
+    expect(admission.held()).toEqual([]);
+  });
+
+  it("fences nothing when the server has been up longer than the window", async () => {
+    interactiveConversation();
+    repo().insertAttempt({
+      attemptId: "custody-1",
+      conversationId: "conv-u",
+      cause: "custody:turn-1",
+      state: "admitted",
+      outcome: null,
+      openedAt: now,
+      settledAt: null,
+    });
+    uptime = 6_000;
+    await newCore({ interactiveWorktree: worktreeOf }).recover();
+    expect(admission.held()).toEqual([]);
   });
 });
 

@@ -51,6 +51,8 @@ import {
   type InteractiveTurns,
 } from "./interactive-turns";
 import { createProductionConversationRecords } from "./production-records";
+import { createRuntimeCustody } from "./custody";
+import { createCustodyLossRecorder } from "@/lib/conversation-core/contributions/custody-loss";
 import { createRuntimeApplicationState } from "./runtime-application-state";
 import { prepareTurnInput } from "./turn-input";
 import { runtimeRegistryIndex } from "@/lib/agent-backends/runtime-registry";
@@ -99,6 +101,7 @@ export async function createProductionTurnRuntime(options: {
     log,
   });
 
+  const records = createProductionConversationRecords();
   const host = createRuntimeHost({
     factory: (backend) => deps.execution.getConversationBackendFactory(backend),
     async instructions(conversation, selection) {
@@ -169,7 +172,10 @@ export async function createProductionTurnRuntime(options: {
         storeSessionName,
         conversationId: conversation.conversationId,
       };
+      const ordinary = conversation.executionClass === "ordinary-conversation";
       return {
+        // An ordinary conversation's runtime may be kept between turns while it owes work; a seat's ends with its turn.
+        ...(ordinary ? custody.callbacks(conversation, track) : {}),
         onCostSettled(settlement) {
           void recordConversationCostSettlement(identity, settlement, {
             mutateConversation: deps.effects.mutateConversation,
@@ -193,8 +199,8 @@ export async function createProductionTurnRuntime(options: {
           );
         },
         onBackgroundTasksLost(info) {
-          // Nothing runs outside a core attempt: tasks still alive when a runtime
-          // closes are gone, and the indicator must not keep claiming otherwise.
+          // Tasks still alive when a runtime closes are gone with it, and the
+          // indicator must not keep claiming otherwise.
           getBackgroundActivityChannel().record(
             {
               projectName: conversation.projectName,
@@ -205,8 +211,6 @@ export async function createProductionTurnRuntime(options: {
           );
           // The person reads it in the transcript; an ordinary conversation's agent hears it at its
           // next turn's head (a seat's work orders carry no such reminder, so it records none).
-          const ordinary =
-            conversation.executionClass === "ordinary-conversation";
           const surfaced = createBackgroundTasksLostHandler(
             {
               recordRuntimeLossNotice: ordinary
@@ -250,6 +254,53 @@ export async function createProductionTurnRuntime(options: {
     log,
   });
 
+  const custody = createRuntimeCustody({
+    host,
+    records,
+    appendFrame: (conversationId, entry, meta) =>
+      entry.id !== undefined
+        ? deps.transcript.safeAppendTranscriptEntryOnce(
+            conversationId,
+            { ...entry, id: entry.id },
+            meta,
+          )
+        : deps.transcript.safeAppendTranscriptEntry(
+            conversationId,
+            entry,
+            meta,
+          ),
+    async applyStagedCapabilities(conversation) {
+      const { defaultCapabilityRuntimeApplyService } =
+        await import("@/lib/agent-capabilities/default-deps");
+      const shared = {
+        projectPath: conversation.projectPath,
+        projectName: conversation.projectName,
+        conversationId: conversation.conversationId,
+        worktreePath: conversation.worktreePath,
+        backend: conversation.backend,
+      };
+      await defaultCapabilityRuntimeApplyService.applyAtTurnStart(
+        conversation.target.scope === "project"
+          ? { ...shared, conversationScope: "project" }
+          : { ...shared, sessionName: conversation.target.sessionName },
+      );
+    },
+    recordLoss: createCustodyLossRecorder({
+      recordRuntimeLossNotice: deps.effects.recordRuntimeLossNotice,
+      appendTranscriptEntryOnce: (identity, entry) =>
+        deps.transcript.appendTranscriptEntryOnce(
+          identity.conversationId,
+          entry,
+          {
+            projectName: getProjectDisplayName(identity.projectPath),
+            storeSessionName: identity.storeSessionName,
+          },
+        ),
+      log,
+    }),
+    log,
+  });
+
   const engine = createTurnEngine({
     host,
     executeAgentCall: deps.execution.executeAgentCall,
@@ -283,8 +334,9 @@ export async function createProductionTurnRuntime(options: {
 
   const interactiveTurns = createInteractiveTurns({
     engine,
-    records: createProductionConversationRecords(),
+    records,
     host,
+    custody,
     worktreeOf,
     continuation: createCheckpointContinuation({
       repo: getConversationCheckpointsRepo,

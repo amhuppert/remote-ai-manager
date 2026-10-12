@@ -282,6 +282,126 @@ describe("conversation rows of a project conversation the core runs", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps the row running for custody's provider turn as the turn that left it settles, counting only the turn", async () => {
+    setUp();
+    recordNotifications();
+    await fixture.seedProjectConversation(
+      PROJECT,
+      makeConversationState({
+        id: "conv-kept",
+        scope: "project",
+        status: "running",
+        activeTurnSource: "user",
+        totalCostUsd: 1,
+      }),
+    );
+    const records = createProductionConversationRecords(rowStore());
+
+    await records.settleTurn(
+      projectIdentity("conv-kept"),
+      settled({ costUsd: 0.5 }),
+      "user",
+      () => ({ status: "running", source: "user" }),
+    );
+
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(PROJECT, PROJECT_KEY, "conv-kept");
+    // The turn source is not stored; the status is.
+    expect(reloaded).toMatchObject({
+      status: "running",
+      promptCount: 1,
+      totalCostUsd: 1.5,
+    });
+    // Control has not come back to the person yet.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(persistedNotifications()).toEqual([]);
+  });
+
+  it("records custody's provider turn on the row: running under its handing turn's source, then its usage and the person told when it ends, never as a prompt", async () => {
+    setUp();
+    recordNotifications();
+    await fixture.seedProjectConversation(
+      PROJECT,
+      makeConversationState({
+        id: "conv-segment",
+        scope: "project",
+        name: "Chat conv-segment",
+        status: "awaiting",
+        promptCount: 2,
+        totalCostUsd: 1,
+        totalTurns: 4,
+        unread: false,
+      }),
+    );
+    const records = createProductionConversationRecords(rowStore());
+    const identity = projectIdentity("conv-segment");
+
+    await records.recordSegment(identity, null, () => ({
+      status: "running",
+      source: "user",
+    }));
+    expect(
+      await fixture
+        .recreateStore()
+        .getConversation(PROJECT, PROJECT_KEY, "conv-segment"),
+    ).toMatchObject({ status: "running" });
+
+    await records.recordSegment(
+      identity,
+      {
+        continuity: {
+          kind: "set",
+          ref: { backend: "claude", ref: "sdk-9" },
+        },
+        costUsd: 0.25,
+        durationMs: 3_000,
+        numTurns: 2,
+        contextTokens: 1_200,
+        contextWindowMax: 200_000,
+      },
+      () => ({ status: "idle", notify: "user" }),
+    );
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(PROJECT, PROJECT_KEY, "conv-segment");
+    expect(reloaded).toMatchObject({
+      status: "awaiting",
+      unread: true,
+      promptCount: 2,
+      totalCostUsd: 1.25,
+      totalTurns: 6,
+      backendRef: { backend: "claude", ref: "sdk-9" },
+    });
+    await vi.waitFor(() =>
+      expect(persistedNotifications()).toEqual([
+        expect.objectContaining({
+          type: "project-conversation-ready",
+          conversationId: "conv-segment",
+        }),
+      ]),
+    );
+
+    // A turn that holds the row owns its status: only the usage is written.
+    await records.recordSegment(
+      identity,
+      {
+        continuity: { kind: "keep" },
+        costUsd: 0.5,
+        durationMs: null,
+        numTurns: null,
+        contextTokens: null,
+        contextWindowMax: null,
+      },
+      () => null,
+    );
+    expect(
+      await fixture
+        .recreateStore()
+        .getConversation(PROJECT, PROJECT_KEY, "conv-segment"),
+    ).toMatchObject({ status: "awaiting", totalCostUsd: 1.75 });
+  });
+
   it("leaves a session conversation's settled turn to the session's own notices", async () => {
     setUp();
     recordNotifications();

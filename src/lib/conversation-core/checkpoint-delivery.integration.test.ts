@@ -48,6 +48,7 @@ import { createCheckpointForkService } from "@/lib/conversation-checkpoints/fork
 import { createCheckpointForkTurnAdmission } from "@/lib/conversation-checkpoints/fork-submission";
 import { createCheckpointContinuation } from "./checkpoints";
 import { createInteractiveTurns } from "./interactive-turns";
+import { noCustody, noCustodyOpener } from "./testing/no-custody";
 import {
   applyBackendAdoption,
   applyTurnBegin,
@@ -366,6 +367,7 @@ function harness(
         : {}),
     }),
     host,
+    custody: noCustody,
     continuation: createCheckpointContinuation({
       repo: () => repo,
       transcript: {
@@ -427,6 +429,7 @@ function harness(
         attemptId,
         signal,
         stream: null,
+        custody: noCustodyOpener,
       });
     },
   };

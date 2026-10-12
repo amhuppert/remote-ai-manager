@@ -13,7 +13,7 @@ import {
   type TurnSource,
 } from "./conversation-record";
 import type { DebugFinalization } from "@/lib/workflows/debug/finalization";
-import type { CoreTurnResult } from "./executor";
+import type { CoreTurnResult, CustodyLease } from "./executor";
 import type { RuntimeHost } from "./runtime-host";
 
 export interface RecordedTurnDeps {
@@ -35,16 +35,19 @@ export interface RecordedTurn {
 /**
  * One core turn between its conversation row's begin and settle. The row and
  * the runtime are settled whatever the turn did, and nothing may keep running
- * outside the attempt, so the runtime is given back before the row goes idle.
+ * outside an admitted attempt: the runtime is given back before the row goes
+ * idle, unless `keep` hands it to a custody (design C5b §3.3), whose own
+ * attempt holds it from then on and whose view of the row the settlement
+ * shows.
  */
 export async function runRecordedTurn(
   deps: RecordedTurnDeps,
   identity: ConversationIdentity,
   source: TurnSource,
   run: () => Promise<TurnExecutionOutcome>,
+  keep?: () => CustodyLease | null,
 ): Promise<RecordedTurn> {
   const { conversationId } = identity;
-  await deps.records.beginTurn(identity, source);
   let outcome: TurnExecutionOutcome = {
     kind: "not_started",
     reason: "configuration",
@@ -54,6 +57,8 @@ export async function runRecordedTurn(
   let unsettled: string | null = null;
   let debug: DebugFinalization | null = null;
   try {
+    // Inside the lifetime: a runtime the turn inherited is kept or collected however it ends.
+    await deps.records.beginTurn(identity, source);
     outcome = await run();
   } catch (error) {
     deps.log.error("conversation_core.turn_threw", {
@@ -66,26 +71,44 @@ export async function runRecordedTurn(
       message: getErrorMessage(error),
     };
   } finally {
-    // Closed first: the row shows running until nothing of the turn runs.
-    await deps.host.release(conversationId).catch((error: unknown) => {
-      uncollected = getErrorMessage(error);
-      deps.log.error("conversation_core.runtime_release_failed", {
+    let custody: CustodyLease | null = null;
+    try {
+      custody = keep?.() ?? null;
+    } catch (error) {
+      deps.log.error("conversation_core.custody_open_failed", {
         conversationId,
-        error: uncollected,
+        error: getErrorMessage(error),
       });
-    });
-    await deps.records.settleTurn(identity, settlementOf(outcome), source).then(
-      (settled) => {
-        debug = settled.debug;
-      },
-      (error: unknown) => {
-        unsettled = getErrorMessage(error);
-        deps.log.error("conversation_core.row_settle_failed", {
+    }
+    // Closed first: the row shows running until nothing of the turn runs.
+    if (custody === null)
+      await deps.host.release(conversationId).catch((error: unknown) => {
+        uncollected = getErrorMessage(error);
+        deps.log.error("conversation_core.runtime_release_failed", {
           conversationId,
-          error: unsettled,
+          error: uncollected,
         });
-      },
-    );
+      });
+    const kept = custody;
+    await deps.records
+      .settleTurn(
+        identity,
+        settlementOf(outcome),
+        source,
+        kept === null ? undefined : () => kept.row(),
+      )
+      .then(
+        (settled) => {
+          debug = settled.debug;
+        },
+        (error: unknown) => {
+          unsettled = getErrorMessage(error);
+          deps.log.error("conversation_core.row_settle_failed", {
+            conversationId,
+            error: unsettled,
+          });
+        },
+      );
   }
   return { outcome, uncollected, unsettled, debug };
 }

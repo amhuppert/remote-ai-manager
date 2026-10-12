@@ -3643,6 +3643,78 @@ describe("QuerySession owed work and caller attribution", () => {
     );
   });
 
+  describe("a continuation the CLI never starts (design C5b §6)", () => {
+    /** A caller turn that leaves tasks `a` and `b` running in the background, then `a` ends between turns. */
+    async function aEndsBetweenTurns(overrides: Partial<QuerySessionOptions>) {
+      const started = start({
+        foldedNotificationGraceMs: 30,
+        continuationDeadlineMs: 40,
+        ...overrides,
+      });
+      const turn = started.session.sendPrompt("start a and b", vi.fn());
+      const uuid = await started.read();
+      started.cli.init();
+      started.cli.assistant("…", uuid);
+      started.cli.backgroundTaskStarted("a");
+      started.cli.backgroundTaskStarted("b");
+      started.cli.result({ total: 0.01, names: [uuid], text: "STARTED" });
+      await turn;
+      started.cli.backgroundTaskEnded("a");
+      return started;
+    }
+
+    it("ends the session when no turn answers a finished task in time, though another task still runs", async () => {
+      const onTerminated = vi.fn();
+      const { session } = await aEndsBetweenTurns({ onTerminated });
+      await tick(20);
+      expect(onTerminated).not.toHaveBeenCalled();
+
+      await tick(80);
+      expect(onTerminated).toHaveBeenCalledTimes(1);
+      expect(session.owesWork()).toBe(false);
+      session.close();
+      expect(onTerminated).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the session when the CLI starts the continuation in time", async () => {
+      const onTerminated = vi.fn();
+      const { session, cli: frames } = await aEndsBetweenTurns({
+        onTerminated,
+      });
+      frames.init();
+      await tick(100);
+      frames.assistant("a finished.");
+      frames.result({ total: 0.02, origin: "task-notification" });
+      await tick(100);
+      expect(onTerminated).not.toHaveBeenCalled();
+      // `b` still runs.
+      expect(session.owesWork()).toBe(true);
+      session.close();
+    });
+
+    it("gives a debt a turn left unanswered a fresh deadline after that turn's result", async () => {
+      const onTerminated = vi.fn();
+      const {
+        session,
+        read,
+        cli: frames,
+      } = await aEndsBetweenTurns({ onTerminated, continuationDeadlineMs: 60 });
+      const followUp = session.sendPrompt("anything else?", vi.fn());
+      const uuid = await read();
+      frames.init();
+      await tick(80);
+      expect(onTerminated).not.toHaveBeenCalled();
+      frames.assistant("no", uuid);
+      frames.result({ total: 0.02, names: [uuid], text: "no" });
+      await followUp;
+      await tick(30);
+      expect(onTerminated).not.toHaveBeenCalled();
+      await tick(80);
+      expect(onTerminated).toHaveBeenCalledTimes(1);
+      session.close();
+    });
+  });
+
   it("does not let the grace clear a task that ended between turns", async () => {
     const {
       session,

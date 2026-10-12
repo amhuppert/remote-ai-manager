@@ -11,7 +11,10 @@ import {
   type CoreCheckpoints,
 } from "@/lib/conversation-core/checkpoints";
 import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
-import type { ConversationRecordPort } from "@/lib/conversation-core/conversation-record";
+import type {
+  ConversationRecordPort,
+  CustodyRecordPort,
+} from "@/lib/conversation-core/conversation-record";
 import type Database from "better-sqlite3";
 import {
   createConversationCore,
@@ -89,7 +92,12 @@ export interface SupervisionPorts {
     | "withdrawQuestion"
     | "claimTurn"
     | "endClaim"
-  >;
+  > &
+    CustodyRecordPort;
+  /** Records the runtime loss of work a custody cut short, for the conversation's next turn. */
+  custodyLoss: ConversationCoreDeps["custodyLoss"];
+  /** How long this server has been running. */
+  uptimeMs(): number;
   /** The conversation message queue (the rows clients show) that feeds interactive conversations. */
   queue: Omit<ConversationQueueDeps, "submitTurn">;
   getProjectDisplayName(projectPath: string): string;
@@ -246,6 +254,8 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
     userTurns: ports.userTurns,
     taskTurns: ports.taskTurns,
     records: ports.records,
+    custodyLoss: ports.custodyLoss,
+    uptimeMs: ports.uptimeMs,
     slots: ports.slots,
     questions: requests,
     touchRequester,

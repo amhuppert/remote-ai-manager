@@ -171,17 +171,43 @@ export type MailboxItemRecord = z.infer<typeof mailboxItemRecordSchema>;
 
 export const attemptStateSchema = z.enum(["open", "admitted", "settled"]);
 
+/**
+ * How a custody (the attempt that holds a turn's runtime while it still owes
+ * provider work, design C5b §3) ended: the work was done, the person stopped
+ * it, the runtime died, it ran past its bound, the server stopped, or a turn
+ * took the runtime over.
+ */
+export const custodyEndSchema = z.enum([
+  "settled",
+  "stopped",
+  "lost",
+  "timed_out",
+  "interrupted",
+  "handed_over",
+]);
+export type CustodyEnd = z.infer<typeof custodyEndSchema>;
+
+/** The cause of the custody attempt that holds the runtime the attempt `turnAttemptId` left owing work. */
+export const custodyCause = (turnAttemptId: string): string =>
+  `custody:${turnAttemptId}`;
+
+export const isCustodyCause = (cause: string): boolean =>
+  cause.startsWith("custody:");
+
 export const attemptRecordSchema = z
   .object({
     attemptId: z.string().min(1),
     conversationId: z.string().min(1),
     cause: z.string().min(1),
     state: attemptStateSchema,
-    /** `not_admitted` when the permit closed before admission; otherwise the report. */
+    /** `not_admitted` when the permit closed before admission; a custody's end; otherwise the report. */
     outcome: z
       .union([
         seatTurnReportSchema,
         z.object({ notAdmitted: z.string() }).strict(),
+        z
+          .object({ kind: z.literal("custody"), end: custodyEndSchema })
+          .strict(),
       ])
       .nullable(),
     openedAt: z.string().min(1),

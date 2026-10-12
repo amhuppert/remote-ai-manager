@@ -15,6 +15,7 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { ConversationRecordPort } from "./conversation-record";
 import { createInteractiveTurns } from "./interactive-turns";
+import { noCustody, noCustodyOpener } from "./testing/no-custody";
 import { createRuntimeHost } from "./runtime-host";
 import { createTurnEngine } from "./turn-engine";
 
@@ -104,6 +105,7 @@ async function runProjectMessage() {
     engine,
     records,
     host,
+    custody: noCustody,
     worktreeOf: async (projectPath, target) => {
       if (target.scope !== "project")
         throw new Error("a project conversation has no session worktree");
@@ -145,6 +147,7 @@ async function runProjectMessage() {
     attemptId: "attempt-1",
     signal: new AbortController().signal,
     stream: null,
+    custody: noCustodyOpener,
   });
   await host.releaseAll();
   return { result, created, options: provider.claudeOptions };

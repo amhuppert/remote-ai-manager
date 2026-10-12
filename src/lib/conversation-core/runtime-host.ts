@@ -75,7 +75,12 @@ export interface RuntimeHostDeps {
     track: (work: Promise<void>) => void,
   ): Pick<
     ConversationBackendCreateInput,
-    "onCostSettled" | "onBackgroundActivity" | "onBackgroundTasksLost"
+    | "onCostSettled"
+    | "onBackgroundActivity"
+    | "onBackgroundTasksLost"
+    | "onExternalTurnEvent"
+    | "onOwedWorkChanged"
+    | "onTerminated"
   >;
   index: BackendRuntimeIndex;
   log: Pick<Logger, "info" | "warn" | "error">;
@@ -100,6 +105,19 @@ export interface RuntimeHost {
     capture: CaptureRequest,
   ): Promise<ConversationBackendRuntime>;
   release(conversationId: string): Promise<void>;
+  /**
+   * What a turn with these needs would change in the conversation's live
+   * runtime (the dimensions `runtimeConfigurationChanges` names); empty when
+   * nothing would, or when no runtime is live. The runtime is left as it is.
+   * An empty answer for a live runtime is the turn's decision: its next
+   * `obtain` reuses that runtime without comparing again, so a configuration
+   * saved meanwhile applies at the next check rather than closing work the
+   * turn's input was prepared for.
+   */
+  drift(
+    conversation: HostedConversation,
+    requirements: RuntimeRequirements,
+  ): Promise<string[]>;
   /**
    * Closes again a runtime whose close failed (a checkpoint's reconcile or
    * recovery); throws if it fails again. Only then may a new runtime start.
@@ -136,6 +154,8 @@ interface Hosted {
   requirements: RuntimeRequirements;
   /** A close that failed: the old process may still run, so nothing new starts here. */
   closeFailure: Error | null;
+  /** The live runtime a turn's drift check decided to reuse, until that turn's obtain takes it. */
+  kept: ConversationBackendRuntime | null;
 }
 
 /**
@@ -263,6 +283,20 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
     return runtime;
   }
 
+  /** How `requirements` differ from what the entry's live runtime was created with; empty when none is live. */
+  async function changesFor(
+    entry: Hosted | undefined,
+    conversation: HostedConversation,
+    requirements: RuntimeRequirements,
+  ): Promise<string[]> {
+    if (entry?.managed.backend?.status !== "alive") return [];
+    const { desired } = await desiredFor(conversation, requirements);
+    return runtimeConfigurationChanges({
+      current: entry.managed.configurationSnapshot,
+      desired,
+    });
+  }
+
   const host: RuntimeHost = {
     async obtain(conversation, requirements) {
       const existing = hosted.get(conversation.conversationId);
@@ -276,19 +310,18 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         conversation,
         requirements,
         closeFailure: null,
+        kept: null,
       };
       entry.conversation = conversation;
       entry.requirements = requirements;
       hosted.set(conversation.conversationId, entry);
       const live = entry.managed.backend;
-      // Core turns release their runtime when they end, so each obtains a fresh one; reuse serves a
-      // host that keeps runtimes between turns (design amendment 13).
+      const decided = entry.kept;
+      entry.kept = null;
+      // A runtime is live here only when custody kept it for this turn (design C5b §4.1).
       if (live !== undefined && live.status === "alive") {
-        const { desired } = await desiredFor(conversation, requirements);
-        const changes = runtimeConfigurationChanges({
-          current: entry.managed.configurationSnapshot,
-          desired,
-        });
+        if (decided === live) return { runtime: live, created: false };
+        const changes = await changesFor(entry, conversation, requirements);
         if (changes.length === 0) return { runtime: live, created: false };
         deps.log.info("conversation_core.runtime_recreate", {
           conversationId: conversation.conversationId,
@@ -296,6 +329,16 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         });
       }
       return { runtime: await create(entry), created: true };
+    },
+
+    async drift(conversation, requirements) {
+      const entry = hosted.get(conversation.conversationId);
+      if (entry === undefined) return [];
+      entry.kept = null;
+      const live = entry.managed.backend;
+      const changes = await changesFor(entry, conversation, requirements);
+      if (changes.length === 0 && live?.status === "alive") entry.kept = live;
+      return changes;
     },
 
     async obtainForCapture(conversation, capture) {
@@ -314,9 +357,11 @@ export function createRuntimeHost(deps: RuntimeHostDeps): RuntimeHost {
         conversation,
         requirements,
         closeFailure: null,
+        kept: null,
       };
       entry.conversation = conversation;
       entry.requirements = requirements;
+      entry.kept = null;
       hosted.set(conversation.conversationId, entry);
       return create(entry, capture);
     },

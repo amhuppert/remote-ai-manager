@@ -609,8 +609,8 @@ export function createCoreCheckpoints(
           settled: reason === null,
           reason,
           backendRef: priorRef?.ref ?? null,
-          // No turn runs under the lease, and the core hosts no runtime between turns:
-          // nothing can advance the conversation's activity while this build holds it.
+          // No turn runs under the lease, and no custody keeps a runtime while it is held (custody
+          // refuses the lease): nothing can advance the conversation's activity while this build holds it.
           activityEpoch: 0,
           backgroundEpoch: deps.background.epoch(conversationId),
         };

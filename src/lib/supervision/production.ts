@@ -309,6 +309,37 @@ function composeProductionSupervision(): Supervision {
       },
     },
     records: createProductionConversationRecords(),
+    async custodyLoss({ place, attemptId, end, collected }) {
+      const [
+        { createCustodyLossRecorder },
+        { getSubscriptionService },
+        { appendTranscriptEntryOnce },
+      ] = await Promise.all([
+        import("@/lib/conversation-core/contributions/custody-loss"),
+        import("@/lib/subscriptions/service-factory"),
+        import("@/lib/prompt/transcript"),
+      ]);
+      await createCustodyLossRecorder({
+        recordRuntimeLossNotice: (input) =>
+          getSubscriptionService().recordRuntimeLossNotice(input),
+        appendTranscriptEntryOnce: (identity, entry) =>
+          appendTranscriptEntryOnce(identity.conversationId, entry, undefined, {
+            projectName: getProjectDisplayName(identity.projectPath),
+            storeSessionName: identity.storeSessionName,
+          }),
+        log: createLogger("conversation-core"),
+      })({
+        identity: {
+          projectPath: place.projectPath,
+          storeSessionName: place.sessionName,
+          conversationId: place.conversationId,
+        },
+        key: attemptId,
+        end,
+        collected,
+      });
+    },
+    uptimeMs: () => process.uptime() * 1000,
     queue: {
       // The core holds a debug session's queue; the conversation actor holds its own by state.
       claimNextTurnBatch: (input) =>

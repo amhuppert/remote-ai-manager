@@ -64,7 +64,12 @@ import {
   turnResultOf,
   recordedResult,
 } from "./recorded-turn";
-import type { RuntimeHost } from "./runtime-host";
+import type { RuntimeCustody } from "./custody";
+import type {
+  HostedConversation,
+  RuntimeHost,
+  RuntimeRequirements,
+} from "./runtime-host";
 import type { TurnEngine } from "./turn-engine";
 
 /** The conversation row as an interactive turn reads it. */
@@ -87,6 +92,8 @@ export interface InteractiveTurnDeps {
   engine: Pick<TurnEngine, "runTurn">;
   records: ConversationRecordPort;
   host: Pick<RuntimeHost, "release" | "isLive" | "runtime" | "alignment">;
+  /** The runtime side of custody: what keeps a runtime that still owes provider work between turns. */
+  custody: Pick<RuntimeCustody, "keep" | "takeOver" | "describe">;
   /** Where the conversation's agent works: its session's worktree, or the project root for a project conversation. */
   worktreeOf(projectPath: string, target: ConversationTarget): Promise<string>;
   /**
@@ -345,7 +352,9 @@ export function createInteractiveTurns(
     if (turn === undefined) return "no_running_turn";
     if (turn.settling) return "turn_settling";
     const runtime = deps.host.runtime(conversationId);
-    // Only input that joins this turn, or is refused once it ends: the runtime closes with the turn.
+    // Only input that joins this turn, or is refused once it ends.
+    // TODO(C5b slice 4): a runtime custody may keep takes input the provider answers after the turn's
+    // result, during a turn or a provider turn custody holds; idle custody keeps refusing it.
     if (
       runtime?.queueUserInput === undefined ||
       runtime.liveInput !== "running_turn"
@@ -499,7 +508,10 @@ export function createInteractiveTurns(
 
   return {
     describeRunning(conversationId) {
-      return described.get(conversationId) ?? null;
+      // Between turns, the provider turn custody runs is the conversation's running turn.
+      return (
+        described.get(conversationId) ?? deps.custody.describe(conversationId)
+      );
     },
     settleRetained,
     acceptsLive,
@@ -570,7 +582,15 @@ export function createInteractiveTurns(
             : `Not sent: ${reason}`,
       });
     },
-    async run({ conversationId, place, request, attemptId, signal, stream }) {
+    async run({
+      conversationId,
+      place,
+      request,
+      attemptId,
+      signal,
+      stream,
+      custody,
+    }) {
       const identity = {
         projectPath: place.projectPath,
         storeSessionName: place.sessionName,
@@ -584,11 +604,42 @@ export function createInteractiveTurns(
       let evidence: InputDelivery | null = null;
       const streamedErrors = new Set<string>();
       let turnWorktree: string | null = null;
+      /** The message this turn delivers, which custody's provider turns inherit as their origin. */
+      let originMessageId: string | null = null;
       // Whatever ends the turn, from here on, the queue is told what became of its batch.
       let ran: TurnExecutionOutcome = {
         kind: "not_started",
         reason: "configuration",
         message: "The turn did not run",
+      };
+      // An unattended turn keeps out of the person's bookkeeping, and `cctl ask` refuses it, as on the actor.
+      const source = autonomous ? "workflow" : "user";
+      const keepRuntime = () =>
+        deps.custody.keep(
+          conversationId,
+          { source, autonomous, originMessageId },
+          custody,
+        );
+      /** Set once the recorded turn owns the runtime's end: before that, this turn does. */
+      let recording = false;
+      /**
+       * A turn that ends before its recorded lifetime begins still owns the
+       * runtime a custody handed it at admission: custody keeps it again while
+       * it owes work, otherwise it is collected. Why it could not be, or null.
+       */
+      const disposeInherited = async (): Promise<string | null> => {
+        if (keepRuntime() !== null) return null;
+        try {
+          await deps.host.release(conversationId);
+          return null;
+        } catch (error) {
+          const uncollected = getErrorMessage(error);
+          deps.log.error("conversation_core.runtime_release_failed", {
+            conversationId,
+            error: uncollected,
+          });
+          return uncollected;
+        }
       };
       try {
         // Inputs an earlier turn still owes settle first: what they record can decide this message's continuation.
@@ -602,7 +653,10 @@ export function createInteractiveTurns(
             message: failure,
           };
           stream?.emit("error", { message: failure });
-          return failedTurn(failure);
+          return recordedResult(failedTurn(failure), {
+            uncollected: await disposeInherited(),
+            unsettled: null,
+          });
         }
         // In debug mode the session's phase decides the turn's context and the report it asks for.
         const debugMode = runtimeDebugMode(row.debugMode);
@@ -610,12 +664,14 @@ export function createInteractiveTurns(
           debugMode === null
             ? undefined
             : resolveDebugOutputFormat(debugMode.phase);
-        // An unattended turn keeps out of the person's bookkeeping, and `cctl ask` refuses it, as on the actor.
+        recording = true;
         const recorded = await runRecordedTurn(
           deps,
           identity,
-          autonomous ? "workflow" : "user",
+          source,
           () => runMessage(row, debugMode, outputFormat),
+          // Debug mode's turns end with their runtime, as the actor's debug state ignored the provider's own turns.
+          debugMode === null ? keepRuntime : undefined,
         );
         const { outcome, debug } = recorded;
         ran = outcome;
@@ -640,6 +696,15 @@ export function createInteractiveTurns(
           reason: "configuration",
           message: getErrorMessage(error),
         };
+        if (!recording) {
+          const uncollected = await disposeInherited();
+          // Processes that may still write keep the turn's grant: the core holds it rather than fail the turn plainly.
+          if (uncollected !== null)
+            return recordedResult(failedTurn(getErrorMessage(error)), {
+              uncollected,
+              unsettled: null,
+            });
+        }
         throw error;
       } finally {
         await settleQueued(ran);
@@ -749,6 +814,7 @@ export function createInteractiveTurns(
             : (delivery.subscriptionBatchId ??
               delivery.messageIds[0] ??
               delivery.deliveryAttemptId);
+        originMessageId = messageId;
         const userEntry: TranscriptEntry = {
           id: messageId,
           timestamp: new Date().toISOString(),
@@ -786,6 +852,28 @@ export function createInteractiveTurns(
         );
         const worktreePath = await deps.worktreeOf(place.projectPath, target);
         turnWorktree = worktreePath;
+        const hosted: HostedConversation = {
+          conversationId,
+          projectPath: place.projectPath,
+          projectName,
+          target,
+          worktreePath,
+          backend,
+          executionClass: "ordinary-conversation",
+          persistedRef: resumeRef,
+          // A project conversation has no session for its agent to act in as itself.
+          ...(target.scope === "session"
+            ? { callerIdentity: conversationId }
+            : {}),
+          profile,
+        };
+        const requirements: RuntimeRequirements = {
+          modelSelection,
+          instructionSelection: { autonomous },
+        };
+        // A runtime custody handed over: drift closes it before the input that must carry its loss is prepared.
+        if (deps.host.isLive(conversationId))
+          await deps.custody.takeOver(hosted, requirements, attemptId);
         const execution: TurnInputRequest["execution"] = {
           projectPath: place.projectPath,
           target,
@@ -850,25 +938,8 @@ export function createInteractiveTurns(
           });
           const turnOutcome = await deps.engine.runTurn({
             ...(outputFormat !== undefined ? { outputFormat } : {}),
-            conversation: {
-              conversationId,
-              projectPath: place.projectPath,
-              projectName,
-              target,
-              worktreePath,
-              backend,
-              executionClass: "ordinary-conversation",
-              persistedRef: resumeRef,
-              // A project conversation has no session for its agent to act in as itself.
-              ...(target.scope === "session"
-                ? { callerIdentity: conversationId }
-                : {}),
-              profile,
-            },
-            requirements: {
-              modelSelection,
-              instructionSelection: { autonomous },
-            },
+            conversation: hosted,
+            requirements,
             // An autonomous turn has no person to ask.
             ...(autonomous
               ? {}

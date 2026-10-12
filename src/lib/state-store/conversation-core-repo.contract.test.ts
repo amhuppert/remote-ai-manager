@@ -194,6 +194,30 @@ describe("conversation core repository", () => {
     });
   });
 
+  it("round-trips a custody attempt settled with how its custody ended", async () => {
+    fixture = createPersistenceFixture();
+    const db = fixture.db;
+    await assertRoundTripDurability({
+      label: "custody attempt",
+      schema: attemptRecordSchema,
+      buildMaximalFixture: () => ({
+        attemptId: "att-custody",
+        conversationId: "conv-1",
+        cause: "custody:att-1",
+        state: "settled" as const,
+        outcome: { kind: "custody" as const, end: "timed_out" as const },
+        openedAt: at,
+        settledAt: later,
+      }),
+      persist: (value) => {
+        createConversationCoreRepo(db).insertAttempt(value);
+        return value;
+      },
+      reload: (value) =>
+        createConversationCoreRepo(db).getAttempt(value.attemptId),
+    });
+  });
+
   it("round-trips an answered question", async () => {
     fixture = createPersistenceFixture();
     const db = fixture.db;

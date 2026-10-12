@@ -16,7 +16,10 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
-import type { ConversationRecordPort } from "./conversation-record";
+import type { ConversationRecordPort, CustodyRow } from "./conversation-record";
+import type { CustodyTurn } from "./custody";
+import type { CustodyLease, CustodyOpener } from "./executor";
+import type { HostedConversation, RuntimeRequirements } from "./runtime-host";
 import type { UserTurnRequest } from "./schemas";
 import {
   createInteractiveTurns,
@@ -110,6 +113,23 @@ function harness(
   let runtime: ConversationBackendRuntime | null = null;
   /** The charter the running turn's runtime was created with. */
   let alignment: { version: number | null; eligible: boolean } | null = null;
+  /** Whether a runtime custody handed over is live at the turn's start. */
+  let handedOver = false;
+  /** What custody does at the turn's end: keep the runtime (a lease) or not (null). */
+  let keep: (
+    turn: CustodyTurn,
+    opener: CustodyOpener,
+  ) => CustodyLease | null = () => null;
+  let custodyRunning: {
+    autonomous: boolean;
+    originMessageId: string | null;
+  } | null = null;
+  const takenOver: Array<{
+    conversation: HostedConversation;
+    requirements: RuntimeRequirements;
+    turnAttemptId: string;
+  }> = [];
+  const opener: CustodyOpener = { open: () => null };
   const records: ConversationRecordPort = {
     async read() {
       return row === null
@@ -139,8 +159,11 @@ function harness(
     async withdrawQuestion() {
       return false;
     },
-    async settleTurn(_identity, settlement, source) {
-      events.push(`settle:${settlement.counted}:${source}`);
+    async settleTurn(_identity, settlement, source, custody) {
+      const shown = custody?.();
+      events.push(
+        `settle:${settlement.counted}:${source}${shown == null ? "" : `:${shown.status}`}`,
+      );
       return { debug: settledDebug };
     },
     async adoptBackend(_identity, backend) {
@@ -170,9 +193,20 @@ function harness(
       async release(conversationId) {
         events.push(`release:${conversationId}`);
       },
-      isLive: () => false,
+      isLive: () => handedOver,
       runtime: () => runtime,
       alignment: () => alignment,
+    },
+    custody: {
+      keep(conversationId, turn, custodyOpener) {
+        events.push(`keep:${conversationId}`);
+        return keep(turn, custodyOpener);
+      },
+      async takeOver(conversation, requirements, turnAttemptId) {
+        events.push("take-over");
+        takenOver.push({ conversation, requirements, turnAttemptId });
+      },
+      describe: () => custodyRunning,
     },
     async worktreeOf(projectPath, target) {
       worktreeTargets.push(target);
@@ -294,6 +328,7 @@ function harness(
       attemptId: "attempt-1",
       signal,
       stream: { emit: (event, data) => streamed.push([event, data]) },
+      custody: opener,
     });
   return {
     deps,
@@ -317,6 +352,32 @@ function harness(
     },
     createdWithCharter(charter: typeof alignment) {
       alignment = charter;
+    },
+    opener,
+    takenOver,
+    /** The turn starts on a runtime custody handed over. */
+    handOver() {
+      handedOver = true;
+    },
+    /** At the turn's end custody keeps the runtime, showing `row` on the conversation. */
+    keepRuntime(row: CustodyRow | null) {
+      const kept: CustodyTurn[] = [];
+      const openers: CustodyOpener[] = [];
+      keep = (turn, custodyOpener) => {
+        kept.push(turn);
+        openers.push(custodyOpener);
+        return {
+          attemptId: "custody-1",
+          row: () => row,
+          segmentEnded() {},
+          settled() {},
+          lost() {},
+        };
+      };
+      return { kept, openers };
+    },
+    custodyDescribes(running: typeof custodyRunning) {
+      custodyRunning = running;
     },
   };
 }
@@ -442,10 +503,12 @@ describe("interactive turns", () => {
         modelSelection: { modelId: "opus", parameters: {} },
       },
     });
+    // A runtime that owes nothing more is released before the row settles.
     expect(h.events).toEqual([
       "begin:user",
       "admit-profile",
       "receipts-finished",
+      "keep:conv-1",
       "release:conv-1",
       "settle:true:user",
     ]);
@@ -581,6 +644,7 @@ describe("interactive turns", () => {
     ]);
     expect(h.events).toEqual([
       "begin:user",
+      "keep:conv-1",
       "release:conv-1",
       "settle:false:user",
     ]);
@@ -1044,16 +1108,22 @@ describe("interactive turns", () => {
     h.deps.records.beginTurn = async () => {
       throw new Error("database is locked");
     };
-    await expect(
-      h.run(
+    // The begin write is inside the turn's recorded lifetime: the turn fails, and its runtime is given back.
+    expect(
+      await h.run(
         message({
           text: "Queued",
           queuedDelivery: { messageIds: ["q-9"], deliveryAttemptId: "att-9" },
         }),
       ),
-    ).rejects.toThrow("database is locked");
+    ).toMatchObject({ status: "failed", failure: "database is locked" });
     expect(h.turns).toEqual([]);
-    expect(h.events).toEqual(["failed:att-9:database is locked"]);
+    expect(h.events).toEqual([
+      "keep:conv-1",
+      "release:conv-1",
+      "settle:false:user",
+      "failed:att-9:database is locked",
+    ]);
   });
 
   it("lets the agent ask the person in the middle of a turn", async () => {
@@ -1136,6 +1206,105 @@ describe("interactive turns", () => {
     finish();
     await running;
     expect(h.port.describeRunning("conv-1")).toBeNull();
+  });
+
+  describe("when the runtime still owes provider work at the turn's end (design C5b §3.3)", () => {
+    it("keeps the runtime in custody instead of releasing it, and settles the turn's accounting with the row as custody shows it", async () => {
+      const h = harness(async () => completed("Started it in the background."));
+      const custody = h.keepRuntime({ status: "running", source: "user" });
+      const result = await h.run(message());
+
+      expect(result).toMatchObject({ status: "succeeded" });
+      expect(custody.kept).toEqual([
+        { source: "user", autonomous: false, originMessageId: "attempt-1" },
+      ]);
+      expect(custody.openers).toEqual([h.opener]);
+      expect(h.events).toEqual([
+        "begin:user",
+        "admit-profile",
+        "receipts-finished",
+        "keep:conv-1",
+        "settle:true:user:running",
+      ]);
+    });
+
+    it("gives an unattended turn's custody the turn's workflow source and its delivery's origin", async () => {
+      const h = harness(async () => completed());
+      const custody = h.keepRuntime({ status: "idle", notify: null });
+      await h.run({ ...queued("Wake", "att-3"), autonomous: true });
+      expect(custody.kept).toEqual([
+        { source: "workflow", autonomous: true, originMessageId: "q-att-3" },
+      ]);
+      expect(h.events).toContain("settle:true:workflow:idle");
+      expect(h.events).not.toContain("release:conv-1");
+    });
+
+    it("releases the runtime as before when custody does not keep it", async () => {
+      const h = harness(async () => completed());
+      await h.run(message());
+      expect(h.events.slice(-3)).toEqual([
+        "keep:conv-1",
+        "release:conv-1",
+        "settle:true:user",
+      ]);
+    });
+
+    it("never keeps the runtime of a turn in debug mode", async () => {
+      const h = harness(async () => completed(), {
+        backendRef: { backend: "claude", ref: "sdk-1" },
+        promptCount: 2,
+        debugMode: debugSession("hypothesizing"),
+      });
+      const custody = h.keepRuntime({ status: "idle", notify: null });
+      await h.run(message());
+      expect(custody.kept).toEqual([]);
+      expect(h.events).toContain("release:conv-1");
+    });
+
+    it("describes custody's provider turn as the conversation's running turn once its own turn has ended", async () => {
+      const h = harness(async () => completed());
+      h.custodyDescribes({ autonomous: false, originMessageId: "attempt-1" });
+      expect(h.port.describeRunning("conv-1")).toEqual({
+        autonomous: false,
+        originMessageId: "attempt-1",
+      });
+    });
+
+    it("on a runtime custody handed over, lets custody settle the runtime's drift before the turn's input is prepared", async () => {
+      const h = harness(async () => completed());
+      h.handOver();
+      await h.run(
+        message({ modelSelection: { modelId: "opus", parameters: {} } }),
+      );
+
+      expect(h.takenOver).toEqual([
+        {
+          conversation: expect.objectContaining({
+            conversationId: "conv-1",
+            backend: "claude",
+            executionClass: "ordinary-conversation",
+            persistedRef: { backend: "claude", ref: "sdk-1" },
+            profile: expect.objectContaining({
+              instructionBlock: "You review security.",
+            }),
+          }),
+          requirements: {
+            modelSelection: { modelId: "opus", parameters: {} },
+            instructionSelection: { autonomous: false },
+          },
+          turnAttemptId: "attempt-1",
+        },
+      ]);
+      // Before the input that would carry the runtime's loss is prepared.
+      expect(h.events.indexOf("take-over")).toBeLessThan(
+        h.events.indexOf("receipts-finished"),
+      );
+      expect(h.contexts).toHaveLength(1);
+
+      const fresh = harness(async () => completed());
+      await fresh.run(message());
+      expect(fresh.takenOver).toEqual([]);
+    });
   });
 
   it("records the charter version an attended turn ran with, and none for a turn the charter does not apply to", async () => {
@@ -1318,10 +1487,10 @@ describe("interactive turns", () => {
     });
   });
 
-  it("fails a message to a conversation that no longer exists without touching it", async () => {
+  it("fails a message to a conversation that no longer exists without touching its row, giving back any runtime it inherited", async () => {
     const h = harness(async () => completed(), null);
     expect(await h.run(message())).toMatchObject({ status: "failed" });
-    expect(h.events).toEqual([]);
+    expect(h.events).toEqual(["keep:conv-1", "release:conv-1"]);
     expect(h.streamed).toEqual([
       ["error", { message: "Conversation conv-1 no longer exists" }],
     ]);

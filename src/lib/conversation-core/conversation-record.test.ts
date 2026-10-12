@@ -6,6 +6,8 @@ import type { DebugModePhase, DebugModeState } from "@/lib/debug-log/schemas";
 import {
   applyBackendAdoption,
   applyClaimEnded,
+  applyCustodyRow,
+  applySegmentUsage,
   applyDebugCommandToRow,
   applyQuestionAsked,
   applyQuestionCleared,
@@ -15,9 +17,11 @@ import {
   applyTurnInterrupted,
   applyTurnSettlement,
   conversationHoldRefusal,
+  segmentUsageOf,
   settlementOf,
   type ConversationRow,
 } from "./conversation-record";
+import type { ConversationBackendTurnResult } from "@/lib/agent-backends/conversation";
 
 function outcomeOf(
   execution: ReturnType<typeof settledConversationTurn>,
@@ -46,7 +50,103 @@ const row = (): ConversationRow => ({
   owner: null,
 });
 
+/** A provider turn's result as the backend reports it on its own path. */
+const providerResult = (
+  overrides: Partial<ConversationBackendTurnResult> = {},
+): ConversationBackendTurnResult => ({
+  backendRef: { backend: "claude", ref: "sdk-2" },
+  costUsd: 0.25,
+  durationMs: 3_000,
+  numTurns: 2,
+  contextTokens: 1_500,
+  contextWindowMax: 200_000,
+  contentBlocks: [],
+  aborted: false,
+  compacted: false,
+  failure: null,
+  continuationDisposition: "retain",
+  ...overrides,
+});
+
 describe("conversation record", () => {
+  it("accounts a provider turn custody held: its usage and continuity go to the row, and it is no prompt", () => {
+    const next = row();
+    applySegmentUsage(next, segmentUsageOf(providerResult()));
+    applySegmentUsage(
+      next,
+      segmentUsageOf(providerResult({ costUsd: 0.5, numTurns: 1 })),
+    );
+    expect(next).toMatchObject({
+      status: "running",
+      promptCount: 2,
+      totalCostUsd: 2.25,
+      totalDurationMs: 7_000,
+      totalTurns: 7,
+      contextTokens: 1_500,
+      backendRef: { backend: "claude", ref: "sdk-2" },
+    });
+
+    // A displaced provider turn reports no cost: the turn that took it over is charged.
+    applySegmentUsage(
+      next,
+      segmentUsageOf(
+        providerResult({ costUsd: null, durationMs: null, numTurns: null }),
+      ),
+    );
+    expect(next.totalCostUsd).toBe(2.25);
+
+    applySegmentUsage(
+      next,
+      segmentUsageOf(providerResult({ continuationDisposition: "clear" })),
+    );
+    expect(next.backendRef).toBeNull();
+  });
+
+  it("shows custody's provider turn running under its handing turn's source, and the row idle again once it ends", () => {
+    const next = row();
+    next.status = "awaiting";
+    next.activeTurnSource = null;
+    expect(
+      applyCustodyRow(next, { status: "running", source: "user" }, "t1"),
+    ).toBe("running");
+    expect(next).toMatchObject({
+      status: "running",
+      activeTurnSource: "user",
+      lastActivityAt: "t1",
+      unread: false,
+    });
+
+    // Its end tells the person, as a turn's does.
+    expect(
+      applyCustodyRow(next, { status: "idle", notify: "user" }, "t2"),
+    ).toBe("awaiting");
+    expect(next).toMatchObject({
+      status: "awaiting",
+      activeTurnSource: null,
+      unread: true,
+    });
+
+    // A durable question it asked still waits; an autonomous custody leaves the person's bookkeeping alone.
+    const asked = row();
+    asked.unread = false;
+    asked.pendingQuestionId = "q-1";
+    expect(
+      applyCustodyRow(asked, { status: "running", source: "workflow" }, "t"),
+    ).toBe("waiting_for_input");
+    expect(
+      applyCustodyRow(asked, { status: "idle", notify: "workflow" }, "t"),
+    ).toBe("waiting_for_input");
+    expect(asked).toMatchObject({ activeTurnSource: null, unread: false });
+
+    // A turn waiting to take over keeps the row running, with no provider turn's source.
+    const claimed = row();
+    applyCustodyRow(claimed, { status: "running", source: null }, "t");
+    expect(claimed).toMatchObject({
+      status: "running",
+      activeTurnSource: null,
+    });
+  });
+
   it("accounts a settled turn: totals, newest continuity, idle status", () => {
     const settlement = settlementOf(
       outcomeOf(

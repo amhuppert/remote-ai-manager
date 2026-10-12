@@ -8,7 +8,10 @@ import type {
   ConversationBackendTurnInput,
 } from "../conversation";
 import { claudeConversationBackendFactory } from "../claude/conversation-runtime";
-import { _setSdkQueryForTesting } from "../claude/query-session";
+import {
+  _setContinuationDeadlineForTesting,
+  _setSdkQueryForTesting,
+} from "../claude/query-session";
 import { CodexConversationRuntime } from "../codex/conversation-runtime";
 import { createFakeClaudeSdkController } from "./fake-claude-sdk-port";
 import { createFakeCodexProvider } from "./fake-codex-provider";
@@ -18,6 +21,8 @@ export function createScriptedConversationBackend(input: {
   backend: "claude" | "codex";
   responseText: string;
   sandboxUnavailable?: boolean;
+  /** How long a Claude session waits for an unanswered continuation before it ends. */
+  continuationDeadlineMs?: number;
 }) {
   recordServerBaseUrl({
     CC_SERVER_URL: "http://cc-provider-fixture.test:4312",
@@ -37,6 +42,9 @@ export function createScriptedConversationBackend(input: {
           validateModelSelection:
             claudeConversationBackendFactory.validateModelSelection,
           async createRuntime(createInput) {
+            _setContinuationDeadlineForTesting(
+              input.continuationDeadlineMs ?? null,
+            );
             _setSdkQueryForTesting((args) => {
               if (input.sandboxUnavailable)
                 throw new Error("sandbox dependencies are unavailable");
@@ -125,6 +133,8 @@ export function createScriptedConversationBackend(input: {
   };
   return {
     factory,
+    /** The scripted Claude provider port: its background work, continuations and death, driven by the test. */
+    claudeSdk: claude,
     get turns(): ReadonlyArray<(typeof turns)[number]> {
       return turns;
     },
@@ -151,7 +161,10 @@ export function createScriptedConversationBackend(input: {
       return userPrompt();
     },
     close() {
-      if (input.backend === "claude") _setSdkQueryForTesting(null);
+      if (input.backend === "claude") {
+        _setSdkQueryForTesting(null);
+        _setContinuationDeadlineForTesting(null);
+      }
       _resetServerBaseUrlForTesting();
     },
   };

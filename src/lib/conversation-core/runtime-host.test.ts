@@ -215,6 +215,45 @@ describe("runtime host", () => {
     expect(h.unregistered).toEqual(["conv-1", "conv-1"]);
   });
 
+  it("tells how what a turn needs differs from the live runtime, without touching it, and nothing when none is live", async () => {
+    const h = harness();
+    expect(await h.host.drift(conversation, sonnet)).toEqual([]);
+    await h.host.obtain(conversation, sonnet);
+    expect(await h.host.drift(conversation, sonnet)).toEqual([]);
+
+    expect(
+      await h.host.drift(conversation, {
+        ...sonnet,
+        modelSelection: { modelId: "opus", parameters: {} },
+      }),
+    ).toEqual(["modelSelection"]);
+    expect(h.created.map((runtime) => runtime.closed)).toEqual([false]);
+
+    h.created[0]?.kill();
+    expect(
+      await h.host.drift(conversation, {
+        ...sonnet,
+        modelSelection: { modelId: "opus", parameters: {} },
+      }),
+    ).toEqual([]);
+  });
+
+  it("reuses the runtime a turn's drift check kept, as it is, at that turn's obtain: a configuration saved in between applies next time", async () => {
+    const h = harness();
+    await h.host.obtain(conversation, sonnet);
+    expect(await h.host.drift(conversation, sonnet)).toEqual([]);
+    h.setInstructions(["You are a CC agent.", "A new reference document."]);
+
+    expect(await h.host.obtain(conversation, sonnet)).toMatchObject({
+      created: false,
+    });
+    // The next obtain that no drift check settled compares again.
+    expect(await h.host.obtain(conversation, sonnet)).toMatchObject({
+      created: true,
+    });
+    expect(h.created.map((runtime) => runtime.closed)).toEqual([true, false]);
+  });
+
   it("creates a fresh runtime when the live one died, resuming the newest continuity", async () => {
     const h = harness();
     await h.host.obtain(conversation, sonnet);

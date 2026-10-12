@@ -4,7 +4,8 @@
  * the archive cannot show. The checkpoint maintenance owns the operation and
  * its durable stages; this host runs the capture and writes its audit.
  *
- * The core keeps no runtime between turns, so a capture always opens its own,
+ * No runtime is kept while a checkpoint holds the conversation (custody,
+ * which keeps one between turns, refuses the hold), so a capture always opens its own,
  * resuming the session the build captured, and releases it once the capture
  * has settled. A capture whose processes could not be confirmed stopped keeps
  * its runtime hosted: the operation is held for reconciliation, whose close

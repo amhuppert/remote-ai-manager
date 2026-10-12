@@ -36,6 +36,7 @@ import { createFakeLaneGit } from "@/lib/workspace/testing/fake-lane-git";
 import { createDirectLaneIntegrator } from "@/lib/workspace/testing/direct-lane-integrator";
 import type { WorkspaceExecutorDeps } from "@/lib/workspace/executor";
 import type { RunBoundary } from "@/lib/runs/schemas";
+import type { CustodyRow } from "@/lib/conversation-core/conversation-record";
 import { composeSupervision, type Supervision } from "../supervision";
 
 const silent = {
@@ -180,6 +181,12 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     interrupted: [] as string[],
     /** Conversations whose last runtime did not close, with why. */
     uncollected: new Map<string, string>(),
+    /** What custody showed on a conversation's row at each of its writes. */
+    custodyRows: [] as Array<CustodyRow | null>,
+    /** Runtime losses recorded for custodies, as `attempt:end`. */
+    custodyLosses: [] as string[],
+    /** How long the server has been up, which bounds the restart fence. */
+    uptimeMs: 60_000,
     /** How many evidence captures fail before they succeed again. */
     evidenceFailures: 0,
     /** What conversations' rows hold; none unless a test composes the real rule. */
@@ -269,12 +276,19 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
           async recordInterrupted(identity) {
             harness.interrupted.push(identity.conversationId);
           },
+          async recordSegment(_identity, _usage, project) {
+            harness.custodyRows.push(project());
+          },
           async recordWithdrawn() {},
           hasPendingQuestion: () => false,
           withdrawQuestion: async () => false,
           async claimTurn() {},
           async endClaim() {},
         },
+        async custodyLoss({ attemptId, end }) {
+          harness.custodyLosses.push(`${attemptId}:${end}`);
+        },
+        uptimeMs: () => harness.uptimeMs,
         userTurns: {
           async run(input) {
             harness.userMessages.push(input.request.text);

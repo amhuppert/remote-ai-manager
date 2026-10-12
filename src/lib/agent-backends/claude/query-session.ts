@@ -170,6 +170,17 @@ export function _setSdkQueryForTesting(impl: CreateSdkQuery | null): void {
   createSdkQueryImpl = impl ?? defaultCreateSdkQuery;
 }
 
+let continuationDeadlineOverrideMs: number | null = null;
+
+/**
+ * Test-only seam for the unanswered-continuation deadline of sessions created
+ * from here on (see `UNANSWERED_CONTINUATION_DEADLINE_MS`), for tests that
+ * drive the session through its runtime. Pass null to restore the default.
+ */
+export function _setContinuationDeadlineForTesting(ms: number | null): void {
+  continuationDeadlineOverrideMs = ms;
+}
+
 export interface QuerySession {
   /** Current health status */
   readonly status: "alive" | "dead";
@@ -317,6 +328,8 @@ export interface QuerySessionOptions {
   idleTtlMs?: number;
   /** Test seam for the folded-notification grace; see `FOLDED_NOTIFICATION_GRACE_MS`. */
   foldedNotificationGraceMs?: number;
+  /** Test seam for the unanswered-continuation deadline; see `UNANSWERED_CONTINUATION_DEADLINE_MS`. */
+  continuationDeadlineMs?: number;
   /**
    * Initial SDK Settings object passed to `Options.settings`. The Claude
    * factory builds this from the translated capability config so the SDK
@@ -469,6 +482,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const foldedNotificationGraceMs =
     options.foldedNotificationGraceMs ?? FOLDED_NOTIFICATION_GRACE_MS;
   let foldGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  const continuationDeadlineMs =
+    options.continuationDeadlineMs ??
+    continuationDeadlineOverrideMs ??
+    UNANSWERED_CONTINUATION_DEADLINE_MS;
+  let continuationDeadline: ReturnType<typeof setTimeout> | null = null;
   let turnStartedSinceResult = false;
   let cliTurnRunning = false;
   // The debt a running CLI turn found when it began: all that a
@@ -827,6 +845,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       clearTimeout(idleTimer);
       idleTimer = null;
     }
+    // A turn is coming: its result gives unanswered debt a fresh deadline.
+    clearContinuationDeadline();
 
     currentTurnOptions = turnOptions ?? null;
 
@@ -938,6 +958,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       clearTimeout(idleTimer);
       idleTimer = null;
     }
+    clearContinuationDeadline();
   }
 
   // ------------------------------------------------------------------
@@ -1236,8 +1257,49 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     }, foldedNotificationGraceMs);
   }
 
+  /**
+   * Debt for a task that ended while no CLI turn ran is answered by a
+   * continuation the CLI starts within about 100 ms (design C5b §9.1). The
+   * deadline runs while such debt is owed and no turn runs or is coming; a
+   * CLI that has not started one by then never will, so the session ends and
+   * its host hears it as death, whatever other tasks still run. A turn's
+   * result gives debt it left unanswered a fresh deadline.
+   */
+  function reconcileContinuationDeadline(): void {
+    const owedBetweenTurns = [...owedContinuations].some(
+      (taskId) => !foldableContinuations.has(taskId),
+    );
+    if (
+      status !== "alive" ||
+      cliTurnRunning ||
+      pendingTurn !== null ||
+      !owedBetweenTurns
+    ) {
+      clearContinuationDeadline();
+      return;
+    }
+    if (continuationDeadline !== null) return;
+    continuationDeadline = setTimeout(() => {
+      continuationDeadline = null;
+      if (status !== "alive" || cliTurnRunning || pendingTurn !== null) return;
+      logger.warn("query-session.continuation_deadline", {
+        conversationId: options.conversationId,
+        deadlineMs: continuationDeadlineMs,
+        owed: owedContinuations.size,
+      });
+      close();
+    }, continuationDeadlineMs);
+  }
+
+  function clearContinuationDeadline(): void {
+    if (continuationDeadline === null) return;
+    clearTimeout(continuationDeadline);
+    continuationDeadline = null;
+  }
+
   /** Report death once, after every other callback of the dying session. */
   function notifyTerminated(reason: string): void {
+    clearContinuationDeadline();
     unansweredInputs.clear();
     owedContinuations.clear();
     foldableContinuations.clear();
@@ -1474,6 +1536,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     processMessageBody(message);
     checkBackgroundTaskWaiters();
     reconcileIdleTimer();
+    reconcileContinuationDeadline();
     publishOwedWork();
   }
 
@@ -1828,6 +1891,14 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
 /** How long after a turn's result its folded-in task notifications count as answered. */
 const FOLDED_NOTIFICATION_GRACE_MS = 2_000;
+
+/**
+ * How long debt for a task that ended between turns may wait for the CLI to
+ * start the turn that answers it before the session is ended (design C5b §6).
+ * Continuations start within about 100 ms; this only catches a CLI that never
+ * answers.
+ */
+const UNANSWERED_CONTINUATION_DEADLINE_MS = 60_000;
 
 /** A result of a turn the CLI started on its own, such as a continuation. */
 function isProviderOrigin(result: SDKResultSuccess | SDKResultError): boolean {

@@ -35,6 +35,8 @@ import { getStateDb, type StateStore } from "@/lib/state-store/store";
 import {
   applyBackendAdoption,
   applyClaimEnded,
+  applyCustodyRow,
+  applySegmentUsage,
   applyDebugCommandToRow,
   applyQuestionAsked,
   applyQuestionCleared,
@@ -47,6 +49,7 @@ import {
   statusWithoutQuestion,
   type ConversationIdentity,
   type ConversationRecordPort,
+  type CustodyRecordPort,
   type QuestionBatch,
 } from "./conversation-record";
 import type { CoreDebugModeDeps } from "./debug-mode";
@@ -214,8 +217,63 @@ function publishUnread(identity: ConversationIdentity, unread: boolean): void {
 /** The conversation row written the way every client already reads it. */
 export function createProductionConversationRecords(
   rows: ConversationRowStore = productionRowStore,
-): ConversationRecordPort {
+): ConversationRecordPort & CustodyRecordPort {
+  /** The person gets control back: unread for a person's work, asked back, and a project conversation's notice. */
+  function tellIdle(
+    identity: ConversationIdentity,
+    status: "awaiting" | "waiting_for_input",
+    source: "user" | "workflow",
+    unread: boolean,
+    facts: NotificationFacts,
+    failure: string | undefined,
+    askBack: boolean,
+  ): void {
+    // A question still open was announced when it was asked.
+    if (status === "awaiting")
+      notifyProjectStatus(identity, status, facts, failure);
+    if (source !== "user") return;
+    publishUnread(identity, unread);
+    if (status === "awaiting" && askBack) pushStatus(identity, "awaiting");
+  }
+
   return {
+    async recordSegment(identity, usage, project) {
+      const written = await rows.mutateConversation(
+        identity.projectPath,
+        identity.storeSessionName,
+        identity.conversationId,
+        "conversation-core.custody.segment",
+        (row) => {
+          if (usage !== null) applySegmentUsage(row, usage);
+          const shown = project();
+          if (shown === null) return null;
+          return {
+            shown,
+            status: applyCustodyRow(row, shown, new Date().toISOString()),
+            unread: row.unread,
+            facts: factsOf(row),
+          };
+        },
+      );
+      if (written === null) return;
+      const { shown, status, unread, facts } = written;
+      publishStatus(identity, status);
+      // A provider turn's end hands control back as a turn's does.
+      if (
+        shown.status === "idle" &&
+        shown.notify !== null &&
+        status !== "running"
+      )
+        tellIdle(
+          identity,
+          status,
+          shown.notify,
+          unread,
+          facts,
+          undefined,
+          true,
+        );
+    },
     async read(identity) {
       const row: ConversationState | null = await rows.getConversation(
         identity.projectPath,
@@ -386,22 +444,27 @@ export function createProductionConversationRecords(
       publishStatus(identity, withdrawn);
       return true;
     },
-    async settleTurn(identity, settlement, source) {
+    async settleTurn(identity, settlement, source, custody) {
       const { status, debug, unread, facts } = await rows.mutateConversation(
         identity.projectPath,
         identity.storeSessionName,
         identity.conversationId,
         "conversation-core.turn.settle",
-        (row) => ({
-          ...applyTurnSettlement(
-            row,
-            settlement,
-            new Date().toISOString(),
-            source,
-          ),
-          unread: row.unread,
-          facts: factsOf(row),
-        }),
+        (row) => {
+          const now = new Date().toISOString();
+          const settled = applyTurnSettlement(row, settlement, now, source);
+          // The custody that kept the runtime decides what the row shows now.
+          const shown = custody?.() ?? null;
+          return {
+            debug: settled.debug,
+            status:
+              shown?.status === "running"
+                ? applyCustodyRow(row, shown, now)
+                : settled.status,
+            unread: row.unread,
+            facts: factsOf(row),
+          };
+        },
       );
       // A failure must stay explicable after a reload, not only in a live stream.
       if (settlement.failure !== null && !settlement.failure.recorded) {
@@ -417,19 +480,19 @@ export function createProductionConversationRecords(
           ? debug.lastError
           : settlement.failure?.message;
       publishStatus(identity, status, failure);
-      // A question still open was announced when it was asked.
-      if (status === "awaiting")
-        notifyProjectStatus(identity, status, facts, failure);
-      if (source === "user") {
-        publishUnread(identity, unread);
-        // The person is asked back when the turn hands them control: not for a question (its ask
-        // already did), and in debug mode only when the session's phase advanced.
-        if (
-          status === "awaiting" &&
-          (debug === null || debug.kind === "advance")
-        )
-          pushStatus(identity, "awaiting");
-      }
+      // Still running a provider turn custody holds: control comes back when that ends.
+      if (status === "running") return { debug };
+      // The person is asked back when the turn hands them control: not for a question (its ask
+      // already did), and in debug mode only when the session's phase advanced.
+      tellIdle(
+        identity,
+        status,
+        source,
+        unread,
+        facts,
+        failure,
+        debug === null || debug.kind === "advance",
+      );
       return { debug };
     },
   };

@@ -21,6 +21,7 @@ import {
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { ConversationRecordPort } from "./conversation-record";
 import { createInteractiveTurns } from "./interactive-turns";
+import { noCustody, noCustodyOpener } from "./testing/no-custody";
 import { createNativeSeatTurns } from "./native-seat-turns";
 import { createRuntimeApplicationState } from "./runtime-application-state";
 import { createRuntimeHost } from "./runtime-host";
@@ -230,6 +231,7 @@ async function runInteractiveTurn(): Promise<unknown> {
     engine,
     records,
     host,
+    custody: noCustody,
     worktreeOf: async () => WORKTREE,
     admitCheckpointFork: async () => null,
     resolveModelSelection: async () => ({
@@ -267,6 +269,7 @@ async function runInteractiveTurn(): Promise<unknown> {
     attemptId: "attempt-1",
     signal: new AbortController().signal,
     stream: null,
+    custody: noCustodyOpener,
   });
 }
 

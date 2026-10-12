@@ -6,6 +6,7 @@ import type {
   ConversationState,
 } from "@/lib/conversations/schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
+import type { ConversationBackendTurnResult } from "@/lib/agent-backends/conversation";
 import {
   toPromptActorResult,
   type TurnExecutionOutcome,
@@ -85,6 +86,87 @@ export interface TurnSettlement {
   failure: { message: string; recorded: boolean } | null;
   /** What a debug turn produced, as debug finalization reads it. */
   debugOutcome: DebugTurnOutcome;
+}
+
+/**
+ * What a provider turn in a runtime custody holds (design C5b §3.3)
+ * contributes to the row: its usage and continuity. It answers no prompt, so
+ * it never counts as one.
+ */
+export type SegmentUsage = Pick<
+  TurnSettlement,
+  | "continuity"
+  | "costUsd"
+  | "durationMs"
+  | "numTurns"
+  | "contextTokens"
+  | "contextWindowMax"
+>;
+
+/**
+ * The row as custody leaves it: running while a provider turn runs, under
+ * its handing turn's source (null while only a turn waiting to take over
+ * holds it), otherwise idle. `notify` names the source of a provider turn
+ * that just ended, whose end the person hears about as a turn's.
+ */
+export type CustodyRow =
+  | { status: "running"; source: TurnSource | null }
+  | { status: "idle"; notify: TurnSource | null };
+
+/** Pure: a provider turn's usage and continuity, from the result the backend reported for it. */
+export function segmentUsageOf(
+  result: ConversationBackendTurnResult,
+): SegmentUsage {
+  return {
+    // The adapter decides whether its continuation survived, as for a turn.
+    continuity:
+      result.continuationDisposition === "clear"
+        ? { kind: "clear" }
+        : result.backendRef !== null
+          ? { kind: "set", ref: result.backendRef }
+          : { kind: "keep" },
+    costUsd: result.costUsd,
+    durationMs: result.durationMs,
+    numTurns: result.numTurns,
+    contextTokens: result.contextTokens,
+    contextWindowMax: result.contextWindowMax,
+  };
+}
+
+/** Pure over the row draft: a provider turn's usage joins the totals; its continuity is the row's. */
+export function applySegmentUsage(
+  row: ConversationRow,
+  usage: SegmentUsage,
+): void {
+  if (usage.continuity.kind === "set") row.backendRef = usage.continuity.ref;
+  if (usage.continuity.kind === "clear") row.backendRef = null;
+  row.totalCostUsd = (row.totalCostUsd ?? 0) + (usage.costUsd ?? 0);
+  row.totalDurationMs = (row.totalDurationMs ?? 0) + (usage.durationMs ?? 0);
+  row.totalTurns = (row.totalTurns ?? 0) + (usage.numTurns ?? 0);
+  row.contextTokens = usage.contextTokens ?? row.contextTokens;
+  row.contextWindowMax = usage.contextWindowMax ?? row.contextWindowMax;
+}
+
+/**
+ * Pure over the row draft: the row as custody's owner leaves it. A question
+ * the provider turn asked keeps the row waiting for its answer.
+ */
+export function applyCustodyRow(
+  row: ConversationRow,
+  change: CustodyRow,
+  now: string,
+): "running" | "waiting_for_input" | "awaiting" {
+  row.lastActivityAt = now;
+  if (change.status === "running") {
+    row.activeTurnSource = change.source;
+    row.status =
+      row.pendingQuestionId !== null ? "waiting_for_input" : "running";
+    return row.status;
+  }
+  row.activeTurnSource = null;
+  row.status = idleStatus(row);
+  if (change.notify === "user") row.unread = true;
+  return row.status;
 }
 
 /** Pure: the row effect of one turn's normalized outcome. */
@@ -473,12 +555,32 @@ export interface ConversationRecordPort {
   hasPendingQuestion(identity: ConversationIdentity): boolean;
   /** The person stopped the conversation: its pending question is withdrawn. False when none was pending. */
   withdrawQuestion(identity: ConversationIdentity): Promise<boolean>;
-  /** Applies the settlement to the row and publishes the conversation's idle status. */
+  /**
+   * Applies the settlement to the row and publishes the conversation's idle
+   * status. `custody`, read as the row is written, is the row as the custody
+   * that kept the turn's runtime leaves it: running while its provider turn
+   * runs (design C5b §3.3, step 3).
+   */
   settleTurn(
     identity: ConversationIdentity,
     settlement: TurnSettlement,
     source: TurnSource,
+    custody?: () => CustodyRow | null,
   ): Promise<TurnSettled>;
+}
+
+/** The conversation row as a custody holding its runtime between turns writes it (design C5b §3.3). */
+export interface CustodyRecordPort {
+  /**
+   * A provider turn custody holds: once it ended, its usage and continuity
+   * join the row; `project`, read as the row is written, is what the row shows
+   * now, or null when a turn holds the row and owns its status.
+   */
+  recordSegment(
+    identity: ConversationIdentity,
+    usage: SegmentUsage | null,
+    project: () => CustodyRow | null,
+  ): Promise<void>;
 }
 
 /** Why the conversation row holds work back. */
