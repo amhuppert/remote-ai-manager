@@ -94,14 +94,24 @@ interface FakeRuntime extends ConversationBackendRuntime {
   die(): void;
 }
 
-function harness(options: { owedWork?: boolean } = {}) {
+function harness(
+  options: {
+    owedWork?: boolean;
+    /** Every close of the runtime fails: its processes cannot be confirmed stopped. */
+    closeFailure?: string;
+  } = {},
+) {
   const created: FakeRuntime[] = [];
   const tracked: Promise<void>[] = [];
   const writes: Array<{ usage: SegmentUsage | null; row: CustodyRow | null }> =
     [];
   const frames: string[] = [];
   const staged: string[] = [];
-  const losses: Array<{ key: string; end: CustodyLossReason }> = [];
+  const losses: Array<{
+    key: string;
+    end: CustodyLossReason;
+    collected: boolean;
+  }> = [];
   let failNextAppend = false;
   let failNextSegmentWrite = false;
   /** While set, frame appends wait for it, stalling the runtime's event chain. */
@@ -150,6 +160,10 @@ function harness(options: { owedWork?: boolean } = {}) {
             throw new Error("not used");
           },
           async close() {
+            if (options.closeFailure !== undefined) {
+              terminate("closed");
+              throw new Error(options.closeFailure);
+            }
             runtime.closed = true;
             terminate("closed");
           },
@@ -209,8 +223,8 @@ function harness(options: { owedWork?: boolean } = {}) {
     async applyStagedCapabilities(hosted) {
       staged.push(hosted.conversationId);
     },
-    async recordLoss({ key, end }) {
-      losses.push({ key, end });
+    async recordLoss({ key, end, collected }) {
+      losses.push({ key, end, collected });
     },
     log: silent,
   });
@@ -488,6 +502,25 @@ describe("runtime custody", () => {
     expect(custody.told).toEqual([]);
   });
 
+  it("leaves a stale 'owes nothing', read after the runtime died, to its death: custody ends lost, never settled", async () => {
+    const h = harness();
+    const runtime = await h.obtain();
+    runtime.owe(true);
+    const custody = h.opener();
+    h.custody.keep("conv-1", turn, custody.open);
+    let release: () => void = () => {};
+    h.holdAppends(new Promise<void>((resolve) => (release = resolve)));
+
+    runtime.providerTurn([frame("a", "Checking the build.")]);
+    runtime.owe(false);
+    runtime.die();
+    h.holdAppends(null);
+    release();
+    await h.settle();
+
+    expect(custody.told).toEqual(["lost"]);
+  });
+
   it("reports a runtime that dies while custody holds it as lost", async () => {
     const h = harness();
     const runtime = await h.obtain();
@@ -600,8 +633,31 @@ describe("runtime custody", () => {
     );
     expect(runtime.closed).toBe(true);
     expect(h.host.runtime("conv-1")).toBeNull();
-    expect(h.losses).toEqual([{ key: "drift:turn-2", end: "reconfigured" }]);
+    expect(h.losses).toEqual([
+      { key: "drift:turn-2", end: "reconfigured", collected: true },
+    ]);
     expect(h.staged).toEqual([]);
+  });
+
+  it("tells the person a drift close could not be confirmed, claiming no termination, before the turn fails", async () => {
+    const h = harness({ closeFailure: "the CLI did not exit" });
+    const runtime = await h.obtain();
+    runtime.owe(true);
+    const custody = h.opener();
+    h.custody.keep("conv-1", turn, custody.open);
+    custody.release("handed_over");
+    await h.settle();
+
+    await expect(
+      h.custody.takeOver(
+        conversation,
+        { ...sonnet, modelSelection: { modelId: "opus", parameters: {} } },
+        "turn-2",
+      ),
+    ).rejects.toThrow("the CLI did not exit");
+    expect(h.losses).toEqual([
+      { key: "drift:turn-2", end: "reconfigured", collected: false },
+    ]);
   });
 
   it("keeps a handed-over runtime that did not drift, applying staged capability changes only when no provider turn runs", async () => {

@@ -16,7 +16,12 @@ import {
   type CustodyRecordPort,
   type TurnSource,
 } from "./conversation-record";
-import type { CustodyLease, CustodyLossEnd, CustodyOpener } from "./executor";
+import type {
+  CustodyLease,
+  CustodyLossEnd,
+  CustodyOpener,
+  LostTask,
+} from "./executor";
 import type { RunningTurnDescription } from "./interactive-turns";
 import type {
   HostedConversation,
@@ -44,6 +49,8 @@ export interface RuntimeCustodyDeps {
     key: string;
     end: CustodyLossReason;
     collected: boolean;
+    /** The tasks the runtime reported cut short, which the loss names. */
+    tasks: LostTask[];
   }): Promise<void>;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
@@ -98,6 +105,16 @@ export interface RuntimeCustody {
   describe(conversationId: string): RunningTurnDescription | null;
   /** The provider turn custody holds now, which live input may join; null in idle custody or without one. */
   segment(conversationId: string): CustodySegment | null;
+  /**
+   * The conversation's runtime reports these tasks cut short as it closes or
+   * dies (design C5b §6). Custody claims the loss when it holds the runtime,
+   * closes it itself on a handover's drift, or a closed scope refused it and
+   * the refusal records the loss: its one record names these tasks, and the
+   * adapter's own report records nothing. A death custody has not heard of
+   * yet ends it lost now; an end already under way stays that end. False
+   * when custody does not claim the loss.
+   */
+  claimLoss(conversationId: string, tasks: LostTask[]): boolean;
 }
 
 /** One runtime's provider turns and the custody, if any, that holds it now. */
@@ -108,6 +125,14 @@ interface Retention {
   /** A provider turn is running: set as its start is received, cleared as its end is. */
   segment: boolean;
   lease: CustodyLease | null;
+  /**
+   * Custody claims what the runtime's close in progress cuts short: it closes
+   * the runtime itself on a handover's drift, or a closed scope refused
+   * custody and the turn releases the runtime.
+   */
+  claimsLoss: boolean;
+  /** The tasks the runtime reported cut short when custody claimed its loss. */
+  lostTasks: LostTask[];
   turn: CustodyTurn | null;
   /** Live input custody took during its provider turns, until each has settled. */
   deliveries: Set<Promise<unknown>>;
@@ -227,6 +252,8 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
         meta: { projectName: conversation.projectName, storeSessionName },
         segment: false,
         lease: null,
+        claimsLoss: false,
+        lostTasks: [],
         turn: null,
         deliveries: new Set(),
         chain: Promise.resolve(),
@@ -240,9 +267,15 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
           then(retention, async () => {
             const lease = retention.lease;
             if (lease === null) return;
-            // The notice trails the runtime's own answer, which is the truth now.
+            // The notice trails the runtime's own answer, which is the truth now. Only a live
+            // runtime's "nothing owed" is success: a dead or gone one is its death's to end.
             const runtime = deps.host.runtime(conversation.conversationId);
-            if (runtime?.owesWork?.() === true) return;
+            if (
+              runtime === null ||
+              runtime.status !== "alive" ||
+              runtime.owesWork?.() !== false
+            )
+              return;
             lease.settled();
           });
         },
@@ -269,7 +302,12 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
         segmentActive: () => retention.segment,
         close: () => deps.host.release(conversationId),
         closeFailure: () => deps.host.closeFailure(conversationId),
+        lossClaimed() {
+          retention.claimsLoss = true;
+        },
+        lostTasks: () => retention.lostTasks,
         released() {
+          retention.claimsLoss = false;
           if (retention.lease !== lease) return;
           retention.lease = null;
           retention.turn = null;
@@ -293,10 +331,10 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
           changes,
           owed,
         });
-        // A close that cannot be confirmed fails the turn, which keeps its grant: no loss is claimed.
-        await deps.host.release(conversationId);
-        if (owed)
-          await deps.recordLoss({
+        const retention = retentions.get(conversationId);
+        if (retention !== undefined) retention.claimsLoss = owed;
+        const recordLoss = (collected: boolean) =>
+          deps.recordLoss({
             identity: {
               projectPath: conversation.projectPath,
               storeSessionName: conversationTargetStoreSessionName(
@@ -306,8 +344,20 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
             },
             key: `drift:${turnAttemptId}`,
             end: "reconfigured",
-            collected: true,
+            collected,
+            tasks: retention?.lostTasks ?? [],
           });
+        try {
+          await deps.host.release(conversationId);
+        } catch (error) {
+          // A close that cannot be confirmed fails the turn, which keeps its grant: the person
+          // hears the work was stopped unconfirmed, and no termination is claimed.
+          if (owed) await recordLoss(false);
+          throw error;
+        } finally {
+          if (retention !== undefined) retention.claimsLoss = false;
+        }
+        if (owed) await recordLoss(true);
         return;
       }
       const retention = retentions.get(conversationId);
@@ -347,6 +397,20 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
           void delivery.then(settled, settled);
         },
       };
+    },
+
+    claimLoss(conversationId, tasks) {
+      const retention = retentions.get(conversationId);
+      // A custody ending closes its runtime before it lets the runtime go, so its lease is still held here.
+      if (
+        retention === undefined ||
+        (retention.lease === null && !retention.claimsLoss)
+      )
+        return false;
+      retention.lostTasks = tasks;
+      // No turn may take a dead runtime over while its death is still on its way to custody.
+      retention.lease?.lost();
+      return true;
     },
   };
 }

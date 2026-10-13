@@ -24,105 +24,132 @@ import {
 } from "@/lib/debug-log/service";
 import { type ConversationCommandOutcome } from "@/lib/workflows/conversation/manager";
 import { ensureConversationLifecycle } from "@/lib/workflows/conversation/lifecycle";
-import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
+import {
+  getDefaultDebugAdapter,
+  type DebugAdapter,
+} from "@/lib/workflows/conversation/debug-adapter";
 import { createDebugLogStatsHandlers } from "@/lib/debug-log/stats-route-handlers";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import type { ApiError } from "@/lib/api/errors";
 
+interface DebugModeRouteDeps {
+  resolveProjectPath(name: string): ReturnType<typeof resolveProjectPath>;
+  getSession(
+    ...args: Parameters<typeof getSession>
+  ): ReturnType<typeof getSession>;
+  ensureConversation(binding: ConversationBinding): Promise<void>;
+  adapter(): DebugAdapter;
+}
+
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/debug-mode — enter/exit debug mode */
-export const updateDebugMode = withTracing(async (request, { params }) => {
-  const resolved = await resolveSessionConversationRoute(
-    { resolveProjectPath, getSession },
-    { params },
-  );
-  if (!resolved.ok) return resolved.response;
-  const { projectPath, sessionName, conversationId, session, conversation } =
-    resolved.value;
-
-  let body: ReturnType<typeof debugModeRequestSchema.parse>;
-  try {
-    body = debugModeRequestSchema.parse(await request.json());
-  } catch {
-    return NextResponse.json(
-      { error: "valid action is required" } satisfies ApiError,
-      { status: 400 },
-    );
-  }
-
-  try {
-    // Hosts (and repairs) an actor conversation's actor; nothing to do for one the core runs.
-    await ensureConversationLifecycle({
-      kind: "durable",
-      address: {
-        projectPath,
-        target: sessionConversationTarget(
-          (await params)["name"] ?? "",
-          sessionName,
-          conversationId,
-        ),
+export function createDebugModeHandler(deps: DebugModeRouteDeps) {
+  return async (
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ) => {
+    const resolved = await resolveSessionConversationRoute(
+      {
+        resolveProjectPath: deps.resolveProjectPath,
+        getSession: deps.getSession,
       },
-    });
-    const adapter = getDefaultDebugAdapter();
-    const target = { projectPath, sessionName, conversationId };
+      { params },
+    );
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId, session, conversation } =
+      resolved.value;
 
-    let dispatched: ConversationCommandOutcome;
-    switch (body.action) {
-      case "enter": {
-        if (conversation.debugMode?.active) {
-          return NextResponse.json(
-            { error: "Already in debug mode" } satisfies ApiError,
-            { status: 409 },
-          );
-        }
-        ensureDebugDir(session.worktreePath, conversationId);
-        const logFilePath = getDebugLogPath(
-          session.worktreePath,
-          conversationId,
-        );
-        dispatched = await adapter.enterDebugMode(target, { logFilePath });
-        break;
-      }
-      case "exit":
-        dispatched = await adapter.exitDebugMode(target);
-        break;
-      case "mark_reproduced":
-        dispatched = await adapter.markReproduced(target);
-        break;
-      case "mark_fix_verified":
-        dispatched = await adapter.markFixVerified(target);
-        break;
-      case "mark_fix_failed":
-        dispatched = await adapter.markFixFailed(target);
-        break;
-      case "revert_to_awaiting_reproduction":
-        dispatched = await adapter.revertToAwaitingReproduction(target);
-        break;
-      case "revert_to_awaiting_verification":
-        dispatched = await adapter.revertToAwaitingVerification(target);
-        break;
-      case "retry_turn":
-        dispatched = await adapter.retryDebugTurn(target);
-        break;
-    }
-
-    if (dispatched.kind === "refused") {
+    let body: ReturnType<typeof debugModeRequestSchema.parse>;
+    try {
+      body = debugModeRequestSchema.parse(await request.json());
+    } catch {
       return NextResponse.json(
-        {
-          error: `Action '${body.action}' is not valid in the current debug phase`,
-        } satisfies ApiError,
-        { status: 409 },
+        { error: "valid action is required" } satisfies ApiError,
+        { status: 400 },
       );
     }
 
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to toggle debug mode";
-    return NextResponse.json({ error: message } satisfies ApiError, {
-      status: 500,
-    });
-  }
-});
+    try {
+      // Hosts (and repairs) an actor conversation's actor; nothing to do for one the core runs.
+      await deps.ensureConversation({
+        kind: "durable",
+        address: {
+          projectPath,
+          target: sessionConversationTarget(
+            (await params)["name"] ?? "",
+            sessionName,
+            conversationId,
+          ),
+        },
+      });
+      const adapter = deps.adapter();
+      const target = { projectPath, sessionName, conversationId };
+
+      let dispatched: ConversationCommandOutcome;
+      switch (body.action) {
+        case "enter": {
+          if (conversation.debugMode?.active) {
+            return NextResponse.json(
+              { error: "Already in debug mode" } satisfies ApiError,
+              { status: 409 },
+            );
+          }
+          ensureDebugDir(session.worktreePath, conversationId);
+          const logFilePath = getDebugLogPath(
+            session.worktreePath,
+            conversationId,
+          );
+          dispatched = await adapter.enterDebugMode(target, { logFilePath });
+          break;
+        }
+        case "exit":
+          dispatched = await adapter.exitDebugMode(target);
+          break;
+        case "mark_reproduced":
+          dispatched = await adapter.markReproduced(target);
+          break;
+        case "mark_fix_verified":
+          dispatched = await adapter.markFixVerified(target);
+          break;
+        case "mark_fix_failed":
+          dispatched = await adapter.markFixFailed(target);
+          break;
+        case "revert_to_awaiting_reproduction":
+          dispatched = await adapter.revertToAwaitingReproduction(target);
+          break;
+        case "revert_to_awaiting_verification":
+          dispatched = await adapter.revertToAwaitingVerification(target);
+          break;
+        case "retry_turn":
+          dispatched = await adapter.retryDebugTurn(target);
+          break;
+      }
+
+      if (dispatched.kind === "refused") {
+        return NextResponse.json(
+          { error: dispatched.message } satisfies ApiError,
+          { status: 409 },
+        );
+      }
+
+      return NextResponse.json({ ok: true });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to toggle debug mode";
+      return NextResponse.json({ error: message } satisfies ApiError, {
+        status: 500,
+      });
+    }
+  };
+}
+
+export const updateDebugMode = withTracing(
+  createDebugModeHandler({
+    resolveProjectPath,
+    getSession,
+    ensureConversation: ensureConversationLifecycle,
+    adapter: getDefaultDebugAdapter,
+  }),
+);
 
 /** GET .../debug-mode/logs — return debug log entry count */
 export const getDebugModeLogs = withTracing(createDebugLogStatsHandlers().GET);

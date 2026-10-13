@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import type { ControlPermits } from "@/lib/control/permits";
 import type { PermitRef } from "@/lib/control/schemas";
 import type { Executor, OperationState } from "@/lib/intents/executor";
@@ -198,6 +199,9 @@ export interface BackgroundWorkHold {
   unconfirmed: string | null;
 }
 
+/** A background task a runtime reported cut short as it closed, for the loss custody records. */
+export type LostTask = BackgroundTasksLostInfo["tasks"][number];
+
 /** The runtime a custody holds between turns, as the runtime side keeps it (design C5b §3). */
 export interface RetainedRuntime {
   /** A provider turn (a segment) is running in it now. */
@@ -206,6 +210,14 @@ export interface RetainedRuntime {
   close(): Promise<void>;
   /** Why its processes are still not confirmed stopped after a failed close, or null once collected. */
   closeFailure(): string | null;
+  /**
+   * A closed scope refused custody, whose admitted attempt now records the
+   * loss of what the turn's release of the runtime cuts short: custody
+   * claims that loss, not the runtime's own report of lost tasks.
+   */
+  lossClaimed(): void;
+  /** The tasks the runtime reported cut short as it closed; empty when it reported none. */
+  lostTasks(): LostTask[];
   /** Custody is over: nothing more reports to it. */
   released(end: CustodyEnd): void;
 }
@@ -381,6 +393,8 @@ export interface ConversationCoreDeps {
      * only the person is told, and the agent's loss stays owed until they are.
      */
     collected: boolean;
+    /** The tasks the runtime reported cut short, which the loss names; empty when none were reported. */
+    tasks: LostTask[];
   }): Promise<void>;
   /** How long this server has been running, which bounds the restart fence. */
   uptimeMs(): number;
@@ -643,7 +657,7 @@ export function createConversationCore(
   /** Custodies whose loss is not yet recorded for the agent, by attempt: the loss, and the end settled once it is. */
   const owedLosses = new Map<
     string,
-    { loss: CustodyLossEnd; end: CustodyEnd }
+    { loss: CustodyLossEnd; end: CustodyEnd; tasks: LostTask[] }
   >();
   /** Scopes closed to background work while their act commits; custody opens in none of them. */
   const closings = new Set<{ scope: CustodyScope; end: CustodyRefusedEnd }>();
@@ -1153,7 +1167,10 @@ export function createConversationCore(
       let settle: () => void = () => {};
       const settled = new Promise<void>((resolve) => (settle = resolve));
       pendingCollections.set(conversationId, { place, settled, settle });
-      return { kind: "closed", owed: owedRefusal(item, turnAttemptId, closed) };
+      const owed = owedRefusal(item, turnAttemptId, closed);
+      // Without its attempt the refusal records nothing, and the runtime's own report is the loss's one record.
+      if (owed !== null) runtime.lossClaimed();
+      return { kind: "closed", owed };
     }
     const cause = custodyCause(turnAttemptId);
     // Interactive grants never conflict with each other, so this never waits.
@@ -1238,22 +1255,34 @@ export function createConversationCore(
     if (custody.ending !== null) return custody.ending;
     clearTimeout(custody.bound);
     const { conversationId, attemptId } = custody;
-    custody.ending = (async (): Promise<string | null> => {
+    let finish: (uncollected: string | null) => void = () => {};
+    let fail: (error: unknown) => void = () => {};
+    // Set before the close starts: a death the runtime reports from inside its close is this end.
+    custody.ending = new Promise<string | null>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    });
+    void (async (): Promise<string | null> => {
       let uncollected: string | null = null;
       await custody.runtime.close().catch((error: unknown) => {
         uncollected = getErrorMessage(error);
       });
       const collected = uncollected === null;
+      const tasks = custody.runtime.lostTasks();
+      // A custody that chose to settle still lost what its close cut short: a task started after
+      // nothing was owed. One end, the effective one, is recorded, settled, told and logged.
+      const effective = end === "settled" && tasks.length > 0 ? "lost" : end;
       // Custody stays admitted until the loss it cut short is recorded for the agent: the next
       // turn's admission or the next boot records it then.
       let lossOwed = false;
-      if (end !== "settled") {
+      if (effective !== "settled") {
         try {
           await deps.custodyLoss({
             place: custody.place,
             attemptId,
-            end,
+            end: effective,
             collected,
+            tasks,
           });
           lossOwed = !collected;
         } catch (error) {
@@ -1264,21 +1293,17 @@ export function createConversationCore(
             error: getErrorMessage(error),
           });
         }
+        if (lossOwed) {
+          owedLosses.set(attemptId, { loss: effective, end: effective, tasks });
+          deps.log.warn("conversation_core.custody_loss_owed", {
+            conversationId,
+            attemptId,
+            end: effective,
+            collected,
+          });
+        }
       }
-      if (lossOwed) {
-        owedLosses.set(attemptId, {
-          loss: end === "settled" ? "lost" : end,
-          end,
-        });
-        deps.log.warn("conversation_core.custody_loss_owed", {
-          conversationId,
-          attemptId,
-          end,
-          collected,
-        });
-      } else {
-        settleCustody(conversationId, attemptId, end);
-      }
+      if (!lossOwed) settleCustody(conversationId, attemptId, effective);
       if (uncollected !== null) {
         uncollectedRuntimes.set(conversationId, {
           runtime: custody.runtime,
@@ -1299,11 +1324,12 @@ export function createConversationCore(
         custodies.delete(conversationId);
         tellCustody(custody.place, false);
       }
-      custody.runtime.released(end);
+      custody.runtime.released(effective);
       deps.log.info("conversation_core.custody_ended", {
         conversationId,
         attemptId,
-        end,
+        end: effective,
+        ...(effective !== end ? { requestedEnd: end } : {}),
         uncollected: uncollected !== null,
       });
       // A provider turn whose end never arrived must not leave the row running.
@@ -1325,7 +1351,7 @@ export function createConversationCore(
       }
       offerIdle(conversationId);
       return uncollected;
-    })();
+    })().then(finish, fail);
     return custody.ending;
   }
 
@@ -1389,7 +1415,8 @@ export function createConversationCore(
 
   /**
    * After the turn whose custody a closed scope refused has released its
-   * runtime: its pending collection settles (an uncollected runtime stays
+   * runtime: the runtime side hears the refused custody is over, its
+   * pending collection settles (an uncollected runtime stays
    * background work until collected), then the loss is recorded (the
    * agent's only once the runtime was seen collected) and the attempt
    * settled `refused`; otherwise it stays owed.
@@ -1400,6 +1427,8 @@ export function createConversationCore(
     uncollected: string | null,
   ): Promise<void> {
     const { conversationId } = place;
+    refusal.runtime.released("refused");
+    const tasks = refusal.runtime.lostTasks();
     if (uncollected !== null)
       uncollectedRuntimes.set(conversationId, {
         runtime: refusal.runtime,
@@ -1408,13 +1437,14 @@ export function createConversationCore(
     pendingCollections.get(conversationId)?.settle();
     pendingCollections.delete(conversationId);
     if (refusal.owed === null) return;
-    await recordRefusedLoss(place, refusal.owed, uncollected);
+    await recordRefusedLoss(place, refusal.owed, uncollected, tasks);
   }
 
   async function recordRefusedLoss(
     place: InteractiveConversation,
     refusal: RefusedCustody,
     uncollected: string | null,
+    tasks: LostTask[],
   ): Promise<void> {
     const { conversationId } = place;
     let owed = uncollected !== null;
@@ -1424,6 +1454,7 @@ export function createConversationCore(
         attemptId: refusal.attemptId,
         end: refusal.end,
         collected: uncollected === null,
+        tasks,
       });
     } catch (error) {
       owed = true;
@@ -1437,7 +1468,11 @@ export function createConversationCore(
       settleCustody(conversationId, refusal.attemptId, "refused");
       return;
     }
-    owedLosses.set(refusal.attemptId, { loss: refusal.end, end: "refused" });
+    owedLosses.set(refusal.attemptId, {
+      loss: refusal.end,
+      end: "refused",
+      tasks,
+    });
     deps.log.warn("conversation_core.custody_loss_owed", {
       conversationId,
       attemptId: refusal.attemptId,
@@ -1467,6 +1502,7 @@ export function createConversationCore(
       const owed = owedLosses.get(attempt.attemptId) ?? {
         loss: "interrupted",
         end: "interrupted",
+        tasks: [],
       };
       try {
         // Admitted past the conversation's holds, its runtime's processes are known to be gone.
@@ -1475,6 +1511,7 @@ export function createConversationCore(
           attemptId: attempt.attemptId,
           end: owed.loss,
           collected: true,
+          tasks: owed.tasks,
         });
       } catch (error) {
         return getErrorMessage(error);
@@ -1566,14 +1603,14 @@ export function createConversationCore(
   /**
    * After a crash, a worktree a custody held stays closed to turns and
    * publications until the window in which its background work could still
-   * write has passed since the server started.
+   * write has passed since the server started. Whether the fence was taken.
    */
   async function fenceRecoveredWorktree(
     place: InteractiveConversation,
     attemptId: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const remaining = CUSTODY_RESTART_FENCE_MS - deps.uptimeMs();
-    if (remaining <= 0) return;
+    if (remaining <= 0) return false;
     let worktree: string | null | undefined;
     try {
       worktree = await deps.interactiveWorktree?.(place);
@@ -1583,21 +1620,22 @@ export function createConversationCore(
         attemptId,
         error: getErrorMessage(error),
       });
-      return;
+      return false;
     }
-    if (worktree === undefined || worktree === null) return;
+    if (worktree === undefined || worktree === null) return false;
     const fence = deps.admission.tryAcquire({
       worktree,
       kind: "git",
       holder: `restart-fence:${attemptId}`,
     });
-    if (fence === null) return;
+    if (fence === null) return false;
     deps.log.info("conversation_core.custody_restart_fence", {
       conversationId: place.conversationId,
       attemptId,
       remainingMs: remaining,
     });
     setTimeout(() => deps.admission.release(fence), remaining).unref?.();
+    return true;
   }
 
   /** One turn lifetime: every exit after `open` records exactly one terminal. */
@@ -2200,19 +2238,25 @@ export function createConversationCore(
     async recover() {
       // A custody the crash left admitted lost its runtime with the process: its loss is
       // recorded before it settles, so a crash in between records it again.
-      const custodyLost = new Set<string>();
+      const custodyLost = new Map<
+        string,
+        { conversationId: string; fenced: boolean }
+      >();
       for (const attempt of deps.repo.attemptsInState("admitted")) {
         if (!isCustodyCause(attempt.cause)) continue;
         const place = deps.repo.getInteractive(attempt.conversationId);
+        let fenced = false;
         if (place !== null) {
           // The window in which its work could still write holds whether or not the loss can be recorded.
-          await fenceRecoveredWorktree(place, attempt.attemptId);
+          fenced = await fenceRecoveredWorktree(place, attempt.attemptId);
           try {
+            // The process that knew which tasks ran is gone: the loss names none.
             await deps.custodyLoss({
               place,
               attemptId: attempt.attemptId,
               end: "interrupted",
               collected: true,
+              tasks: [],
             });
           } catch (error) {
             deps.log.error("conversation_core.custody_loss_unrecorded", {
@@ -2223,7 +2267,10 @@ export function createConversationCore(
             continue;
           }
         }
-        custodyLost.add(attempt.attemptId);
+        custodyLost.set(attempt.attemptId, {
+          conversationId: attempt.conversationId,
+          fenced,
+        });
       }
       const { interrupted, claimed, unsent } = deps.transaction(() => {
         const conversations = new Set<string>();
@@ -2274,6 +2321,12 @@ export function createConversationCore(
           unsent,
         };
       });
+      for (const [attemptId, { conversationId, fenced }] of custodyLost)
+        deps.log.info("conversation_core.custody_recovered", {
+          conversationId,
+          attemptId,
+          fenced,
+        });
       // A turn that was still waiting to start left its conversation claimed (running).
       for (const conversationId of claimed) {
         const place = deps.repo.getInteractive(conversationId);

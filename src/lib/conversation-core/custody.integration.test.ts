@@ -10,12 +10,14 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import { getConversationTranscriptProjection } from "@/lib/agent-backends/conversation-policy";
 import {
+  FAKE_CLAUDE_BACKGROUND_TASK_ID,
   FAKE_CLAUDE_HANGING_PROMPT,
   FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
   FAKE_CLAUDE_QUEUE_LATER_PROMPT,
 } from "@/lib/agent-backends/testing/fake-claude-sdk-port";
 import { createScriptedConversationBackend } from "@/lib/agent-backends/testing/scripted-conversation-backends";
 import { createControlPermits } from "@/lib/control/permits";
+import { createBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
@@ -30,6 +32,12 @@ import {
   type WorkspaceAdmission,
 } from "@/lib/workspace/admission";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
+import type { RecordSubscriptionNoticeInput } from "@/lib/subscriptions/service";
+import {
+  createBackgroundTasksLostHandler,
+  createLostTasksCallback,
+} from "./contributions/background-tasks-lost";
+import { createCustodyLossRecorder } from "./contributions/custody-loss";
 import { createQueuedDeliveryAccounting } from "./contributions/queued-delivery-accounting";
 import { createProductionConversationRecords } from "./production-records";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -183,7 +191,12 @@ interface TurnHooks {
  */
 function compose(
   factory: ConversationBackendFactory,
-  options: { rows?: "memory" | "production"; order?: string[] } = {},
+  options: {
+    rows?: "memory" | "production";
+    order?: string[];
+    /** The custody attempt a closed scope's refusal inserts cannot be written. */
+    custodyInsertFails?: boolean;
+  } = {},
 ) {
   const persistence = createPersistenceFixture();
   fixture = persistence;
@@ -255,7 +268,33 @@ function compose(
   const storedRow = async () =>
     persistence.recreateStore().getConversation(PROJECT, SESSION, CHAT);
   const frames: string[] = [];
+  /** While set, transcript frame appends wait for it, stalling custody's event chain. */
+  const frameHold: { until: Promise<void> | null } = { until: null };
+  /** The background-activity indicator, as production's channel keeps it; a throttled publish never fires. */
+  const activity = createBackgroundActivityChannel({
+    publish: () => ({ delivered: true }),
+    nowMs: () => Date.now(),
+    setTimer: () => null,
+    clearTimer: () => {},
+  });
   const losses: string[] = [];
+  /** The person's loss notices in the transcript and the runtime-loss facts the next turn's input carries, as production records them. */
+  const lossNotices: TranscriptEntry[] = [];
+  const lossFacts: RecordSubscriptionNoticeInput[] = [];
+  const recordRuntimeLossNotice = async (
+    input: RecordSubscriptionNoticeInput,
+  ) => {
+    lossFacts.push(input);
+    return true;
+  };
+  const recordCustodyLoss = createCustodyLossRecorder({
+    recordRuntimeLossNotice,
+    async appendTranscriptEntryOnce(_identity, entry) {
+      if (!lossNotices.some((kept) => kept.id === entry.id))
+        lossNotices.push(entry);
+    },
+    log,
+  });
   /** The conversation's message queue, which live input is claimed from and released to. */
   let queuedIds = 0;
   const liveQueue = createMessageQueueService({
@@ -297,7 +336,43 @@ function compose(
     beginSeed: async () => ({ async commit() {} }),
     callbacks: (conversation, track) =>
       conversation.executionClass === "ordinary-conversation"
-        ? custody.callbacks(conversation, track)
+        ? {
+            ...custody.callbacks(conversation, track),
+            onBackgroundActivity: (snapshot) =>
+              activity.record(
+                {
+                  projectName: "repo",
+                  sessionName: SESSION,
+                  conversationId: conversation.conversationId,
+                },
+                snapshot,
+              ),
+            onBackgroundTasksLost: createLostTasksCallback({
+              custody,
+              conversationId: conversation.conversationId,
+              clearIndicator: () =>
+                activity.record(
+                  {
+                    projectName: "repo",
+                    sessionName: SESSION,
+                    conversationId: conversation.conversationId,
+                  },
+                  null,
+                ),
+              record: createBackgroundTasksLostHandler(
+                { recordRuntimeLossNotice, log },
+                {
+                  projectPath: PROJECT,
+                  sessionName: SESSION,
+                  conversationId: conversation.conversationId,
+                  async appendTranscriptEntry(_conversationId, entry) {
+                    lossNotices.push(entry);
+                  },
+                },
+              ),
+              track,
+            }),
+          }
         : {},
     index: { register: () => {}, unregister: () => {} },
     log,
@@ -306,6 +381,7 @@ function compose(
     _conversationId: string,
     entry: TranscriptEntry,
   ) => {
+    if (frameHold.until !== null) await frameHold.until;
     for (const block of entry.content ?? [])
       if (block.type === "text") frames.push(block.text);
   };
@@ -314,8 +390,9 @@ function compose(
     records,
     appendFrame,
     applyStagedCapabilities: async () => {},
-    recordLoss: async ({ key, end }) => {
-      losses.push(`${key}:${end}`);
+    recordLoss: async (input) => {
+      losses.push(`${input.key}:${input.end}`);
+      await recordCustodyLoss(input);
     },
     log,
   });
@@ -395,6 +472,14 @@ function compose(
     log,
   });
   const repo = createConversationCoreRepo(persistence.db);
+  const coreRepo: typeof repo = {
+    ...repo,
+    insertAttempt(record) {
+      if (options.custodyInsertFails && record.cause.startsWith("custody:"))
+        throw new Error("the database is locked");
+      repo.insertAttempt(record);
+    },
+  };
   const workspace = createWorkspaceAdmission();
   // Grant releases join the order log, so a test can see what was collected before a worktree was let go.
   const admission: WorkspaceAdmission = {
@@ -406,7 +491,7 @@ function compose(
   };
   const core: ConversationCore = createConversationCore({
     transaction: (fn) => persistence.db.transaction(fn)(),
-    repo,
+    repo: coreRepo,
     permits: createControlPermits(createControlPermitsRepo(persistence.db)),
     admission,
     interactiveWorktree: async () => WORKTREE,
@@ -425,8 +510,19 @@ function compose(
       },
     },
     records,
-    async custodyLoss({ attemptId, end }) {
+    async custodyLoss({ place, attemptId, end, collected, tasks }) {
       losses.push(`${attemptId}:${end}`);
+      await recordCustodyLoss({
+        identity: {
+          projectPath: place.projectPath,
+          storeSessionName: place.sessionName,
+          conversationId: place.conversationId,
+        },
+        key: attemptId,
+        end,
+        collected,
+        tasks,
+      });
     },
     uptimeMs: () => 60_000,
     slots: {
@@ -477,6 +573,10 @@ function compose(
     statuses,
     frames,
     losses,
+    lossNotices,
+    lossFacts,
+    activity,
+    frameHold,
     turnHooks,
     instructions,
     order,
@@ -543,6 +643,10 @@ interface DrivenRuntime extends ConversationBackendRuntime {
   /** The CLI starts a continuation: announced by its first frame, not yet finished. */
   startContinuation(text: string): void;
   finishContinuation(costUsd: number): void;
+  /** The CLI dies with these tasks running: the adapter reports them lost at once, its death only on `terminate`. */
+  die(tasks: Array<{ taskId: string; description: string | null }>): void;
+  /** The runtime's death reaches its host. */
+  terminate(): void;
 }
 
 function drivenClaude(
@@ -612,6 +716,14 @@ function drivenClaude(
             result: result(costUsd),
           });
           owe(false);
+        },
+        die(tasks) {
+          status = "dead";
+          owing = false;
+          input.onBackgroundTasksLost?.({ tasks, reason: "pump_completed" });
+        },
+        terminate() {
+          input.onTerminated?.({ reason: "pump_completed" });
         },
         async sendTurn(turnInput) {
           // A caller's prompt takes the stream over: the provider turn completes on what it streamed.
@@ -1291,5 +1403,263 @@ describe("live input into a retaining Claude runtime (design C5b §4.2, slice 4)
     ).toMatchObject({ outcome: { kind: "custody", end: "handed_over" } });
     expect(await h.pendingQueue()).toEqual([]);
     expect(h.row.promptCount).toBe(3);
+  });
+});
+
+describe("one record of each loss of work kept between turns (design C5b §6)", () => {
+  /** The real Claude adapter over the scripted SDK port, as production composes it. */
+  function claude() {
+    const provider = createScriptedConversationBackend({
+      backend: "claude",
+      responseText: JSON.stringify({ done: true }),
+    });
+    cleanups.push(() => provider.close());
+    return { factory: provider.factory, sdk: provider.claudeSdk };
+  }
+
+  /** A turn that leaves a background task running ends, and custody keeps its runtime. */
+  async function keptInCustody() {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Run the suite in the background. ${FAKE_CLAUDE_HANGING_PROMPT}`,
+    );
+    await vi.waitFor(() =>
+      expect(sdk.lastPromptText).toContain(FAKE_CLAUDE_HANGING_PROMPT),
+    );
+    sdk.startBackgroundTask();
+    sdk.pushExternalTurn();
+    await sent.settled;
+    await h.core.conversationIdle(CHAT);
+    const [custody] = h.custodyAttempts();
+    if (custody === undefined) throw new Error("custody did not open");
+    return { h, sdk, custody };
+  }
+
+  it("Stop in idle custody tells the person and the next turn once, through custody (Claude adapter)", async () => {
+    const { h, custody } = await keptInCustody();
+
+    await h.core.stopConversation(CHAT).settled;
+
+    expect(h.lossNotices.map((notice) => notice.id)).toEqual([
+      `custody-loss:${custody.attemptId}`,
+    ]);
+    expect(h.lossFacts.map((fact) => fact.fact.occurrenceId)).toEqual([
+      `custody-loss:${custody.attemptId}`,
+    ]);
+  });
+
+  it("a handover whose configuration drifted records the work its close cut short once, as reconfigured (Claude adapter)", async () => {
+    const { h } = await keptInCustody();
+    h.instructions.lines = ["Work carefully.", "A new reference document."];
+
+    const second = await h.send("Then deploy");
+    expect(await second.settled).toMatchObject({ status: "succeeded" });
+
+    expect(h.lossNotices).toHaveLength(1);
+    expect(h.lossFacts).toHaveLength(1);
+    expect(h.lossFacts[0]?.fact.sourceText).toContain(
+      "the conversation's configuration changed",
+    );
+  });
+
+  it("the death of a runtime custody holds is recorded once, as lost (Claude adapter)", async () => {
+    const { h, sdk, custody } = await keptInCustody();
+
+    sdk.endProvider();
+    await vi.waitFor(() =>
+      expect(h.custodyAttempts()).toMatchObject([
+        { state: "settled", outcome: { kind: "custody", end: "lost" } },
+      ]),
+    );
+
+    expect(h.lossNotices.map((notice) => notice.id)).toEqual([
+      `custody-loss:${custody.attemptId}`,
+    ]);
+    expect(h.lossFacts).toHaveLength(1);
+  });
+
+  it("an ordinary turn stopped with a background task running keeps the adapter's one record (Claude adapter)", async () => {
+    const { factory, sdk } = claude();
+    const h = compose(factory);
+    const sent = await h.send(
+      `Run the suite in the background. ${FAKE_CLAUDE_HANGING_PROMPT}`,
+    );
+    await vi.waitFor(() =>
+      expect(sdk.lastPromptText).toContain(FAKE_CLAUDE_HANGING_PROMPT),
+    );
+    sdk.startBackgroundTask();
+    await vi.waitFor(() =>
+      expect(h.host.runtime(CHAT)?.owesWork?.()).toBe(true),
+    );
+
+    await h.core.stopConversation(CHAT).settled;
+    await sent.settled;
+    await h.core.conversationIdle(CHAT);
+
+    expect(h.custodyAttempts()).toEqual([]);
+    expect(h.lossNotices).toHaveLength(1);
+    expect(h.lossFacts.map((fact) => fact.reason)).toEqual([
+      "Background tasks lost",
+    ]);
+  });
+
+  /** A turn ends owing work while its session is closed to background work, without a stop: custody is refused. */
+  async function endsOwingWhileClosed(
+    end: "merging" | "archived",
+    options: { custodyInsertFails?: boolean } = {},
+  ) {
+    const { factory, sdk } = claude();
+    const h = compose(factory, options);
+    const sent = await h.send(
+      `Run the suite in the background. ${FAKE_CLAUDE_HANGING_PROMPT}`,
+    );
+    await vi.waitFor(() =>
+      expect(sdk.lastPromptText).toContain(FAKE_CLAUDE_HANGING_PROMPT),
+    );
+    sdk.startBackgroundTask();
+    const committed = gate();
+    const closing = h.core.closeBackgroundWork(
+      { projectPath: PROJECT, sessionName: SESSION },
+      () => committed.wait(),
+      { end, stop: false },
+    );
+    sdk.pushExternalTurn();
+    await sent.settled;
+    await h.core.conversationIdle(CHAT);
+    committed.open();
+    await closing;
+    expect(h.host.runtime(CHAT)).toBeNull();
+    return h;
+  }
+
+  it.each(["merging", "archived"] as const)(
+    "a turn that ends owing work while its session is closed to it (%s) records the loss once, through the refused custody (Claude adapter)",
+    async (end) => {
+      const h = await endsOwingWhileClosed(end);
+
+      const [refused] = h.custodyAttempts();
+      expect(refused).toMatchObject({
+        state: "settled",
+        outcome: { kind: "custody", end: "refused" },
+      });
+      expect(h.lossNotices.map((notice) => notice.id)).toEqual([
+        `custody-loss:${refused?.attemptId}`,
+      ]);
+      expect(h.lossFacts).toHaveLength(1);
+    },
+  );
+
+  it("keeps the adapter's record as the one record when the refused custody's attempt cannot be written (Claude adapter)", async () => {
+    const h = await endsOwingWhileClosed("merging", {
+      custodyInsertFails: true,
+    });
+
+    expect(h.custodyAttempts()).toEqual([]);
+    expect(h.lossNotices).toHaveLength(1);
+    expect(h.lossFacts.map((fact) => fact.reason)).toEqual([
+      "Background tasks lost",
+    ]);
+  });
+
+  /** The text of the person's one loss notice. */
+  function noticeText(h: { lossNotices: TranscriptEntry[] }): string {
+    return (h.lossNotices[0]?.content ?? [])
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("");
+  }
+
+  it("names each task the closed runtime cut short in the one notice and the one fact (Claude adapter)", async () => {
+    const { h, sdk } = await keptInCustody();
+    sdk.startBackgroundTask({ taskId: "task-b", description: "npm run build" });
+    await vi.waitFor(() =>
+      expect(h.activity.get(CHAT)?.tasks.map((task) => task.taskId)).toEqual([
+        FAKE_CLAUDE_BACKGROUND_TASK_ID,
+        "task-b",
+      ]),
+    );
+
+    await h.core.stopConversation(CHAT).settled;
+
+    expect(h.lossNotices).toHaveLength(1);
+    expect(h.lossFacts).toHaveLength(1);
+    for (const named of [
+      FAKE_CLAUDE_BACKGROUND_TASK_ID,
+      "task-b (npm run build)",
+    ]) {
+      expect(noticeText(h)).toContain(named);
+      expect(h.lossFacts[0]?.fact.sourceText).toContain(named);
+    }
+  });
+
+  it("clears the background-activity indicator when custody claims the loss (Claude adapter)", async () => {
+    const { h } = await keptInCustody();
+    await vi.waitFor(() => expect(h.activity.get(CHAT)).not.toBeNull());
+
+    await h.core.stopConversation(CHAT).settled;
+
+    expect(h.activity.get(CHAT)).toBeNull();
+    expect(h.lossNotices).toHaveLength(1);
+  });
+
+  it("a death the adapter reports before custody hears of it ends custody lost at once: a message admitted meanwhile waits for it, and the loss is recorded once", async () => {
+    const provider = drivenClaude([
+      { costUsd: 0.25, owesAfter: true },
+      { costUsd: 0.5, owesAfter: false },
+    ]);
+    const h = compose(provider.factory);
+    await (
+      await h.send("Start the build in the background")
+    ).settled;
+    await h.core.conversationIdle(CHAT);
+    const [custody] = h.custodyAttempts();
+    const dying = provider.runtime;
+
+    dying.die([{ taskId: "build-1", description: "npm run build" }]);
+    const second = await h.send("And the lint?");
+    expect(await second.settled).toMatchObject({ status: "succeeded" });
+    await h.core.conversationIdle(CHAT);
+    dying.terminate();
+
+    expect(h.custodyAttempts()).toMatchObject([
+      {
+        attemptId: custody?.attemptId,
+        outcome: { kind: "custody", end: "lost" },
+      },
+    ]);
+    expect(h.losses).toEqual([`${custody?.attemptId}:lost`]);
+    expect(h.lossNotices).toHaveLength(1);
+    expect(h.lossFacts).toHaveLength(1);
+    expect(provider.created).toHaveLength(2);
+  });
+
+  it("a runtime that dies after a stale 'owes nothing', with another task started meanwhile, ends custody lost with one record (Claude adapter)", async () => {
+    const { h, sdk, custody } = await keptInCustody();
+    let release: () => void = () => {};
+    h.frameHold.until = new Promise<void>((resolve) => (release = resolve));
+    // The continuation answers the finished task, but its frame's append is still pending when nothing is owed.
+    sdk.endBackgroundTask();
+    sdk.runContinuation();
+    sdk.startBackgroundTask({ taskId: "task-b", description: "npm run build" });
+    await vi.waitFor(() =>
+      expect(h.activity.get(CHAT)?.tasks.map((task) => task.taskId)).toEqual([
+        "task-b",
+      ]),
+    );
+
+    sdk.endProvider();
+    h.frameHold.until = null;
+    release();
+    await vi.waitFor(() =>
+      expect(h.custodyAttempts()).toMatchObject([
+        { state: "settled", outcome: { kind: "custody", end: "lost" } },
+      ]),
+    );
+
+    expect(h.lossNotices.map((notice) => notice.id)).toEqual([
+      `custody-loss:${custody.attemptId}`,
+    ]);
+    expect(h.lossFacts).toHaveLength(1);
+    expect(noticeText(h)).toContain("task-b (npm run build)");
   });
 });

@@ -11,6 +11,10 @@ import {
 import { debugLogKeys } from "@/lib/debug-log/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import {
+  selectInFlightFor,
+  useSessionDetailStore,
+} from "@/stores/session-detail.store";
 
 function makeClient() {
   return new QueryClient({
@@ -164,6 +168,64 @@ describe("useDebugModeToggleMutation", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: conversationKeys.list("proj-1", "sess-1"),
     });
+  });
+
+  it("shows the server's refusal on the conversation, where the composer shows its errors", async () => {
+    useSessionDetailStore.getState().resetStore();
+    fetchSpy.mockResolvedValue(
+      jsonResponse(
+        { error: "Background work is running; stop it or wait" },
+        409,
+      ),
+    );
+
+    const { result } = renderHook(
+      () => useDebugModeToggleMutation("proj-1", "sess-1", "conv-1"),
+      { wrapper: makeWrapper(makeClient()) },
+    );
+    result.current.mutate("enter");
+
+    await waitFor(() =>
+      expect(
+        selectInFlightFor(useSessionDetailStore.getState(), "conv-1")
+          .promptError,
+      ).toBe("Background work is running; stop it or wait"),
+    );
+  });
+
+  it("shows a refusal that arrives after a prompt was sent without ending that prompt", async () => {
+    useSessionDetailStore.getState().resetStore();
+    let respond: (response: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((resolve) => (respond = resolve)),
+    );
+    const { result } = renderHook(
+      () => useDebugModeToggleMutation("proj-1", "sess-1", "conv-1"),
+      { wrapper: makeWrapper(makeClient()) },
+    );
+    result.current.mutate("enter");
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    // The person sends a prompt while the toggle's request is still pending.
+    useSessionDetailStore
+      .getState()
+      .submitPrompt("conv-1", [{ type: "text", text: "Ship it" }], 0);
+    respond(
+      jsonResponse(
+        { error: "The conversation is running a turn; try again when it ends" },
+        409,
+      ),
+    );
+
+    await waitFor(() =>
+      expect(
+        selectInFlightFor(useSessionDetailStore.getState(), "conv-1")
+          .promptError,
+      ).toBe("The conversation is running a turn; try again when it ends"),
+    );
+    expect(
+      selectInFlightFor(useSessionDetailStore.getState(), "conv-1").sending,
+    ).toBe(true);
   });
 });
 

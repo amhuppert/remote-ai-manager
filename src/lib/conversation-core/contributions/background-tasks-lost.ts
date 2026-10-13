@@ -5,6 +5,7 @@ import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation"
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationDurableEffects } from "@/lib/conversation-core/turn/effects";
+import type { RuntimeCustody } from "@/lib/conversation-core/custody";
 
 interface BackgroundTasksLostDependencies extends Pick<
   ConversationDurableEffects,
@@ -31,6 +32,15 @@ function backgroundTasksLostReminder(
   return `Your previous agent session ended (${reason}) while ${taskCount} background task(s) were still running: ${taskSummary}. Those processes were terminated with the session — their completion notifications will never arrive. Do not wait for them; check any output files on disk and re-run whatever is still needed.`;
 }
 
+/** The tasks a runtime cut short, as its loss notices name them: each id, with its description when known. */
+export function lostTasksSummary(
+  tasks: BackgroundTasksLostInfo["tasks"],
+): string {
+  return tasks
+    .map((t) => (t.description ? `${t.taskId} (${t.description})` : t.taskId))
+    .join(", ");
+}
+
 /** Preserve the human notice and deliver the agent reminder through its inbox. */
 export function createBackgroundTasksLostHandler(
   deps: BackgroundTasksLostDependencies,
@@ -40,9 +50,7 @@ export function createBackgroundTasksLostHandler(
   return async (info: BackgroundTasksLostInfo): Promise<void> => {
     const occurrenceId = randomUUID();
     const occurredAt = new Date().toISOString();
-    const summary = info.tasks
-      .map((t) => (t.description ? `${t.taskId} (${t.description})` : t.taskId))
-      .join(", ");
+    const summary = lostTasksSummary(info.tasks);
     // These previews fit the normal briefing budget even when quoted source
     // delimiters expand into six-character JSON escapes. Full evidence stays
     // available in the inbox and the human transcript.
@@ -110,5 +118,26 @@ export function createBackgroundTasksLostHandler(
         });
       });
     await Promise.all([transcript, notice]);
+  };
+}
+
+/**
+ * What a conversation's runtime reports as it closes with background tasks
+ * still running (design C5b §6): the activity indicator always clears, and
+ * the loss is recorded here unless custody claims it, so one loss has one
+ * record and that record names the tasks.
+ */
+export function createLostTasksCallback(deps: {
+  custody: Pick<RuntimeCustody, "claimLoss">;
+  conversationId: string;
+  clearIndicator(): void;
+  record(info: BackgroundTasksLostInfo): Promise<void>;
+  /** Keeps the record's writes open until the runtime counts as closed. */
+  track(work: Promise<void>): void;
+}): (info: BackgroundTasksLostInfo) => void {
+  return (info) => {
+    deps.clearIndicator();
+    if (deps.custody.claimLoss(deps.conversationId, info.tasks)) return;
+    deps.track(deps.record(info));
   };
 }

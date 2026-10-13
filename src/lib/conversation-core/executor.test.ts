@@ -27,6 +27,7 @@ import {
   type TaskTurnPort,
   type CustodyLease,
   type RetainedRuntime,
+  type LostTask,
   BACKGROUND_WORK_RUNNING,
 } from "./executor";
 import { BackgroundWorkUnstoppedError } from "./background-work";
@@ -2109,6 +2110,8 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     let segment = false;
     /** Why its last close failed, as the host keeps it until a later close collects it. */
     let closeFailure: string | null = null;
+    /** The tasks it reported cut short as it closed, which custody claimed. */
+    let lost: LostTask[] = [];
     const runtime: RetainedRuntime = {
       segmentActive: () => segment,
       async close() {
@@ -2122,11 +2125,17 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
         }
       },
       closeFailure: () => closeFailure,
+      lossClaimed: () => told.push("loss-claimed"),
+      lostTasks: () => lost,
       released: (end: CustodyEnd) => told.push(`released:${end}`),
     };
     return {
       runtime,
       told,
+      /** Its close reports these tasks cut short, as the runtime's report of lost tasks hands them to custody. */
+      lose(tasks: LostTask[]) {
+        lost = tasks;
+      },
       segment(active: boolean) {
         segment = active;
       },
@@ -2546,6 +2555,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       attemptId,
       end,
       collected,
+      tasks,
     }) =>
       record({
         identity: {
@@ -2556,6 +2566,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
         key: attemptId,
         end,
         collected,
+        tasks,
       });
     const recovery = async () =>
       (
@@ -2783,11 +2794,28 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     expect(opened).toBeNull();
   });
 
-  it("keeps a custody admitted when its loss cannot be recorded as it ends, and records it before the conversation's next message runs", async () => {
+  it("keeps a custody admitted when its loss cannot be recorded as it ends, and records it, naming its tasks, before the conversation's next message runs", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
-    const { lease } = await custodyAfterTurn(core);
-    lossFailures = 1;
+    const loss = realLossRecorder();
+    let writeFailures = 1;
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      async custodyLoss(input) {
+        if (writeFailures > 0) {
+          writeFailures -= 1;
+          throw new Error("the inbox could not be written");
+        }
+        losses.push(`${input.attemptId}:${input.end}`);
+        await loss.custodyLoss(input);
+      },
+    });
+    const held = retained(async () =>
+      held.lose([
+        { taskId: "build-1", description: "npm run build" },
+        { taskId: "lint-1", description: "npm run lint" },
+      ]),
+    );
+    const { lease } = await custodyAfterTurn(core, held);
 
     await core.stopConversation("conv-u").settled;
     // Collected: the worktree and the conversation are free, but the loss is still owed.
@@ -2813,7 +2841,86 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       kind: "custody",
       end: "stopped",
     });
+    const recovery = await loss.recovery();
+    expect(recovery).toContain("build-1 (npm run build)");
+    expect(recovery).toContain("lint-1 (npm run lint)");
   });
+
+  it("ends lost, naming the task, a custody that chose to settle when its close still cut a task short; its death reported later adds nothing", async () => {
+    interactiveConversation();
+    const loss = realLossRecorder();
+    const core = newCore({
+      interactiveWorktree: worktreeOf,
+      custodyLoss: loss.custodyLoss,
+    });
+    // A task started after the settle check: the close cuts it short and reports it.
+    const held = retained(async () =>
+      held.lose([{ taskId: "build-2", description: "npm run build" }]),
+    );
+    const { lease } = await custodyAfterTurn(core, held);
+
+    lease.settled();
+    await eventually(() => repo().getAttempt(lease.attemptId)?.outcome != null);
+    lease.lost();
+    await tick();
+
+    expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+      kind: "custody",
+      end: "lost",
+    });
+    expect(held.told).toEqual(["close", "released:lost"]);
+    expect(loss.notices).toHaveLength(1);
+    expect(loss.notices[0]).toContain("build-2 (npm run build)");
+    const recovery = await loss.recovery();
+    expect(recovery?.match(/"event":"background-tasks-lost"/g)).toHaveLength(1);
+    expect(recovery).toContain("build-2 (npm run build)");
+  });
+
+  it.each(["the loss cannot be written", "the runtime cannot be collected"])(
+    "keeps such a custody owed as lost, with its task, when %s, and records it so before the next message",
+    async (failure) => {
+      interactiveConversation();
+      const loss = realLossRecorder();
+      let writeFailures = failure === "the loss cannot be written" ? 1 : 0;
+      const core = newCore({
+        interactiveWorktree: worktreeOf,
+        async custodyLoss(input) {
+          if (writeFailures > 0) {
+            writeFailures -= 1;
+            throw new Error("the inbox could not be written");
+          }
+          await loss.custodyLoss(input);
+        },
+      });
+      const held = retained(async () => {
+        held.lose([{ taskId: "build-2", description: "npm run build" }]);
+        if (failure === "the runtime cannot be collected")
+          throw new Error("the CLI did not exit");
+      });
+      const { lease } = await custodyAfterTurn(core, held);
+
+      lease.settled();
+      await eventually(() => held.told.length === 2);
+      expect(held.told).toEqual(["close", "released:lost"]);
+      expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
+
+      held.confirmCollected();
+      const sent = await core.sendUserMessage({
+        conversationId: "conv-u",
+        text: "What happened?",
+        inputOrigin: "user",
+      });
+      if (sent.kind !== "accepted") throw new Error(sent.message);
+      expect(await sent.settled).toMatchObject({ status: "succeeded" });
+      await core.conversationIdle("conv-u");
+
+      expect(repo().getAttempt(lease.attemptId)?.outcome).toEqual({
+        kind: "custody",
+        end: "lost",
+      });
+      expect(await loss.recovery()).toContain("build-2 (npm run build)");
+    },
+  );
 
   it("refuses the next message, saying why, while the loss a custody left still cannot be recorded", async () => {
     interactiveConversation();

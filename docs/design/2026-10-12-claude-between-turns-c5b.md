@@ -161,7 +161,7 @@ Custody is not "a runner" in the old sense. Each operation has its own rule (O-F
 |---|---|
 | A full turn: `sendUserMessage`, including a queue drain that carries delivery metadata | **Handover** (§4.1). The delivery metadata and its hold and receipt semantics are kept |
 | Live delivery (`deliverLive`) | Accepted into the retained runtime only while a turn or segment is running. In idle custody it is refused, so the message stays queued and drains as a handover turn |
-| `task`, `command`, `claim`, `hold`, `whileIdle` leases (checkpoint, capture, debug enter, collaboration claim) | Refused: "background work is running; stop it or wait". A task already queued behind the ending turn is answered `not_started` with the same message (`executor.ts:836-844`), not left waiting up to the bound. One refusal rule replaces "tasks queue behind custody" (O-F3, O alternative 4) |
+| `task`, `command`, `claim`, `hold`, `whileIdle` leases (checkpoint, capture, debug enter, collaboration claim) | The core refuses: "background work is running; stop it or wait". A task already queued behind the ending turn is answered `not_started` with the same message (`executor.ts:836-844`), not left waiting up to the bound. One refusal rule in the core replaces "tasks queue behind custody" (O-F3, O alternative 4). A checkpoint's own admission gate is broader (background activity the indicator shows, or a conversation actor's tracked work) and can answer first, with its own `background_work` wording |
 
 The queue bridge treats idle custody as not busy for draining, so a queued message hands over rather than waiting.
 
@@ -249,6 +249,23 @@ Stated limits of these guards:
   released once collected. The next message's admission records the owed loss before the turn prepares its input,
   or refuses the message with the reason; boot records it otherwise (as `interrupted`, since the original end is
   not stored).
+- One loss has one record. Custody records it whenever it holds the runtime, closes it itself on a handover's drift,
+  or a closed scope refused it and the refusal records the loss. The adapter's own report of lost tasks then only
+  clears the activity indicator and hands its task inventory to custody. Custody's notice and the agent's recovery
+  text name those tasks; without an inventory (owed input or a continuation, or boot's recovery) they speak of the
+  work in general. Outside custody the adapter's report stays the one record.
+- A reported loss is never success:
+  - A death the adapter reports with lost tasks, before custody hears of it, ends custody `lost` at once, so no
+    message takes the dead runtime over meanwhile.
+  - Only a live runtime's own "nothing owed" settles custody.
+  - A custody that chose to settle, but whose close still reports lost tasks (a task started after the check), ends
+    `lost` instead. That one end is recorded, settled and reported.
+- Stated limits:
+  - **Debt-only death before handover.** A runtime that owes only input or a continuation, and dies with no running
+    task, gives no immediate signal. A message admitted before the termination reaches custody can take the dead
+    runtime over, and its loss goes unrecorded. This predates the single-record rule.
+  - **Drift loss recovery.** A failed drift loss write is not retried. A drift close whose collection failed gets no
+    agent fact when the runtime is later collected.
 
 **Bound.**
 - Custody ends after a constant 120 minutes (`timed_out`), with the loss notice. There is no new setting.

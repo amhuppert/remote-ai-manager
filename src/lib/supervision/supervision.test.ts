@@ -641,6 +641,8 @@ describe("custody of a conversation's runtime between turns (design C5b)", () =>
         told.push("close");
       },
       closeFailure: () => null,
+      lossClaimed: () => told.push("loss-claimed"),
+      lostTasks: () => [],
       released: (end) => told.push(`released:${end}`),
     };
     return {

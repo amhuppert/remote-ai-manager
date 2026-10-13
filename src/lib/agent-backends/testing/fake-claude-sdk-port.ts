@@ -171,29 +171,42 @@ function buildInitMessage(): SDKSystemMessage {
   };
 }
 
+/** A background task the fake CLI runs: its id and the description the CLI reports for it. */
+export interface FakeClaudeBackgroundTask {
+  taskId: string;
+  description: string;
+}
+
+const DEFAULT_BACKGROUND_TASK: FakeClaudeBackgroundTask = {
+  taskId: FAKE_CLAUDE_BACKGROUND_TASK_ID,
+  description: BACKGROUND_TASK_DESCRIPTION,
+};
+
 function buildBackgroundTasksChanged(
-  taskIds: string[],
+  tasks: FakeClaudeBackgroundTask[],
 ): SDKBackgroundTasksChangedMessage {
   return {
     type: "system",
     subtype: "background_tasks_changed",
-    tasks: taskIds.map((task_id) => ({
-      task_id,
+    tasks: tasks.map((task) => ({
+      task_id: task.taskId,
       task_type: "local_bash",
-      description: BACKGROUND_TASK_DESCRIPTION,
+      description: task.description,
     })),
     uuid: randomUUID(),
     session_id: FAKE_CLAUDE_SESSION_ID,
   };
 }
 
-function buildTaskStarted(taskId: string): SDKTaskStartedMessage {
+function buildTaskStarted(
+  task: FakeClaudeBackgroundTask,
+): SDKTaskStartedMessage {
   return {
     type: "system",
     subtype: "task_started",
-    task_id: taskId,
-    tool_use_id: `toolu_${taskId}`,
-    description: BACKGROUND_TASK_DESCRIPTION,
+    task_id: task.taskId,
+    tool_use_id: `toolu_${task.taskId}`,
+    description: task.description,
     uuid: randomUUID(),
     session_id: FAKE_CLAUDE_SESSION_ID,
   };
@@ -262,8 +275,9 @@ export interface FakeClaudeSdkController {
    * the notification; the continuation is `init`, its work and a result with
    * a `task-notification` origin that names no input.
    */
-  startBackgroundTask(): void;
-  endBackgroundTask(): void;
+  /** Starts a background task; several may run at once, each with its own id. */
+  startBackgroundTask(task?: FakeClaudeBackgroundTask): void;
+  endBackgroundTask(taskId?: string): void;
   runContinuation(): void;
   /**
    * A continuation in two halves: `init` and its work, then its result. Input
@@ -290,6 +304,8 @@ export interface FakeClaudeSdkController {
 }
 
 interface FakePortState {
+  /** The background tasks running in this port's CLI, which the level signal lists. */
+  readonly backgroundTasks: Map<string, FakeClaudeBackgroundTask>;
   emit(message: SDKMessage): void;
   end(): void;
   /** Input consumed while a continuation ran, which its result names. */
@@ -461,6 +477,7 @@ export function createFakeClaudeSdkController(
     };
 
     lastPort = {
+      backgroundTasks: new Map(),
       emit,
       end() {
         closed = true;
@@ -502,16 +519,22 @@ export function createFakeClaudeSdkController(
       lastPort.emit(buildAssistantMessage("external continuation"));
       lastPort.emit(buildResultSuccess(undefined));
     },
-    startBackgroundTask() {
+    startBackgroundTask(task = DEFAULT_BACKGROUND_TASK) {
       const port = requirePort(lastPort);
-      port.emit(buildBackgroundTasksChanged([FAKE_CLAUDE_BACKGROUND_TASK_ID]));
-      port.emit(buildTaskStarted(FAKE_CLAUDE_BACKGROUND_TASK_ID));
+      port.backgroundTasks.set(task.taskId, task);
+      port.emit(
+        buildBackgroundTasksChanged([...port.backgroundTasks.values()]),
+      );
+      port.emit(buildTaskStarted(task));
     },
-    endBackgroundTask() {
+    endBackgroundTask(taskId = FAKE_CLAUDE_BACKGROUND_TASK_ID) {
       const port = requirePort(lastPort);
-      port.emit(buildBackgroundTasksChanged([]));
-      port.emit(buildTaskCompleted(FAKE_CLAUDE_BACKGROUND_TASK_ID));
-      port.emit(buildTaskNotification(FAKE_CLAUDE_BACKGROUND_TASK_ID));
+      port.backgroundTasks.delete(taskId);
+      port.emit(
+        buildBackgroundTasksChanged([...port.backgroundTasks.values()]),
+      );
+      port.emit(buildTaskCompleted(taskId));
+      port.emit(buildTaskNotification(taskId));
     },
     endProvider() {
       requirePort(lastPort).end();

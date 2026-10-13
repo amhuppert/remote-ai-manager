@@ -17,7 +17,10 @@ import {
   getSession,
   mutateConversation,
 } from "@/lib/state-store";
-import { createBackgroundTasksLostHandler } from "@/lib/conversation-core/contributions/background-tasks-lost";
+import {
+  createBackgroundTasksLostHandler,
+  createLostTasksCallback,
+} from "@/lib/conversation-core/contributions/background-tasks-lost";
 import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
 import {
   resolveBackendStallTimeoutMs,
@@ -182,20 +185,23 @@ export async function createProductionTurnRuntime(options: {
             }),
           );
         },
-        onBackgroundTasksLost(info) {
+        onBackgroundTasksLost: createLostTasksCallback({
+          custody,
+          conversationId: conversation.conversationId,
           // Tasks still alive when a runtime closes are gone with it, and the
           // indicator must not keep claiming otherwise.
-          getBackgroundActivityChannel().record(
-            {
-              projectName: conversation.projectName,
-              sessionName: storeSessionName,
-              conversationId: conversation.conversationId,
-            },
-            null,
-          );
+          clearIndicator: () =>
+            getBackgroundActivityChannel().record(
+              {
+                projectName: conversation.projectName,
+                sessionName: storeSessionName,
+                conversationId: conversation.conversationId,
+              },
+              null,
+            ),
           // The person reads it in the transcript; an ordinary conversation's agent hears it at its
           // next turn's head (a seat's work orders carry no such reminder, so it records none).
-          const surfaced = createBackgroundTasksLostHandler(
+          record: createBackgroundTasksLostHandler(
             {
               recordRuntimeLossNotice: ordinary
                 ? deps.effects.recordRuntimeLossNotice
@@ -216,10 +222,10 @@ export async function createProductionTurnRuntime(options: {
                   },
                 ),
             },
-          )(info);
+          ),
           // Its writes finish before the runtime counts as closed, as the actor's do.
-          track(surfaced);
-        },
+          track,
+        }),
         onBackgroundActivity(activity) {
           // A background task's progress after the agent's own output: the turn still works.
           engine.notifyActivity(conversation.conversationId);

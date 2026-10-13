@@ -50,6 +50,7 @@ describe("custody loss", () => {
       key: "custody-1",
       end: "interrupted",
       collected: true,
+      tasks: [],
     });
     // A crash before custody settled: the next boot records it again.
     await record({
@@ -57,6 +58,7 @@ describe("custody loss", () => {
       key: "custody-1",
       end: "interrupted",
       collected: true,
+      tasks: [],
     });
 
     const briefing = await service.prepareRuntimeLossNotice({
@@ -85,10 +87,34 @@ describe("custody loss", () => {
 
   it("says why for each way custody can cut work short", async () => {
     const { record, service } = recorderOverFixture();
-    await record({ identity, key: "a", end: "stopped", collected: true });
-    await record({ identity, key: "b", end: "lost", collected: true });
-    await record({ identity, key: "c", end: "timed_out", collected: true });
-    await record({ identity, key: "d", end: "reconfigured", collected: true });
+    await record({
+      identity,
+      key: "a",
+      end: "stopped",
+      collected: true,
+      tasks: [],
+    });
+    await record({
+      identity,
+      key: "b",
+      end: "lost",
+      collected: true,
+      tasks: [],
+    });
+    await record({
+      identity,
+      key: "c",
+      end: "timed_out",
+      collected: true,
+      tasks: [],
+    });
+    await record({
+      identity,
+      key: "d",
+      end: "reconfigured",
+      collected: true,
+      tasks: [],
+    });
 
     const briefing = await service.prepareRuntimeLossNotice({
       recipient,
@@ -104,7 +130,13 @@ describe("custody loss", () => {
 
   it("says a merge of the session stopped work that custody could not keep (design C5b §3.3)", async () => {
     const { record, service } = recorderOverFixture();
-    await record({ identity, key: "turn-1", end: "merging", collected: true });
+    await record({
+      identity,
+      key: "turn-1",
+      end: "merging",
+      collected: true,
+      tasks: [],
+    });
 
     const briefing = await service.prepareRuntimeLossNotice({
       recipient,
@@ -122,6 +154,7 @@ describe("custody loss", () => {
       key: "custody-1",
       end: "stopped",
       collected: false,
+      tasks: [],
     });
 
     const briefing = await service.prepareRuntimeLossNotice({

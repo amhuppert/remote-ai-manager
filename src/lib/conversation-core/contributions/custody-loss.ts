@@ -3,7 +3,11 @@ import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type { ConversationDurableEffects } from "@/lib/conversation-core/turn/effects";
 import type { ConversationIdentity } from "@/lib/conversation-core/conversation-record";
 import type { CustodyLossReason } from "@/lib/conversation-core/custody";
-import { CUSTODY_BOUND_MS } from "@/lib/conversation-core/executor";
+import {
+  CUSTODY_BOUND_MS,
+  type LostTask,
+} from "@/lib/conversation-core/executor";
+import { lostTasksSummary } from "@/lib/conversation-core/contributions/background-tasks-lost";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 export interface CustodyLossDeps extends Pick<
@@ -32,14 +36,19 @@ const WHY: Record<CustodyLossReason, string> = {
   deleted: "the conversation is being deleted",
 };
 
+/** The tasks' preview in the agent's briefing, sized as the runtime's own lost-task notice sizes it. */
+const TASKS_PREVIEW_CHARS = 96;
+
 /**
  * Records that work a custody held between turns was cut short (design C5b
  * §6): a notice the person reads in the transcript, and the runtime loss the
- * conversation's next turn hears in its `<runtime_recovery>`. Keyed by `key`
- * (the custody attempt), so recording it again changes nothing. When the
- * runtime's processes could not be confirmed stopped, only the person is told
- * so: the agent's loss claims a termination, which waits until it is known.
- * Throws when the agent's loss could not be recorded.
+ * conversation's next turn hears in its `<runtime_recovery>`. Both name the
+ * tasks the runtime reported cut short; without that inventory (owed input or
+ * a continuation, or a restart) they speak of the work in general. Keyed by
+ * `key` (the custody attempt), so recording it again changes nothing. When
+ * the runtime's processes could not be confirmed stopped, only the person is
+ * told so: the agent's loss claims a termination, which waits until it is
+ * known. Throws when the agent's loss could not be recorded.
  */
 export function createCustodyLossRecorder(
   deps: CustodyLossDeps,
@@ -48,11 +57,18 @@ export function createCustodyLossRecorder(
   key: string;
   end: CustodyLossReason;
   collected: boolean;
+  tasks: LostTask[];
 }) => Promise<void> {
-  return async ({ identity, key, end, collected }) => {
+  return async ({ identity, key, end, collected, tasks }) => {
     const { conversationId } = identity;
     const why = WHY[end];
     const occurredAt = new Date().toISOString();
+    const summary = lostTasksSummary(tasks);
+    const preview = summary.slice(0, TASKS_PREVIEW_CHARS);
+    const named = (list: string) =>
+      tasks.length === 0
+        ? ""
+        : ` (${tasks.length} background task(s): ${list})`;
     if (!collected) {
       await deps
         .appendTranscriptEntryOnce(identity, {
@@ -63,7 +79,7 @@ export function createCustodyLossRecorder(
           content: [
             {
               type: "text",
-              text: `Background work the agent left running was stopped because ${why}, but its processes could not be confirmed to have exited. Nothing more runs in this conversation until they are collected; restarting the server collects them.`,
+              text: `Background work the agent left running${named(summary)} was stopped because ${why}, but its processes could not be confirmed to have exited. Nothing more runs in this conversation until they are collected; restarting the server collects them.`,
             },
           ],
         })
@@ -77,7 +93,8 @@ export function createCustodyLossRecorder(
       return;
     }
     const occurrenceId = `custody-loss:${key}`;
-    const reminder = `Background work your previous turn left running was cut short because ${why}: the processes it started were terminated, and any continuation or reply it still owed will not arrive. Do not wait for it; check any output files on disk and re-run whatever is still needed.`;
+    const reminder = (list: string) =>
+      `Background work your previous turn left running${named(list)} was cut short because ${why}: the processes it started were terminated, and any continuation or reply it still owed will not arrive. Do not wait for it; check any output files on disk and re-run whatever is still needed.`;
     const transcript = deps.appendTranscriptEntryOnce(identity, {
       id: occurrenceId,
       timestamp: occurredAt,
@@ -86,7 +103,7 @@ export function createCustodyLossRecorder(
       content: [
         {
           type: "text",
-          text: `Background work the agent left running was cut short because ${why}. Anything it still owed will not arrive.`,
+          text: `Background work the agent left running${named(summary)} was cut short because ${why}. Anything it still owed will not arrive.`,
         },
       ],
     });
@@ -100,8 +117,13 @@ export function createCustodyLossRecorder(
         eventKind: "background-tasks-lost",
         category: "outcome",
         sourceTitle: "Background work",
-        summary: reminder,
-        sourceText: reminder,
+        // The briefing's preview stays within its budget; the full list is in the source and the transcript.
+        summary:
+          reminder(preview) +
+          (preview === summary
+            ? ""
+            : " Details omitted; read the full notice in the conversation."),
+        sourceText: reminder(summary),
         occurredAt,
         revision: null,
         outcome: "terminated",

@@ -5,6 +5,7 @@ import { debugLogKeys } from "./query-keys";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { useSetQueueError } from "@/stores/session-detail.store";
 
 function debugModeUrl(
   projectName: string,
@@ -20,6 +21,7 @@ export function useDebugModeToggleMutation(
   conversationId: string,
 ) {
   const queryClient = useQueryClient();
+  const showError = useSetQueueError();
 
   return useMutation({
     mutationFn: (action: "enter" | "exit") =>
@@ -32,6 +34,9 @@ export function useDebugModeToggleMutation(
           body: JSON.stringify({ action }),
         },
       ),
+    // The toggle sits in the composer, so a refusal shows where the composer shows its errors,
+    // through the error-only action: a prompt sent while the request was pending keeps running.
+    onError: (error) => showError(conversationId, error.message),
     onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),

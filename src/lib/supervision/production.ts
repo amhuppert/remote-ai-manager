@@ -343,7 +343,7 @@ function composeProductionSupervision(): Supervision {
       },
     },
     records: createProductionConversationRecords(),
-    async custodyLoss({ place, attemptId, end, collected }) {
+    async custodyLoss({ place, attemptId, end, collected, tasks }) {
       const [
         { createCustodyLossRecorder },
         { getSubscriptionService },
@@ -371,6 +371,7 @@ function composeProductionSupervision(): Supervision {
         key: attemptId,
         end,
         collected,
+        tasks,
       });
     },
     uptimeMs: () => process.uptime() * 1000,
