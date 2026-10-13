@@ -114,6 +114,16 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "Saving, listing, reading and deleting run templates address the project's template library (its own tier and the global one) through the project route tree; no session, worktree or run is involved, so a project conversation can author templates.",
   },
+  "run template launch": {
+    support: "session-only",
+    reason:
+      "A leaf that differs from its project-supported group: launching starts a run, which places its contexts in a session worktree and belongs to the session conversation that launched it. No project-root run route exists.",
+  },
+  "run template launch-check": {
+    support: "session-only",
+    reason:
+      "The launch's check twin resolves the same session identity the launch needs, so it fails without a session as the launch does.",
+  },
   charter: {
     support: "session-only",
     reason:

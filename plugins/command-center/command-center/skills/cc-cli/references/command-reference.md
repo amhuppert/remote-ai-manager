@@ -273,11 +273,17 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--lane` (required).
 - `cctl run show` — Read a run's progress, contexts and boundaries
   - `cctl run show <run-id> [options]`
-- `cctl run template` — Save run templates that Alex configures and launches
+- `cctl run template` — Save and launch run templates that Alex configures
   - `cctl run template <command> [options]`
 - `cctl run template delete` — Delete a run template
   - `cctl run template delete <id> --based-on <integer> [options]`
   - Flags: `--tier`, `--based-on` (required).
+- `cctl run template launch` — Launch a saved run template in this session
+  - `cctl run template launch <id> --file <path> [options]`
+  - Flags: `--tier`, `--file` (required).
+- `cctl run template launch-check` — Validate: Launch a saved run template in this session
+  - `cctl run template launch-check <id> --file <path> [options]`
+  - Flags: `--tier`, `--file` (required).
 - `cctl run template list` — List this project's run templates and the global ones
   - `cctl run template list [options]`
   - Flags: `--tier`, `--limit`.

@@ -2,7 +2,8 @@
  * The workflow domain's answer to "who still references this agent profile?"
  * (R15, D14).
  *
- * This implements a port the agent-profile library declares, which is what
+ * This implements the workflow share of a port the agent-profile library
+ * declares (run templates report theirs beside it), which is what
  * keeps the dependency arrow pointing one way: the library knows that
  * references exist and when to ask about them, and nothing about where they
  * live. Workflow definitions, global templates, and `workflowDefaults` are this
@@ -21,8 +22,8 @@
  */
 
 import type {
-  AgentProfileReferenceReporter,
   AgentProfileProjectScope,
+  AgentProfileWorkflowReferenceReporter,
 } from "@/lib/agent-profiles/library-service";
 import type {
   AgentProfileRef,
@@ -114,7 +115,7 @@ function compareHolders(
 
 export function createWorkflowProfileReferenceReporter(
   deps: WorkflowProfileReferenceReporterDeps = {},
-): AgentProfileReferenceReporter {
+): AgentProfileWorkflowReferenceReporter {
   const storage = deps.storage ?? createWorkflowStorageService();
   const readWorkflowDefaults =
     deps.readWorkflowDefaults ??
@@ -182,13 +183,13 @@ export function createWorkflowProfileReferenceReporter(
     async enumerateSavedReferences(
       projectPath: AgentProfileProjectScope,
       ref: AgentProfileRef,
-    ): Promise<AgentProfileSavedReferences> {
+    ): Promise<Omit<AgentProfileSavedReferences, "runTemplates">> {
       const scopes = await scopesFor(projectPath, ref);
       const found = (
         await Promise.all(scopes.map((scope) => holdersInScope(scope, ref)))
       ).flat();
 
-      const references: AgentProfileSavedReferences = {
+      const references: Omit<AgentProfileSavedReferences, "runTemplates"> = {
         definitions: dedupe(
           found.filter((holder) => holder.scope.kind === "project"),
         ),

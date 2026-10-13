@@ -46,6 +46,7 @@ import {
   type AgentProfileLibraryItem,
   type AgentProfileLibraryListing,
   type AgentProfileRef,
+  type AgentProfileRunTemplateHolder,
   type AgentProfileSavedReferences,
   type AgentProfileTier,
   type ContentHash,
@@ -161,16 +162,50 @@ export interface AgentProfileDuplicateRequest {
  *
  * The library owns WHEN the question is asked (preview open, and again at the
  * delete that writes the report) and the shape of the answer; it owns nothing
- * about where references live. Workflow definitions, templates, and
- * `workflowDefaults` are the workflow domain's storage, so the workflow domain
- * implements this and the route composition wires it in — which is what keeps
- * the arrow pointing one way: agent-profiles never imports workflow-graph.
+ * about where references live. Two domains hold references, each reporting
+ * its share: workflow definitions, templates and `workflowDefaults` are the
+ * workflow domain's storage, run templates the run template library's.
+ * `combineReferenceReporters` makes one reporter of the two shares, and the
+ * route composition wires it in — which is what keeps the arrow pointing one
+ * way: agent-profiles imports neither domain.
  */
 export interface AgentProfileReferenceReporter {
   enumerateSavedReferences(
     projectPath: AgentProfileProjectScope,
     ref: AgentProfileRef,
   ): Promise<AgentProfileSavedReferences>;
+}
+
+/** The share of the report graph workflow storage holds, until deploy 2 deletes it. */
+export interface AgentProfileWorkflowReferenceReporter {
+  enumerateSavedReferences(
+    projectPath: AgentProfileProjectScope,
+    ref: AgentProfileRef,
+  ): Promise<Omit<AgentProfileSavedReferences, "runTemplates">>;
+}
+
+/** The share of the report the run template library holds. */
+export interface AgentProfileRunTemplateReferenceReporter {
+  runTemplateHolders(
+    projectPath: AgentProfileProjectScope,
+    ref: AgentProfileRef,
+  ): Promise<AgentProfileRunTemplateHolder[]>;
+}
+
+/** One report from both domains that hold profile references. */
+export function combineReferenceReporters(
+  workflow: AgentProfileWorkflowReferenceReporter,
+  runTemplates: AgentProfileRunTemplateReferenceReporter,
+): AgentProfileReferenceReporter {
+  return {
+    async enumerateSavedReferences(projectPath, ref) {
+      const [workflowHolders, runTemplateHolders] = await Promise.all([
+        workflow.enumerateSavedReferences(projectPath, ref),
+        runTemplates.runTemplateHolders(projectPath, ref),
+      ]);
+      return { ...workflowHolders, runTemplates: runTemplateHolders };
+    },
+  };
 }
 
 export interface AgentProfileLibraryService {
@@ -563,6 +598,7 @@ export function createAgentProfileLibraryService(
       revision: expectedRevision,
       referencingDefinitions: savedReferenceEnumeration.definitions.length,
       referencingTemplates: savedReferenceEnumeration.templates.length,
+      referencingRunTemplates: savedReferenceEnumeration.runTemplates.length,
       referencedByWorkflowDefaults: savedReferenceEnumeration.workflowDefaults,
     });
 

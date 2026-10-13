@@ -158,6 +158,8 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
           defaults: {},
           workflow: { contexts: [{ key: "notes", brief: "Write notes" }] },
         });
+      if (filePath === ".cc/temp/run-template-inputs.json")
+        return JSON.stringify({ parameters: {} });
       if (filePath.includes("validation-lease-")) return "lease-1\n";
       return JSON.stringify({ summary: "s", objective: "o", decisions: [] });
     },
@@ -942,6 +944,25 @@ describe("session commands reach real session route modules", () => {
       body: { deliveries: [], total: 0, limit: 20, offset: 0 },
     },
     { name: "inbox get", argv: ["inbox", "get", "delivery-1"], body: {} },
+    {
+      name: "run template launch",
+      argv: [
+        "run",
+        "template",
+        "launch",
+        "release-checklist",
+        "--tier",
+        "project",
+        "--file",
+        ".cc/temp/run-template-inputs.json",
+      ],
+      body: {
+        runId: "run-1",
+        contextIds: ["run-1.notes"],
+        progress: { kind: "running" },
+        ownerConversationId: "conv-1",
+      },
+    },
     {
       name: "workflow run",
       argv: [

@@ -97,6 +97,25 @@ export const runTemplateDeleteSpec = {
   },
 } as const;
 
+export const runTemplateLaunchSpec = {
+  path: "run template launch",
+  summary: "Launch a saved run template in this session",
+  description:
+    "Launch the template as a workflow run in the session worktree, exactly as run workflow would launch the definition it makes: its settings cascaded per context, each {{inputs.<name>}} replaced by the value you give. The file is {parameters, revision}: parameters maps each parameter name to its text (a required one must not be blank; an omitted optional one becomes empty text; an unknown name is refused), and revision, when given, is the one you read (run template show --json), so a template changed since is refused rather than launched. Documents declared with from are read from the session worktree now. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones). The launch-check twin checks only the inputs file and your session identity; the template's lookup, revision, parameter values, profiles and the launch's admission are checked by the launch itself.",
+  requires: "cc",
+  effects: "write",
+  args: [templateId],
+  flags: { tier },
+  related: [
+    { path: "run template list", description: "The templates you can launch" },
+    { path: "run show", description: "Follow the launched run" },
+  ],
+  payload: {
+    maxBytes: bytes(262_144),
+    validatePath: "run template launch-check",
+  },
+} as const;
+
 const handlers = async () => import("./template-handlers");
 
 export const runTemplateSaveCommand = ccCommands.defineCommand(
@@ -151,17 +170,32 @@ export const runTemplateDeleteCommand = ccCommands.defineCommand(
   },
 );
 
+export const runTemplateLaunchCommand = ccCommands.defineCommand(
+  runTemplateLaunchSpec,
+  {
+    examples: [
+      {
+        file: ".cc/temp/release-inputs.json",
+        args: { id: "release-checklist" },
+        why: "Launch a template with its parameter values",
+      },
+    ],
+    handler: async () => ({ default: (await handlers()).launchHandler }),
+  },
+);
+
 export const runTemplateCommands = [
   runTemplateSaveCommand,
   runTemplateListCommand,
   runTemplateShowCommand,
   runTemplateDeleteCommand,
+  runTemplateLaunchCommand,
 ] as const;
 export const runTemplateGroups = [
   defineGroup({
     path: "run template",
-    summary: "Save run templates that Alex configures and launches",
+    summary: "Save and launch run templates that Alex configures",
     description:
-      "A run template is a workflow with {{inputs.<name>}} parameters and its settings in two tiers; Alex edits its settings and content in Command Center and launches it.",
+      "A run template is a workflow with {{inputs.<name>}} parameters and its settings in two tiers; Alex edits its settings and content in Command Center and launches it, and an agent launches one with run template launch and owns the run.",
   }),
 ] as const;

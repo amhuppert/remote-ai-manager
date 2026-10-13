@@ -78,7 +78,12 @@ beforeEach(async () => {
     // conversation snapshots, and no workflow artifacts exist in this fixture.
     referenceReporter: {
       async enumerateSavedReferences() {
-        return { definitions: [], templates: [], workflowDefaults: false };
+        return {
+          definitions: [],
+          templates: [],
+          runTemplates: [],
+          workflowDefaults: false,
+        };
       },
     },
   });

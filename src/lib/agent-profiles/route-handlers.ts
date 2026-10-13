@@ -41,11 +41,14 @@ import {
   resolveProjectOr404,
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
+import { createRunTemplateProfileReferences } from "@/lib/run-templates/profile-references";
+import { createRunTemplateStorage } from "@/lib/run-templates/storage";
 import { createWorkflowProfileReferenceReporter } from "@/lib/workflow-graph/profile-reference-reporter";
 
 import { AgentProfileInstructionCollisionError } from "./composer";
 import {
   agentProfileLibraryItemOf,
+  combineReferenceReporters,
   createAgentProfileLibraryService,
   AgentProfileDeletionNotConfirmedError,
   AgentProfileNotResolvableError,
@@ -89,15 +92,21 @@ export interface AgentProfileRouteDeps {
  * deletion-reference reporter is wired.
  *
  * The library declares the reporter port and refuses to answer a delete or a
- * preview without one; the workflow domain implements it; this module, which
- * already depends on both, is where the two meet. That is what lets
- * `agent-profiles` stay ignorant of `workflow-graph`: the dependency exists
- * only in the composition, never in the domain.
+ * preview without one; the workflow and run template domains each implement
+ * their share of it; this module, which already depends on all three, is
+ * where they meet. That is what lets `agent-profiles` stay ignorant of
+ * `workflow-graph` and `run-templates`: the dependency exists only in the
+ * composition, never in the domain.
  */
 const defaultDeps: AgentProfileRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   library: createAgentProfileLibraryService({
-    referenceReporter: createWorkflowProfileReferenceReporter(),
+    referenceReporter: combineReferenceReporters(
+      createWorkflowProfileReferenceReporter(),
+      createRunTemplateProfileReferences({
+        storage: createRunTemplateStorage(),
+      }),
+    ),
   }),
   publish: publishEvent,
 };

@@ -321,6 +321,7 @@ export type ConversationScope = z.infer<typeof conversationScopeSchema>;
 // regenerate action may). Rows persisted before this field existed decode as
 // "default" — harmless, because auto-naming only fires on a first turn.
 export const nameOriginSchema = z.enum(["default", "auto", "manual"]);
+export type NameOrigin = z.infer<typeof nameOriginSchema>;
 
 /**
  * Every conversation field that is identical whether the aggregate is being

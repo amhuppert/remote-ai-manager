@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
 import { agentLaunchRequestSchema } from "./launch";
-import { createRunSeatResolver } from "./routes";
+import { createNewOwnerPreparer, createRunSeatResolver } from "./routes";
 
 let configDir: string;
 
@@ -41,6 +42,31 @@ describe("the run routes' seat resolver", () => {
       status: 400,
       code: "agent_profile_not_resolvable",
       error: expect.stringContaining("project:deleted-writer"),
+    });
+  });
+});
+
+describe("a new owner a person's launch creates", () => {
+  it("takes the configured default backend, not the built-in one, and the default profile", async () => {
+    const library = createAgentProfileLibraryService({
+      storage: createAgentProfileStorage({ resolveConfigDir: () => configDir }),
+    });
+    const prepare = createNewOwnerPreparer({
+      readConfig: async () => ({ defaultAgentBackend: "codex" }),
+      resolveProfileSnapshot: (projectPath) =>
+        resolveConversationProfileSnapshot(projectPath, null, {
+          resolveProfile: (p, ref) => library.resolve(p, ref),
+        }),
+    });
+
+    const prepared = await prepare("/repo/app");
+
+    expect(prepared).toMatchObject({
+      ok: true,
+      owner: {
+        agentBackend: "codex",
+        profileSnapshot: { tier: "builtin", id: "standard-agent" },
+      },
     });
   });
 });

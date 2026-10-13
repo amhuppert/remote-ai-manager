@@ -17,6 +17,7 @@ import {
   cascadeSettings,
   type SettingsTier,
 } from "@/lib/config/settings-cascade";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { runDocumentRequestSchema } from "@/lib/runs/documents";
 import { runCharterSchema } from "@/lib/runs/schemas";
 import {
@@ -30,6 +31,7 @@ import {
   settingsSetAbove,
   type RunSettingKey,
   type RunSettings,
+  type RunSettingsPatch,
 } from "@/lib/runs/settings";
 import {
   workflowContextRequestSchema,
@@ -193,6 +195,47 @@ export function materializeRunTemplate(
       issueAt(templatePathOf(issue.path, tierOf), issue.message),
     ),
   };
+}
+
+/** Every profile a settings patch names, with its path inside the patch. */
+function profilesIn(
+  patch: RunSettingsPatch | undefined,
+): Array<{ path: Array<string | number>; ref: AgentProfileRef }> {
+  if (patch === undefined) return [];
+  return [
+    ...(patch.implementer === undefined
+      ? []
+      : [{ path: ["implementer", "profile"], ref: patch.implementer.profile }]),
+    ...(patch.reviewers ?? []).map((reviewer, index) => ({
+      path: ["reviewers", index, "profile"],
+      ref: reviewer.profile,
+    })),
+  ];
+}
+
+/**
+ * Every profile a template names, at its path in the template: in its
+ * defaults (`contextKey` null), or in a context's settings.
+ */
+export function profileSitesOf(content: RunTemplateContent): Array<{
+  path: Array<string | number>;
+  ref: AgentProfileRef;
+  contextKey: string | null;
+}> {
+  return [
+    ...profilesIn(content.defaults).map(({ path, ref }) => ({
+      path: ["defaults", ...path],
+      ref,
+      contextKey: null,
+    })),
+    ...content.workflow.contexts.flatMap((context, index) =>
+      profilesIn(context.settings).map(({ path, ref }) => ({
+        path: ["workflow", "contexts", index, "settings", ...path],
+        ref,
+        contextKey: context.key,
+      })),
+    ),
+  ];
 }
 
 function issueOf(issue: z.core.$ZodIssue): RunTemplateIssue {

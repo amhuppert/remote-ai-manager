@@ -408,9 +408,27 @@ export type AgentProfileReferenceHolder = z.infer<
 >;
 
 /**
+ * A run template naming the profile: in its `defaults` (no `contextId`), or in
+ * one context's `settings` (`contextId` is that context's key). A run template
+ * has no dormant configuration: a context turns a reviewer off by overriding
+ * the reviewer list without it.
+ */
+export const agentProfileRunTemplateHolderSchema = z
+  .object({
+    scope: agentProfileReferenceScopeSchema,
+    id: z.string().min(1),
+    name: z.string(),
+    contextId: z.string().min(1).optional(),
+  })
+  .strict();
+export type AgentProfileRunTemplateHolder = z.infer<
+  typeof agentProfileRunTemplateHolderSchema
+>;
+
+/**
  * Every persisted holder of one profile reference: project-scope workflow
- * definitions, global-scope templates, and whether the global
- * `workflowDefaults` block names it.
+ * definitions, global-scope templates, run templates of either tier, and
+ * whether the global `workflowDefaults` block names it.
  *
  * One shape serves the preview and the post-delete report, produced by one
  * reporter, so what the human was shown before confirming and what the delete
@@ -425,6 +443,7 @@ export const agentProfileSavedReferencesSchema = z
   .object({
     definitions: z.array(agentProfileReferenceHolderSchema),
     templates: z.array(agentProfileReferenceHolderSchema),
+    runTemplates: z.array(agentProfileRunTemplateHolderSchema),
     workflowDefaults: z.boolean(),
   })
   .strict();

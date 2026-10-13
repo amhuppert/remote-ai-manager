@@ -1,4 +1,5 @@
-import { isOrdinaryConversationRole, type ConversationState } from "./schemas";
+import { isEligibleOwner } from "./owner-eligibility";
+import type { ConversationState } from "./schemas";
 import type { ConversationsRepo } from "@/lib/state-store/conversations-repo";
 import type { ProjectConversationsRepo } from "@/lib/state-store/project-conversations-repo";
 import type { SessionsRepo } from "@/lib/state-store/sessions-repo";
@@ -50,10 +51,7 @@ export function isEligibleSubscriptionRecipient(
   return (
     identity !== null &&
     identity.projectPath === projectPath &&
-    !identity.sessionArchived &&
-    !identity.conversation.archived &&
-    identity.conversation.owner === null &&
-    isOrdinaryConversationRole(identity.conversation.role)
+    isEligibleOwner(identity.conversation, identity.sessionArchived)
   );
 }
 

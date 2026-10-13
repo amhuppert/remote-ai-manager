@@ -16,10 +16,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  checkProfileResolves,
-  createAgentProfileLibraryService,
-} from "@/lib/agent-profiles/library-service";
-import {
   publishEvent,
   publishEventBestEffort,
   type PublishFn,
@@ -45,12 +41,8 @@ import {
   type RunTemplateChangedEvent,
   type RunTemplateDeletedResponse,
 } from "./schemas";
-import {
-  createRunTemplateService,
-  type RunTemplateRefusal,
-  type RunTemplateService,
-} from "./service";
-import { createRunTemplateStorage } from "./storage";
+import { createProductionRunTemplateService } from "./production";
+import type { RunTemplateRefusal, RunTemplateService } from "./service";
 
 type RouteContext = { params: Promise<Record<string, string>> };
 type Handler = (request: Request, context: RouteContext) => Promise<Response>;
@@ -304,17 +296,9 @@ export function createRunTemplateRouteHandlers(
   };
 }
 
-const library = createAgentProfileLibraryService();
 const handlers = createRunTemplateRouteHandlers({
   resolveProjectPath,
-  templates: createRunTemplateService({
-    storage: createRunTemplateStorage(),
-    // The library a seat's spawn resolves its profile through.
-    profiles: {
-      check: (projectPath, ref) =>
-        checkProfileResolves(library, projectPath, ref),
-    },
-  }),
+  templates: createProductionRunTemplateService(),
   publish: publishEvent,
   log: createLogger("run-templates"),
 });

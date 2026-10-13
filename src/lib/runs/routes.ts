@@ -22,6 +22,14 @@ import {
   createAgentProfileLibraryService,
   type AgentProfileLibraryService,
 } from "@/lib/agent-profiles/library-service";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
+import {
+  createConversation,
+  deleteConversation,
+} from "@/lib/conversations/service";
+import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
+import { publishEvent } from "@/lib/events/publication";
+import { createProductionRunTemplateService } from "@/lib/run-templates/production";
 import { createSeatResolver, type SeatResolution } from "./seats";
 import { snapshotDocumentFile, snapshotRunDocuments } from "./documents";
 import { freezeCharter } from "./charter";
@@ -102,6 +110,36 @@ export function createRunSeatResolver(
 
 const resolveSeats = createRunSeatResolver(createAgentProfileLibraryService());
 
+/**
+ * A new owner as a person's launch creates it: the configured default
+ * backend, admitted for an ordinary conversation, and the default profile.
+ */
+export function createNewOwnerPreparer(deps: {
+  readConfig(): Promise<{ defaultAgentBackend: AgentBackendId }>;
+  resolveProfileSnapshot(projectPath: string): Promise<AgentProfileSnapshot>;
+}): RunRouteDeps["prepareNewOwner"] {
+  return async (projectPath) => {
+    const agentBackend = (await deps.readConfig()).defaultAgentBackend;
+    try {
+      await assertBackendExecution(agentBackend, {
+        facet: "conversation",
+        operation: "create-conversation",
+        executionClass: "ordinary-conversation",
+      });
+    } catch (error) {
+      if (!(error instanceof BackendAdmissionError)) throw error;
+      return { ok: false, status: 400, error: error.message, code: error.code };
+    }
+    return {
+      ok: true,
+      owner: {
+        agentBackend,
+        profileSnapshot: await deps.resolveProfileSnapshot(projectPath),
+      },
+    };
+  };
+}
+
 /** Lane worktrees sit beside the session's, named as every CC lane is; the branch prefix is read once, at launch. */
 const laneTargets: RunRouteDeps["laneTargets"] = async ({
   projectPath,
@@ -138,15 +176,30 @@ const handlers = createRunRouteHandlers({
   sessionLifecycle: (projectPath, sessionName, operation) =>
     getSessionLifecycleGate().runExclusive(projectPath, sessionName, operation),
   finalizingMerge: getFinalizingSessionMergeJob,
-  async ownerWakeable(projectPath, conversationId) {
-    const runtime = getSubscriptionRuntime();
-    return isEligibleSubscriptionRecipient(
-      runtime.readConversation(conversationId),
-      projectPath,
+  ownerAdmissible({ projectPath, sessionName, conversationId }) {
+    const identity = getSubscriptionRuntime().readConversation(conversationId);
+    return (
+      identity !== null &&
+      identity.sessionName === sessionName &&
+      isEligibleSubscriptionRecipient(identity, projectPath)
     );
   },
   resolveSeats,
   newRunId,
+  templates: createProductionRunTemplateService(),
+  prepareNewOwner: createNewOwnerPreparer({
+    readConfig,
+    resolveProfileSnapshot: (projectPath) =>
+      resolveConversationProfileSnapshot(projectPath, null),
+  }),
+  createOwner: ({ projectPath, sessionName, name, prepared }) =>
+    createConversation(projectPath, sessionName, {
+      name,
+      agentBackend: prepared.agentBackend,
+      profileSnapshot: prepared.profileSnapshot,
+    }),
+  removeOwner: deleteConversation,
+  publish: publishEvent,
   snapshotDocuments: (requests, worktreePath, current) =>
     snapshotRunDocuments({
       requests,
@@ -196,6 +249,7 @@ const handlers = createRunRouteHandlers({
 
 export const launchRunPOST = withTracing(handlers.launch);
 export const launchWorkflowRunPOST = withTracing(handlers.launchWorkflow);
+export const launchTemplateRunPOST = withTracing(handlers.launchTemplate);
 export const showRunGET = withTracing(handlers.show);
 export const listRunsGET = withTracing(handlers.list);
 export const activeRunsGET = withTracing(handlers.active);

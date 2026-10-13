@@ -19,7 +19,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
+import {
+  combineReferenceReporters,
+  createAgentProfileLibraryService,
+} from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
 import type {
   AgentProfileDeletionReport,
@@ -27,6 +30,9 @@ import type {
 } from "@/lib/agent-profiles/schemas";
 import { createConfigReader } from "@/lib/config/loader";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { runTemplateContentSchema } from "@/lib/run-templates/document";
+import { createRunTemplateProfileReferences } from "@/lib/run-templates/profile-references";
+import { createRunTemplateStorage } from "@/lib/run-templates/storage";
 
 import {
   createAssignmentReferenceChecker,
@@ -72,12 +78,20 @@ function configReader() {
   return createConfigReader(configDir);
 }
 
+/** As the profile routes compose it: this domain's share, and the run templates' beside it. */
 function reporter() {
-  return createWorkflowProfileReferenceReporter({
-    storage: workflowStorage(),
-    readWorkflowDefaults: async () =>
-      (await configReader().readConfig()).workflowDefaults,
-  });
+  return combineReferenceReporters(
+    createWorkflowProfileReferenceReporter({
+      storage: workflowStorage(),
+      readWorkflowDefaults: async () =>
+        (await configReader().readConfig()).workflowDefaults,
+    }),
+    createRunTemplateProfileReferences({ storage: runTemplateStorage() }),
+  );
+}
+
+function runTemplateStorage() {
+  return createRunTemplateStorage({ resolveConfigDir: () => configDir });
 }
 
 function libraryService() {
@@ -241,6 +255,40 @@ describe("agent profile deletion preview (R15.1)", () => {
     ).not.toBeNull();
   });
 
+  it("lists the run templates that name the profile beside the workflow holders, which it keeps", async () => {
+    await seedTargetProfile();
+    const definitionId = await saveDefinition(
+      SCOPE_A,
+      "Alpha Delivery",
+      definitionReferencingInContext(validatorFor(TARGET)),
+    );
+    const saved = await runTemplateStorage().create(
+      { kind: "global" },
+      "shared-release",
+      runTemplateContentSchema.parse({
+        name: "Shared release",
+        description: "",
+        parameters: [],
+        defaults: { reviewers: [{ authority: "blocking", profile: TARGET }] },
+        workflow: { contexts: [{ key: "notes", brief: "Write notes" }] },
+      }),
+    );
+    expect(saved.ok).toBe(true);
+
+    const report = await preview(PROJECT_A, TARGET);
+
+    expect(report.savedReferenceEnumeration.definitions).toEqual([
+      expect.objectContaining({ id: definitionId, contextId: "context-plan" }),
+    ]);
+    expect(report.savedReferenceEnumeration.runTemplates).toEqual([
+      {
+        scope: { kind: "global" },
+        id: "shared-release",
+        name: "Shared release",
+      },
+    ]);
+  });
+
   it("enumerates a reference held only by a dormant assignment inside a disabled cohort", async () => {
     await seedTargetProfile();
     const definitionId = await saveDefinition(
@@ -297,6 +345,7 @@ describe("agent profile deletion preview (R15.1)", () => {
     expect(report.savedReferenceEnumeration).toEqual({
       definitions: [],
       templates: [],
+      runTemplates: [],
       workflowDefaults: false,
     });
 
@@ -309,6 +358,7 @@ describe("agent profile deletion preview (R15.1)", () => {
     expect(deleted.savedReferenceEnumeration).toEqual({
       definitions: [],
       templates: [],
+      runTemplates: [],
       workflowDefaults: false,
     });
   });

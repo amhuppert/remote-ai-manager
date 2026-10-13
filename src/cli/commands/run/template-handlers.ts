@@ -16,6 +16,7 @@ import {
 } from "cli-for-agents";
 import { hint } from "cli-for-agents/guidance";
 import { renderInvocation } from "cli-for-agents/runtime";
+import { z } from "zod";
 import {
   runTemplateContentSchema,
   runTemplateDetailResponseSchema,
@@ -29,7 +30,12 @@ import {
   type RunTemplateDiagnostic,
   type RunTemplateSummary,
 } from "@/lib/run-templates/schemas";
-import type { RunTemplateTier } from "@/lib/runs/schemas";
+import {
+  runTemplateLaunchedResponseSchema,
+  runTemplateParameterValuesSchema,
+  type RunTemplateLaunchedResponse,
+  type RunTemplateTier,
+} from "@/lib/runs/schemas";
 import { quoteLiteralText } from "../../framework/literal-text";
 import {
   ccErrors,
@@ -47,11 +53,14 @@ import {
   cliRequest,
   encodePathSegment,
   type ProjectContext,
+  type SessionContext,
 } from "../../transport";
+import { launchedText, postLaunch, prepareSession } from "./handlers";
 import {
   runTemplateListCommand,
   runTemplateShowCommand,
   type runTemplateDeleteSpec,
+  type runTemplateLaunchSpec,
   type runTemplateListSpec,
   type runTemplateSaveSpec,
   type runTemplateShowSpec,
@@ -82,6 +91,25 @@ type Save = MutationHandler<
   typeof ccErrors.definitions,
   typeof ccGlobalFlags,
   RunTemplateContent
+>;
+
+/** The file `run template launch` takes. */
+const launchInputsSchema = z
+  .object({
+    parameters: runTemplateParameterValuesSchema,
+    /** The revision the launching agent read; a template changed since is refused. */
+    revision: z.number().int().min(1).optional(),
+  })
+  .strict();
+type LaunchInputs = z.infer<typeof launchInputsSchema>;
+
+type Launch = MutationHandler<
+  typeof runTemplateLaunchSpec,
+  CcApplication,
+  { context: SessionContext },
+  typeof ccErrors.definitions,
+  typeof ccGlobalFlags,
+  LaunchInputs
 >;
 
 const invalid = (message: string) =>
@@ -491,3 +519,39 @@ export const deleteHandler: Write<typeof runTemplateDeleteSpec> = {
       ),
   }),
 };
+
+// The caller owns the run, so the receipt and hint are run workflow's.
+const launchImplementation: Launch = {
+  decode: launchInputsSchema,
+  prepare: prepareSession,
+  commit: writeRunner<
+    Parameters<Launch["commit"]>[0],
+    RunTemplateLaunchedResponse,
+    CcErrorCode
+  >({
+    async run({ app, ctx, payload, prepared }) {
+      const { context } = prepared.value;
+      const id = ctx.args.id;
+      const tier = await resolveTier(app, context, id, ctx.flags.tier);
+      if (!tier.ok) return { effect: "not_applied" as const, result: tier };
+      return postLaunch({
+        app,
+        context,
+        suffix: "/template",
+        payload: {
+          template: {
+            tier: tier.value,
+            id,
+            ...(payload.revision !== undefined
+              ? { revision: payload.revision }
+              : {}),
+          },
+          parameters: payload.parameters,
+        },
+        receipt: runTemplateLaunchedResponseSchema,
+      });
+    },
+    text: launchedText,
+  }),
+};
+export const launchHandler = mutation(launchImplementation);

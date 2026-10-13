@@ -37,23 +37,6 @@ export const runTemplateParameterSchema = z
   .strict();
 export type RunTemplateParameter = z.infer<typeof runTemplateParameterSchema>;
 
-function isTextByName(value: unknown): value is Record<string, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every((text) => typeof text === "string")
-  );
-}
-
-/**
- * The values a launch gives, by parameter name, kept exactly as sent: a record
- * schema would drop a `__proto__` key, which binding must see to refuse.
- */
-export const runTemplateParameterValuesSchema = z.custom<
-  Record<string, string>
->(isTextByName, "Parameter values are text, by parameter name");
-
 /** One problem with a template or a launch's values, located by its dotted path. */
 export const runTemplateIssueSchema = z
   .object({ path: z.string(), message: z.string() })

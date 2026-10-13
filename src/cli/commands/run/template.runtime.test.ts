@@ -497,4 +497,128 @@ describe("run template commands", () => {
       payload: { data: { revision: 3 } },
     });
   });
+
+  describe("launch", () => {
+    const launched = {
+      runId: "run-1",
+      contextIds: ["run-1.notes"],
+      progress: { kind: "running" },
+      ownerConversationId: "owner-1",
+    };
+    const RUNS =
+      "http://cc.test/api/projects/project-one/sessions/session-one/runs";
+
+    it("launches the template as the calling conversation, finding its tier, and points at run show as run workflow does", async () => {
+      const fixture = createCcRuntimeFixture({
+        env: { CC_CONVERSATION: "owner-1" },
+        files: {
+          "/inputs.json": JSON.stringify({
+            parameters: { version: "1.2" },
+            revision: 2,
+          }),
+        },
+        respond: (request) =>
+          request.url === LIBRARY
+            ? jsonReply({
+                items: [
+                  summary("global", "release-checklist", "Release checklist"),
+                ],
+                diagnostics: [],
+              })
+            : jsonReply(launched, 202),
+      });
+
+      const result = await fixture.run([
+        "run",
+        "template",
+        "launch",
+        "release-checklist",
+        "--file",
+        "/inputs.json",
+      ]);
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const request = fixture.requests[1];
+      expect(request?.url).toBe(`${RUNS}/template`);
+      expect(request?.init.method).toBe("POST");
+      expect(bodyOf(request?.init ?? {})).toEqual({
+        template: { tier: "global", id: "release-checklist", revision: 2 },
+        parameters: { version: "1.2" },
+      });
+      const headers = (request?.init.headers ?? {}) as Record<string, string>;
+      expect(JSON.parse(headers["x-cc-conversation-identity"] ?? "{}")).toEqual(
+        { sessionName: "session-one", conversationId: "owner-1" },
+      );
+      const output = JSON.parse(result.stdout);
+      expect(output).toMatchObject({
+        effect: "applied",
+        payload: { data: { runId: "run-1" } },
+      });
+      expect(output.hint).toContain("cctl run show -- run-1");
+    });
+
+    it("says in text that the caller follows the run, as run workflow does", async () => {
+      const fixture = createCcRuntimeFixture({
+        files: { "/inputs.json": JSON.stringify({ parameters: {} }) },
+        respond: () => jsonReply(launched, 202),
+      });
+
+      const result = await fixture.run(
+        [
+          "run",
+          "template",
+          "launch",
+          "release-checklist",
+          "--tier",
+          "project",
+          "--file",
+          "/inputs.json",
+        ],
+        "text",
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "Run run-1 launched (running). You follow it",
+      );
+      expect(bodyOf(fixture.requests[0]?.init ?? {})).toEqual({
+        template: { tier: "project", id: "release-checklist" },
+        parameters: {},
+      });
+    });
+
+    it("reports a refused launch as not applied, keeping the server's code", async () => {
+      const fixture = createCcRuntimeFixture({
+        files: {
+          "/inputs.json": JSON.stringify({ parameters: {}, revision: 1 }),
+        },
+        respond: () =>
+          jsonReply(
+            {
+              error: "Run template project:release-checklist changed",
+              code: "run_template_changed",
+              details: { currentRevision: 3 },
+            },
+            409,
+          ),
+      });
+
+      const result = await fixture.run([
+        "run",
+        "template",
+        "launch",
+        "release-checklist",
+        "--tier",
+        "project",
+        "--file",
+        "/inputs.json",
+      ]);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(JSON.parse(result.stderr || result.stdout)).toMatchObject({
+        effect: "not_applied",
+        error: { details: { serverCode: "run_template_changed" } },
+      });
+    });
+  });
 });

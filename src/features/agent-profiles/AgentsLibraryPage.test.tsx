@@ -115,6 +115,15 @@ const DELETION_PREVIEW: AgentProfileDeletionReport = {
         dormant: false,
       },
     ],
+    runTemplates: [
+      {
+        scope: { kind: "project", projectPath: "/repos/my-app" },
+        id: "release-checklist",
+        name: "Release checklist",
+        contextId: "notes",
+      },
+      { scope: { kind: "global" }, id: "shared-fix", name: "Shared fix" },
+    ],
     workflowDefaults: true,
   },
 };
@@ -379,7 +388,7 @@ describe("AgentsLibraryPage", () => {
       name: "Delete House Style?",
     });
     const holders = await within(confirmation).findByRole("list", {
-      name: "Workflows referencing this profile",
+      name: "Graph workflows referencing this profile",
     });
     expect(holders).toHaveTextContent("Nightly Delivery");
     expect(holders).toHaveTextContent("Shared Delivery Template");
@@ -390,6 +399,29 @@ describe("AgentsLibraryPage", () => {
     expect(confirmation).toHaveTextContent(
       "The global workflow defaults also reference it.",
     );
+
+    // Each list is captioned on screen, so a run template is not read as a graph template.
+    expect(
+      within(confirmation).getByText(
+        "Graph workflows referencing this profile",
+      ),
+    ).toBeVisible();
+    expect(
+      within(confirmation).getByText("Run templates referencing this profile"),
+    ).toBeVisible();
+    // A run template names it in one context's settings, or in its defaults.
+    const runTemplates = within(confirmation).getByRole("list", {
+      name: "Run templates referencing this profile",
+    });
+    const contextRow = within(runTemplates)
+      .getByText("Release checklist")
+      .closest("li");
+    expect(contextRow).toHaveTextContent("context notes");
+    const defaultsRow = within(runTemplates)
+      .getByText("Shared fix")
+      .closest("li");
+    expect(defaultsRow).toHaveTextContent("Global");
+    expect(defaultsRow).toHaveTextContent("defaults");
 
     // Advisory about its CONTENT: holders were found and the button is still
     // live, because a human may delete a referenced profile on purpose.
@@ -429,7 +461,7 @@ describe("AgentsLibraryPage", () => {
     scan.resolve(Response.json(DELETION_PREVIEW));
 
     await within(confirmation).findByRole("list", {
-      name: "Workflows referencing this profile",
+      name: "Graph workflows referencing this profile",
     });
     await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
@@ -490,7 +522,7 @@ describe("AgentsLibraryPage", () => {
       name: "Delete House Style?",
     });
     await within(firstOpen).findByRole("list", {
-      name: "Workflows referencing this profile",
+      name: "Graph workflows referencing this profile",
     });
     await waitFor(() =>
       expect(
@@ -521,7 +553,7 @@ describe("AgentsLibraryPage", () => {
     // The stale enumeration is neither shown nor counted as having been shown.
     expect(
       within(reopened).queryByRole("list", {
-        name: "Workflows referencing this profile",
+        name: "Graph workflows referencing this profile",
       }),
     ).toBeNull();
     await waitFor(() => expect(confirm).toBeDisabled());

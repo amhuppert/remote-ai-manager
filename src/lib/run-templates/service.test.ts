@@ -265,6 +265,132 @@ describe("run template service", () => {
     ]);
   });
 
+  describe("preparing a launch", () => {
+    const prepare = (
+      input: {
+        id?: string;
+        tier?: "project" | "global";
+        revision?: number;
+        parameters?: Record<string, string>;
+      } = {},
+    ) =>
+      service.prepareLaunch({
+        projectPath: PROJECT,
+        tier: input.tier ?? "project",
+        id: input.id ?? "fix-ticket",
+        ...(input.revision !== undefined ? { revision: input.revision } : {}),
+        parameters: input.parameters ?? { ticket: "CC-12" },
+      });
+
+    it("makes the workflow request with the values substituted, and an origin naming the template as it stood", async () => {
+      await save(
+        "project",
+        null,
+        content({ defaults: { humanApproval: true } }),
+      );
+
+      const prepared = await prepare({ revision: 1 });
+
+      expect(prepared).toEqual({
+        ok: true,
+        request: {
+          title: "Fix a ticket",
+          contexts: [{ key: "fix", brief: "Fix CC-12", humanApproval: true }],
+        },
+        origin: {
+          kind: "template",
+          tier: "project",
+          id: "fix-ticket",
+          revision: 1,
+          name: "Fix a ticket",
+        },
+      });
+    });
+
+    it("launches the current revision when the launch names none", async () => {
+      await save("project", null, content());
+      await save("project", 1, content({ name: "Fix it fast" }));
+
+      expect(await prepare()).toMatchObject({
+        ok: true,
+        request: { title: "Fix it fast" },
+        origin: { revision: 2, name: "Fix it fast" },
+      });
+    });
+
+    it("refuses a revision the person launching did not see, naming the current one", async () => {
+      await save("project", null, content());
+      await save("project", 1, content({ name: "Fix it fast" }));
+
+      expect(await prepare({ revision: 1 })).toEqual({
+        ok: false,
+        refusal: {
+          code: "run_template_changed",
+          message: expect.stringContaining("revision 2"),
+          currentRevision: 2,
+        },
+      });
+    });
+
+    it("locates every value problem at its parameter", async () => {
+      await save(
+        "project",
+        null,
+        content({
+          parameters: [
+            { name: "ticket", description: "Ticket", required: true },
+            { name: "area", description: "Area", required: false },
+          ],
+        }),
+      );
+
+      expect(
+        await prepare({ parameters: { ticket: "  ", extra: "x" } }),
+      ).toEqual({
+        ok: false,
+        refusal: {
+          code: "run_template_launch_invalid",
+          message: expect.any(String),
+          issues: [
+            { path: "parameters.extra", message: expect.any(String) },
+            { path: "parameters.ticket", message: expect.any(String) },
+          ],
+        },
+      });
+    });
+
+    it("refuses a template that does not exist, one whose file cannot be read naming the file, and a malformed id", async () => {
+      const projectDir = path.join(
+        configDir,
+        "run-templates",
+        Buffer.from(PROJECT).toString("base64url"),
+      );
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(path.join(projectDir, "broken.json"), "{");
+
+      expect(await prepare({ id: "missing" })).toEqual({
+        ok: false,
+        refusal: {
+          code: "run_template_not_found",
+          message: "Run template project:missing does not exist",
+        },
+      });
+      expect(await prepare({ id: "broken" })).toEqual({
+        ok: false,
+        refusal: {
+          code: "run_template_not_found",
+          message: expect.stringContaining(
+            path.join(projectDir, "broken.json"),
+          ),
+        },
+      });
+      expect(await prepare({ id: "../escape" })).toMatchObject({
+        ok: false,
+        refusal: { code: "run_template_invalid_id" },
+      });
+    });
+  });
+
   it("deletes a template only at its current revision", async () => {
     await save("project", null, content());
 

@@ -104,7 +104,12 @@ beforeEach(async () => {
     // exist in this fixture, so the reporter has nothing to find.
     referenceReporter: {
       async enumerateSavedReferences() {
-        return { definitions: [], templates: [], workflowDefaults: false };
+        return {
+          definitions: [],
+          templates: [],
+          runTemplates: [],
+          workflowDefaults: false,
+        };
       },
     },
   });

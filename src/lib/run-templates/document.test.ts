@@ -5,7 +5,7 @@ import {
   validateRunTemplate,
   type RunTemplateContent,
 } from "./document";
-import { runTemplateParameterValuesSchema } from "./schemas";
+import { runTemplateParameterValuesSchema } from "@/lib/runs/schemas";
 
 const writer = { tier: "project" as const, id: "api-writer" };
 const other = { tier: "global" as const, id: "docs-writer" };

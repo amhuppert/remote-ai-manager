@@ -324,9 +324,34 @@ locality); domain terms name the concepts the code is about.
   template may name only builtin and global profiles. It materialises into
   `workflowLaunchRequestSchema`, so the workflow compiler and launch
   resolver are unchanged; a setting neither tier sets stays out of the
-  request. `service.ts` is the only module consumers call; writes publish
-  `run-template-changed`, scoped by the changed template's tier. Agents
-  author templates through `cctl run template`.
+  request. `service.ts` is the boundary for CRUD and launch preparation;
+  writes publish `run-template-changed`, scoped by the changed template's
+  tier. Agents author templates through `cctl run template`. The one
+  exception to the service boundary is the agent-profile deletion report,
+  whose composition reads storage through
+  `run-templates/profile-references.ts` to list the run templates that name a
+  profile, beside the graph workflow holders it keeps until deploy 2.
+- **Template launch** — `POST …/sessions/<s>/runs/template` and
+  `cctl run template launch`: the template library prepares the workflow
+  request and the run's origin (`prepareLaunch`, refusing a revision the
+  launcher did not see), and the run routes launch it as any workflow. An
+  agent owns what it launches and names no owner; a person names one, a
+  conversation of the session or a new one. Every slow input (the template
+  read, the new owner's backend and profile, seats, documents, charter,
+  placement) is prepared first; then, under the session lifecycle gate, a
+  new owner is created in a session found open, and after the last awaited
+  session read the owner (whoever named it) is admitted by the owner rule,
+  then the closed-session and finalizing-merge check runs, with nothing
+  yielding before `runs.record`. `run launch` and `run workflow` share that
+  segment for their caller. A refusal or failure after creation removes the
+  owner, and its `conversation-created` is published only once the run is
+  recorded.
+- **Owner eligibility** — whether work may report to a conversation by
+  waking it (`conversations/owner-eligibility.ts`, browser-safe): an
+  ordinary role, no owning execution, and neither it nor its session
+  archived. `isEligibleSubscriptionRecipient` adds the project to it, and a
+  run's owner, whether the caller, a chosen conversation or a new one, must
+  meet it when the run is recorded.
 - **Run origin** — the template a run was launched from,
   `{kind: "template", tier, id, revision, name}`, in the run row's own
   nullable `origin_json` column and never inside `facts_json`, which an older

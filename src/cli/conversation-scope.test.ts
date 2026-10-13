@@ -152,6 +152,7 @@ function makeHost(
         },
         "/tmp/plan.json": { expectedRevision: 1, summary: "s", objective: "o" },
         "/tmp/inputs.json": {},
+        "/tmp/template-inputs.json": { parameters: {} },
         "/tmp/edit.json": {
           expectedRevision: 1,
           operations: [
@@ -484,6 +485,24 @@ describe("cctl at project conversation scope — session-only commands", () => {
     // pins it to a session, and approveExecutionStart refuses one whose session is
     // null, so a project-scope start would persist an unapprovable execution.
     "spec start": ["spec", "start", "feat", "--file", "/tmp/inputs.json"],
+    // A leaf that differs from its project-supported group: a launch starts a
+    // run in a session worktree.
+    "run template launch": [
+      "run",
+      "template",
+      "launch",
+      "release-checklist",
+      "--file",
+      "/tmp/template-inputs.json",
+    ],
+    "run template launch-check": [
+      "run",
+      "template",
+      "launch-check",
+      "release-checklist",
+      "--file",
+      "/tmp/template-inputs.json",
+    ],
   };
 
   /** Session-only workflow verbs that resolve through the group entry. */

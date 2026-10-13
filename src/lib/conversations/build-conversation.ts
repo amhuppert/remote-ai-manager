@@ -5,6 +5,7 @@ import type {
   ConversationScope,
   ConversationState,
   ForkedFrom,
+  NameOrigin,
 } from "./schemas";
 
 /**
@@ -18,6 +19,8 @@ export interface BuildConversationInput {
   id: string;
   scope: ConversationScope;
   name: string;
+  /** `manual` for a name a person chose, which automatic naming never replaces. */
+  nameOrigin?: NameOrigin;
   /** ISO timestamp used for both `createdAt` and `lastActivityAt`. */
   createdAt: string;
   agentBackend: AgentBackendId;
@@ -72,7 +75,7 @@ export function buildConversation(
     id: input.id,
     scope: input.scope,
     name: input.name,
-    nameOrigin: "default",
+    nameOrigin: input.nameOrigin ?? "default",
     transcriptPath: input.transcriptPath ?? null,
     status: "new",
     promptCount: 0,

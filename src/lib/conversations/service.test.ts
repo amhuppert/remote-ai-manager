@@ -339,6 +339,23 @@ describe("createConversation", () => {
     expect(c1.id).not.toBe(c2.id);
   });
 
+  it("takes a chosen name as a person's name, which automatic naming never replaces", async () => {
+    const { state, conversations } = createTestServices();
+    await seedSession(state);
+
+    await conversations.createConversation("/proj", "test", {
+      name: "Release owner",
+    });
+
+    const session = await state.getSession("/proj", "test");
+    expect(session!.conversations[0]).toMatchObject({
+      name: "Release owner",
+      nameOrigin: "manual",
+      status: "new",
+      promptCount: 0,
+    });
+  });
+
   it("throws for non-existent project", async () => {
     const { state, conversations } = createTestServices();
     await seedSession(state);

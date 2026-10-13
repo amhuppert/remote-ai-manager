@@ -95,6 +95,7 @@ beforeEach(async () => {
   savedReferences = {
     definitions: [],
     templates: [],
+    runTemplates: [],
     workflowDefaults: false,
   };
   library = createAgentProfileLibraryService({
@@ -970,6 +971,7 @@ describe("agent profile routes — deletion preview (R15.1)", () => {
         dormant: false,
       },
     ],
+    runTemplates: [],
     workflowDefaults: true,
   };
 

@@ -1,9 +1,12 @@
 "use client";
 
+import { useId } from "react";
+
 import { StatusChip } from "@/components/ui/StatusChip";
 import type {
   AgentProfileDeletionReport,
   AgentProfileReferenceHolder,
+  AgentProfileRunTemplateHolder,
 } from "@/lib/agent-profiles/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -15,16 +18,22 @@ export interface AgentProfileDeletionImpactProps {
   };
 }
 
-function holderKey(holder: AgentProfileReferenceHolder): string {
+type Holder = AgentProfileReferenceHolder | AgentProfileRunTemplateHolder;
+
+function holderKey(holder: Holder): string {
   const scope =
     holder.scope.kind === "global" ? "global" : holder.scope.projectPath;
-  return `${scope}:${holder.id}:${holder.contextId ?? ""}:${holder.dormant}`;
+  const dormant = "dormant" in holder ? holder.dormant : false;
+  return `${scope}:${holder.id}:${holder.contextId ?? ""}:${dormant}`;
 }
 
 function HolderRow({
   holder,
+  place,
 }: {
-  holder: AgentProfileReferenceHolder;
+  holder: Holder;
+  /** Where a holder with no context names the profile, when that needs saying. */
+  place?: string;
 }): React.JSX.Element {
   return (
     <li className="flex flex-wrap items-center gap-xs font-mono text-[0.72rem] text-text-secondary">
@@ -36,14 +45,47 @@ function HolderRow({
           Global
         </StatusChip>
       )}
-      {holder.contextId !== undefined && (
+      {holder.contextId !== undefined ? (
         <span className="text-text-tertiary">context {holder.contextId}</span>
+      ) : (
+        place !== undefined && (
+          <span className="text-text-tertiary">{place}</span>
+        )
       )}
       {/* A dormant holder is configuration nothing currently invokes — it is
           listed because re-enabling the cohort would run it, and by then the
           library lookup that could have caught the dangling reference is gone. */}
-      {holder.dormant && <StatusChip tone="neutral">Dormant</StatusChip>}
+      {"dormant" in holder && holder.dormant && (
+        <StatusChip tone="neutral">Dormant</StatusChip>
+      )}
     </li>
+  );
+}
+
+/** One kind of holder, captioned on screen so the kinds cannot be confused. */
+function HolderList({
+  caption,
+  children,
+}: {
+  caption: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const captionId = useId();
+  return (
+    <div className="flex flex-col gap-2xs">
+      <p
+        id={captionId}
+        className="m-0 font-mono text-[0.72rem] text-text-tertiary"
+      >
+        {caption}
+      </p>
+      <ul
+        aria-labelledby={captionId}
+        className="m-0 flex max-h-[180px] list-none flex-col gap-2xs overflow-auto p-0"
+      >
+        {children}
+      </ul>
+    </div>
   );
 }
 
@@ -83,14 +125,15 @@ export default function AgentProfileDeletionImpact({
     );
   }
 
-  const { definitions, templates, workflowDefaults } =
+  const { definitions, templates, runTemplates, workflowDefaults } =
     preview.report.savedReferenceEnumeration;
   const holders = [...definitions, ...templates];
 
-  if (holders.length === 0 && !workflowDefaults) {
+  if (holders.length === 0 && runTemplates.length === 0 && !workflowDefaults) {
     return (
       <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
-        No saved workflow, template, or global default references this profile.
+        No saved workflow, template, run template, or global default references
+        this profile.
       </p>
     );
   }
@@ -98,18 +141,26 @@ export default function AgentProfileDeletionImpact({
   return (
     <section className="flex flex-col gap-2xs">
       <p className="m-0 font-mono text-[0.72rem] text-amber">
-        Deleting this profile leaves these saved artifacts unlaunchable until
-        they are re-staffed:
+        These saved artifacts still reference this profile, and may need
+        updating before they launch:
       </p>
       {holders.length > 0 && (
-        <ul
-          aria-label="Workflows referencing this profile"
-          className="m-0 flex max-h-[180px] list-none flex-col gap-2xs overflow-auto p-0"
-        >
+        <HolderList caption="Graph workflows referencing this profile">
           {holders.map((holder) => (
             <HolderRow key={holderKey(holder)} holder={holder} />
           ))}
-        </ul>
+        </HolderList>
+      )}
+      {runTemplates.length > 0 && (
+        <HolderList caption="Run templates referencing this profile">
+          {runTemplates.map((holder) => (
+            <HolderRow
+              key={holderKey(holder)}
+              holder={holder}
+              place="defaults"
+            />
+          ))}
+        </HolderList>
       )}
       {workflowDefaults && (
         <p className="m-0 font-mono text-[0.72rem] text-text-secondary">

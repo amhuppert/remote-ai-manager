@@ -212,7 +212,7 @@ beforeEach(() => {
       const jobId = finalizing.get(sessionName);
       return jobId === undefined ? null : { jobId };
     },
-    async ownerWakeable(_projectPath, conversationId) {
+    ownerAdmissible({ conversationId }) {
       return !unwakeable.has(conversationId);
     },
     async resolveSeats({ request: launchRequest }) {
@@ -250,6 +250,22 @@ beforeEach(() => {
       sequence += 1;
       return `run-${sequence}`;
     },
+    // Template launches and the owners they create are covered in template-launch.test.ts.
+    templates: {
+      async prepareLaunch() {
+        throw new Error("No template launch here");
+      },
+    },
+    async prepareNewOwner() {
+      throw new Error("No template launch here");
+    },
+    async createOwner() {
+      throw new Error("No template launch here");
+    },
+    async removeOwner() {
+      throw new Error("No template launch here");
+    },
+    publish: () => ({ delivered: true }),
     // Freezes each document as the bytes its path names; a path starting "missing" has no file.
     // A kept revision takes the bytes the run's latest revision of its path holds.
     async snapshotDocuments(requests, worktreePath, current = []) {
@@ -581,6 +597,32 @@ describe("run routes", () => {
     expect(response.status).toBe(409);
     expect(await json(response)).toMatchObject({ code: "owner_not_wakeable" });
     expect(supervision.runs.observe("run-1")).toBeNull();
+  });
+
+  it("asks again whether the inbox can wake the caller as the run is recorded, refusing one archived while its launch prepared", async () => {
+    const held = hold();
+    holdDocuments = held.wait;
+    const launching = routes.launchWorkflow(
+      request(
+        {
+          title: "Notice",
+          contexts: [{ key: "fix", brief: "Fix the notice" }],
+          documents: [
+            { path: "plan.md", from: "docs/plan.md", description: "The plan" },
+          ],
+        },
+        identity("other-1"),
+      ),
+      params(),
+    );
+    await held.reached;
+    unwakeable.add("other-1");
+    held.release();
+    const response = await launching;
+
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: "owner_not_wakeable" });
+    expect(supervision.runs.listSession("/repo", "session")).toEqual([]);
   });
 
   it("refuses a launch without a verified calling conversation, and an unknown option", async () => {

@@ -34,6 +34,7 @@ const OTHER_PROJECT_PATH = "/repos/other-project";
 const NO_REFERENCES: AgentProfileSavedReferences = {
   definitions: [],
   templates: [],
+  runTemplates: [],
   workflowDefaults: false,
 };
 
@@ -551,6 +552,7 @@ describe("agent profile library — deletion preview (R15.1)", () => {
     referenceAnswer = {
       definitions: [HOLDER],
       templates: [],
+      runTemplates: [],
       workflowDefaults: true,
     };
 
@@ -581,6 +583,7 @@ describe("agent profile library — deletion preview (R15.1)", () => {
     referenceAnswer = {
       definitions: [HOLDER],
       templates: [],
+      runTemplates: [],
       workflowDefaults: false,
     };
     const second = await library.previewDeletion(

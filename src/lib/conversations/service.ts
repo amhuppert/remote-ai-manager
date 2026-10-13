@@ -255,6 +255,8 @@ export function createConversationService(
        * the conversation actually ran under.
        */
       profileSnapshot?: AgentProfileSnapshot;
+      /** A person's name for it; automatic naming never replaces it. */
+      name?: string;
     },
   ): Promise<ConversationState> {
     if (opts?.profile != null && opts.profileSnapshot !== undefined) {
@@ -289,7 +291,9 @@ export function createConversationService(
         buildConversation({
           id: crypto.randomUUID(),
           scope: "session",
-          name: `${sessionName} ${sequenceNumber}`,
+          ...(opts?.name !== undefined
+            ? { name: opts.name, nameOrigin: "manual" as const }
+            : { name: `${sessionName} ${sequenceNumber}` }),
           createdAt: new Date().toISOString(),
           agentBackend: opts?.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
           role: opts?.role ?? null,

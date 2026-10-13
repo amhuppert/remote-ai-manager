@@ -1,23 +1,30 @@
 /**
- * The run template library: the only module consumers call. It lists both
- * tiers a project sees, reads one template, and saves or deletes one with
- * compare-and-swap; a save is checked first (`validateRunTemplate`, then every
- * profile the template names, resolved from the template's own scope).
+ * The run template library's boundary for CRUD and launch preparation. It
+ * lists both tiers a project sees, reads one template, and saves or deletes
+ * one with compare-and-swap; a save is checked first (`validateRunTemplate`,
+ * then every profile the template names, resolved from the template's own
+ * scope). A launch reads the template here and materialises it into the
+ * workflow request the run routes launch. The one exception is the
+ * agent-profile deletion report, whose composition reads storage through
+ * `profile-references.ts`.
  */
 import {
   formatAgentProfileRef,
   type AgentProfileRef,
 } from "@/lib/agent-profiles/schemas";
-import type { RunTemplateTier } from "@/lib/runs/schemas";
-import type { RunSettingsPatch } from "@/lib/runs/settings";
+import type { RunOrigin, RunTemplateTier } from "@/lib/runs/schemas";
+import type { WorkflowLaunchRequest } from "@/lib/runs/workflow-definition";
 
 import {
+  materializeRunTemplate,
+  profileSitesOf,
   validateRunTemplate,
   type RunTemplateContent,
   type RunTemplateRecord,
 } from "./document";
 import {
   issueAt,
+  runTemplateIdSchema,
   type RunTemplateIssue,
   type RunTemplateLibrary,
   type RunTemplateSummary,
@@ -44,6 +51,23 @@ export type RunTemplateSaved =
 export type RunTemplateDeleted =
   | { ok: true; record: RunTemplateRecord }
   | { ok: false; refusal: RunTemplateRefusal };
+
+/** Why a template cannot be launched as asked; nothing was launched. */
+export type RunTemplateLaunchRefusal =
+  | { code: "run_template_invalid_id"; message: string }
+  | { code: "run_template_not_found"; message: string }
+  /** The template changed since the revision the launch names. */
+  | { code: "run_template_changed"; message: string; currentRevision: number }
+  /** A parameter value at `parameters.<name>`, or what the values make of the template, at its path. */
+  | {
+      code: "run_template_launch_invalid";
+      message: string;
+      issues: RunTemplateIssue[];
+    };
+
+export type RunTemplateLaunchPreparation =
+  | { ok: true; request: WorkflowLaunchRequest; origin: RunOrigin }
+  | { ok: false; refusal: RunTemplateLaunchRefusal };
 
 /** Whether a profile reference resolves where the template lives; the message says why not. */
 export interface RunTemplateProfileCheck {
@@ -81,22 +105,18 @@ export interface RunTemplateService {
     id: string;
     expectedRevision: number;
   }): Promise<RunTemplateDeleted>;
-}
-
-/** Every profile a settings patch names, with its path inside the patch. */
-function profilesIn(
-  patch: RunSettingsPatch | undefined,
-): Array<{ path: Array<string | number>; ref: AgentProfileRef }> {
-  if (patch === undefined) return [];
-  return [
-    ...(patch.implementer === undefined
-      ? []
-      : [{ path: ["implementer", "profile"], ref: patch.implementer.profile }]),
-    ...(patch.reviewers ?? []).map((reviewer, index) => ({
-      path: ["reviewers", index, "profile"],
-      ref: reviewer.profile,
-    })),
-  ];
+  /**
+   * The workflow launch request the template makes with these values, and the
+   * origin the run records. `revision`, when given, is the one the person
+   * launching saw: a template changed since is refused, not launched.
+   */
+  prepareLaunch(input: {
+    projectPath: string;
+    tier: RunTemplateTier;
+    id: string;
+    revision?: number;
+    parameters: Readonly<Record<string, string>>;
+  }): Promise<RunTemplateLaunchPreparation>;
 }
 
 function summaryOf(
@@ -130,20 +150,8 @@ export function createRunTemplateService(
     tier: RunTemplateTier,
     content: RunTemplateContent,
   ): Promise<RunTemplateIssue[]> {
-    const named = [
-      ...profilesIn(content.defaults).map(({ path, ref }) => ({
-        path: ["defaults", ...path],
-        ref,
-      })),
-      ...content.workflow.contexts.flatMap((context, index) =>
-        profilesIn(context.settings).map(({ path, ref }) => ({
-          path: ["workflow", "contexts", index, "settings", ...path],
-          ref,
-        })),
-      ),
-    ];
     const issues: RunTemplateIssue[] = [];
-    for (const { path, ref } of named) {
+    for (const { path, ref } of profileSitesOf(content)) {
       if (tier === "global" && ref.tier === "project") {
         issues.push(
           issueAt(
@@ -226,6 +234,61 @@ export function createRunTemplateService(
         id,
         expectedRevision,
       );
+    },
+
+    async prepareLaunch({ projectPath, tier, id, revision, parameters }) {
+      const validId = runTemplateIdSchema.safeParse(id);
+      if (!validId.success)
+        return {
+          ok: false,
+          refusal: {
+            code: "run_template_invalid_id",
+            message: `Invalid run template id ${JSON.stringify(id)}: ${validId.error.issues[0]?.message ?? "malformed"}`,
+          },
+        };
+      const read = await storage.get(scopeForTier(tier, projectPath), id);
+      if (read.kind !== "found")
+        return {
+          ok: false,
+          refusal: {
+            code: "run_template_not_found",
+            message:
+              read.kind === "absent"
+                ? `Run template ${tier}:${id} does not exist`
+                : `Run template ${tier}:${id} cannot be read (${read.reason}); fix or remove ${read.path}`,
+          },
+        };
+      const { record } = read;
+      if (revision !== undefined && record.revision !== revision)
+        return {
+          ok: false,
+          refusal: {
+            code: "run_template_changed",
+            message: `Run template ${tier}:${id} changed since revision ${revision}: it is at revision ${record.revision} now; read it again before launching it`,
+            currentRevision: record.revision,
+          },
+        };
+      const materialized = materializeRunTemplate(record, parameters);
+      if (!materialized.ok)
+        return {
+          ok: false,
+          refusal: {
+            code: "run_template_launch_invalid",
+            message: `The launch has ${materialized.issues.length} ${materialized.issues.length === 1 ? "problem" : "problems"}`,
+            issues: materialized.issues,
+          },
+        };
+      return {
+        ok: true,
+        request: materialized.request,
+        origin: {
+          kind: "template",
+          tier,
+          id,
+          revision: record.revision,
+          name: record.name,
+        },
+      };
     },
   };
 }

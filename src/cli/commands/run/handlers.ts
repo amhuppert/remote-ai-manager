@@ -454,11 +454,13 @@ function viewText(view: JsonData<RunViewData>): string {
 }
 
 /** Posts a launch payload to `suffix` and turns the receipt into the CLI result. */
-async function postLaunch(input: {
+export async function postLaunch<T extends RunLaunchedResponse>(input: {
   app: CcApplication;
   context: SessionContext;
   suffix: string;
   payload: unknown;
+  /** The receipt the endpoint answers with. */
+  receipt: z.ZodType<T>;
 }) {
   const { app, context } = input;
   const target = recoveryFacts([sessionReference(context.session)]);
@@ -470,7 +472,7 @@ async function postLaunch(input: {
     principalIdentity: resolveCcPrincipal(app),
   });
   if (response.kind !== "ok") return ccWriteFailure(response, target);
-  const parsed = runLaunchedResponseSchema.safeParse(response.body);
+  const parsed = input.receipt.safeParse(response.body);
   if (!parsed.success) {
     return {
       effect: "unknown" as const,
@@ -489,12 +491,12 @@ async function postLaunch(input: {
   };
 }
 
-const launchedText = (data: JsonData<RunLaunchedResponse>) =>
+export const launchedText = (data: JsonData<RunLaunchedResponse>) =>
   quoteLiteralText(
     `Run ${data.runId} launched (${data.progress.kind}). You follow it: its questions, halts and result wake you as subscription updates.\n`,
   );
 
-async function prepareSession({ app }: { app: CcApplication }) {
+export async function prepareSession({ app }: { app: CcApplication }) {
   const context = await resolveCcSession(app);
   return context.ok
     ? ({ ok: true, value: { context: context.value } } as const)
@@ -510,7 +512,13 @@ const launchImplementation: Launch = {
     CcErrorCode
   >({
     run: ({ app, payload, prepared }) =>
-      postLaunch({ app, context: prepared.value.context, suffix: "", payload }),
+      postLaunch({
+        app,
+        context: prepared.value.context,
+        suffix: "",
+        payload,
+        receipt: runLaunchedResponseSchema,
+      }),
     text: launchedText,
   }),
 };
@@ -530,6 +538,7 @@ const workflowImplementation: LaunchWorkflow = {
         context: prepared.value.context,
         suffix: "/workflow",
         payload,
+        receipt: runLaunchedResponseSchema,
       }),
     text: launchedText,
   }),

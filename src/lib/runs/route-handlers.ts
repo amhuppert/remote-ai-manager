@@ -4,6 +4,7 @@
  * - GET  /api/projects/[name]/sessions/[session]/runs                → the session's runs, newest first
  * - POST /api/projects/[name]/sessions/[session]/runs                → launch an agent run
  * - POST /api/projects/[name]/sessions/[session]/runs/workflow       → launch a workflow run
+ * - POST /api/projects/[name]/sessions/[session]/runs/template       → launch a saved run template (a conversation, or a person naming its owner)
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]        → the run view
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]/page  → the run as the run page shows it
  * - GET  /api/projects/[name]/sessions/[session]/runs/[runId]/definition → the workflow as written
@@ -17,10 +18,15 @@
  * The calling conversation is the principal: it owns the runs it launches, and
  * only the owner answers or amends them. A person in Command Center, whose
  * request carries no agent credential, reads and steers runs beside their
- * owners and alone decides human approval. A seat conversation changes tasks,
- * and publishes documents, only for the Context its seat binding names.
+ * owners, alone decides human approval, and launches a template run for an
+ * owner it names: a conversation of the session, or a new one the launch
+ * creates. A seat conversation changes tasks, and publishes documents, only
+ * for the Context its seat binding names.
  */
-import { closedSessionRefusal } from "./session-guard";
+import {
+  closedSessionRefusal,
+  type ClosedSessionRefusal,
+} from "./session-guard";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -34,6 +40,14 @@ import { isContextRefusal } from "@/lib/execution-context/advance";
 import type { SeatWorkplace } from "@/lib/execution-context/host";
 import type { SeatBindingRecord } from "@/lib/conversation-core/schemas";
 import type { Logger } from "@/lib/logging";
+import {
+  publishEventBestEffort,
+  type PublishFn,
+} from "@/lib/events/publication";
+import { buildConversationCreatedEvent } from "@/lib/conversations/created-event";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   jsonError,
   notFound,
@@ -52,6 +66,11 @@ import { frozenKeys, writtenEntry } from "./amendment";
 import {
   runControlRequestSchema,
   runDecisionRequestSchema,
+  runTemplateLaunchRequestSchema,
+  type RunOrigin,
+  type RunProgress,
+  type RunTemplateLaunchRequest,
+  type RunTemplateTier,
   type RunCharter,
   type RunDefinitionContext,
   type RunDocumentRevision,
@@ -84,6 +103,29 @@ import {
 
 type RouteContext = { params: Promise<Record<string, string>> };
 type Handler = (request: Request, context: RouteContext) => Promise<Response>;
+
+/** Why a template cannot be launched as asked, as the template library reports it. */
+export type TemplateLaunchRefusal =
+  | {
+      code: "run_template_invalid_id" | "run_template_not_found";
+      message: string;
+    }
+  | { code: "run_template_changed"; message: string; currentRevision: number }
+  | {
+      code: "run_template_launch_invalid";
+      message: string;
+      issues: ReadonlyArray<{ path: string; message: string }>;
+    };
+
+export type TemplateLaunchPreparation =
+  | { ok: true; request: WorkflowLaunchRequest; origin: RunOrigin }
+  | { ok: false; refusal: TemplateLaunchRefusal };
+
+/** What creating a new owner reads, settled before the launch takes its session's lifecycle. */
+export interface NewOwnerPreparation {
+  agentBackend: AgentBackendId;
+  profileSnapshot: AgentProfileSnapshot;
+}
 
 export interface RunRouteDeps {
   auth: Pick<AgentAuth, "requireToken" | "validateOptionalToken">;
@@ -119,8 +161,17 @@ export interface RunRouteDeps {
   /** The project's registered validation commands, which a launch or amendment freezes for the implementers it adds. */
   validationCommands(projectPath: string): Promise<string[]>;
   supervision(): Supervision;
-  /** Whether the subscription inbox can wake this conversation, which is how a run's owner hears from it. */
-  ownerWakeable(projectPath: string, conversationId: string): Promise<boolean>;
+  /**
+   * Whether this conversation can own a run of this session now: it exists,
+   * belongs to the session, and the subscription inbox can wake it, which is
+   * how a run's owner hears from it. Synchronous, so the last admission reads
+   * it with no yield before the record.
+   */
+  ownerAdmissible(owner: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): boolean;
   /** Backend, model selection and admission for every seat the launch names. */
   resolveSeats(input: {
     projectPath: string;
@@ -133,6 +184,38 @@ export interface RunRouteDeps {
     | { ok: false; status: number; error: string; code?: string }
   >;
   newRunId(): string;
+  /** The template library's side of a template launch: the workflow request the template makes, and the run's origin. */
+  templates: {
+    prepareLaunch(input: {
+      projectPath: string;
+      tier: RunTemplateTier;
+      id: string;
+      revision?: number;
+      parameters: Readonly<Record<string, string>>;
+    }): Promise<TemplateLaunchPreparation>;
+  };
+  /** A new owner's backend and profile, settled before the launch takes its session's lifecycle. */
+  prepareNewOwner(
+    projectPath: string,
+  ): Promise<
+    | { ok: true; owner: NewOwnerPreparation }
+    | { ok: false; status: number; error: string; code?: string }
+  >;
+  /** Creates an owner conversation in the session under a person's name, as one write and with no model turn. */
+  createOwner(input: {
+    projectPath: string;
+    sessionName: string;
+    name: string;
+    prepared: NewOwnerPreparation;
+  }): Promise<ConversationState>;
+  /** Removes an owner a refused launch created and nothing has used. */
+  removeOwner(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<void>;
+  /** Publishes the `conversation-created` of an owner a launch created. */
+  publish: PublishFn;
   /**
    * Freezes a launch's or amendment's documents as artifacts, reading each
    * `from` file in the session worktree; a kept revision takes its bytes
@@ -215,12 +298,63 @@ interface Place {
   branch: string;
 }
 
-interface Caller {
+/** The session a launch places its run in. */
+interface LaunchSession {
   projectPath: string;
   sessionName: string;
   worktreePath: string;
   branch: string;
+}
+
+interface Caller extends LaunchSession {
   conversationId: string;
+}
+
+/** Who owns a launch: its calling conversation, one a person named, or one the launch creates. */
+type LaunchOwner =
+  | { kind: "caller" | "existing"; conversationId: string }
+  | { kind: "new"; name: string; prepared: NewOwnerPreparation };
+
+/** An owner as the launch admits it, once it exists. */
+interface OwnerAtAdmission {
+  kind: LaunchOwner["kind"];
+  conversationId: string;
+}
+
+/** A run recorded in its open session, with the owner its launch created, if any. */
+type Recorded =
+  | { ok: true; launch: RunLaunchInput; created: ConversationState | null }
+  | { ok: false; response: Response };
+
+/** What a template launch's log names, as far as the request got. */
+interface TemplateLaunchFacts {
+  tier?: RunTemplateTier;
+  templateId?: string;
+}
+
+const refusalCodeSchema = z.object({ code: z.string() });
+
+/** A template launch refusal as an HTTP answer. */
+function templateRefusal(refusal: TemplateLaunchRefusal): Response {
+  switch (refusal.code) {
+    case "run_template_invalid_id":
+      return jsonError(refusal.message, 400, refusal.code);
+    case "run_template_not_found":
+      return notFound(refusal.message, refusal.code);
+    case "run_template_changed":
+      return jsonError(
+        refusal.message,
+        409,
+        refusal.code,
+        { currentRevision: refusal.currentRevision },
+        "Read the template again, and launch the revision you reviewed.",
+      );
+    case "run_template_launch_invalid":
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code, issues: refusal.issues },
+        { status: 400 },
+      );
+  }
 }
 
 async function readBody<T>(
@@ -299,6 +433,7 @@ export function createRunRouteHandlers(
 ): Record<
   | "launch"
   | "launchWorkflow"
+  | "launchTemplate"
   | "show"
   | "definition"
   | "answer"
@@ -561,7 +696,7 @@ export function createRunRouteHandlers(
    * it was admitted with: its work happened, and is not admitted again.
    */
   async function workflowSeats(
-    caller: Caller,
+    place: { projectPath: string },
     definition: WorkflowLaunchRequest,
     kept: ReadonlyMap<string, RunDefinitionContext> = new Map(),
   ): Promise<
@@ -593,7 +728,7 @@ export function createRunRouteHandlers(
         continue;
       }
       const resolvedSeats = await deps.resolveSeats({
-        projectPath: caller.projectPath,
+        projectPath: place.projectPath,
         request: contextRequest,
       });
       if (!resolvedSeats.ok)
@@ -622,19 +757,49 @@ export function createRunRouteHandlers(
     return null;
   }
 
-  /** A run's questions, halts and result reach its owner only as inbox wakes. */
-  async function refuseUnwakeableOwner(
-    caller: Caller,
-  ): Promise<Response | null> {
-    if (await deps.ownerWakeable(caller.projectPath, caller.conversationId))
+  /**
+   * A run's questions, halts and result reach its owner only as inbox wakes,
+   * so an owner that cannot be woken now is refused, worded by how the launch
+   * named it; null when it can own the run.
+   */
+  function ownerRefusal(
+    session: { projectPath: string; sessionName: string },
+    owner: OwnerAtAdmission,
+  ): Response | null {
+    if (
+      deps.ownerAdmissible({
+        projectPath: session.projectPath,
+        sessionName: session.sessionName,
+        conversationId: owner.conversationId,
+      })
+    )
       return null;
-    return jsonError(
-      "This conversation cannot be woken by the subscription inbox, so a run's questions and result would never reach it",
-      409,
-      "owner_not_wakeable",
-      undefined,
-      "Launch the run from an ordinary, unarchived conversation that no other execution owns.",
-    );
+    switch (owner.kind) {
+      case "caller":
+        return jsonError(
+          "This conversation cannot be woken by the subscription inbox, so a run's questions and result would never reach it",
+          409,
+          "owner_not_wakeable",
+          undefined,
+          "Launch the run from an ordinary, unarchived conversation that no other execution owns.",
+        );
+      case "existing":
+        return jsonError(
+          `Conversation "${owner.conversationId}" cannot own this run: it must be an ordinary, unarchived conversation of this session that no other execution owns, so the run's questions and result can wake it`,
+          409,
+          "owner_not_eligible",
+          undefined,
+          "Choose another conversation of this session, or create a new owner.",
+        );
+      case "new":
+        return jsonError(
+          "A new conversation in this session could not own the run: the subscription inbox cannot wake it, so the run's questions and result would never reach it",
+          409,
+          "owner_not_eligible",
+          undefined,
+          "Unarchive the session, or launch the run in another session.",
+        );
+    }
   }
 
   /** A seat resolution refusal; a workflow's names the context it belongs to. */
@@ -655,59 +820,140 @@ export function createRunRouteHandlers(
     );
   }
 
+  /** A closed-session refusal as an HTTP answer. */
+  function closedResponse(refusal: ClosedSessionRefusal): Response {
+    return jsonError(
+      refusal.message,
+      409,
+      refusal.code,
+      undefined,
+      refusal.hint,
+    );
+  }
+
   /**
    * The last admission, under the session's lifecycle so a deletion or a
    * merge-status change cannot pass between it and the run's record: the
    * session must still exist, not be delivered by a merge, and not be
    * finished. The merge's own job is read with no yield before the record.
+   *
+   * The owner is admitted in the same segment, whatever named it: a
+   * conversation archived or deleted, or a session archived, while the
+   * launch prepared is refused here. A new owner is created in a session
+   * found open, then admitted by the same rule; any refusal or failure after
+   * it exists removes it, so a refused launch leaves no conversation behind.
+   * The run compiles once its owner is known.
    */
   async function recordInOpenSession(
-    caller: Caller,
-    launch: RunLaunchInput,
-  ): Promise<Response | null> {
-    const refusal = await deps.sessionLifecycle(
-      caller.projectPath,
-      caller.sessionName,
-      async () => {
-        const session = await deps.getSession(
-          caller.projectPath,
-          caller.sessionName,
-        );
-        const closed = closedSessionRefusal({
-          session,
-          finalizingMerge: deps.finalizingMerge(
-            caller.projectPath,
-            caller.sessionName,
-          ),
-        });
-        if (closed === null) deps.supervision().runs.record(launch);
-        return closed;
+    session: LaunchSession,
+    owner: LaunchOwner,
+    compile: (owner: LaunchPlacement["owner"]) => RunLaunchInput,
+  ): Promise<Recorded> {
+    const { projectPath, sessionName } = session;
+    return deps.sessionLifecycle(
+      projectPath,
+      sessionName,
+      async (): Promise<Recorded> => {
+        let ownerId: string;
+        let created: ConversationState | null = null;
+        if (owner.kind === "new") {
+          const closed = closedSessionRefusal({
+            session: await deps.getSession(projectPath, sessionName),
+            finalizingMerge: deps.finalizingMerge(projectPath, sessionName),
+          });
+          if (closed !== null)
+            return { ok: false, response: closedResponse(closed) };
+          created = await deps.createOwner({
+            projectPath,
+            sessionName,
+            name: owner.name,
+            prepared: owner.prepared,
+          });
+          ownerId = created.id;
+        } else ownerId = owner.conversationId;
+        let recorded = false;
+        try {
+          const launch = compile({ conversationId: ownerId, sessionName });
+          const current = await deps.getSession(projectPath, sessionName);
+          // From here to the record nothing yields.
+          const ineligible = ownerRefusal(session, {
+            kind: owner.kind,
+            conversationId: ownerId,
+          });
+          if (ineligible !== null) return { ok: false, response: ineligible };
+          const closed = closedSessionRefusal({
+            session: current,
+            finalizingMerge: deps.finalizingMerge(projectPath, sessionName),
+          });
+          if (closed !== null)
+            return { ok: false, response: closedResponse(closed) };
+          deps.supervision().runs.record(launch);
+          recorded = true;
+          return { ok: true, launch, created };
+        } finally {
+          if (created !== null && !recorded)
+            await deps.removeOwner(projectPath, sessionName, created.id);
+        }
       },
     );
-    return refusal === null
-      ? null
-      : jsonError(refusal.message, 409, refusal.code, undefined, refusal.hint);
+  }
+
+  /** Announces an owner the launch created, once its run is recorded. */
+  function publishCreatedOwner(
+    session: LaunchSession,
+    conversation: ConversationState,
+  ): void {
+    const projectName = getProjectDisplayName(session.projectPath);
+    publishEventBestEffort({
+      publish: deps.publish,
+      logger: deps.log,
+      failureEvent: "runs.owner_created_publish_failed",
+      context: {
+        sessionName: session.sessionName,
+        conversationId: conversation.id,
+      },
+      build: () =>
+        buildConversationCreatedEvent({
+          scope: "session",
+          projectName,
+          sessionName: session.sessionName,
+          conversation,
+        }),
+    });
   }
 
   async function startLaunch(
-    caller: Caller,
-    launch: RunLaunchInput,
-  ): Promise<Response> {
-    const closed = await recordInOpenSession(caller, launch);
-    if (closed !== null) return closed;
+    session: LaunchSession,
+    owner: LaunchOwner,
+    compile: (owner: LaunchPlacement["owner"]) => RunLaunchInput,
+  ): Promise<
+    | { ok: true; launch: RunLaunchInput; progress: RunProgress }
+    | { ok: false; response: Response }
+  > {
+    const recorded = await recordInOpenSession(session, owner, compile);
+    if (!recorded.ok) return recorded;
+    const { launch, created } = recorded;
+    if (created !== null) publishCreatedOwner(session, created);
     const record = await deps.supervision().runs.launch(launch);
     deps.log.info("runs.launched", {
       runId: launch.runId,
       kind: launch.kind,
       contexts: launch.contexts.length,
-      sessionName: caller.sessionName,
-      conversationId: caller.conversationId,
+      sessionName: session.sessionName,
+      conversationId: launch.owner.conversationId,
     });
+    return { ok: true, launch, progress: record.progress };
+  }
+
+  function launchedResponse(
+    launch: RunLaunchInput,
+    progress: RunProgress,
+  ): Response {
     return NextResponse.json(
       {
         runId: launch.runId,
         contextIds: launch.contexts.map((context) => context.request.contextId),
-        progress: record.progress,
+        progress,
       },
       { status: 202 },
     );
@@ -721,28 +967,213 @@ export function createRunRouteHandlers(
       ? undefined
       : deps.freezeCharter(workflow.charter);
 
+  /** Where a run of this session works; its owner is added once known. */
+  const placeIn = async (
+    session: LaunchSession,
+    runId: string,
+  ): Promise<Omit<LaunchPlacement, "owner">> => ({
+    runId,
+    cause: `launch:${runId}`,
+    projectPath: session.projectPath,
+    session: {
+      sessionName: session.sessionName,
+      worktreePath: session.worktreePath,
+      branch: session.branch,
+    },
+    laneTargets: await deps.laneTargets({
+      projectPath: session.projectPath,
+      sessionWorktreePath: session.worktreePath,
+    }),
+    validationCommands: await deps.validationCommands(session.projectPath),
+  });
+
   const placementOf = async (
     caller: Caller,
     runId: string,
   ): Promise<LaunchPlacement> => ({
-    runId,
-    cause: `launch:${runId}`,
-    projectPath: caller.projectPath,
-    session: {
-      sessionName: caller.sessionName,
-      worktreePath: caller.worktreePath,
-      branch: caller.branch,
-    },
+    ...(await placeIn(caller, runId)),
     owner: {
       conversationId: caller.conversationId,
       sessionName: caller.sessionName,
     },
-    laneTargets: await deps.laneTargets({
-      projectPath: caller.projectPath,
-      sessionWorktreePath: caller.worktreePath,
-    }),
-    validationCommands: await deps.validationCommands(caller.projectPath),
   });
+
+  /**
+   * The launching session and the run's owner: an agent owns what it
+   * launches and names no other owner; a person names one, a conversation of
+   * this session or a new one.
+   */
+  async function templateLaunchPrincipal(
+    request: Request,
+    context: RouteContext,
+    facts: TemplateLaunchFacts,
+  ): Promise<
+    | {
+        ok: true;
+        session: LaunchSession;
+        owner: LaunchOwner;
+        body: RunTemplateLaunchRequest;
+      }
+    | { ok: false; response: Response }
+  > {
+    const sent = await senderOf(request);
+    if (!sent.ok) return sent;
+    if (sent.sender === "agent") {
+      const resolved = await resolveCaller(request, context);
+      if (!resolved.ok) return resolved;
+      const body = await readBody(
+        request,
+        runTemplateLaunchRequestSchema,
+        "template run launch",
+      );
+      if (!body.ok) return body;
+      facts.tier = body.value.template.tier;
+      facts.templateId = body.value.template.id;
+      const { caller } = resolved;
+      if (body.value.owner !== undefined)
+        return {
+          ok: false,
+          response: jsonError(
+            "An agent owns the runs it launches, so it names no other owner",
+            403,
+            "owner_not_allowed",
+            undefined,
+            "Leave owner out: the run reports to your conversation.",
+          ),
+        };
+      // Asked again as the run is recorded; asked here so a refusal comes before any preparation.
+      const refused =
+        refuseLaunch(caller) ??
+        ownerRefusal(caller, {
+          kind: "caller",
+          conversationId: caller.conversationId,
+        });
+      if (refused !== null) return { ok: false, response: refused };
+      return {
+        ok: true,
+        session: caller,
+        owner: { kind: "caller", conversationId: caller.conversationId },
+        body: body.value,
+      };
+    }
+    const { name, session: sessionName } = await context.params;
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      name ?? "",
+      sessionName ?? "",
+    );
+    if (!resolved.ok) return resolved;
+    const body = await readBody(
+      request,
+      runTemplateLaunchRequestSchema,
+      "template run launch",
+    );
+    if (!body.ok) return body;
+    facts.tier = body.value.template.tier;
+    facts.templateId = body.value.template.id;
+    const { projectPath, session: state } = resolved.value;
+    const session: LaunchSession = {
+      projectPath,
+      sessionName: state.sessionName,
+      worktreePath: state.worktreePath,
+      branch: state.branchName,
+    };
+    const named = body.value.owner;
+    if (named === undefined)
+      return {
+        ok: false,
+        response: jsonError(
+          "A person launching a template names the run's owner: a conversation of this session, or a new one",
+          400,
+          "owner_required",
+        ),
+      };
+    if (named.kind === "new") {
+      const prepared = await deps.prepareNewOwner(projectPath);
+      if (!prepared.ok)
+        return {
+          ok: false,
+          response: jsonError(prepared.error, prepared.status, prepared.code),
+        };
+      return {
+        ok: true,
+        session,
+        owner: { kind: "new", name: named.title, prepared: prepared.owner },
+        body: body.value,
+      };
+    }
+    const owner = {
+      kind: "existing" as const,
+      conversationId: named.conversationId,
+    };
+    // Asked again as the run is recorded; asked here so a refusal comes before any preparation.
+    const ineligible = ownerRefusal(session, owner);
+    if (ineligible !== null) return { ok: false, response: ineligible };
+    return { ok: true, session, owner, body: body.value };
+  }
+
+  async function launchFromTemplate(
+    request: Request,
+    context: RouteContext,
+    facts: TemplateLaunchFacts,
+  ): Promise<Response> {
+    const principal = await templateLaunchPrincipal(request, context, facts);
+    if (!principal.ok) return principal.response;
+    const { session, body } = principal;
+    const prepared = await deps.templates.prepareLaunch({
+      projectPath: session.projectPath,
+      tier: body.template.tier,
+      id: body.template.id,
+      ...(body.template.revision !== undefined
+        ? { revision: body.template.revision }
+        : {}),
+      parameters: body.parameters,
+    });
+    if (!prepared.ok) return templateRefusal(prepared.refusal);
+    const { request: workflow, origin } = prepared;
+    const seats = await workflowSeats(session, workflow);
+    if (!seats.ok) return seats.response;
+    const documents = await freezeDocuments(
+      deps,
+      workflow.documents,
+      session.worktreePath,
+    );
+    if (!documents.ok) return documents.response;
+    const charter = await freezeWorkflowCharter(workflow);
+    const runId = deps.newRunId();
+    const placement = await placeIn(session, runId);
+    const started = await startLaunch(session, principal.owner, (owner) => ({
+      ...compileWorkflow({
+        ...placement,
+        owner,
+        request: workflow,
+        seats: seats.seats,
+        documents: documents.documents,
+        ...(charter !== undefined ? { charter } : {}),
+      }),
+      origin,
+    }));
+    if (!started.ok) return started.response;
+    deps.log.info("runs.template_launched", {
+      runId,
+      templateId: origin.id,
+      tier: origin.tier,
+      revision: origin.revision,
+      owner: principal.owner.kind,
+      contexts: started.launch.contexts.length,
+    });
+    return NextResponse.json(
+      {
+        runId,
+        contextIds: started.launch.contexts.map(
+          (context) => context.request.contextId,
+        ),
+        progress: started.progress,
+        ownerConversationId: started.launch.owner.conversationId,
+      },
+      { status: 202 },
+    );
+  }
 
   return {
     async launch(request, context) {
@@ -756,7 +1187,11 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const { caller } = resolved;
       const refused =
-        refuseLaunch(caller) ?? (await refuseUnwakeableOwner(caller));
+        refuseLaunch(caller) ??
+        ownerRefusal(caller, {
+          kind: "caller",
+          conversationId: caller.conversationId,
+        });
       if (refused !== null) return refused;
       const seats = await deps.resolveSeats({
         projectPath: caller.projectPath,
@@ -770,15 +1205,22 @@ export function createRunRouteHandlers(
       );
       if (!documents.ok) return documents.response;
       const runId = deps.newRunId();
-      return startLaunch(
+      const placement = await placeIn(caller, runId);
+      const started = await startLaunch(
         caller,
-        resolveAgentLaunch({
-          ...(await placementOf(caller, runId)),
-          request: body.value,
-          seats: seats.seats,
-          documents: documents.documents,
-        }),
+        { kind: "caller", conversationId: caller.conversationId },
+        (owner) =>
+          resolveAgentLaunch({
+            ...placement,
+            owner,
+            request: body.value,
+            seats: seats.seats,
+            documents: documents.documents,
+          }),
       );
+      return started.ok
+        ? launchedResponse(started.launch, started.progress)
+        : started.response;
     },
 
     async launchWorkflow(request, context) {
@@ -792,7 +1234,11 @@ export function createRunRouteHandlers(
       if (!body.ok) return body.response;
       const { caller } = resolved;
       const refused =
-        refuseLaunch(caller) ?? (await refuseUnwakeableOwner(caller));
+        refuseLaunch(caller) ??
+        ownerRefusal(caller, {
+          kind: "caller",
+          conversationId: caller.conversationId,
+        });
       if (refused !== null) return refused;
       const seats = await workflowSeats(caller, body.value);
       if (!seats.ok) return seats.response;
@@ -804,16 +1250,41 @@ export function createRunRouteHandlers(
       if (!documents.ok) return documents.response;
       const charter = await freezeWorkflowCharter(body.value);
       const runId = deps.newRunId();
-      return startLaunch(
+      const placement = await placeIn(caller, runId);
+      const started = await startLaunch(
         caller,
-        compileWorkflow({
-          ...(await placementOf(caller, runId)),
-          request: body.value,
-          seats: seats.seats,
-          documents: documents.documents,
-          ...(charter !== undefined ? { charter } : {}),
-        }),
+        { kind: "caller", conversationId: caller.conversationId },
+        (owner) =>
+          compileWorkflow({
+            ...placement,
+            owner,
+            request: body.value,
+            seats: seats.seats,
+            documents: documents.documents,
+            ...(charter !== undefined ? { charter } : {}),
+          }),
       );
+      return started.ok
+        ? launchedResponse(started.launch, started.progress)
+        : started.response;
+    },
+
+    async launchTemplate(request, context) {
+      const facts: TemplateLaunchFacts = {};
+      const response = await launchFromTemplate(request, context, facts);
+      if (response.status < 400) return response;
+      const refusal = refusalCodeSchema.safeParse(
+        await response
+          .clone()
+          .json()
+          .catch(() => null),
+      );
+      deps.log.warn("runs.template_launch_refused", {
+        status: response.status,
+        code: refusal.success ? refusal.data.code : null,
+        ...facts,
+      });
+      return response;
     },
 
     async amend(request, context) {

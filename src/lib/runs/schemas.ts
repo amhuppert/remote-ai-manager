@@ -582,6 +582,67 @@ export const runLaunchedResponseSchema = z
   .strict();
 export type RunLaunchedResponse = z.infer<typeof runLaunchedResponseSchema>;
 
+function isTextByName(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((text) => typeof text === "string")
+  );
+}
+
+/**
+ * The values a template launch gives, by parameter name, kept exactly as
+ * sent: a record schema would drop a `__proto__` key, which binding must see
+ * to refuse.
+ */
+export const runTemplateParameterValuesSchema = z.custom<
+  Record<string, string>
+>(isTextByName, "Parameter values are text, by parameter name");
+
+/** The owner a person names for a run: a conversation of the session, or a new one with this name. */
+export const runOwnerChoiceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal("existing"), conversationId: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("new"),
+      title: z.string().trim().min(1).max(200),
+    })
+    .strict(),
+]);
+export type RunOwnerChoice = z.infer<typeof runOwnerChoiceSchema>;
+
+/**
+ * A launch from a saved template. `revision` is the one the person launching
+ * saw, so a template changed since is refused rather than launched. A person
+ * names the owner; an agent owns what it launches and names none.
+ */
+export const runTemplateLaunchRequestSchema = z
+  .object({
+    template: z
+      .object({
+        tier: runTemplateTierSchema,
+        id: z.string().min(1),
+        revision: z.number().int().min(1).optional(),
+      })
+      .strict(),
+    owner: runOwnerChoiceSchema.optional(),
+    parameters: runTemplateParameterValuesSchema,
+  })
+  .strict();
+export type RunTemplateLaunchRequest = z.infer<
+  typeof runTemplateLaunchRequestSchema
+>;
+
+export const runTemplateLaunchedResponseSchema = runLaunchedResponseSchema
+  .extend({ ownerConversationId: z.string().min(1) })
+  .strict();
+export type RunTemplateLaunchedResponse = z.infer<
+  typeof runTemplateLaunchedResponseSchema
+>;
+
 /** Where a lane stands for its owner. */
 export const runLaneStatusSchema = z.enum([
   "waiting",
