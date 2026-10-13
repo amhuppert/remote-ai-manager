@@ -316,14 +316,30 @@ describe("POST conversation ask", () => {
       return { ...made, opened };
     }
 
-    it("opens the question in the seat's Context instead of parking the conversation", async () => {
+    it("opens the question in the seat's Context instead of parking the conversation, its text carrying each question's options", async () => {
       const { deps, send, resolveLaneAskPermission, opened } = seatDeps({
         canAsk: true,
         attemptId: "attempt-1",
         openQuestionId: null,
       });
       const res = await createAskQuestionHandlers(deps).POST(
-        makeRequest(validBody),
+        makeRequest({
+          questions: [
+            {
+              question: "Which storage?",
+              header: "Storage",
+              options: [
+                {
+                  label: "SQLite",
+                  description: "One file, no server",
+                  recommended: true,
+                },
+                { label: "Postgres" },
+              ],
+            },
+            { id: "named", question: "Named one?", options: [] },
+          ],
+        }),
         { params },
       );
 
@@ -336,7 +352,8 @@ describe("POST conversation ask", () => {
         expect.objectContaining({
           conversationId: "conv-1",
           attemptId: "attempt-1",
-          questionText: "Which order?\nNamed one?",
+          questionText:
+            "Which storage?\n- SQLite (recommended): One file, no server\n- Postgres\n\nNamed one?",
         }),
       ]);
       expect(send).not.toHaveBeenCalled();

@@ -57,12 +57,13 @@ import {
   agentLaunchRequestSchema,
   resolveAgentLaunch,
   type AgentLaunchRequest,
+  type DefinitionIssue,
   type LaunchPlacement,
   type ResolvedSeat,
 } from "./launch";
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
-import { frozenKeys, writtenEntry } from "./amendment";
+import { frozenKeys, frozenLaneKeys, writtenEntry } from "./amendment";
 import {
   runControlRequestSchema,
   runDecisionRequestSchema,
@@ -321,6 +322,11 @@ interface OwnerAtAdmission {
   conversationId: string;
 }
 
+/** A launch compiled for its owner, or the checks no registered command names. */
+type Compiled =
+  | { ok: true; launch: RunLaunchInput }
+  | { ok: false; unregistered: DefinitionIssue[] };
+
 /** A run recorded in its open session, with the owner its launch created, if any. */
 type Recorded =
   | { ok: true; launch: RunLaunchInput; created: ConversationState | null }
@@ -383,6 +389,27 @@ async function readBody<T>(
       { status: 400 },
     ),
   };
+}
+
+/**
+ * The refusal of checks that name no registered validation command. A local
+ * check verb cannot read the registry, so the launch or amendment refuses them.
+ */
+function unregisteredChecksResponse(
+  issues: readonly DefinitionIssue[],
+  at: ReadonlyArray<string | number> = [],
+): Response {
+  return NextResponse.json(
+    {
+      error: `${issues.length} ${issues.length === 1 ? "check names" : "checks name"} no validation command registered for this project`,
+      code: "checks_not_registered",
+      issues: issues.map((issue) => ({
+        path: [...at, ...issue.path].join("."),
+        message: issue.message,
+      })),
+    },
+    { status: 400 },
+  );
 }
 
 /** A launch's documents, frozen; or the refusal that names each one that cannot be. */
@@ -847,7 +874,7 @@ export function createRunRouteHandlers(
   async function recordInOpenSession(
     session: LaunchSession,
     owner: LaunchOwner,
-    compile: (owner: LaunchPlacement["owner"]) => RunLaunchInput,
+    compile: (owner: LaunchPlacement["owner"]) => Compiled,
   ): Promise<Recorded> {
     const { projectPath, sessionName } = session;
     return deps.sessionLifecycle(
@@ -873,7 +900,13 @@ export function createRunRouteHandlers(
         } else ownerId = owner.conversationId;
         let recorded = false;
         try {
-          const launch = compile({ conversationId: ownerId, sessionName });
+          const compiled = compile({ conversationId: ownerId, sessionName });
+          if (!compiled.ok)
+            return {
+              ok: false,
+              response: unregisteredChecksResponse(compiled.unregistered),
+            };
+          const { launch } = compiled;
           const current = await deps.getSession(projectPath, sessionName);
           // From here to the record nothing yields.
           const ineligible = ownerRefusal(session, {
@@ -925,7 +958,7 @@ export function createRunRouteHandlers(
   async function startLaunch(
     session: LaunchSession,
     owner: LaunchOwner,
-    compile: (owner: LaunchPlacement["owner"]) => RunLaunchInput,
+    compile: (owner: LaunchPlacement["owner"]) => Compiled,
   ): Promise<
     | { ok: true; launch: RunLaunchInput; progress: RunProgress }
     | { ok: false; response: Response }
@@ -1142,17 +1175,19 @@ export function createRunRouteHandlers(
     const charter = await freezeWorkflowCharter(workflow);
     const runId = deps.newRunId();
     const placement = await placeIn(session, runId);
-    const started = await startLaunch(session, principal.owner, (owner) => ({
-      ...compileWorkflow({
+    const started = await startLaunch(session, principal.owner, (owner) => {
+      const compiled = compileWorkflow({
         ...placement,
         owner,
         request: workflow,
         seats: seats.seats,
         documents: documents.documents,
         ...(charter !== undefined ? { charter } : {}),
-      }),
-      origin,
-    }));
+      });
+      return compiled.ok
+        ? { ok: true, launch: { ...compiled.launch, origin } }
+        : compiled;
+    });
     if (!started.ok) return started.response;
     deps.log.info("runs.template_launched", {
       runId,
@@ -1327,18 +1362,24 @@ export function createRunRouteHandlers(
       const compiled = compileWorkflow({
         ...(await placementOf(caller, run.runId)),
         existingLanes: run.facts.definition.lanes ?? [],
+        kept: { contexts: frozen, lanes: frozenLaneKeys(run.facts) },
         request: asStarted,
         seats: seats.seats,
       });
+      if (!compiled.ok)
+        return unregisteredChecksResponse(compiled.unregistered, [
+          "definition",
+        ]);
+      const { launch } = compiled;
       const runs = deps.supervision().runs;
       let removedDocuments: string[];
       try {
         ({ removedDocuments } = await runs.amend(run.runId, {
           definition: {
-            title: compiled.title,
-            contexts: compiled.contexts,
-            ...(compiled.loops !== undefined ? { loops: compiled.loops } : {}),
-            ...(compiled.lanes !== undefined ? { lanes: compiled.lanes } : {}),
+            title: launch.title,
+            contexts: launch.contexts,
+            ...(launch.loops !== undefined ? { loops: launch.loops } : {}),
+            ...(launch.lanes !== undefined ? { lanes: launch.lanes } : {}),
             authored: withoutDocuments(proposed),
             documents: documents.documents,
             ...(charter !== undefined ? { charter } : {}),

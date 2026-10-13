@@ -5,8 +5,8 @@ Reference for [run-planning](../SKILL.md). Read it when a running workflow must 
 ## Procedure
 
 1. Read the run and its definition revision: `cctl run show <run-id>` prints `definition revision N` on its first line.
-2. Save the definition as written: `cctl run definition <run-id> > .cc/temp/workflow.json`. The text output is the definition alone; delete a trailing `hint:` line if one follows it. If stdout starts with a `notice:` line instead, the response was too large for stdout: the named artifact holds the response, and the definition is its `payload.data.definition` string.
-3. Edit the file. It is the whole definition in the `run workflow` shape, as it should be from now on.
+2. Write the definition as written to a file: `cctl run definition <run-id>`. The reply names its revision, and its `artifact:` line names the JSON file, under `.cc/temp/cctl-artifacts/`.
+3. Copy that file to `.cc/temp/workflow.json` and edit the copy. It is the whole definition in the `run workflow` shape, as it should be from now on. The written file is never overwritten, so an edited one would block reading the same revision again.
 4. Check it, then amend, naming the revision you read and why:
 
 ```

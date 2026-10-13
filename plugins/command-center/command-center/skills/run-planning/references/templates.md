@@ -54,7 +54,7 @@ Write `"defaults": {}` and leave settings out unless the user asked for specific
 cctl run template save-check fix-bug --file .cc/temp/fix-bug.json
 cctl run template save fix-bug --file .cc/temp/fix-bug.json
 cctl run template list
-cctl run template show fix-bug --json
+cctl run template show fix-bug
 cctl run template save fix-bug --file .cc/temp/fix-bug.json --based-on 2
 cctl run template delete fix-bug --based-on 3
 ```
@@ -62,7 +62,7 @@ cctl run template delete fix-bug --based-on 3
 - The id is 1–48 lowercase letters, digits, `-` or `_`, starting with a letter or digit. A template is saved in this project's library, or with `--tier global` in every project's; a global template may name only builtin and global profiles. Without `--tier`, a replacement goes to the tier that holds the id, and a create goes to this project, refused when the global library already uses the id.
 - The template file is at most 1 MB, and a launch's inputs file at most 256 KB.
 - Problems are reported in stages: the file's shape, then parameter tokens, then the workflow's topology, then, on save only, profiles that do not resolve. The check verb runs every stage but the profile check.
-- To edit, read the template with `show` (its text output is the file `save` takes; `--json` adds the tier and revision), change a copy, and save it with `--based-on <revision>`. A template changed since is refused: read it again. The user may have changed its settings in the editor, so start from the current file, never from your old copy.
+- To edit, write the template to a file with `show`: the reply names its tier and revision, and its `artifact:` line names the file, the one `save` takes. Copy it to `.cc/temp/<id>.json`, edit the copy and save that with `--based-on <revision>`; the written file is never overwritten, so an edited one would block reading the same revision again. A template changed since is refused: read it again. The user may have changed its settings in the editor, so start from the current file, never from your old copy.
 - Deleting a template leaves runs launched from it untouched.
 
 ## Launching
@@ -77,5 +77,5 @@ cctl run template delete fix-bug --based-on 3
 ```
 
 - `parameters` maps each parameter's name to its text. A required one must not be blank, and an unknown name is refused.
-- `revision` is the one you read with `list` or `show --json` (plain `show` prints no revision); a template changed since is refused rather than launched. Name it whenever you reviewed the template before launching.
-- `cctl run template launch-check` checks only the inputs file and your session identity. The launch itself resolves the template, its revision, the parameters, the profiles and the launch's admission.
+- `revision` is the one `list` or `show` reports; a template changed since is refused rather than launched. Name it whenever you reviewed the template before launching.
+- `cctl run template launch-check` checks only the inputs file and your session identity. The launch itself resolves the template, its revision, the parameters, the profiles, the check names against this project's registered commands, and the launch's admission.

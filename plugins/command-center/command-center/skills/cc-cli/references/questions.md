@@ -87,8 +87,8 @@ off the ask is refused as an autonomous conversation.
   contexts of the run go on. End your turn after asking. The answer arrives as
   your next order, headed "Your question was answered", with the question and
   the answer; continue the interrupted work.
-- The owner is woken with each question's text only: not its options, header
-  or context. Write each question to stand alone, naming the choices in it.
+- The owner reads each question with its options' labels, descriptions and
+  recommended marks, not its header or context.
 - One batch at a time: a second ask while one is open is refused; end your turn.
 
 The owner answers in text with

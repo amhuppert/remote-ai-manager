@@ -1,6 +1,15 @@
 import { z } from "zod";
 
 /**
+ * Characters a write rule reads as a pattern. The Claude write envelope refuses
+ * a policy entry holding one, and a run request refuses an owned path holding
+ * one, so no context is admitted that its agents cannot be confined to. One
+ * set for both, so they cannot drift apart. Not applied by `ownedPathSchema`,
+ * which also parses stored definitions and facts.
+ */
+export const WRITE_RULE_PATTERN_CHARACTERS = /[[\](){}*?!]/;
+
+/**
  * One owned path: a normalized repo-relative POSIX path that covers itself
  * and everything beneath it. Overlap is decided by comparing path segments,
  * so a path has exactly one spelling.
@@ -19,8 +28,9 @@ import { z } from "zod";
  *
  * An entry is a LITERAL path, never a glob (spec non-goal) — a metacharacter is
  * read as an ordinary filename character here, and the write-policy adapter is
- * what refuses one, because that is the layer that knows what the backend can
- * actually enforce. Directory-grain entries cover the need a glob would.
+ * what refuses one (`WRITE_RULE_PATTERN_CHARACTERS`, which run requests also
+ * apply), because that is the layer that knows what the backend can actually
+ * enforce. Directory-grain entries cover the need a glob would.
  */
 export const ownedPathSchema = z
   .string()

@@ -67,6 +67,8 @@ let holdPlacement: (() => Promise<void>) | null;
 let beforeNextSessionRead: (() => Promise<void>) | null;
 let conversations: ReturnType<typeof createConversationService>;
 let h: ReturnType<typeof createSupervisionHarness>;
+/** This project's registered validation commands. */
+let registered: string[];
 
 /** A hold the test releases, and a promise that settles once something waits on it. */
 function hold(): {
@@ -219,6 +221,7 @@ beforeEach(async () => {
   ownersCreated = [];
   holdPlacement = null;
   beforeNextSessionRead = null;
+  registered = [];
 
   const profiles = createAgentProfileLibraryService({
     storage: createAgentProfileStorage({ resolveConfigDir: () => configDir }),
@@ -285,7 +288,7 @@ beforeEach(async () => {
     },
     async validationCommands() {
       if (holdPlacement !== null) await holdPlacement();
-      return [];
+      return [...registered];
     },
     supervision: () => supervision,
     ownerAdmissible({ projectPath, sessionName, conversationId }) {
@@ -638,6 +641,40 @@ describe("template launch", () => {
     });
     expect(storedIds()).toEqual(seeded);
     expect(storedRuns()).toEqual([]);
+  });
+
+  it("checks a global template's checks against this project's registered commands, leaving no owner or run behind", async () => {
+    registered = ["test"];
+    const saved = await templates.save({
+      projectPath: PROJECT,
+      tier: "global",
+      id: "checked",
+      expectedRevision: null,
+      content: template({ defaults: { checks: ["test", "lint"] } }),
+    });
+    expect(saved.ok).toBe(true);
+
+    const { response, json } = await launch(
+      body({
+        template: { tier: "global", id: "checked", revision: 1 },
+        owner: { kind: "new", title: "Release owner" },
+      }),
+      person,
+    );
+
+    expect(response.status).toBe(400);
+    expect(json).toMatchObject({
+      code: "checks_not_registered",
+      issues: [
+        {
+          path: "contexts.0.checks.1",
+          message: expect.stringContaining('"lint"'),
+        },
+      ],
+    });
+    expect(storedRuns()).toEqual([]);
+    expect(storedIds()).toEqual(seeded);
+    expect(published).toEqual([]);
   });
 
   it("refuses a launch into a finished session before creating its owner", async () => {

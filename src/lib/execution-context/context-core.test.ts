@@ -340,6 +340,59 @@ describe("execution context acceptance chain", () => {
     });
   });
 
+  it("gives every seat of the round a rereview opened the disputed plan defect's reason, and no later round", () => {
+    const h = harness(
+      contract({ reviewers: [reviewer("reviewer-a", "blocking")] }),
+    );
+    workAndFreeze(h);
+    const reviewMessage = (): string => {
+      const [review] = h.step();
+      if (review?.request.kind !== "review") throw new Error("no review");
+      return review.request.message;
+    };
+    expect(reviewMessage()).not.toContain("was disputed");
+    h.settle("review", verdictReport("plan_defect"));
+    h.input({
+      kind: "disposition",
+      disposition: {
+        kind: "rereview",
+        reason: "The brief allows the old endpoint; read criterion ac-1 again",
+      },
+      occurrence: "occ",
+      at: "t",
+    });
+
+    expect(reviewMessage()).toContain(
+      "## This result is reviewed again\n\nA plan defect was disputed: The brief allows the old endpoint; read criterion ac-1 again",
+    );
+
+    // A round a retry opened is not the rereview's.
+    h.settle(
+      "review",
+      workReport({ conversationId: "conv-review", structuredOutput: {} }),
+    );
+    expect(h.progress()).toMatchObject({ kind: "halted", halt: "unavailable" });
+    h.input({
+      kind: "disposition",
+      disposition: { kind: "retry" },
+      occurrence: "occ-2",
+      at: "t",
+    });
+    expect(reviewMessage()).not.toContain("was disputed");
+
+    h.settle(
+      "review",
+      verdictReport("fail", {
+        findings: [{ title: "Two notices", description: "Still duplicated" }],
+      }),
+    );
+    h.step();
+    h.settle("work", workReport());
+    h.step();
+    h.settle("freeze", frozen("ev-2"));
+    expect(reviewMessage()).not.toContain("was disputed");
+  });
+
   it("gives work done after an advisory response a full review again, advisory reviewers included", () => {
     const h = harness(
       contract({

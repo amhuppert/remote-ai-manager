@@ -187,7 +187,7 @@ A workflow's optional `charter` governs every context: `mission` (required), `in
 
 By default, with no checks, reviewers or human approval, a result is accepted once the implementer finishes its tasks and its result is captured; a structured result that does not match its `outputSchema` still halts it. Add what the work needs:
 
-- **`checks`**: registered validation commands run on the result, over the workspace's changes against its target branch, which include other contexts' changes. A failing check sends the work back; an unregistered command halts the context. A check that rewrites the files under review fails, so select checks that only read, never a formatter that writes.
+- **`checks`**: registered validation commands run on the result, over the workspace's changes against its target branch, which include other contexts' changes. A failing check sends the work back. A check that rewrites the files under review fails, so select checks that only read, never a formatter that writes.
 - **`reviewers`**: a `blocking` reviewer's `fail` sends the work back with its findings; its `plan_defect`, which says a criterion contradicts a higher-ranked source or cannot be met, halts the context for you. An `advisory` reviewer's advice reaches the implementer after the blocking review passes; the implementer addresses, declines or defers each item, and changed work goes through the checks and blocking reviewers again. `focus` narrows a reviewer's lens; `profile` defaults to `{"tier": "builtin", "id": "general-reviewer"}`. Add a specialist only when the context needs that lens.
 - **`humanApproval: true`**: after checks and reviews pass, the user approves the result in Command Center, or rejects it with notes that send the work back. Agents cannot approve.
 - **Allowances**: a context gets 2 extra work turns while tasks remain open and 3 rework turns after failed checks or blocking reviews. Spent, it halts; you grant more when the work is converging ([Steer the run](#steer-the-run)).
@@ -215,7 +215,7 @@ cctl run workflow-check --file .cc/temp/workflow.json
 cctl run workflow --file .cc/temp/workflow.json
 ```
 
-The check verbs run locally on the file. They apply the shape and every topology rule, with located issues: dependencies, scopes, lanes, routes, loops and check coverage. The launch then checks what only the server knows: each seat's profile, backend and model, the documents' paths, files and sizes, the session's state and your conversation's eligibility to own the run. Nothing confirms a check name is registered until the check runs, and an unknown name halts the context. Fix each issue and check again before launching.
+The check verbs run locally on the file. They apply the shape and every topology rule, with located issues: dependencies, scopes, lanes, routes, loops and check coverage. The launch then checks what only the server knows: each check name against the project's registered commands, each seat's profile, backend and model, the documents' paths, files and sizes, the session's state and your conversation's eligibility to own the run. Fix each issue and check again before launching.
 
 The receipt names the run id. From launch you follow the run: each question, approval, halt and its result wakes you as a subscription update.
 
@@ -235,8 +235,8 @@ Until the result arrives, edit no file the run may change; a context without `sc
   | Halt | Meaning | Dispositions |
   |---|---|---|
   | `retries_exhausted` | tasks still open, or checks and blocking reviews still failing, with the allowance spent | `grant` (`--allowance unfinishedTaskRetries` or `validationRetries`, `--count` 1–10, `--reason`) |
-  | `plan_defect` | a blocking reviewer says the contract cannot be met as written | `rereview --reason`; the reviewer does not see the reason, so it helps only when a fresh look may change the verdict |
-  | `unavailable` | a check could not run, or a blocking reviewer could not answer | `retry`; it does not fix an unknown check name: register the command, or cancel |
+  | `plan_defect` | a blocking reviewer says the contract cannot be met as written | `rereview --reason`: the reviewer judges the same result again, and reads your reason |
+  | `unavailable` | a check could not run, or a blocking reviewer could not answer | `retry` |
   | `output_invalid` | the structured result did not match the `outputSchema` | `retry_capture` |
   | `candidate_unstable` | the reviewed files kept changing before acceptance | `continue` |
   | `advice_invalid` | the implementer's response to advice was invalid | `retry_advice` |

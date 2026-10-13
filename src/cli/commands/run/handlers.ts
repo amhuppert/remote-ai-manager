@@ -1,4 +1,5 @@
 import {
+  binaryArtifact,
   invocation,
   mutation,
   recoveryFacts,
@@ -396,8 +397,15 @@ function viewText(view: JsonData<RunViewData>): string {
     for (const task of context.tasks)
       lines.push(`  task ${task.id} ${task.status}: ${task.title}`);
     for (const question of context.openQuestions) {
+      // A seat's question carries its options on the lines below it.
+      const text = (question.text ?? "(unreadable)")
+        .split("\n")
+        .map((line, index) =>
+          index === 0 || line === "" ? line : `    ${line}`,
+        )
+        .join("\n");
       lines.push(
-        `  question ${question.questionId} from ${question.seat}: ${question.text ?? "(unreadable)"}`,
+        `  question ${question.questionId} from ${question.seat}: ${text}`,
       );
     }
     if (context.lastSummary !== null)
@@ -636,27 +644,36 @@ export const showHandler: Read<typeof runShowSpec> = {
 };
 
 /**
- * JSON whose text survives being printed and saved: JSON leaves DEL, C1 controls
- * and the line and paragraph separators raw inside strings, which the literal
- * quoting would mark up and which line readers split on.
+ * A JSON file an agent edits and submits again. JSON leaves DEL, C1 controls
+ * and the line and paragraph separators raw inside strings; editors treat the
+ * separators as line breaks (some offer to remove them) and the controls are
+ * invisible, so they are written as escapes, which parse to the same text.
  */
-function escapedJson(value: unknown): string {
-  return JSON.stringify(value, null, 2).replace(
+export function editableJsonFile(value: unknown): Uint8Array {
+  const text = JSON.stringify(value, null, 2).replace(
     /[\u007f-\u009f\u2028\u2029]/g,
     (character) =>
       `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
+  return new TextEncoder().encode(`${text}\n`);
 }
 
-interface DefinitionData {
+/** A written definition file's summary: the revision to amend from. */
+interface DefinitionWritten {
   runId: string;
   revision: number;
-  /** The workflow as written, JSON-encoded; null for an agent run. */
-  definition: string | null;
+}
+/** An agent run, or one launched before definitions were kept: no file. */
+interface NoDefinition extends DefinitionWritten {
+  definition: null;
 }
 
 export const definitionHandler: Read<typeof runDefinitionSpec> = {
-  run: runner<Input<typeof runDefinitionSpec>, DefinitionData, CcErrorCode>({
+  run: runner<
+    Input<typeof runDefinitionSpec>,
+    DefinitionWritten | NoDefinition,
+    CcErrorCode
+  >({
     async run({ app, ctx }) {
       const resolved = await resolveCcSession(app);
       if (!resolved.ok) return resolved;
@@ -670,22 +687,24 @@ export const definitionHandler: Read<typeof runDefinitionSpec> = {
       const parsed = runDefinitionResponseSchema.safeParse(response.body);
       if (!parsed.success || parsed.data.runId !== ctx.args["run-id"])
         return invalid("The run definition is invalid.");
-      const { definition } = parsed.data;
+      const { runId, revision, definition } = parsed.data;
+      if (definition === null)
+        return { ok: true, data: { runId, revision, definition: null } };
       return {
         ok: true,
-        data: {
-          runId: parsed.data.runId,
-          revision: parsed.data.revision,
-          definition: definition === null ? null : escapedJson(definition),
-        },
+        binary: binaryArtifact<DefinitionWritten>({
+          bytes: editableJsonFile(definition),
+          mediaType: "application/json",
+          basename: `${runId}-definition.json`,
+          summary: { runId, revision },
+        }),
       };
     },
-    // The definition alone, so it can be saved to a file, edited and amended.
     text: (data) =>
       quoteLiteralText(
-        data.definition === null
+        "definition" in data
           ? `Run ${data.runId} has no workflow definition to amend: it runs one agent, or was launched before definitions were kept.\n`
-          : `${data.definition}\n`,
+          : `Wrote run ${data.runId}'s definition (revision ${data.revision}) as JSON. Copy it and edit the copy, then: cctl run amend ${data.runId} --file <copy> --based-on ${data.revision}\n`,
       ),
   }),
 };

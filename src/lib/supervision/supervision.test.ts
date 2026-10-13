@@ -36,6 +36,15 @@ import {
 let fixture: PersistenceFixture;
 let h: ReturnType<typeof createSupervisionHarness>;
 
+/** A compiled workflow launch; a refused one fails the test with its issues. */
+function compiledLaunch(compiled: ReturnType<typeof compileWorkflow>) {
+  if (!compiled.ok)
+    throw new Error(
+      compiled.unregistered.map((issue) => issue.message).join("; "),
+    );
+  return compiled.launch;
+}
+
 async function launch(
   s: Supervision,
   runId: string,
@@ -369,27 +378,29 @@ describe("lane runs across a restart", () => {
       modelSelection: { modelId: "sonnet", parameters: {} },
     };
     await before.runs.launch(
-      compileWorkflow({
-        runId: "run-1",
-        cause: "launch-run-1",
-        projectPath: "/repo",
-        session: {
-          sessionName: "session",
-          worktreePath: "/repo/.worktrees/session",
-          branch: "csm/session",
-        },
-        owner: { conversationId: "owner-1", sessionName: "session" },
-        laneTargets: (laneId) => ({
-          worktreePath: `/repo/.worktrees/session.${laneId}`,
-          branch: `csm/session-${laneId}`,
+      compiledLaunch(
+        compileWorkflow({
+          runId: "run-1",
+          cause: "launch-run-1",
+          projectPath: "/repo",
+          session: {
+            sessionName: "session",
+            worktreePath: "/repo/.worktrees/session",
+            branch: "csm/session",
+          },
+          owner: { conversationId: "owner-1", sessionName: "session" },
+          laneTargets: (laneId) => ({
+            worktreePath: `/repo/.worktrees/session.${laneId}`,
+            branch: `csm/session-${laneId}`,
+          }),
+          validationCommands: [],
+          request,
+          seats: {
+            x: { implementer: seat, reviewers: [] },
+            y: { implementer: seat, reviewers: [] },
+          },
         }),
-        validationCommands: [],
-        request,
-        seats: {
-          x: { implementer: seat, reviewers: [] },
-          y: { implementer: seat, reviewers: [] },
-        },
-      }),
+      ),
     );
     // Lane a provisions, x lands, and its publication starts and stays in its merge.
     for (
@@ -481,28 +492,30 @@ describe("workflow runs on the supervision graph", () => {
         },
       ],
     });
-    const launch = compileWorkflow({
-      runId: "run-w",
-      cause: "launch-run-w",
-      projectPath: "/repo",
-      session: {
-        sessionName: "session",
-        worktreePath: "/repo/.worktrees/session",
-        branch: "csm/session",
-      },
-      owner: { conversationId: "owner-1", sessionName: "session" },
-      laneTargets: (laneId) => ({
-        worktreePath: `/repo/.worktrees/session.${laneId}`,
-        branch: `csm/session-${laneId}`,
+    const launch = compiledLaunch(
+      compileWorkflow({
+        runId: "run-w",
+        cause: "launch-run-w",
+        projectPath: "/repo",
+        session: {
+          sessionName: "session",
+          worktreePath: "/repo/.worktrees/session",
+          branch: "csm/session",
+        },
+        owner: { conversationId: "owner-1", sessionName: "session" },
+        laneTargets: (laneId) => ({
+          worktreePath: `/repo/.worktrees/session.${laneId}`,
+          branch: `csm/session-${laneId}`,
+        }),
+        validationCommands: ["typecheck"],
+        request,
+        seats: {
+          api: { implementer: seat, reviewers: [] },
+          ui: { implementer: seat, reviewers: [] },
+          integrate: { implementer: seat, reviewers: [] },
+        },
       }),
-      validationCommands: [],
-      request,
-      seats: {
-        api: { implementer: seat, reviewers: [] },
-        ui: { implementer: seat, reviewers: [] },
-        integrate: { implementer: seat, reviewers: [] },
-      },
-    });
+    );
 
     await s.runs.launch(launch);
     await quiesce(s);

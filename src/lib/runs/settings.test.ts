@@ -17,7 +17,7 @@ const sonnet: ResolvedSeat = {
 };
 
 function start(raw: Record<string, unknown>, reviewers: ResolvedSeat[] = []) {
-  return resolveContextStart({
+  const resolved = resolveContextStart({
     request: agentLaunchRequestSchema.parse(raw),
     key: "agent",
     placement: {
@@ -39,6 +39,11 @@ function start(raw: Record<string, unknown>, reviewers: ResolvedSeat[] = []) {
     scope: { mode: "full" },
     seats: { implementer: sonnet, reviewers },
   });
+  if (!resolved.ok)
+    throw new Error(
+      resolved.unregistered.map((issue) => issue.message).join("; "),
+    );
+  return resolved.request;
 }
 
 const custom = {

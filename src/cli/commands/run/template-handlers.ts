@@ -1,4 +1,5 @@
 import {
+  binaryArtifact,
   count,
   invocation,
   type JsonData,
@@ -55,7 +56,12 @@ import {
   type ProjectContext,
   type SessionContext,
 } from "../../transport";
-import { launchedText, postLaunch, prepareSession } from "./handlers";
+import {
+  editableJsonFile,
+  launchedText,
+  postLaunch,
+  prepareSession,
+} from "./handlers";
 import {
   runTemplateListCommand,
   runTemplateShowCommand,
@@ -131,15 +137,6 @@ function templatePath(
   return `${libraryPath(context)}/${tier}/${encodePathSegment(id)}`;
 }
 const label = (tier: RunTemplateTier, id: string) => `${tier}:${id}`;
-
-/** JSON safe to print and paste: separators and C1 controls escaped. */
-function escapedJson(value: unknown): string {
-  return JSON.stringify(value, null, 2).replace(
-    /[\u007f-\u009f\u2028\u2029]/g,
-    (character) =>
-      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
 
 type Held = RunTemplateSummary | RunTemplateDiagnostic;
 
@@ -419,12 +416,11 @@ export const listHandler: Read<typeof runTemplateListSpec> = {
   }),
 };
 
+/** A written template file's summary: the revision to save from. */
 interface ShowData {
   tier: RunTemplateTier;
   id: string;
   revision: number;
-  /** The content run template save takes, JSON-encoded. */
-  template: string;
 }
 
 export const showHandler: Read<typeof runTemplateShowSpec> = {
@@ -454,16 +450,18 @@ export const showHandler: Read<typeof runTemplateShowSpec> = {
       } = parsed.data.template;
       return {
         ok: true,
-        data: {
-          tier: tier.value,
-          id,
-          revision,
-          template: escapedJson(content),
-        },
+        binary: binaryArtifact<ShowData>({
+          bytes: editableJsonFile(content),
+          mediaType: "application/json",
+          basename: `${id}-template.json`,
+          summary: { tier: tier.value, id, revision },
+        }),
       };
     },
-    // The content alone, so it can be saved to a file, edited and saved again.
-    text: (data) => quoteLiteralText(`${data.template}\n`),
+    text: (data) =>
+      quoteLiteralText(
+        `Wrote run template ${label(data.tier, data.id)} (revision ${data.revision}) as JSON. Copy it and edit the copy, then: cctl run template save ${data.id} --tier ${data.tier} --file <copy> --based-on ${data.revision}\n`,
+      ),
   }),
 };
 

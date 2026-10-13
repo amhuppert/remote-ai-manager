@@ -373,6 +373,42 @@ function checksSection(round: ReviewRound): string {
   return section("Checks", lines.join("\n"));
 }
 
+/**
+ * The disputed plan defect's reason, when this round is the one a `rereview`
+ * disposition opened: the round before it, for the same candidate, was
+ * retired. Only a `rereview` or `retry` disposition retires a round, each the
+ * current candidate's active one, so retired rounds and those dispositions
+ * pair up in order. A later round comes after a round that was not retired.
+ * Every seat of the round reads it, whatever its own verdict was, and the
+ * owner or a person may have applied it, so it names neither.
+ */
+function disputedDefectSection(
+  facts: ContextFacts,
+  round: ReviewRound,
+): string | null {
+  const rounds = facts.certification.rounds;
+  const index = rounds.findIndex((r) => r.id === round.id);
+  const previous = index > 0 ? rounds[index - 1] : undefined;
+  if (
+    previous === undefined ||
+    !previous.retired ||
+    previous.candidateId !== round.candidateId
+  )
+    return null;
+  const retiredBefore = rounds.slice(0, index).filter((r) => r.retired).length;
+  const opened = facts.control.dispositions
+    .map((recorded) => recorded.disposition)
+    .filter((d) => d.kind === "rereview" || d.kind === "retry")[
+    retiredBefore - 1
+  ];
+  return opened?.kind === "rereview"
+    ? section(
+        "This result is reviewed again",
+        `A plan defect was disputed: ${opened.reason}`,
+      )
+    : null;
+}
+
 export function composeReview(
   facts: ContextFacts,
   input: { candidate: Candidate; round: ReviewRound; seat: ReviewerAssignment },
@@ -388,6 +424,7 @@ export function composeReview(
     input.seat.focus !== undefined
       ? section("Your focus", input.seat.focus)
       : null,
+    disputedDefectSection(facts, input.round),
     section("What was asked", facts.contract.current.brief),
     charterSection(facts, input.seat.authority),
     inputsSection(facts),

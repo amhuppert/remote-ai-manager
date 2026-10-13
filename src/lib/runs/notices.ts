@@ -23,7 +23,7 @@ function definitionRemedy(
 ): string {
   return clearedBy === "cancel"
     ? `Resuming does not clear it, and a started loop's exit condition cannot be amended, so the remedy is to cancel the run and relaunch a corrected workflow: cctl run cancel ${id}`
-    : `Resuming does not clear it. Amend the definition: save it with cctl run definition ${id} > <workflow.json>, change the routes of the result that halted or raise the loop's maxPasses, then cctl run amend ${id} --file <workflow.json> --based-on <revision>. Or stop: cctl run cancel ${id}`;
+    : `Resuming does not clear it. Amend the definition: cctl run definition ${id} writes it to a file and names the file and its revision; copy that file, in the copy change the routes of the result that halted or raise the loop's maxPasses, then cctl run amend ${id} --file <copy> --based-on <revision>. Or stop: cctl run cancel ${id}`;
 }
 
 function actionLine(

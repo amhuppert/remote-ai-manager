@@ -14,7 +14,7 @@ A context works in one **workspace**: the session worktree, or the worktree of t
 
 - Two contexts run side by side when neither depends on the other, directly or through others, and no route excludes one of them. Side by side, their scopes must be disjoint: owned paths that do not contain each other. A full scope overlaps everything.
 - A read-only context reads the whole workspace, so it cannot run beside any writer there; two readers can. Its result is its whole deliverable: give it an `outputSchema` when later work or a route reads the result.
-- An owned path is a repository-relative directory or file, with no `.` or `..` parts and no trailing `/`, never the root, `.git` or `.cc`, and never a glob. It may not contain `[ ] ( ) { } * ? !`, even in a directory name: own the nearest parent directory without them instead. Prefer directories: implementers create files you did not plan, and may not write outside their scope.
+- An owned path is a repository-relative directory or file, with no `.` or `..` parts and no trailing `/`, never the root, `.git` or `.cc`, and never a glob. Prefer directories: implementers create files you did not plan, and may not write outside their scope.
 - A shared surface (a barrel file, a lockfile, a shared schema) has one owner. Home it in a context the others depend on, or order the contexts.
 - Give `owned` only where two writers really run side by side. A context ordered against every other writer in its workspace takes the full scope.
 

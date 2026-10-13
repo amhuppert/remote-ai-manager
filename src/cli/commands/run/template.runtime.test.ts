@@ -48,6 +48,15 @@ function bodyOf(init: { body?: unknown }): unknown {
   return typeof init.body === "string" ? JSON.parse(init.body) : undefined;
 }
 
+function artifactText(
+  fixture: ReturnType<typeof createCcRuntimeFixture>,
+  path: string,
+): string {
+  const bytes = fixture.kernelHost.filesSnapshot()[path];
+  if (bytes === undefined) throw new Error(`No artifact at ${path}`);
+  return new TextDecoder().decode(bytes);
+}
+
 const LIBRARY = "http://cc.test/api/projects/project-one/run-templates";
 
 describe("run template commands", () => {
@@ -317,7 +326,7 @@ describe("run template commands", () => {
     expect(result.stderr).toContain("checks is a setting");
   });
 
-  it("finds a template's tier by id and prints its content ready to save again", async () => {
+  it("finds a template's tier by id and writes its content to a file that run template save takes unchanged", async () => {
     const fixture = createCcRuntimeFixture({
       respond: (request) =>
         request.url === LIBRARY
@@ -327,20 +336,80 @@ describe("run template commands", () => {
               ],
               diagnostics: [],
             })
-          : jsonReply({ template: record(2), globals }),
+          : request.init.method === "PUT"
+            ? jsonReply({ template: record(3) })
+            : jsonReply({ template: record(2), globals }),
     });
 
-    const result = await fixture.run(
-      ["run", "template", "show", "release-checklist"],
-      "text",
-    );
+    const shown = await fixture.run([
+      "run",
+      "template",
+      "show",
+      "release-checklist",
+    ]);
 
-    expect(result.exitCode, result.stderr).toBe(0);
+    expect(shown.exitCode, shown.stderr).toBe(0);
     expect(fixture.requests.map((request) => request.url)).toEqual([
       LIBRARY,
       `${LIBRARY}/global/release-checklist`,
     ]);
-    expect(JSON.parse(result.stdout)).toEqual(content);
+    const { payload } = JSON.parse(shown.stdout);
+    expect(payload).toMatchObject({
+      kind: "artifact",
+      summary: { tier: "global", id: "release-checklist", revision: 2 },
+    });
+    expect(JSON.parse(artifactText(fixture, payload.artifact.path))).toEqual(
+      content,
+    );
+
+    const saved = await fixture.run([
+      "run",
+      "template",
+      "save",
+      "release-checklist",
+      "--file",
+      payload.artifact.path,
+      "--based-on",
+      "2",
+    ]);
+    expect(saved.exitCode, saved.stderr).toBe(0);
+    const put = fixture.requests.at(-1);
+    expect(put?.url).toBe(`${LIBRARY}/global/release-checklist`);
+    expect(bodyOf(put?.init ?? {})).toEqual({
+      expectedRevision: 2,
+      template: content,
+    });
+  });
+
+  it("names the template file in text and writes it where --out says, inside the artifact directory", async () => {
+    const fixture = createCcRuntimeFixture({
+      respond: () => jsonReply({ template: record(2), globals }),
+    });
+
+    const result = await fixture.run(
+      [
+        "run",
+        "template",
+        "show",
+        "release-checklist",
+        "--tier",
+        "project",
+        "--out",
+        "release.json",
+      ],
+      "text",
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "Wrote run template project:release-checklist (revision 2) as JSON.",
+    );
+    expect(result.stdout).toContain(
+      'artifact: {"path":"/artifacts/release.json"',
+    );
+    expect(
+      JSON.parse(artifactText(fixture, "/artifacts/release.json")),
+    ).toEqual(content);
   });
 
   it("refuses an id both tiers use, naming both templates", async () => {

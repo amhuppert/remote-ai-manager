@@ -43,9 +43,10 @@ The checks run locally. `launch-check` checks the file's shape;
 `workflow-check` and `amend-check` add every topology rule; `template save-check`
 checks the template's shape, parameter tokens and workflow, but not its
 profiles; `template launch-check` checks only the inputs file. What needs the
-server is checked by the write itself: profiles, backends and models, document
-files, the session's state, the run's history for an amendment, and the
-template's current revision. A launch file is at most 256 KB; a workflow or
+server is checked by the write itself: check names against the project's
+registered validation commands, profiles, backends and models, document files,
+the session's state, the run's history for an amendment, and the template's
+current revision. A launch file is at most 256 KB; a workflow or
 amendment file, 1 MB.
 
 ### Receipts and ids
@@ -62,14 +63,17 @@ launch adds `ownerConversationId`. Keep the run id: every other verb takes it.
   changes whenever the context moves on, and a stale one is refused.
 - **Definition revisions** appear on the first line of `run show`; `--based-on`
   takes the one you read.
-- **Template revisions** appear in `run template list` and `run template show --json`.
+- **Template revisions** appear in `run template list` and `run template show`.
 
 `run show` prints the run's progress, then each context as
 `- <key> [<context-id>]: <state>` with its tasks, open questions, halt and
 occurrence, last summary, result and the document revisions it froze, then
 lanes, loops, the charter, documents, run-level halts and the last five
-boundaries. `run definition` prints the workflow definition alone, as JSON to
-save, edit and amend; an agent run has none.
+boundaries. `run definition` writes the workflow definition as written to a
+JSON file under `.cc/temp/cctl-artifacts/`; the reply names its revision, and
+its `artifact:` line names the file. Copy it, edit the copy and amend with
+that: the written file is never overwritten, so an edited one would block
+reading the same revision again. An agent run has none.
 
 ### Wakes
 
@@ -109,6 +113,7 @@ Read the error message: it names the cause, and usually the remedy.
 | `session_finished`, `session_finalizing`, `session_deleted` | the session takes no new run |
 | a profile, backend or model message naming a context | a seat cannot be resolved; read `cctl agent list` |
 | `Invalid documents` | a document's path, `from` file or size; one issue per document |
+| `checks_not_registered` | a check names no validation command registered for this project (`cctl validate list`); one issue per check |
 | `not_run_owner` | only the conversation that launched the run answers, amends or steers it |
 | `question_closed` | the question was already answered or withdrawn |
 | `run_control_refused` | the run finished, the disposition does not clear that halt, the occurrence is stale, the lane has nothing to retry, or the definition revision moved |
@@ -141,7 +146,7 @@ amendment changed the document since the seat's context started.
 
 ```
 cctl run template list
-cctl run template show <id> --json
+cctl run template show <id>
 cctl run template save-check <id> --file .cc/temp/template.json
 cctl run template save <id> --file .cc/temp/template.json --based-on <revision>
 cctl run template delete <id> --based-on <revision>
@@ -149,6 +154,8 @@ cctl run template launch-check <id> --file .cc/temp/inputs.json
 cctl run template launch <id> --file .cc/temp/inputs.json
 ```
 
+`show` writes the template file `save` takes; edit a copy, as for
+`run definition`.
 `save` creates a template without `--based-on` and replaces one with it.
 `--tier project|global` picks the library. Without it, a replacement, `show`,
 `delete` and `launch` find the template by id and refuse an id both tiers use,

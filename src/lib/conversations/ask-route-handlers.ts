@@ -238,6 +238,29 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
   return { POST: post };
 }
 
+/**
+ * A seat's questions as the owner reads them in its wake, `run show` and the
+ * run page: each question with its options, since the owner answers in text
+ * and sees no other part of the batch.
+ */
+function seatQuestionText(questions: readonly AskQuestionItem[]): string {
+  return questions
+    .map((q) =>
+      [
+        q.question,
+        ...q.options.map((option) => {
+          const label = option.recommended
+            ? `${option.label} (recommended)`
+            : option.label;
+          return option.description === undefined
+            ? `- ${label}`
+            : `- ${label}: ${option.description}`;
+        }),
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
 async function registerSeatAsk(
   deps: AskRouteDeps,
   request: Request,
@@ -303,7 +326,7 @@ async function registerSeatAsk(
   const questionBatchId = deps.seatAsk.open({
     conversationId,
     attemptId: seat.attemptId,
-    questionText: questions.map((q) => q.question).join("\n"),
+    questionText: seatQuestionText(questions),
     questions,
   });
   deps.log.info("ask.seat_registered", {

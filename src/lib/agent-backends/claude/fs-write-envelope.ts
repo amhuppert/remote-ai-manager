@@ -38,6 +38,7 @@ import type {
   SandboxSettings,
   Settings,
 } from "@anthropic-ai/claude-agent-sdk";
+import { WRITE_RULE_PATTERN_CHARACTERS } from "@/lib/workspace/schemas";
 import type { FsWritePolicy } from "../task";
 import { checkFsWritePolicy } from "../fs-write-policy";
 
@@ -83,9 +84,6 @@ const IMPLEMENTER_ALLOWED_TOOLS = [
   "WebFetch",
   "WebSearch",
 ] as const;
-
-/** Anything that would make a path mean more than itself inside a rule. */
-const GLOB_METACHARACTERS = /[*?[\]{}!()]/;
 
 /** The SDK's own permission-settings shape, with this envelope's parts pinned. */
 export type ClaudeFsWriteEnvelopePermissions = NonNullable<
@@ -134,7 +132,7 @@ function unestablishableReason(policy: FsWritePolicy): string | null {
   if (check.kind === "unestablishable") return check.reason;
 
   for (const entry of [...policy.allowWrite, ...policy.denyWrite]) {
-    if (GLOB_METACHARACTERS.test(entry)) {
+    if (WRITE_RULE_PATTERN_CHARACTERS.test(entry)) {
       return `the write policy entry "${entry}" contains a glob metacharacter, which a permission rule cannot pin to a single path`;
     }
   }

@@ -118,6 +118,18 @@ export function frozenKeys(facts: RunFacts): Set<string> {
   return new Set([...started, ...startedLoops.flatMap((loop) => loop.body)]);
 }
 
+/**
+ * The lanes an amendment keeps as they are: each provisioned, or asked to be,
+ * keeps its contexts, its publication checks and its worktree.
+ */
+export function frozenLaneKeys(facts: RunFacts): Set<string> {
+  return new Set(
+    (facts.definition.lanes ?? [])
+      .filter((lane) => laneStateOf(facts, lane.key) !== undefined)
+      .map((lane) => lane.key),
+  );
+}
+
 const loopKeyOf = (
   loops: readonly RunLoop[] | undefined,
   key: string,
@@ -215,8 +227,9 @@ export function amendDefinition(
   }
 
   const proposedLanes = proposed.lanes ?? [];
+  const frozenLanes = frozenLaneKeys(facts);
   for (const lane of current.lanes ?? []) {
-    if (laneStateOf(facts, lane.key) === undefined) continue;
+    if (!frozenLanes.has(lane.key)) continue;
     if (
       !same(
         memberKeysOf(current.contexts, lane.key),

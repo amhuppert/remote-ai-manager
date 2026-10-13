@@ -253,6 +253,11 @@ export function recordSeatVerdict(
   }));
 }
 
+/**
+ * Retires a round for a `rereview` or `retry` disposition. `composeReview`
+ * pairs retired rounds with those dispositions in order to find a rereview's
+ * reason, so a new caller must keep that pairing.
+ */
 export function retireRound(
   facts: ContextFacts,
   roundId: string,

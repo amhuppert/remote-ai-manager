@@ -50,6 +50,8 @@ let reachedLifecycle: Promise<void>;
 let diffed: Array<{ worktreePath: string; evidence: string }>;
 /** Seat conversations deleted from the session since they ran. */
 let deleted: Set<string>;
+/** The project's registered validation commands, which can change while a run lives. */
+let registered: string[];
 
 function identity(conversationId: string): Record<string, string> {
   return {
@@ -150,6 +152,7 @@ beforeEach(() => {
   deletedSessions = new Set();
   diffed = [];
   deleted = new Set();
+  registered = ["typecheck", "test"];
   snapshots = [];
   seatFiles = {};
   seatReads = [];
@@ -178,7 +181,7 @@ beforeEach(() => {
       });
     },
     async validationCommands() {
-      return ["typecheck", "test"];
+      return [...registered];
     },
     async getSession(_projectPath, sessionName) {
       if (deletedSessions.has(sessionName)) return null;
@@ -1489,6 +1492,128 @@ describe("run routes", () => {
     expect(h.laneGit.state.removed).toEqual([
       expect.stringContaining("session."),
     ]);
+  });
+
+  it("refuses checks that name no registered validation command, naming the registered ones, and records no run", async () => {
+    const agent = await launch({
+      brief: "Fix the duplicate notice",
+      checks: ["typecheck", "tests"],
+    });
+    expect(agent.response.status).toBe(400);
+    expect(agent.payload).toMatchObject({
+      code: "checks_not_registered",
+      issues: [
+        {
+          path: "checks.1",
+          message: expect.stringMatching(/"tests".*"typecheck", "test"/),
+        },
+      ],
+    });
+
+    const workflow = await routes.launchWorkflow(
+      request(
+        {
+          title: "Lane",
+          contexts: [
+            {
+              key: "api",
+              brief: "Build the API",
+              lane: "api",
+              checks: ["lint"],
+            },
+          ],
+          lanes: [{ key: "api", checks: ["test", "e2e"] }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    expect(workflow.status).toBe(400);
+    expect(await json(workflow)).toMatchObject({
+      code: "checks_not_registered",
+      issues: [
+        {
+          path: "contexts.0.checks.0",
+          message: expect.stringContaining('"lint"'),
+        },
+        { path: "lanes.0.checks.1", message: expect.stringContaining('"e2e"') },
+      ],
+    });
+
+    registered = [];
+    const none = await launch({ brief: "Fix it", checks: ["test"] });
+    expect(none.payload).toMatchObject({
+      issues: [
+        {
+          path: "checks.0",
+          message: expect.stringContaining("registers no validation commands"),
+        },
+      ],
+    });
+    expect(supervision.runs.listActive()).toEqual([]);
+  });
+
+  it("refuses an amendment's unregistered checks only where it can still change them: started work and a provisioned lane keep theirs", async () => {
+    const session = "/repo/.worktrees/session";
+    h.laneGit.state.heads.set("csm/session", "h0");
+    h.laneGit.state.dirt.set(session, ["notes.md"]);
+    const definition = (integrateChecks: string[]) => ({
+      title: "Lane then integrate",
+      contexts: [
+        {
+          key: "api",
+          brief: "Build the API",
+          lane: "api",
+          checks: ["typecheck"],
+        },
+        {
+          key: "integrate",
+          brief: "Integrate",
+          dependsOn: ["api"],
+          checks: integrateChecks,
+        },
+      ],
+      lanes: [{ key: "api", checks: ["typecheck"] }],
+    });
+    const launched = await routes.launchWorkflow(
+      request(definition([]), identity("owner-1")),
+      params(),
+    );
+    expect(launched.status).toBe(202);
+    await quiesce(supervision);
+    expect(
+      supervision.runs
+        .observe("run-1")
+        ?.record.facts.invocations.map((i) => i.key),
+    ).toEqual(["api"]);
+
+    // typecheck is unregistered after "api" and its lane were admitted with it.
+    registered = ["test"];
+    const amend = (body: unknown) =>
+      routes.amend(
+        request(body, identity("owner-1")),
+        params({ runId: "run-1" }),
+      );
+    const refused = await amend({
+      definition: definition(["lint"]),
+      basedOn: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(await json(refused)).toMatchObject({
+      code: "checks_not_registered",
+      issues: [
+        {
+          path: "definition.contexts.1.checks.0",
+          message: expect.stringContaining('"lint"'),
+        },
+      ],
+    });
+
+    const amended = await amend({
+      definition: definition(["test"]),
+      basedOn: 1,
+    });
+    expect(await json(amended)).toMatchObject({ ok: true, revision: 2 });
   });
 
   it("refuses an invalid workflow definition with every located problem, launching nothing", async () => {

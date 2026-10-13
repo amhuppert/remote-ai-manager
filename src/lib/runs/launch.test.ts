@@ -15,7 +15,7 @@ function resolve(
   raw: unknown,
   reviewers: Array<typeof sonnet | typeof gpt> = [],
 ) {
-  return resolveAgentLaunch({
+  const resolved = resolveAgentLaunch({
     request: agentLaunchRequestSchema.parse(raw),
     runId: "run-1",
     cause: "launch-1",
@@ -33,6 +33,11 @@ function resolve(
     validationCommands: ["typecheck", "test"],
     seats: { implementer: sonnet, reviewers },
   });
+  if (!resolved.ok)
+    throw new Error(
+      resolved.unregistered.map((issue) => issue.message).join("; "),
+    );
+  return resolved.launch;
 }
 
 describe("agent launch resolver", () => {

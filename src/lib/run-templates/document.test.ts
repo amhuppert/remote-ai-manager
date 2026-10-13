@@ -121,6 +121,30 @@ describe("run template materialisation", () => {
     );
   });
 
+  it("refuses an owned path a write rule would read as a pattern on save, while a stored template that owns one still reads", () => {
+    const raw = template({
+      contexts: [
+        {
+          key: "fix",
+          brief: "Fix {{inputs.ticket}}",
+          scope: { mode: "owned", paths: ["src/app/[id]"] },
+        },
+      ],
+    });
+
+    const validated = validateRunTemplate(raw);
+    expect(validated.ok).toBe(false);
+    if (validated.ok) return;
+    expect(validated.issues).toEqual([
+      {
+        path: "workflow.contexts.0.scope.paths.0",
+        message: expect.stringContaining('own "src/app"'),
+      },
+    ]);
+    // Refused on save or launch, not when stored content is decoded.
+    expect(runTemplateContentSchema.safeParse(raw).success).toBe(true);
+  });
+
   it("locates a problem a setting causes at the tier that set it", () => {
     const concurrent = {
       contexts: [

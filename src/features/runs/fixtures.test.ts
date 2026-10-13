@@ -59,7 +59,7 @@ describe("run prototype evidence", () => {
         worktreePath: `/repo/.worktrees/checkout-${key}`,
         branch: `csm/checkout-${key}`,
       }),
-      validationCommands: [],
+      validationCommands: ["typecheck", "lint", "test"],
       seats: Object.fromEntries(
         result.data.contexts.map((context) => [
           context.key,
@@ -73,8 +73,12 @@ describe("run prototype evidence", () => {
         ]),
       ),
     });
-    expect(compiled.contexts).toHaveLength(checkoutRun.contexts.length);
-    for (const context of compiled.contexts) {
+    expect(
+      compiled.ok ? [] : compiled.unregistered.map((issue) => issue.message),
+    ).toEqual([]);
+    if (!compiled.ok) return;
+    expect(compiled.launch.contexts).toHaveLength(checkoutRun.contexts.length);
+    for (const context of compiled.launch.contexts) {
       expect(context.request.contract.documentPublishing).toBe(true);
     }
   });

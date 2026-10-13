@@ -877,7 +877,9 @@ export function ContextInspector({
           icon={<QuestionIcon size={16} />}
           title={`${question.seat} asked ${owner.title ?? "the owner"}`}
         >
-          <p className="m-0 text-text-primary">{question.question}</p>
+          <p className="m-0 whitespace-pre-line text-text-primary">
+            {question.question}
+          </p>
           <p className="m-0 mt-xs">
             The owner conversation answers or asks you. Other reviewers can
             continue.

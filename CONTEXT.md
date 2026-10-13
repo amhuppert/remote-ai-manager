@@ -376,6 +376,13 @@ locality); domain terms name the concepts the code is about.
   every new seat's profile through the agent-profile library before anything
   is recorded (`runs/seats.ts`), so a missing profile is refused naming its
   context and seat. Seats spawned later still resolve at spawn.
+- **Launch check-name check** — every launch, template launch and amendment
+  resolves a context's checks in `resolveContextStart`, and a lane's in
+  `compileWorkflow`, against the project's registered validation commands,
+  refusing an unregistered name as a located `checks_not_registered` issue.
+  The local check verbs cannot read the registry. An amendment compares only
+  what it can still change: a started context and a provisioned lane keep the
+  checks they were admitted with.
 
 - **Adoption** — moving a turn's state from its provisional key onto the
   conversation the server named for it, and releasing the provisional key. The

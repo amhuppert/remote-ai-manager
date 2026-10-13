@@ -8,6 +8,7 @@ import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/outp
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { bindingScopesOverlap } from "@/lib/workspace/admission";
 import {
+  WRITE_RULE_PATTERN_CHARACTERS,
   workspaceScopeSchema,
   type WorkspaceScope,
 } from "@/lib/workspace/schemas";
@@ -16,6 +17,8 @@ import type { FrozenCharter } from "./charter";
 import {
   agentLaunchRequestSchema,
   resolveContextStart,
+  unregisteredChecks,
+  type DefinitionIssue,
   type LaunchPlacement,
   type ResolvedSeat,
 } from "./launch";
@@ -96,10 +99,22 @@ export const workflowLoopRequestSchema = runLoopSchema
   .extend({ key: keySchema })
   .strict();
 
-/** One problem with a definition, located by its path in the request. */
-interface DefinitionIssue {
-  path: Array<string | number>;
-  message: string;
+/** Why an owned path is refused for its pattern characters, with the parent to own instead. */
+function patternPathMessage(owned: string): string {
+  const segments = owned.split("/");
+  const parent = segments
+    .slice(
+      0,
+      segments.findIndex((segment) =>
+        WRITE_RULE_PATTERN_CHARACTERS.test(segment),
+      ),
+    )
+    .join("/");
+  const remedy =
+    parent === ""
+      ? "No parent directory is free of them: remove the scope, and if the context then overlaps writers that can run beside it, order it against them with dependsOn."
+      : `Instead, own "${parent}", the nearest parent directory without them.`;
+  return `Owned path "${owned}" contains one of [ ] ( ) { } * ? !, which a write rule reads as a pattern, so the context's agents could not be confined to it. ${remedy}`;
 }
 
 interface WorkflowAnalysis {
@@ -854,6 +869,17 @@ export const workflowLaunchRequestSchema = z
         path: issue.path,
         message: issue.message,
       });
+    request.contexts.forEach((context, index) => {
+      if (context.scope?.mode !== "owned") return;
+      context.scope.paths.forEach((owned, position) => {
+        if (!WRITE_RULE_PATTERN_CHARACTERS.test(owned)) return;
+        ctx.addIssue({
+          code: "custom",
+          path: ["contexts", index, "scope", "paths", position],
+          message: patternPathMessage(owned),
+        });
+      });
+    });
     const keys = new Set(request.contexts.map((context) => context.key));
     const unknownKeys = (
       what: string,
@@ -902,9 +928,10 @@ export function withoutDocuments(
 }
 
 /**
- * Freezes a parsed workflow definition into a Run launch. Pure. The request
- * must come from workflowLaunchRequestSchema, which already refused every
- * definition this cannot compile.
+ * Freezes a parsed workflow definition into a Run launch, or locates each
+ * check, a context's or a lane's, that no registered command names. Pure. The
+ * request must come from workflowLaunchRequestSchema, which already refused
+ * every definition this cannot compile.
  */
 export function compileWorkflow(
   input: LaunchPlacement & {
@@ -912,12 +939,20 @@ export function compileWorkflow(
     seats: Record<string, Seats>;
     /** An amended run's lanes: a lane the run already named keeps its worktree and branch. */
     existingLanes?: readonly RunLane[];
+    /**
+     * What an amendment keeps as it started: contexts by key, and lanes
+     * provisioned or asked to be. Their checks were admitted then, and are not
+     * compared with the commands registered now.
+     */
+    kept?: { contexts: ReadonlySet<string>; lanes: ReadonlySet<string> };
     /** The workflow's documents, already frozen. */
     documents?: RunDocument[];
     /** The workflow's charter, each context's bundle already frozen. */
     charter?: FrozenCharter;
   },
-): RunLaunchInput {
+):
+  | { ok: true; launch: RunLaunchInput }
+  | { ok: false; unregistered: DefinitionIssue[] } {
   const contexts = input.request.contexts;
   const analysis = analyzeWorkflow(input.request);
   const first = analysis.issues[0];
@@ -925,7 +960,69 @@ export function compileWorkflow(
     throw new Error(`Cannot compile an unchecked workflow: ${first.message}`);
   const lanes = freezeLanes(input);
   const laneByKey = new Map(lanes.map((lane) => [lane.key, lane]));
-  return {
+  const unregistered: DefinitionIssue[] = [];
+  const compiled = contexts.flatMap((context, index) => {
+    const {
+      key,
+      dependsOn: authored,
+      routing,
+      scope: _scope,
+      lane: laneKey,
+      ...fields
+    } = context;
+    const lane = laneKey === undefined ? undefined : laneByKey.get(laneKey);
+    const outputOnly = (authored ?? []).flatMap((entry) =>
+      typeof entry !== "string" && entry.outputOnly === true ? [entry.key] : [],
+    );
+    const seats = input.seats[key];
+    if (seats === undefined)
+      throw new Error(`No resolved seats for workflow context "${key}"`);
+    const when = analysis.when[index] ?? {};
+    const resolved = resolveContextStart({
+      request: fields,
+      key,
+      placement: input,
+      scope: scopeOf(context),
+      seats,
+      deferredChecks: analysis.deferred[index],
+      documentPublishing: true,
+      kept: input.kept?.contexts.has(key) ?? false,
+      ...(lane !== undefined
+        ? { lane: { worktreePath: lane.worktreePath, branch: lane.branch } }
+        : {}),
+    });
+    if (!resolved.ok) {
+      for (const issue of resolved.unregistered)
+        unregistered.push({
+          ...issue,
+          path: ["contexts", index, ...issue.path],
+        });
+      return [];
+    }
+    return [
+      {
+        key,
+        dependsOn: analysis.dependsOn[index] ?? [],
+        ...(Object.keys(when).length > 0 ? { when } : {}),
+        ...(routing !== undefined ? { routing } : {}),
+        ...(outputOnly.length > 0 ? { outputOnly } : {}),
+        ...(lane !== undefined ? { lane: lane.key } : {}),
+        request: resolved.request,
+      },
+    ];
+  });
+  (input.request.lanes ?? []).forEach((lane, index) => {
+    if (input.kept?.lanes.has(lane.key) === true) return;
+    unregistered.push(
+      ...unregisteredChecks(lane.checks ?? [], input.validationCommands, [
+        "lanes",
+        index,
+        "checks",
+      ]),
+    );
+  });
+  if (unregistered.length > 0) return { ok: false, unregistered };
+  const launch: RunLaunchInput = {
     runId: input.runId,
     cause: input.cause,
     kind: "workflow",
@@ -941,47 +1038,9 @@ export function compileWorkflow(
     ...(lanes.length > 0 ? { lanes } : {}),
     // Documents are kept as revisions, which `run definition` shows; their inline contents stay out of the record.
     authored: withoutDocuments(input.request),
-    contexts: contexts.map((context, index) => {
-      const {
-        key,
-        dependsOn: authored,
-        routing,
-        scope: _scope,
-        lane: laneKey,
-        ...fields
-      } = context;
-      const lane = laneKey === undefined ? undefined : laneByKey.get(laneKey);
-      const outputOnly = (authored ?? []).flatMap((entry) =>
-        typeof entry !== "string" && entry.outputOnly === true
-          ? [entry.key]
-          : [],
-      );
-      const seats = input.seats[key];
-      if (seats === undefined)
-        throw new Error(`No resolved seats for workflow context "${key}"`);
-      const when = analysis.when[index] ?? {};
-      return {
-        key,
-        dependsOn: analysis.dependsOn[index] ?? [],
-        ...(Object.keys(when).length > 0 ? { when } : {}),
-        ...(routing !== undefined ? { routing } : {}),
-        ...(outputOnly.length > 0 ? { outputOnly } : {}),
-        ...(lane !== undefined ? { lane: lane.key } : {}),
-        request: resolveContextStart({
-          request: fields,
-          key,
-          placement: input,
-          scope: scopeOf(context),
-          seats,
-          deferredChecks: analysis.deferred[index],
-          documentPublishing: true,
-          ...(lane !== undefined
-            ? { lane: { worktreePath: lane.worktreePath, branch: lane.branch } }
-            : {}),
-        }),
-      };
-    }),
+    contexts: compiled,
   };
+  return { ok: true, launch };
 }
 
 /**

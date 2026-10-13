@@ -35,7 +35,11 @@ const view = {
       tasks: [{ id: "t1", title: "Route", status: "open" }],
       seats: { implementer: "conv-9" },
       openQuestions: [
-        { questionId: "q-1", seat: "implementer", text: "Which file?" },
+        {
+          questionId: "q-1",
+          seat: "implementer",
+          text: "Which file?\n- notice.ts: The one that fires twice\n- new.ts",
+        },
       ],
       lastSummary: null,
       output: null,
@@ -61,6 +65,15 @@ const view = {
 
 function bodyOf(init: { body?: unknown }): unknown {
   return typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+}
+
+function artifactText(
+  fixture: ReturnType<typeof createCcRuntimeFixture>,
+  path: string,
+): string {
+  const bytes = fixture.kernelHost.filesSnapshot()[path];
+  if (bytes === undefined) throw new Error(`No artifact at ${path}`);
+  return new TextDecoder().decode(bytes);
 }
 
 describe("run commands", () => {
@@ -479,8 +492,9 @@ describe("run commands", () => {
     expect(result.stdout).toContain(
       "turn_failed: provider error; occurrence occ-7",
     );
+    // A question's options stay under it, indented as part of its context.
     expect(result.stdout).toContain(
-      "question q-1 from implementer: Which file?",
+      "  question q-1 from implementer: Which file?\n    - notice.ts: The one that fires twice\n    - new.ts\n",
     );
     expect(result.stdout).toContain("task t1 open: Route");
   });
@@ -654,23 +668,102 @@ describe("run commands", () => {
     );
   });
 
-  it("prints a workflow run's definition as written, with its revision, to edit and amend", async () => {
+  it("writes a workflow run's definition as written to a file that run amend takes unchanged", async () => {
     const definition = {
       title: "API then docs",
+      contexts: [
+        { key: "api", brief: "Build the API" },
+        { key: "docs", brief: "Document it", dependsOn: ["api"] },
+      ],
+      documents: [{ path: "plan.md", revision: 2, description: "The plan" }],
+    };
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: (request) =>
+        request.url.endsWith("/definition")
+          ? jsonReply({ runId: "run-1", revision: 2, definition })
+          : jsonReply({
+              ok: true,
+              revision: 3,
+              progress: { kind: "running" },
+              halts: [],
+              removedDocuments: [],
+            }),
+    });
+    const read = await fixture.run(["run", "definition", "run-1"]);
+
+    expect(read.exitCode, read.stderr).toBe(0);
+    expect(fixture.requests[0]?.url).toBe(
+      "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/definition",
+    );
+    const { payload } = JSON.parse(read.stdout);
+    expect(payload).toMatchObject({
+      kind: "artifact",
+      summary: { runId: "run-1", revision: 2 },
+    });
+    const file = artifactText(fixture, payload.artifact.path);
+    expect(JSON.parse(file)).toEqual(definition);
+
+    const amended = await fixture.run([
+      "run",
+      "amend",
+      "run-1",
+      "--file",
+      payload.artifact.path,
+      "--based-on",
+      "2",
+    ]);
+    expect(amended.exitCode, amended.stderr).toBe(0);
+    expect(bodyOf(fixture.requests[1]?.init ?? {})).toEqual({
+      definition,
+      basedOn: 2,
+    });
+  });
+
+  it("names the definition file in text and writes it where --out says, inside the artifact directory", async () => {
+    const definition = {
+      title: "API",
       contexts: [{ key: "api", brief: "Build the API" }],
     };
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
       respond: () => jsonReply({ runId: "run-1", revision: 2, definition }),
     });
-    const result = await fixture.run(["run", "definition", "run-1"], "text");
+    const result = await fixture.run(
+      ["run", "definition", "run-1", "--out", "run-1.json"],
+      "text",
+    );
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(fixture.requests[0]?.url).toBe(
-      "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/definition",
+    expect(result.stdout).toContain(
+      "Wrote run run-1's definition (revision 2) as JSON.",
     );
-    // The text is the definition alone, ready to save, edit and amend.
-    expect(JSON.parse(result.stdout)).toEqual(definition);
+    expect(result.stdout).toContain(
+      'artifact: {"path":"/artifacts/run-1.json"',
+    );
+    expect(JSON.parse(artifactText(fixture, "/artifacts/run-1.json"))).toEqual(
+      definition,
+    );
+  });
+
+  it("answers inline for an agent run, which has no definition to write", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: identityEnv,
+      respond: () =>
+        jsonReply({ runId: "run-1", revision: 1, definition: null }),
+    });
+    const result = await fixture.run(["run", "definition", "run-1"]);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).payload).toEqual({
+      kind: "inline",
+      data: { runId: "run-1", revision: 1, definition: null },
+    });
+    expect(Object.keys(fixture.kernelHost.filesSnapshot())).toEqual([]);
+    const text = await fixture.run(["run", "definition", "run-1"], "text");
+    expect(text.stdout).toContain(
+      "Run run-1 has no workflow definition to amend",
+    );
   });
 
   it("prints each change a refused amendment names", async () => {
@@ -714,7 +807,7 @@ describe("run commands", () => {
     expect(output).toContain('"t" was skipped by a route that already ran');
   });
 
-  it("prints a definition that stays valid JSON with line or paragraph separators in its text", async () => {
+  it("writes line and paragraph separators and C1 controls escaped, so editors keep them, and the file still parses to the definition", async () => {
     const definition = {
       title: "Odd",
       contexts: [{ key: "api", brief: "First\u2028second\u2029third\u0085" }],
@@ -723,10 +816,15 @@ describe("run commands", () => {
       env: identityEnv,
       respond: () => jsonReply({ runId: "run-1", revision: 1, definition }),
     });
-    const result = await fixture.run(["run", "definition", "run-1"], "text");
+    const result = await fixture.run(["run", "definition", "run-1"]);
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual(definition);
+    const file = artifactText(
+      fixture,
+      JSON.parse(result.stdout).payload.artifact.path,
+    );
+    expect(file).not.toMatch(/[\u0085\u2028\u2029]/);
+    expect(JSON.parse(file)).toEqual(definition);
   });
 
   it("shows the definition revision an amendment is based on", async () => {

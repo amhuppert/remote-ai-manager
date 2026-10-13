@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { workspaceScopeSchema } from "@/lib/workspace/schemas";
+import type { RunLaunchInput } from "./host";
 import { agentLaunchRequestSchema, resolveAgentLaunch } from "./launch";
 import {
   compileWorkflow,
@@ -27,13 +29,26 @@ const placement = {
     worktreePath: `/repo/.worktrees/session.${laneId}`,
     branch: `csm/session-${laneId}`,
   }),
-  validationCommands: [],
+  validationCommands: ["typecheck", "test", "lint"],
   owner: { conversationId: "owner-1", sessionName: "session" },
 };
 
+/** A compiled launch; a refused one fails the test with its issues. */
+function compiledLaunch(
+  compiled:
+    | { ok: true; launch: RunLaunchInput }
+    | { ok: false; unregistered: Array<{ message: string }> },
+): RunLaunchInput {
+  if (!compiled.ok)
+    throw new Error(
+      compiled.unregistered.map((issue) => issue.message).join("; "),
+    );
+  return compiled.launch;
+}
+
 function launched(raw: unknown) {
   const request = workflowLaunchRequestSchema.parse(raw);
-  return compileWorkflow({
+  const compiled = compileWorkflow({
     ...placement,
     request,
     seats: Object.fromEntries(
@@ -46,6 +61,7 @@ function launched(raw: unknown) {
       ]),
     ),
   });
+  return compiledLaunch(compiled);
 }
 
 function contract(raw: unknown, key: string) {
@@ -81,11 +97,13 @@ describe("one-context workflow (W1)", () => {
       reviewers: [{ authority: "blocking", focus: "Correctness" }],
       timeoutMs: 600000,
     };
-    const agent = resolveAgentLaunch({
-      ...placement,
-      request: agentLaunchRequestSchema.parse(fields),
-      seats: { implementer: sonnet, reviewers: [gpt] },
-    });
+    const agent = compiledLaunch(
+      resolveAgentLaunch({
+        ...placement,
+        request: agentLaunchRequestSchema.parse(fields),
+        seats: { implementer: sonnet, reviewers: [gpt] },
+      }),
+    );
     const workflow = launched({
       title: "Endpoint workflow",
       contexts: [{ key: "agent", ...fields }],
@@ -275,6 +293,51 @@ describe("workflow definition compiler (W2)", () => {
       "contexts.2.scope.paths.2",
       "contexts.2.scope.paths.3",
     ]);
+  });
+
+  it("refuses an owned path a write rule would read as a pattern, naming the nearest parent to own instead", () => {
+    const refused = issues({
+      title: "Patterns",
+      contexts: [
+        {
+          key: "route",
+          brief: "Route",
+          scope: owned("src/app/api/runs/[runId]", "src/lib/runs"),
+        },
+        {
+          key: "page",
+          brief: "Page",
+          dependsOn: ["route"],
+          scope: owned("(marketing)/page.tsx"),
+        },
+      ],
+    });
+    expect(refused).toEqual([
+      {
+        path: "contexts.0.scope.paths.0",
+        message: expect.stringContaining('own "src/app/api/runs"'),
+      },
+      {
+        path: "contexts.1.scope.paths.0",
+        message: expect.stringContaining("[ ] ( ) { } * ? !"),
+      },
+    ]);
+    for (const character of ["]", "{", "}", "*", "?", "!", ")"])
+      expect(
+        issues({
+          title: "Pattern",
+          contexts: [
+            { key: "a", brief: "A", scope: owned(`src/a${character}b`) },
+          ],
+        }).map((issue) => issue.path),
+      ).toEqual(["contexts.0.scope.paths.0"]);
+  });
+
+  it("leaves such paths to the shared scope schema, which stored runs and old-engine definitions parse with", () => {
+    expect(
+      workspaceScopeSchema.safeParse(owned("src/app/[id]", "(marketing)"))
+        .success,
+    ).toBe(true);
   });
 
   it("refuses writers that could run together with overlapping scopes, and allows ordered or disjoint ones", () => {

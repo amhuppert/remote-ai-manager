@@ -255,8 +255,9 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
   - Flags: `--question` (required), `--text` / `--text-file` (required), `--text-file`.
 - `cctl run cancel` — Cancel a run you launched
   - `cctl run cancel <run-id> [options]`
-- `cctl run definition` — Read a workflow run's definition as written, to edit and amend
+- `cctl run definition` — Write a workflow run's definition to a file, to edit and amend
   - `cctl run definition <run-id> [options]`
+  - Flags: `--out`.
 - `cctl run launch` — Launch a supervised agent run in this session
   - `cctl run launch --file <path> [options]`
   - Flags: `--file` (required).
@@ -293,9 +294,9 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl run template save-check` — Validate: Save a run template that Alex can configure and launch
   - `cctl run template save-check <id> --file <path> [options]`
   - Flags: `--tier`, `--based-on`, `--file` (required).
-- `cctl run template show` — Read a run template's content to edit and save again
+- `cctl run template show` — Write a run template's content to a file, to edit and save again
   - `cctl run template show <id> [options]`
-  - Flags: `--tier`.
+  - Flags: `--tier`, `--out`.
 - `cctl run workflow` — Launch a supervised workflow of several contexts in this session
   - `cctl run workflow --file <path> [options]`
   - Flags: `--file` (required).
