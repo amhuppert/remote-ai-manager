@@ -165,7 +165,11 @@ describe("ensureCodexManagedSkillsBridge", () => {
     });
     expect(result.status).toBe("linked");
 
-    for (const name of ["graph-workflow-planning", "graph-workflow-review"]) {
+    for (const name of [
+      "graph-workflow-planning",
+      "graph-workflow-review",
+      "run-planning",
+    ]) {
       const source = path.join(sourceDir, "skills", name);
       const files = ["SKILL.md", "agents/openai.yaml"];
       if (existsSync(path.join(source, "references"))) {

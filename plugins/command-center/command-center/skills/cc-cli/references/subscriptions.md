@@ -2,7 +2,8 @@
 
 Automatic passive follows belong to the current ordinary conversation, including
 project conversations. Recorded involvement establishes them: supplied notepad
-context, linked tickets, spec authorship/review and launched graph workflows.
+context, linked tickets, spec authorship/review, launched graph workflows and
+owned runs (see [Runs](#runs)).
 Validation runs require an explicit subscription or finite wait; submitting a
 validation command does not create a follow, even while it is queued or running.
 A read or search alone does not create a follow.
@@ -170,3 +171,19 @@ receipt. Other members stay unresolved until separately cancelled; the last
 cancellation closes that orphaned batch and releases its wake limit. Nothing
 is resent. An accepted transcript receipt is immutable acceptance evidence and
 cannot be treated as a missing send or recalled turn.
+
+### Runs
+
+A run's owner follows it from launch: the `run` source, identified by the run
+id, with wake. Each boundary (a question, an approval, a halt, the result, a
+cancellation or a pause after a server restart) queues a turn for the owner
+whose prompt carries a `<run-boundary>` notice naming the command that answers
+it. A question closed before delivery, and an approval or context halt its
+context has moved past, are withdrawn. Run-level halt, fault and restored-pause
+notices are delivered regardless, so read `run show` before acting on one. Keep
+that follow: pausing or unfollowing it stops the run's questions and halts from
+reaching you.
+
+`subscription subscribe` and `subscription wait` do not take runs; another
+conversation of the session reads a run with `cctl run show <run-id>`. The
+[runs reference](runs.md) describes the notices.

@@ -157,6 +157,7 @@ export function createActorDependenciesFixture(
     })),
     resolvePluginPaths: vi.fn(async () => []),
     getCodexToolPromptHint: vi.fn(() => ""),
+    getRunToolPromptHint: vi.fn(() => ""),
     mutateConversation: vi.fn(async () => {}),
     recordRuntimeLossNotice: vi.fn(async () => false),
     prepareRuntimeLossNotice: vi.fn(async () => ({
@@ -275,6 +276,7 @@ export function groupActorFixtureDependencies(
       buildChildEnv: deps.buildChildEnv,
       resolvePluginPaths: deps.resolvePluginPaths,
       getCodexToolPromptHint: deps.getCodexToolPromptHint,
+      getRunToolPromptHint: deps.getRunToolPromptHint,
       getConversation: deps.getConversation,
       getSessionState: deps.getSessionState,
       fileExists: deps.fileExists,

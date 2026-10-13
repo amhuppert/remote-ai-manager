@@ -52,7 +52,11 @@ export interface TurnExecutionDependencies {
     config?: ActorConfig;
   }): Promise<ProjectModelSelectionValidation>;
 
+  /** The one-shot `cctl agent run` hint, for a conversation that cannot own a run. */
   getCodexToolPromptHint(): string;
+
+  /** The `cctl run launch` hint, for a conversation that may own a run. */
+  getRunToolPromptHint(): string;
 
   getConversation(
     projectPath: string,

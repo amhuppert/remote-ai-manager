@@ -22,6 +22,7 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
     transcriptImagesMod,
     registryMod,
     codexToolMod,
+    runToolMod,
     projectResolverMod,
     debugLogMod,
     stateMod,
@@ -43,6 +44,7 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
     import("@/lib/images/transcript-images"),
     import("@/lib/agent-backends/registry"),
     import("@/lib/agent-runs/tool-hint"),
+    import("@/lib/runs/tool-hint"),
     import("@/lib/projects/resolver"),
     import("@/lib/debug-log/service"),
     import("@/lib/state-store"),
@@ -97,6 +99,7 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
       admitConfiguredModelSelection: (input) =>
         modelSelectionAdmissionMod.admitConfiguredModelSelection(input),
       getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
+      getRunToolPromptHint: runToolMod.getRunToolPromptHint,
       getProjectDisplayName: projectResolverMod.getProjectDisplayName,
       getConversation: stateMod.getConversation,
       getSessionState: stateMod.getSession,

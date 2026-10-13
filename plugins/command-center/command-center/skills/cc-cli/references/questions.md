@@ -76,6 +76,28 @@ ordinary conversations:
   `autonomous conversation — proceed with best judgment` error: decide
   yourself and record the rationale.
 
+### Asking from a run seat
+
+A seat of a supervised run asks its **owner**, the conversation that launched
+the run, not the user. Its first order says whether it may ask; the run's
+`ownerQuestions` setting is on unless the launch turned it off, and when it is
+off the ask is refused as an autonomous conversation.
+
+- `cctl ask` takes the same file. The context waits for the answer; other
+  contexts of the run go on. End your turn after asking. The answer arrives as
+  your next order, headed "Your question was answered", with the question and
+  the answer; continue the interrupted work.
+- The owner is woken with each question's text only: not its options, header
+  or context. Write each question to stand alone, naming the choices in it.
+- One batch at a time: a second ask while one is open is refused; end your turn.
+
+The owner answers in text with
+`cctl run answer <run-id> --question <question-id> --text "<answer>"`, using
+the ids the wake and `cctl run show` print. Only the owner answers. The user
+sees the open question on the run page but does not answer it there: when the
+decision is theirs, the owner asks them with its own `cctl ask` and relays the
+answer.
+
 ### Reading the answer
 
 The answer arrives in your next user message as a self-contained block:

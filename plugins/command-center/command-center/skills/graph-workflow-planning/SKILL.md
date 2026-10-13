@@ -1,11 +1,11 @@
 ---
 name: graph-workflow-planning
-description: Use when creating, revising, or diagnosing graph workflow plans, especially before authoring a plan.json for cctl workflow validate/create/replace/run, decomposing work into execution contexts, writing acceptance criteria, aligning implementers and validators, deciding dependencies, or recovering from repeated validation failures.
+description: Use when creating, revising, or diagnosing graph workflow plans (`cctl workflow`), including managed spec delivery, especially before authoring a plan.json for cctl workflow validate/create/replace/run, or recovering from repeated validation failures. Supervised runs (`cctl run`) use run-planning instead.
 ---
 
 # Graph Workflow Planning
 
-This skill is the source of truth for planning graph workflows. Use it before authoring a workflow `plan.json` for `cctl workflow validate`/`create`/`replace`/`run`, and when a graph workflow keeps failing validation.
+This skill is the source of truth for planning graph workflows (`cctl workflow`), including managed spec delivery, until the graph engine is removed. Use it before authoring a workflow `plan.json` for `cctl workflow validate`/`create`/`replace`/`run`, and when a graph workflow keeps failing validation. New delegated or multi-context work uses supervised runs (`cctl run`): plan those with the [run-planning](../run-planning/SKILL.md) skill.
 
 This core file covers the ordinary planning path end to end: decompose the objective into contexts, write the charter and acceptance criteria, place contexts on lanes, and submit the plan. Deeper machinery lives in read-on-demand references — load one only when the plan actually needs it:
 

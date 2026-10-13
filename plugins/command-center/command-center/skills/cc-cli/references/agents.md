@@ -5,6 +5,13 @@ worktree. The sub-agent operates autonomously under its configured permissions a
 persist conversation state. Because a run can take tens of minutes, it is
 **job-shaped**: the server runs it and the CLI observes it.
 
+From a session conversation, delegate with a run instead: `cctl run launch`
+starts a supervised agent in this session that can be checked and reviewed,
+asks you its questions, halts rather than failing, and reports its result as a
+wake (see [Runs](runs.md) and the run-planning skill). Use `cctl agent run` for
+a one-shot task from a conversation that cannot own a run: a project
+conversation, or a seat of someone else's run.
+
 This generic one-shot path does not supply CC session identity, credentials, or
 the scoped `cctl` setup. Give the delegate the evidence it needs and have it
 return files through `referenceDocuments`; the server registers those files

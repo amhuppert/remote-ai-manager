@@ -14,13 +14,15 @@ Every route here belongs to the **worktree dev server** — a separate CC instan
 | `/projects/<name>/<session>/diff` | Session diff |
 | `/projects/<name>/<session>/conflicts` | Merge conflicts |
 | `/projects/<name>/<session>/workflow` | Graph-workflow view |
+| `/projects/<name>/<session>/runs` | Session runs. `?run=<runId>` selects a run, `&context=<key>` opens one of its contexts |
+| `/projects/<name>/<session>/runs/templates` | Run template library; `/<tier>/<id>` opens one template's editor |
 | `/conversations` | Cross-session conversations workspace |
 | `/conversations?c=<conversationId>` | Open a specific conversation (shallow selection) |
 | `/conversations?c=<cid>&m=<messageId>` | Deep-link to a specific message |
 | `/conversations?project=<p>&session=<s>` | Filtered to one session |
 | `/config` | Global config UI |
 
-Param parser (source of truth): `src/lib/conversations/hrefs.ts` (`parseConversationsPageParams`).
+Param parser (source of truth): `src/lib/conversations/hrefs.ts` (`parseConversationsPageParams`). Run page hrefs: `src/lib/runs/hrefs.ts`.
 
 ## REST contracts for test fixtures
 

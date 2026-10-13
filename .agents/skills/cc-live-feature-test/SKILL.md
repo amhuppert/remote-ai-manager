@@ -37,9 +37,9 @@ A live test involves **two independent CC instances**. `cctl dev ensure` does no
 | A bare `cctl <verb>` talks to | this one | never this one |
 | The live test must drive | never | always |
 
-**Every step of a live test — seeding, the action under test, and verification — targets the dev server.** A state-producing verb run from your own session (`cctl validate run`, `cctl workflow start`, `cctl spec …`) hits the **managing** instance and is invisible in the dev server's UI and DB. That is not a bug in the feature.
+**Every step of a live test — seeding, the action under test, and verification — targets the dev server.** A state-producing verb run from your own session (`cctl validate run`, `cctl run launch`, `cctl workflow start`, `cctl spec …`) hits the **managing** instance and is invisible in the dev server's UI and DB. That is not a bug in the feature.
 
-This is a trap rather than an ordinary mistake because **it is invisible in the happy path**: reads of *discovered* state (projects, files) behave identically against either instance. Only **server-owned durable state** diverges — the validation ledger, workflow executions, jobs, notifications, conversations. So the failure looks like "the feature doesn't work" instead of "you asked the wrong server".
+This is a trap rather than an ordinary mistake because **it is invisible in the happy path**: reads of *discovered* state (projects, files) behave identically against either instance. Only **server-owned durable state** diverges — the validation ledger, runs, workflow executions, jobs, notifications, conversations. So the failure looks like "the feature doesn't work" instead of "you asked the wrong server".
 
 ### The diagnostic
 

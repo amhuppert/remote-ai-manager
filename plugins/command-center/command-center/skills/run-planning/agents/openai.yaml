@@ -1,0 +1,3 @@
+interface:
+  display_name: "Run Planning"
+  short_description: "Plan, launch and steer supervised runs."

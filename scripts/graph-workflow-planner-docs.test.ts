@@ -79,7 +79,11 @@ const REVIEW_SKILL_DIRS = [
   "plugins/command-center/command-center/skills/graph-workflow-review",
 ] as const;
 
-const SKILL_PACKAGES = [...SKILL_DIRS, ...REVIEW_SKILL_DIRS];
+const RUN_SKILL_DIRS = [
+  "plugins/command-center/command-center/skills/run-planning",
+] as const;
+
+const SKILL_PACKAGES = [...SKILL_DIRS, ...REVIEW_SKILL_DIRS, ...RUN_SKILL_DIRS];
 
 const STEERING = ".kiro/steering/workflows.md";
 
@@ -1161,7 +1165,7 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
   );
 
   it.each(
-    SKILL_DIRS.flatMap((dir) =>
+    [...SKILL_DIRS, ...RUN_SKILL_DIRS].flatMap((dir) =>
       skillFiles(dir)
         .filter((file) => file !== "SKILL.md")
         .map((file) => `${dir}/${file}`),

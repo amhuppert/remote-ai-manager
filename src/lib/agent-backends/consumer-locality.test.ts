@@ -311,6 +311,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     buildChildEnv: () => ({ NODE_ENV: "test" }),
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",
+    getRunToolPromptHint: () => "",
     recordRuntimeLossNotice: async () => false,
     prepareRuntimeLossNotice: async () => ({
       block: null,

@@ -1,9 +1,11 @@
 ---
 name: graph-workflow-review
-description: Review a graph workflow plan against its charter and sources, write actionable findings, and read or record the terminal verdict bound to that revision.
+description: Review a graph workflow plan (`cctl workflow`), including a managed spec delivery plan, against its charter and sources, write actionable findings, and read or record the terminal verdict bound to that revision. Supervised runs (`cctl run`) use run-planning instead.
 ---
 
 # Graph Workflow Plan Review
+
+This skill covers graph workflow plans (`cctl workflow`), including managed spec delivery, until the graph engine is removed; supervised runs (`cctl run`) are planned with the [run-planning](../run-planning/SKILL.md) skill.
 
 You are reviewing ONE plan revision and recording a terminal verdict bound to it. The planning rules live in the [graph-workflow-planning](../graph-workflow-planning/SKILL.md) skill; this skill is the reviewer's half only — which lenses to apply, what a finding must say, and how to record the result.
 

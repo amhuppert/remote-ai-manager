@@ -513,6 +513,7 @@ function makeFakeBackendActorDeps(
     buildChildEnv: () => process.env,
     resolvePluginPaths: async () => [],
     getCodexToolPromptHint: () => "",
+    getRunToolPromptHint: () => "",
     // Durable state-store writes → the fixture, so a stray one shows in the diff.
     mutateConversation: fixture.store.mutateConversation,
     recordRuntimeLossNotice: unusedInTaskRun("recordRuntimeLossNotice"),

@@ -7,6 +7,8 @@ import type { ConversationTurnDependencies } from "./dependencies";
 import type { ExecutePromptInput } from "./types";
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
+import { isEligibleOwner } from "@/lib/conversations/owner-eligibility";
+import type { SessionState } from "@/lib/sessions/schemas";
 import {
   CC_CONTEXT,
   CC_CLI_INSTRUCTIONS,
@@ -90,6 +92,7 @@ type RuntimeInstructionDependencies = {
     | "fileExists"
     | "getConversation"
     | "getCodexToolPromptHint"
+    | "getRunToolPromptHint"
   >;
   context: Pick<
     ConversationTurnDependencies["context"],
@@ -102,6 +105,34 @@ type RuntimeInstructionDependencies = {
     "createReferenceDocument"
   >;
 };
+
+/**
+ * A conversation that may own a run is told to launch one. A project
+ * conversation has no session to launch into, a finished session takes no new
+ * run, and a run seat cannot own a run, so each keeps the one-shot
+ * `cctl agent run` hint.
+ */
+async function delegationHint(
+  execution: RuntimeInstructionDependencies["execution"],
+  input: Pick<ExecutePromptInput, "projectPath" | "target">,
+  sessionState: SessionState | null,
+): Promise<string> {
+  if (
+    input.target.scope === "project" ||
+    sessionState === null ||
+    sessionState.finished
+  )
+    return execution.getCodexToolPromptHint();
+  const conversation = await execution.getConversation(
+    input.projectPath,
+    input.target.sessionName,
+    input.target.conversationId,
+  );
+  return conversation !== null &&
+    isEligibleOwner(conversation, sessionState.archived)
+    ? execution.getRunToolPromptHint()
+    : execution.getCodexToolPromptHint();
+}
 
 export async function readRuntimeInstructions(
   deps: Pick<RuntimeInstructionDependencies, "execution" | "context">,
@@ -196,7 +227,7 @@ export async function readRuntimeInstructions(
     isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,
     alignmentInstruction,
     sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
-    deps.execution.getCodexToolPromptHint(),
+    await delegationHint(deps.execution, input, sessionState),
     referenceDocsPrompt,
     workflowLaneInstructions,
   ].filter((s): s is string => s != null && s.length > 0);
