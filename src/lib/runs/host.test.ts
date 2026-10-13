@@ -236,8 +236,30 @@ async function settle(
   await scheduler.idle();
 }
 
-async function launch(humanApproval = false): Promise<void> {
-  await runs.launch({
+/** A run's facts exactly as stored. */
+function factsJsonOf(runId: string): string {
+  return z
+    .string()
+    .parse(
+      fixture.db
+        .prepare("SELECT facts_json FROM runs WHERE run_id = ?")
+        .pluck()
+        .get(runId),
+    );
+}
+
+/** Every object key anywhere in a JSON value. */
+function keysIn(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(keysIn);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([key, child]) => [
+    key,
+    ...keysIn(child),
+  ]);
+}
+
+function agentLaunch(humanApproval = false): RunLaunchInput {
+  return {
     runId: "run-1",
     cause: "launch-1",
     kind: "agent",
@@ -252,7 +274,11 @@ async function launch(humanApproval = false): Promise<void> {
         request: startRequest("run-1.agent", humanApproval),
       },
     ],
-  });
+  };
+}
+
+async function launch(humanApproval = false): Promise<void> {
+  await runs.launch(agentLaunch(humanApproval));
   await scheduler.idle();
 }
 
@@ -706,6 +732,38 @@ describe("amendments", () => {
     });
     await scheduler.idle();
     expect(contexts.observe("run-1.implement.pass2")).not.toBeNull();
+  });
+
+  it("keeps a template run's origin through an amendment, and never writes it into the run's facts", async () => {
+    const origin = {
+      kind: "template" as const,
+      tier: "project" as const,
+      id: "release-checklist",
+      revision: 2,
+      name: "Release checklist",
+    };
+    const chain = chainContexts();
+    await runs.launch({ ...launchInput({ contexts: chain }), origin });
+    await scheduler.idle();
+
+    await runs.amend("run-1", {
+      definition: {
+        title: "Amended again",
+        contexts: chain,
+        authored: authored("Amended again", chain),
+      },
+      basedOn: 1,
+      reason: "A clearer title",
+    });
+    await scheduler.idle();
+
+    const reloaded = createRunsRepo(fixture.db).get("run-1");
+    expect(reloaded?.facts.definition.revision).toBe(2);
+    expect(reloaded?.origin).toEqual(origin);
+    const facts = factsJsonOf("run-1");
+    expect(keysIn(JSON.parse(facts))).not.toContain("origin");
+    expect(facts).not.toContain(origin.id);
+    expect(facts).not.toContain(origin.name);
   });
 
   it("refuses an amendment that changes started work, or one based on an older revision, and leaves the run as it was", async () => {
@@ -1814,6 +1872,47 @@ describe("run host", () => {
     const after = await read(ownerFollow, { id: "run-1" }, "0");
     expect(after.withdrawnOccurrenceIds).toEqual([halted?.occurrence]);
     expect(after.facts).toEqual([]);
+  });
+
+  it("records a template run's origin on the run row, beside its facts and never inside them", async () => {
+    const origin = {
+      kind: "template" as const,
+      tier: "global" as const,
+      id: "release-checklist",
+      revision: 3,
+      name: "Release checklist",
+    };
+    runs.record({ ...agentLaunch(), origin });
+
+    // An older build parses facts strictly: an origin anywhere inside them would break its reads.
+    const facts = factsJsonOf("run-1");
+    expect(keysIn(JSON.parse(facts))).not.toContain("origin");
+    expect(facts).not.toContain(origin.id);
+    expect(createRunsRepo(fixture.db).get("run-1")?.origin).toEqual(origin);
+
+    const page = await runPage(
+      {
+        supervision: {
+          runs,
+          contexts,
+          requests: { question: () => null },
+          core: { seatBindingsOf: () => [] },
+        },
+        conversations: new Map(),
+        sessionBranch: "csm/session",
+        readText: async () => "",
+        candidateChanges: async () =>
+          ({ ok: false, reason: "unused" }) as const,
+      },
+      "run-1",
+    );
+    expect(page?.origin).toEqual(origin);
+  });
+
+  it("records no origin for a run its owner launched directly", async () => {
+    await launch();
+
+    expect(createRunsRepo(fixture.db).get("run-1")?.origin).toBeNull();
   });
 
   it("shows a completion no one consumed on the run page, for a resume to reconcile", async () => {

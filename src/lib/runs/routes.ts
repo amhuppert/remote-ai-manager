@@ -17,7 +17,12 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getArchivedProjects, getSession } from "@/lib/state-store";
 import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
 import { getSessionLifecycleGate } from "@/lib/sessions/lifecycle-gate";
-import type { ResolvedSeat } from "./launch";
+import {
+  checkProfileResolves,
+  createAgentProfileLibraryService,
+  type AgentProfileLibraryService,
+} from "@/lib/agent-profiles/library-service";
+import { createSeatResolver, type SeatResolution } from "./seats";
 import { snapshotDocumentFile, snapshotRunDocuments } from "./documents";
 import { freezeCharter } from "./charter";
 import { getArtifactStore } from "@/lib/artifacts/production";
@@ -32,10 +37,6 @@ import {
 
 const log = createLogger("runs");
 const workspaceEvidence = createWorkspaceEvidence();
-
-type SeatResolution =
-  | { ok: true; seat: ResolvedSeat }
-  | { ok: false; status: number; error: string; code?: string };
 
 /** Configured defaults and admission for one seat: what a launch omits, configuration supplies. */
 async function resolveSeat(
@@ -84,28 +85,22 @@ async function resolveSeat(
   };
 }
 
-const resolveSeats: RunRouteDeps["resolveSeats"] = async ({
-  projectPath,
-  request,
-}) => {
-  const implementer = await resolveSeat(
-    projectPath,
-    request.backend,
-    request.modelSelection,
-  );
-  if (!implementer.ok) return implementer;
-  const reviewers: ResolvedSeat[] = [];
-  for (const reviewer of request.reviewers ?? []) {
-    const resolved = await resolveSeat(
-      projectPath,
-      reviewer.backend,
-      reviewer.modelSelection,
-    );
-    if (!resolved.ok) return resolved;
-    reviewers.push(resolved.seat);
-  }
-  return { ok: true, seats: { implementer: implementer.seat, reviewers } };
-};
+/**
+ * The launch seat resolver: each seat's profile checked against `library`,
+ * the library a seat's spawn resolves through, then configured backend and
+ * model admission.
+ */
+export function createRunSeatResolver(
+  library: Pick<AgentProfileLibraryService, "resolve">,
+): RunRouteDeps["resolveSeats"] {
+  return createSeatResolver({
+    admitSeat: resolveSeat,
+    checkProfile: (projectPath, ref) =>
+      checkProfileResolves(library, projectPath, ref),
+  });
+}
+
+const resolveSeats = createRunSeatResolver(createAgentProfileLibraryService());
 
 /** Lane worktrees sit beside the session's, named as every CC lane is; the branch prefix is read once, at launch. */
 const laneTargets: RunRouteDeps["laneTargets"] = async ({

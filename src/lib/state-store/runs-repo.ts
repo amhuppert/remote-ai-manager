@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import {
   runBoundarySchema,
+  runOriginSchema,
   runRecordSchema,
   type RunBoundary,
   type RunRecord,
@@ -16,6 +17,7 @@ const runRow = z.object({
   owner_conversation_id: z.string(),
   owner_session_name: z.string().nullable(),
   launch_cause: z.string(),
+  origin_json: z.string().nullable(),
   facts_json: z.string(),
   revision: z.number().int(),
   progress_json: z.string(),
@@ -33,7 +35,7 @@ const boundaryRow = z.object({
 });
 
 const RUN = `run_id, project_path, session_name, owner_conversation_id, owner_session_name, launch_cause,
-  facts_json, revision, progress_json, created_at, updated_at`;
+  origin_json, facts_json, revision, progress_json, created_at, updated_at`;
 const BOUNDARY = `seq, run_id, occurrence, kind, summary, detail_json, recorded_at`;
 
 function runFromRow(raw: unknown): RunRecord {
@@ -45,6 +47,10 @@ function runFromRow(raw: unknown): RunRecord {
     ownerConversationId: r.owner_conversation_id,
     ownerSessionName: r.owner_session_name,
     launchCause: r.launch_cause,
+    origin:
+      r.origin_json === null
+        ? null
+        : runOriginSchema.parse(JSON.parse(r.origin_json)),
     facts: JSON.parse(r.facts_json),
     revision: r.revision,
     progress: JSON.parse(r.progress_json),
@@ -96,7 +102,7 @@ export interface RunsRepo {
 export function createRunsRepo(db: Db): RunsRepo {
   const st = {
     insert: db.prepare(
-      `INSERT OR IGNORE INTO runs (${RUN}) VALUES (@runId, @projectPath, @sessionName, @ownerConversationId, @ownerSessionName, @launchCause, @factsJson, @revision, @progressJson, @createdAt, @updatedAt)`,
+      `INSERT OR IGNORE INTO runs (${RUN}) VALUES (@runId, @projectPath, @sessionName, @ownerConversationId, @ownerSessionName, @launchCause, @originJson, @factsJson, @revision, @progressJson, @createdAt, @updatedAt)`,
     ),
     get: db.prepare(`SELECT ${RUN} FROM runs WHERE run_id = ?`),
     byCause: db.prepare(`SELECT ${RUN} FROM runs WHERE launch_cause = ?`),
@@ -132,6 +138,7 @@ export function createRunsRepo(db: Db): RunsRepo {
         ownerConversationId: p.ownerConversationId,
         ownerSessionName: p.ownerSessionName,
         launchCause: p.launchCause,
+        originJson: p.origin === null ? null : JSON.stringify(p.origin),
         factsJson: JSON.stringify(p.facts),
         revision: p.revision,
         progressJson: JSON.stringify(p.progress),

@@ -265,6 +265,38 @@ function profileOf(record: StoredAgentProfileRecord): AgentProfile {
   };
 }
 
+/** Refusals meaning a reference does not resolve from where it was asked. */
+const UNRESOLVED_REFERENCE_CODES: ReadonlySet<string> = new Set([
+  "agent_profile_not_resolvable",
+  "agent_profile_project_scope_required",
+]);
+
+/**
+ * Whether `ref` resolves from `projectPath`, answered rather than thrown: the
+ * check a launch or a template save makes before a seat's spawn resolves the
+ * reference for real. A refusal is recognised by its code, since it can come
+ * from another bundle's copy of this module; any other failure still throws.
+ */
+export async function checkProfileResolves(
+  library: Pick<AgentProfileLibraryService, "resolve">,
+  projectPath: AgentProfileProjectScope,
+  ref: AgentProfileRef,
+): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+  try {
+    await library.resolve(projectPath, ref);
+    return { ok: true };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      UNRESOLVED_REFERENCE_CODES.has(error.code)
+    )
+      return { ok: false, code: error.code, message: error.message };
+    throw error;
+  }
+}
+
 export function createAgentProfileLibraryService(
   deps: AgentProfileLibraryDeps = {},
 ): AgentProfileLibraryService {

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
-import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
 import {
   backendModelSelectionSchema,
   type BackendModelSelection,
@@ -8,7 +7,6 @@ import {
 import {
   DEFAULT_CONTEXT_POLICY,
   contextContractSchema,
-  reviewerAuthoritySchema,
   type ContextStartRequest,
 } from "@/lib/execution-context/schemas";
 import type { WorkspaceScope } from "@/lib/workspace/schemas";
@@ -17,16 +15,15 @@ import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import type { RunLaunchInput } from "./host";
 import { runDocumentRequestSchema } from "./documents";
 import type { RunDocument } from "./schemas";
+import {
+  DEFAULT_REVIEWER_PROFILE,
+  RUN_SETTING_DEFAULTS,
+  reviewerSettingSchema,
+  type RunSettingsRequestFields,
+} from "./settings";
 
-const reviewerRequestSchema = z
-  .object({
-    authority: reviewerAuthoritySchema,
-    focus: z.string().trim().min(1).optional(),
-    profile: agentProfileRefSchema.optional(),
-    backend: agentBackendSchema.optional(),
-    modelSelection: backendModelSelectionSchema.optional(),
-  })
-  .strict();
+/** A reviewer seat as a launch names it; one without a profile runs under the default reviewer profile. */
+const reviewerRequestSchema = reviewerSettingSchema.partial({ profile: true });
 
 /**
  * A standalone agent launch. Everything but the brief is opt-in; the resolver
@@ -65,17 +62,25 @@ export const agentLaunchRequestSchema = z
   .strict();
 export type AgentLaunchRequest = z.infer<typeof agentLaunchRequestSchema>;
 
+// Settings map onto launch fields: these fail to compile when a mapped field
+// leaves the request, or changes to a type the request does not accept.
+const settingFieldsAreRequestFields: Exclude<
+  keyof RunSettingsRequestFields,
+  keyof AgentLaunchRequest
+> extends never
+  ? true
+  : never = true;
+const settingsFitTheRequest: RunSettingsRequestFields extends Partial<AgentLaunchRequest>
+  ? true
+  : never = true;
+void settingFieldsAreRequestFields;
+void settingsFitTheRequest;
+
 /** A seat's backend and admitted model selection, resolved by the caller from configuration. */
 export interface ResolvedSeat {
   backend: AgentBackendId;
   modelSelection: BackendModelSelection;
 }
-
-const STANDARD_AGENT = {
-  tier: "builtin" as const,
-  id: STANDARD_AGENT_PROFILE_ID,
-};
-const GENERAL_REVIEWER = { tier: "builtin" as const, id: "general-reviewer" };
 
 function titleOf(request: AgentLaunchRequest): string {
   if (request.title !== undefined) return request.title;
@@ -115,14 +120,14 @@ export function resolveContextStart(input: {
   documentPublishing?: boolean;
 }): ContextStartRequest {
   const { request, seats, placement } = input;
-  const reviewerRequests = request.reviewers ?? [];
+  const reviewerRequests = request.reviewers ?? RUN_SETTING_DEFAULTS.reviewers;
   if (reviewerRequests.length !== seats.reviewers.length) {
     throw new Error(
       `Resolved ${seats.reviewers.length} reviewer seats for ${reviewerRequests.length} requested reviewers`,
     );
   }
   const deferred = input.deferredChecks ?? new Set<string>();
-  const selected = request.checks ?? [];
+  const selected = request.checks ?? RUN_SETTING_DEFAULTS.checks;
   const contract = contextContractSchema.parse({
     title: titleOf(request),
     brief: request.brief,
@@ -137,7 +142,7 @@ export function resolveContextStart(input: {
     allowTaskAddition: true,
     implementer: {
       id: "implementer",
-      profile: request.profile ?? STANDARD_AGENT,
+      profile: request.profile ?? RUN_SETTING_DEFAULTS.implementer.profile,
       ...seats.implementer,
       validationAccess: [...placement.validationCommands],
     },
@@ -146,15 +151,16 @@ export function resolveContextStart(input: {
       id: `reviewer-${index + 1}`,
       authority: reviewer.authority,
       ...(reviewer.focus !== undefined ? { focus: reviewer.focus } : {}),
-      profile: reviewer.profile ?? GENERAL_REVIEWER,
+      profile: reviewer.profile ?? DEFAULT_REVIEWER_PROFILE,
       ...seats.reviewers[index],
       validationAccess: [],
     })),
     checks: selected.filter((command) => !deferred.has(command)),
     deferredChecks: selected.filter((command) => deferred.has(command)),
     inputs: [],
-    humanApproval: request.humanApproval ?? false,
-    ownerQuestions: request.ownerQuestions ?? true,
+    humanApproval: request.humanApproval ?? RUN_SETTING_DEFAULTS.humanApproval,
+    ownerQuestions:
+      request.ownerQuestions ?? RUN_SETTING_DEFAULTS.ownerQuestions,
     documents: [],
     documentPublishing: input.documentPublishing ?? false,
   });
@@ -182,7 +188,7 @@ export function resolveContextStart(input: {
     contract,
     policy: {
       ...DEFAULT_CONTEXT_POLICY,
-      invocationTimeoutMs: request.timeoutMs ?? null,
+      invocationTimeoutMs: request.timeoutMs ?? RUN_SETTING_DEFAULTS.timeoutMs,
     },
   };
 }

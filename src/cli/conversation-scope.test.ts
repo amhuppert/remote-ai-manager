@@ -557,6 +557,8 @@ describe("cctl at project conversation scope — session-only commands", () => {
       doctor: ["doctor"],
       inbox: ["inbox", "list"],
       notify: ["notify", "done"],
+      // Template authoring is project-scoped even though `run` needs a session.
+      "run template": ["run", "template", "list"],
       spec: ["spec", "abandon", "feat", "--reason", "x"],
       subscription: ["subscription", "list"],
       ticket: ["ticket", "list"],

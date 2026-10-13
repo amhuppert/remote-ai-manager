@@ -52,6 +52,7 @@ import {
   type RunLane,
   type RunLaneState,
   type RunLoop,
+  type RunOrigin,
   type RunProgress,
   type RunRecord,
 } from "./schemas";
@@ -144,6 +145,8 @@ export interface RunLaunchInput {
   documents?: RunDocument[];
   /** The workflow's charter, each context's bundle already frozen. */
   charter?: FrozenCharter;
+  /** The template it is launched from; absent for a launch its owner wrote. */
+  origin?: RunOrigin;
 }
 
 export interface RunHostDeps {
@@ -897,6 +900,7 @@ export function createRunHost(deps: RunHostDeps): RunHost {
           ownerConversationId: input.owner.conversationId,
           ownerSessionName: input.owner.sessionName,
           launchCause: input.cause,
+          origin: input.origin ?? null,
           facts,
           revision: 1,
           progress: { kind: "running" },

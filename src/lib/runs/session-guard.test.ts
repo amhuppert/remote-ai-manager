@@ -29,6 +29,7 @@ function run(
     ownerConversationId: "owner",
     ownerSessionName: sessionName,
     launchCause: `launch:${runId}`,
+    origin: null,
     facts: {
       runId,
       kind: "agent",

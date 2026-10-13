@@ -66,7 +66,7 @@ const dependencySchema = z.union([
 ]);
 
 /** A lane's publication checks, run on the lane merged with the session head before it publishes. */
-const workflowLaneRequestSchema = z
+export const workflowLaneRequestSchema = z
   .object({
     key: laneKeySchema,
     checks: z.array(validationCommandNameSchema).optional(),

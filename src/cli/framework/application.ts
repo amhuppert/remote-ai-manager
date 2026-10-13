@@ -31,6 +31,10 @@ import {
 import { agentCommands, agentGroups } from "../commands/agent/definitions";
 import { runCommands, runGroups } from "../commands/run/definitions";
 import {
+  runTemplateCommands,
+  runTemplateGroups,
+} from "../commands/run/template-definitions";
+import {
   validateCommands,
   validateGroups,
 } from "../commands/validate/definitions";
@@ -79,6 +83,7 @@ export function createCommandCenterCli(
       ...conversationCommands,
       ...agentCommands,
       ...runCommands,
+      ...runTemplateCommands,
       ...validateCommands,
       ...specCommands,
       ...specWriteCommands,
@@ -97,6 +102,7 @@ export function createCommandCenterCli(
       ...conversationGroups,
       ...agentGroups,
       ...runGroups,
+      ...runTemplateGroups,
       ...validateGroups,
       ...specGroups,
       ...specWriteGroups,

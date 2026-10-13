@@ -298,6 +298,44 @@ locality); domain terms name the concepts the code is about.
   assignment, including dormant cohorts and frozen loop templates; later
   turns replay those stored instructions without consulting the library.
 
+- **Configuration cascade rule** — `cascadeSettings`
+  (`src/lib/config/settings-cascade.ts`, import-free so the server and the
+  browser share it): over the global, template and context tiers the nearest
+  tier that sets a key wins and replaces it whole, an absent key falls
+  through (a reset deletes the key from a patch), and each key reports the
+  tier it came from. A standalone launch has no template tier.
+- **Run settings** — what the cascade decides per context
+  (`src/lib/runs/settings.ts`): the implementer seat, the reviewer list,
+  checks, human approval, owner questions and the invocation timeout.
+  `RUN_SETTING_DEFAULTS` is the global tier and the only defaults the launch
+  resolver reads; its implementer names a profile but no backend or model,
+  which means the configured default, so nothing pins today's configuration.
+  `requestFieldsOf` maps settings onto launch request fields and
+  `settingPathOf` maps a request issue back to its setting. Allowances are
+  not settings: an older build's strict launch request schema has no such
+  field, so a run launched with one could not be amended after a rollback.
+- **Run template** — a saved workflow launch (`src/lib/run-templates/`): a
+  `cctl run workflow` definition whose settings are lifted into the
+  template's `defaults` and each context's `settings`, with free-text
+  parameters substituted as `{{inputs.<name>}}` in a closed set of text
+  fields. Stored one JSON file per template in a `project` or `global` tier
+  (`<configDir>/run-templates/<scopeKey>/<id>.json`, revisioned,
+  compare-and-swap, unreadable files quarantined with their path); a global
+  template may name only builtin and global profiles. It materialises into
+  `workflowLaunchRequestSchema`, so the workflow compiler and launch
+  resolver are unchanged; a setting neither tier sets stays out of the
+  request. `service.ts` is the only module consumers call; writes publish
+  `run-template-changed`, scoped by the changed template's tier. Agents
+  author templates through `cctl run template`.
+- **Run origin** — the template a run was launched from,
+  `{kind: "template", tier, id, revision, name}`, in the run row's own
+  nullable `origin_json` column and never inside `facts_json`, which an older
+  build parses strictly. Written once at launch; an amendment keeps it.
+- **Launch profile check** — a launch, workflow launch or amendment resolves
+  every new seat's profile through the agent-profile library before anything
+  is recorded (`runs/seats.ts`), so a missing profile is refused naming its
+  context and seat. Seats spawned later still resolve at spawn.
+
 - **Adoption** — moving a turn's state from its provisional key onto the
   conversation the server named for it, and releasing the provisional key. The
   name arrives from either the turn's own prompt request stream or the project

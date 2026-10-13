@@ -419,6 +419,26 @@ export const runProgressSchema = z.discriminatedUnion("kind", [
 ]);
 export type RunProgress = z.infer<typeof runProgressSchema>;
 
+/** Where a run template is stored: one project's library, or every project's. */
+export const runTemplateTierSchema = z.enum(["project", "global"]);
+export type RunTemplateTier = z.infer<typeof runTemplateTierSchema>;
+
+/**
+ * The saved template a run was launched from, as it stood then: the template
+ * may change or go later, so its name is kept with the revision. Written once
+ * at launch; an amendment keeps it.
+ */
+export const runOriginSchema = z
+  .object({
+    kind: z.literal("template"),
+    tier: runTemplateTierSchema,
+    id: z.string().min(1),
+    revision: z.number().int().min(1),
+    name: z.string().min(1),
+  })
+  .strict();
+export type RunOrigin = z.infer<typeof runOriginSchema>;
+
 export const runRecordSchema = z
   .object({
     runId: z.string().min(1),
@@ -428,6 +448,11 @@ export const runRecordSchema = z
     /** The owner's scope: its session, or null for a project conversation. */
     ownerSessionName: z.string().min(1).nullable(),
     launchCause: z.string().min(1),
+    /**
+     * Its own column, never a key of `facts`: an older build parses facts
+     * strictly and must still read the run after a rollback.
+     */
+    origin: runOriginSchema.nullable(),
     facts: runFactsSchema,
     revision: z.number().int().min(1),
     progress: runProgressSchema,
@@ -1111,6 +1136,8 @@ export const runPageSchema = z
     kind: z.enum(["agent", "workflow"]),
     status: runStatusSchema,
     owner: runOwnerSchema,
+    /** The template it was launched from; null when its owner launched it directly. */
+    origin: runOriginSchema.nullable(),
     definitionRevision: z.number().int().min(1),
     startedAt: z.string().min(1),
     finishedAt: z.string().min(1).nullable(),

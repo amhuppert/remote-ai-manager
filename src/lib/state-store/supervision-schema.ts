@@ -161,7 +161,9 @@ export const SUPERVISION_SCHEMA_DDL = `
     revision INTEGER NOT NULL CHECK (revision >= 1),
     progress_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- Added after the table shipped, so it also appears in ADDITIVE_COLUMNS.
+    origin_json TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_runs_owner
     ON runs (project_path, owner_conversation_id, created_at);

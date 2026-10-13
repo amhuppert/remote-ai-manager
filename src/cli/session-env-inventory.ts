@@ -109,6 +109,11 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "A supervised run places its contexts in a session worktree and belongs to the session conversation that launched it; the `context task` verbs declared beside it come from that run's seat conversations. No project-root run route exists.",
   },
+  "run template": {
+    support: "project-supported",
+    reason:
+      "Saving, listing, reading and deleting run templates address the project's template library (its own tier and the global one) through the project route tree; no session, worktree or run is involved, so a project conversation can author templates.",
+  },
   charter: {
     support: "session-only",
     reason:

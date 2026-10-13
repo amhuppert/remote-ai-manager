@@ -873,6 +873,7 @@ export async function runPage(
     kind: facts.kind,
     status: statusOf(record.progress),
     owner: ownerOf(record, sources.conversations),
+    origin: record.origin,
     definitionRevision: facts.definition.revision,
     startedAt: record.createdAt,
     finishedAt: finishedAt(boundaries),

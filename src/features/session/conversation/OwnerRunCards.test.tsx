@@ -45,6 +45,7 @@ const page: RunDetail = {
   kind: "workflow",
   status: { kind: "needs_input" },
   owner: owned.owner,
+  origin: null,
   definitionRevision: 1,
   startedAt: owned.startedAt,
   finishedAt: null,

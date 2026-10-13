@@ -78,6 +78,7 @@ import type {
 } from "@/lib/agent-capabilities/schemas";
 import type { SpawnResultEvent } from "@/lib/chat-spawning/schemas";
 import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
+import type { RunTemplateChangedEvent } from "@/lib/run-templates/schemas";
 import type { ContextArtifactStatusEvent } from "@/lib/context-artifacts/schemas";
 import type { TicketChangedEvent } from "@/lib/tickets/schemas";
 import type { RunChangedEvent } from "@/lib/runs/event-schemas";
@@ -284,6 +285,7 @@ export type SSEEvent =
   | ConversationCheckpointUpdatedEvent
   | TicketChangedEvent
   | RunChangedEvent
+  | RunTemplateChangedEvent
   | BundleTransferEvent
   | NotepadChangedEvent
   | MemoryChangedEvent

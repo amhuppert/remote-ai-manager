@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { contextContractSchema } from "@/lib/execution-context/schemas";
 import {
@@ -11,6 +14,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { createRunsRepo } from "./runs-repo";
+import { _createTestDbAtPath } from "./state-db";
 
 let fixture: PersistenceFixture | undefined;
 afterEach(() => fixture?.close());
@@ -170,6 +174,13 @@ describe("runs repository", () => {
         ownerConversationId: "owner-1",
         ownerSessionName: "session",
         launchCause: "launch-1",
+        origin: {
+          kind: "template" as const,
+          tier: "project" as const,
+          id: "fix-the-notice",
+          revision: 4,
+          name: "Fix the notice",
+        },
         facts: {
           runId: "run-1",
           kind: "workflow" as const,
@@ -330,6 +341,67 @@ describe("runs repository", () => {
     });
   });
 
+  it("reads runs a build without the origin column wrote, before and after the column is added back", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cc-runs-origin-"));
+    const dbPath = path.join(dir, "command-center.db");
+    // The facts and progress of a run as the build before origin wrote them.
+    const facts = JSON.stringify({
+      runId: "run-old",
+      kind: "agent",
+      title: "Fix it",
+      definition: {
+        revision: 1,
+        contexts: [
+          { key: "agent", dependsOn: [], request: request("run-old.agent") },
+        ],
+      },
+      invocations: [],
+      control: { paused: false, cancelled: false },
+    });
+    // That build names its columns, so it writes without origin_json.
+    const insertAsBefore = (
+      db: ReturnType<typeof _createTestDbAtPath>,
+      runId: string,
+    ) =>
+      db
+        .prepare(
+          `INSERT INTO runs (run_id, project_path, session_name, owner_conversation_id, owner_session_name, launch_cause,
+            facts_json, revision, progress_json, created_at, updated_at)
+           VALUES (?, '/repo', 'session', 'owner-1', 'session', ?, ?, 1, '{"kind":"running"}', '2026-10-03T10:00:00.000Z', '2026-10-03T10:00:00.000Z')`,
+        )
+        .run(runId, `launch-${runId}`, facts.replaceAll("run-old", runId));
+    try {
+      const before = _createTestDbAtPath(dbPath);
+      // The runs table as deploy 1 (21646e8e0) creates it.
+      before.exec(`DROP TABLE runs;
+        CREATE TABLE runs (
+          run_id TEXT PRIMARY KEY,
+          project_path TEXT NOT NULL,
+          session_name TEXT NOT NULL,
+          owner_conversation_id TEXT NOT NULL,
+          owner_session_name TEXT,
+          launch_cause TEXT NOT NULL UNIQUE,
+          facts_json TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK (revision >= 1),
+          progress_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`);
+      insertAsBefore(before, "run-old");
+      before.close();
+
+      const after = _createTestDbAtPath(dbPath);
+      insertAsBefore(after, "run-rolled-back");
+      const repo = createRunsRepo(after);
+
+      expect(repo.get("run-old")?.origin).toBeNull();
+      expect(repo.get("run-rolled-back")?.origin).toBeNull();
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("lists a session's runs, newest first", () => {
     fixture = createPersistenceFixture();
     const repo = createRunsRepo(fixture.db);
@@ -341,6 +413,7 @@ describe("runs repository", () => {
         ownerConversationId: "owner-1",
         ownerSessionName: sessionName,
         launchCause: `launch-${runId}`,
+        origin: null,
         facts: {
           runId,
           kind: "agent",

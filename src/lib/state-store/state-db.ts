@@ -3244,6 +3244,9 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   },
   { table: "conversations", column: "pending_agent_notices", type: "TEXT" },
   { table: "job_records", column: "owner_pid", type: "INTEGER" },
+  // A run's template origin. Additive and nullable with no schema version bump:
+  // a build without it names its columns and keeps reading and writing runs.
+  { table: "runs", column: "origin_json", type: "TEXT" },
   // Nullable here on purpose even though the floor declares them NOT NULL: an
   // older database reaches `migrateSpecDirectLaunchStorage` through this
   // back-fill, and that rebuild needs both columns to exist before it can

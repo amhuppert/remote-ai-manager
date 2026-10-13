@@ -150,6 +150,14 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
           backend: "claude",
           modelSelection: { modelId: "opus", parameters: { effort: "high" } },
         });
+      if (filePath === ".cc/temp/run-template.json")
+        return JSON.stringify({
+          name: "Release checklist",
+          description: "",
+          parameters: [],
+          defaults: {},
+          workflow: { contexts: [{ key: "notes", brief: "Write notes" }] },
+        });
       if (filePath.includes("validation-lease-")) return "lease-1\n";
       return JSON.stringify({ summary: "s", objective: "o", decisions: [] });
     },
@@ -681,6 +689,78 @@ const PROJECT_SCOPE_INVOCATIONS: {
       tier: "builtin",
       readOnly: true,
     },
+  },
+  {
+    name: "run template save",
+    argv: [
+      "run",
+      "template",
+      "save",
+      "release-checklist",
+      "--tier",
+      "project",
+      "--file",
+      ".cc/temp/run-template.json",
+    ],
+    body: {
+      template: {
+        format: 1,
+        id: "release-checklist",
+        revision: 1,
+        createdAt: "2026-10-12T10:00:00.000Z",
+        updatedAt: "2026-10-12T10:00:00.000Z",
+        name: "Release checklist",
+        description: "",
+        parameters: [],
+        defaults: {},
+        workflow: { contexts: [{ key: "notes", brief: "Write notes" }] },
+      },
+    },
+  },
+  {
+    name: "run template list",
+    argv: ["run", "template", "list"],
+    body: { items: [], diagnostics: [] },
+  },
+  {
+    name: "run template show",
+    argv: ["run", "template", "show", "release-checklist", "--tier", "global"],
+    body: {
+      template: {
+        format: 1,
+        id: "release-checklist",
+        revision: 1,
+        createdAt: "2026-10-12T10:00:00.000Z",
+        updatedAt: "2026-10-12T10:00:00.000Z",
+        name: "Release checklist",
+        description: "",
+        parameters: [],
+        defaults: {},
+        workflow: { contexts: [{ key: "notes", brief: "Write notes" }] },
+      },
+      globals: {
+        implementer: { profile: { tier: "builtin", id: "standard-agent" } },
+        reviewers: [],
+        checks: [],
+        humanApproval: false,
+        ownerQuestions: true,
+        timeoutMs: null,
+      },
+    },
+  },
+  {
+    name: "run template delete",
+    argv: [
+      "run",
+      "template",
+      "delete",
+      "release-checklist",
+      "--tier",
+      "project",
+      "--based-on",
+      "1",
+    ],
+    body: { ok: true, tier: "project", id: "release-checklist", revision: 1 },
   },
   {
     name: "spec section get",
