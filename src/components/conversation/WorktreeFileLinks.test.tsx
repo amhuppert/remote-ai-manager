@@ -137,6 +137,35 @@ describe("file links in agent messages", () => {
     expect(link).toHaveAttribute("href", "https://example.com/spec.md");
   });
 
+  it("opens a worktree HTML report in a new tab", async () => {
+    scoped(`[Analysis report](${WORKTREE}/reports/my%20report.html)`);
+
+    const chip = await screen.findByRole("link", { name: /Analysis report/ });
+    expect(chip).toHaveAttribute(
+      "href",
+      "/api/projects/proj/sessions/sess/worktree-html?path=reports%2Fmy%20report.html",
+    );
+    expect(chip).toHaveAttribute("target", "_blank");
+    expect(chip).toHaveAttribute("rel", "noopener noreferrer");
+    expect(chip).toHaveAccessibleName(/opens in a new tab/i);
+    expect(useFilePreviewStore.getState().preview).toBeFalsy();
+  });
+
+  it("serves HTML reports from the project root in project conversations", async () => {
+    renderMessage(`[Report](${PROJECT_ROOT}/report.htm)`, {
+      projectName: "proj",
+      sessionName: null,
+      worktreePath: PROJECT_ROOT,
+    });
+
+    const chip = await screen.findByRole("link", { name: /Report/ });
+    expect(chip).toHaveAttribute(
+      "href",
+      "/api/projects/proj/worktree-html?path=report.htm",
+    );
+    expect(chip).toHaveAttribute("target", "_blank");
+  });
+
   it("leaves file links unchanged where no session scope is available", async () => {
     renderMessage(SUMMARY, null);
 

@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseJsonl, parseJsonlWithIndex } from "./read-jsonl";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  parseJsonl,
+  parseJsonlWithIndex,
+  readFileLines,
+  readLines,
+  type ByteRangeReader,
+} from "./read-jsonl";
 
 describe("parseJsonl", () => {
   it("parses one value per non-blank line", () => {
@@ -90,5 +99,91 @@ describe("parseJsonlWithIndex", () => {
   it("returns an empty array for empty or blank-only input", () => {
     expect(parseJsonlWithIndex("")).toEqual([]);
     expect(parseJsonlWithIndex("\n\n")).toEqual([]);
+  });
+});
+
+/** Serves `bytes` at most `maxPerRead` bytes per call, as a short read may. */
+function bufferReader(bytes: Buffer, maxPerRead: number): ByteRangeReader {
+  return {
+    async read(buffer, offset, length, position) {
+      const bytesRead = Math.max(
+        0,
+        Math.min(length, maxPerRead, bytes.length - position),
+      );
+      bytes.copy(buffer, offset, position, position + bytesRead);
+      return { bytesRead };
+    },
+  };
+}
+
+async function collect<T>(lines: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const line of lines) out.push(line);
+  return out;
+}
+
+// U+2028 is valid raw inside a JSON string; only the LF byte ends a line.
+const MIXED_TEXT =
+  '{"a":"caf\u00e9 \ud83d\ude80"}\n\n{"b":"x\u2028y"}\r\n{"c":';
+
+describe("readLines", () => {
+  it("yields the segments split('\\n') would, across short reads and multi-byte characters", async () => {
+    const bytes = Buffer.from(MIXED_TEXT, "utf-8");
+
+    const lines = await collect(
+      readLines(bufferReader(bytes, 3), 0, bytes.length),
+    );
+
+    expect(lines.map((line) => line.text)).toEqual(MIXED_TEXT.split("\n"));
+    expect(lines.map((line) => line.terminated)).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(lines.map((line) => line.end)).toEqual([
+      bytes.indexOf(0x0a) + 1,
+      bytes.indexOf(0x0a) + 2,
+      bytes.lastIndexOf(0x0a) + 1,
+      bytes.length,
+    ]);
+  });
+
+  it("reads only the requested byte range and reports absolute offsets", async () => {
+    const bytes = Buffer.from('{"a":1}\n{"b":2}\n{"c":3}\n', "utf-8");
+
+    const lines = await collect(readLines(bufferReader(bytes, 64), 8, 16));
+
+    expect(lines).toEqual([
+      { text: '{"b":2}', end: 16, terminated: true },
+      { text: "", end: 16, terminated: false },
+    ]);
+  });
+
+  it("yields what was read when the range ends early", async () => {
+    const bytes = Buffer.from('{"a":1}\n{"b"', "utf-8");
+
+    const lines = await collect(readLines(bufferReader(bytes, 64), 0, 100));
+
+    expect(lines).toEqual([
+      { text: '{"a":1}', end: 8, terminated: true },
+      { text: '{"b"', end: bytes.length, terminated: false },
+    ]);
+  });
+});
+
+describe("readFileLines", () => {
+  it("yields every split('\\n') segment of the file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "cc-read-jsonl-"));
+    try {
+      const filePath = path.join(dir, "lines.jsonl");
+      await writeFile(filePath, MIXED_TEXT, "utf-8");
+
+      expect(await collect(readFileLines(filePath))).toEqual(
+        MIXED_TEXT.split("\n"),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

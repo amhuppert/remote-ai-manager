@@ -2,6 +2,7 @@
 
 import {
   resolveWorktreeLink,
+  worktreeHtmlUrl,
   worktreeImageUrl,
   type WorktreeLinkTarget,
 } from "@/lib/documents/worktree-links";
@@ -16,6 +17,7 @@ export interface LinkedFiles {
   worktreePath: string;
   resolve(href: string | undefined): WorktreeLinkTarget | null;
   imageUrl(imagePath: string): string;
+  htmlUrl(htmlPath: string): string;
   /** Null where linked Markdown has no viewer (project conversations). */
   openMarkdown:
     | ((
@@ -78,6 +80,7 @@ export function useLinkedFiles(): LinkedFiles | null {
     worktreePath: scope.worktreePath,
     resolve: (href) => resolveWorktreeLink(href, scope.worktreePath),
     imageUrl,
+    htmlUrl: (htmlPath) => worktreeHtmlUrl(scope, htmlPath),
     openMarkdown:
       scope.sessionName === null
         ? null

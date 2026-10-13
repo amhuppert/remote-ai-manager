@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildValidationBudgetView } from "@/lib/validation/budget-view";
 import type { ValidationBudgetResponse } from "@/lib/validation/api-schemas";
@@ -25,6 +25,8 @@ const DESIGN_SCENARIO: ValidationBudgetResponse = {
       projectName: "command-center",
       sessionName: "csm/budget",
       conversationId: "conv-1",
+      conversationName: "Review validation monitor",
+      startedAt: "2026-10-13T15:00:00.000Z",
       position: null,
     },
     {
@@ -35,6 +37,8 @@ const DESIGN_SCENARIO: ValidationBudgetResponse = {
       projectName: "taskgarden",
       sessionName: "csm/spec-import",
       conversationId: "conv-2",
+      conversationName: "Review validation monitor",
+      startedAt: "2026-10-13T15:00:00.000Z",
       position: null,
     },
     {
@@ -45,6 +49,8 @@ const DESIGN_SCENARIO: ValidationBudgetResponse = {
       projectName: "command-center",
       sessionName: null,
       conversationId: null,
+      conversationName: null,
+      startedAt: "2026-10-13T15:00:00.000Z",
       position: null,
     },
     ...Array.from({ length: 9 }, (_, index) => ({
@@ -55,12 +61,120 @@ const DESIGN_SCENARIO: ValidationBudgetResponse = {
       projectName: "taskgarden",
       sessionName: "csm/spec-import",
       conversationId: `queued-conv-${index}`,
+      conversationName: "Review validation monitor",
+      startedAt: null,
       position: index,
     })),
   ],
 };
 
+function scenarioRun(index: number) {
+  const run = DESIGN_SCENARIO.runs[index];
+  if (!run) throw new Error(`missing scenario run ${index}`);
+  return run;
+}
+
 describe("ValidationBudgetPanel", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("shows the owner, actual start time, and elapsed execution time without a refetch", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-13T15:05:07.000Z"));
+    const startedAt = "2026-10-13T15:00:00.000Z";
+    const response = {
+      ...DESIGN_SCENARIO,
+      runs: [
+        {
+          ...scenarioRun(0),
+          conversationName: "Review validation monitor",
+          startedAt,
+        },
+      ],
+    };
+    const { unmount } = render(
+      <ValidationBudgetPanel view={viewFrom(response)} />,
+    );
+    const link = screen.getByRole("link");
+    expect(within(link).getByText("csm/budget")).toBeInTheDocument();
+    expect(
+      within(link).getByText("Review validation monitor"),
+    ).toBeInTheDocument();
+    expect(within(link).getByText("5m 07s")).toBeInTheDocument();
+    const time = link.querySelector("time");
+    expect(time).toHaveAttribute("dateTime", startedAt);
+    expect(time).toHaveTextContent(
+      new Date(startedAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
+    );
+    act(() => vi.advanceTimersByTime(2000));
+    expect(within(link).getByText("5m 09s")).toBeInTheDocument();
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("identifies queued owners without claiming they have started", () => {
+    render(
+      <ValidationBudgetPanel
+        view={viewFrom({
+          ...DESIGN_SCENARIO,
+          runs: [
+            {
+              ...scenarioRun(3),
+              conversationName: "Queued review",
+              startedAt: null,
+            },
+          ],
+        })}
+      />,
+    );
+    const link = screen.getByRole("link");
+    expect(within(link).getByText("csm/spec-import")).toBeInTheDocument();
+    expect(within(link).getByText("Queued review")).toBeInTheDocument();
+    expect(within(link).queryByText(/Started/)).not.toBeInTheDocument();
+  });
+
+  it("shows an explicit label for an unnamed conversation", () => {
+    render(
+      <ValidationBudgetPanel
+        view={viewFrom({
+          ...DESIGN_SCENARIO,
+          runs: [
+            {
+              ...scenarioRun(0),
+              conversationName: "",
+              startedAt: null,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Untitled conversation")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["2026-10-13T15:05:07.000Z", "0s"],
+    ["2026-10-13T15:06:00.000Z", "0s"],
+    ["2026-10-13T14:05:07.000Z", "1h 00m 00s"],
+  ])("formats elapsed time from %s as %s", (startedAt, expected) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-13T15:05:07.000Z"));
+    render(
+      <ValidationBudgetPanel
+        view={viewFrom({
+          ...DESIGN_SCENARIO,
+          runs: [{ ...scenarioRun(0), startedAt }],
+        })}
+      />,
+    );
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
   it("states the totals and what is left", () => {
     render(<ValidationBudgetPanel view={viewFrom(DESIGN_SCENARIO)} />);
 
@@ -77,7 +191,7 @@ describe("ValidationBudgetPanel", () => {
     render(<ValidationBudgetPanel view={viewFrom(DESIGN_SCENARIO)} />);
 
     const link = screen.getByRole("link", {
-      name: /test.*command-center.*4u/s,
+      name: /test.*4u.*csm\/budget.*command-center/s,
     });
     expect(link).toHaveAttribute("href", "/conversations?c=conv-1");
   });
@@ -111,6 +225,8 @@ describe("ValidationBudgetPanel", () => {
           projectName: "command-center",
           sessionName: "csm/budget",
           conversationId: "conv-1",
+          conversationName: "Review validation monitor",
+          startedAt: "2026-10-13T15:00:00.000Z",
           position: null,
         },
       ],

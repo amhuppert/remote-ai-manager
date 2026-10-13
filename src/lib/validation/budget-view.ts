@@ -33,6 +33,9 @@ export interface ValidationBudgetRow {
   runId: string;
   commandName: string;
   projectName: string;
+  sessionName: string | null;
+  conversationName: string | null;
+  startedAt: string | null;
   cost: number;
   /** Null when the run belongs to no navigable surface. */
   href: string | null;
@@ -92,6 +95,11 @@ function toRow(
     runId: run.runId,
     commandName: run.commandName,
     projectName: run.projectName,
+    sessionName: run.sessionName,
+    conversationName:
+      run.conversationName?.trim() ||
+      (run.conversationId !== null ? "Untitled conversation" : null),
+    startedAt: run.startedAt,
     cost: run.cost,
     href: validationRunHref(run),
     queuePosition,

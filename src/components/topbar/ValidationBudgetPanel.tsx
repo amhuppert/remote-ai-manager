@@ -1,6 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/Badge";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
 import type {
   ValidationBudgetRow,
@@ -64,24 +67,88 @@ function RunRowShell({
   );
 }
 
-function RunningRow({ row }: { row: ValidationBudgetRow }): React.JSX.Element {
+function RunOwner({ row }: { row: ValidationBudgetRow }): React.JSX.Element {
+  return (
+    <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-md gap-y-xs font-mono text-[0.7rem] leading-normal">
+      {row.sessionName !== null && (
+        <>
+          <span className="text-text-tertiary">Session</span>
+          <span className="[overflow-wrap:anywhere] text-text-secondary">
+            {row.sessionName}
+          </span>
+        </>
+      )}
+      {row.conversationName !== null && (
+        <>
+          <span className="text-text-tertiary">Conversation</span>
+          <span className="[overflow-wrap:anywhere] text-text-secondary">
+            {row.conversationName}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
+function elapsedTime(startedAt: string, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  if (minutes >= 60) {
+    return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m ${String(seconds % 60).padStart(2, "0")}s`;
+  }
+  return minutes > 0
+    ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`
+    : `${seconds}s`;
+}
+
+function RunningRow({
+  row,
+  now,
+}: {
+  row: ValidationBudgetRow;
+  now: number;
+}): React.JSX.Element {
   return (
     <RunRowShell
       href={row.href}
-      className="flex items-center gap-md rounded-md border border-solid border-border-dim px-[10px] py-[9px] text-text-primary! no-underline [transition:all_0.15s_ease] hover:border-border-default hover:bg-bg-hover max-768:min-h-[44px]"
+      className="group flex flex-col gap-sm rounded-md border border-solid border-border-dim bg-bg-surface p-md text-text-primary! no-underline transition-colors duration-150 hover:border-border-default hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
-        <span className="truncate font-mono text-[0.82rem] font-bold text-text-primary">
+      <span className="flex items-center gap-sm">
+        <span className="min-w-0 flex-1 font-mono text-[0.82rem] font-bold [overflow-wrap:anywhere] text-text-primary">
           {row.commandName}
         </span>
-        <span className="truncate font-mono text-[0.7rem] font-normal text-text-tertiary">
-          {row.projectName}
+        <span
+          className="shrink-0 font-mono text-[0.78rem] font-semibold text-cyan tabular-nums"
+          title="Elapsed running time"
+        >
+          {row.startedAt === null ? "—" : elapsedTime(row.startedAt, now)}
+        </span>
+        <Badge tier="count">{row.cost}u</Badge>
+        {row.href !== null && <ArrowIcon />}
+      </span>
+      <RunOwner row={row} />
+      <span className="flex flex-wrap items-baseline justify-between gap-x-md gap-y-xs font-mono text-[0.7rem] text-text-tertiary group-hover:text-text-secondary group-focus-visible:text-text-secondary">
+        <span className="[overflow-wrap:anywhere]">{row.projectName}</span>
+        <span>
+          Started{" "}
+          {row.startedAt === null ? (
+            "—"
+          ) : (
+            <time
+              dateTime={row.startedAt}
+              title={new Date(row.startedAt).toLocaleString()}
+            >
+              {new Date(row.startedAt).toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </time>
+          )}
         </span>
       </span>
-      <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-cyan-glow px-sm py-[2px] font-mono text-[0.7rem] font-semibold text-cyan">
-        {row.cost}u
-      </span>
-      {row.href !== null && <ArrowIcon />}
     </RunRowShell>
   );
 }
@@ -93,27 +160,27 @@ function QueuedRow({ row }: { row: ValidationBudgetRow }): React.JSX.Element {
   return (
     <RunRowShell
       href={row.href}
-      className="flex items-center gap-[10px] py-[6px] text-text-primary! no-underline [transition:all_0.15s_ease] hover:opacity-80 max-768:min-h-[44px]"
+      className="group flex items-start gap-sm rounded-md p-sm text-text-primary! no-underline transition-colors duration-150 hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
     >
-      <span
-        className={cn(
-          "inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-solid font-mono text-[0.62rem]",
-          isNext
-            ? "border-amber-glow text-amber"
-            : "border-border-default text-text-tertiary",
-        )}
+      <StatusChip
+        tone={isNext ? "amber" : "neutral"}
+        layoutClassName="shrink-0"
       >
         {row.queuePosition}
+      </StatusChip>
+      <span className="flex min-w-0 flex-1 flex-col gap-xs">
+        <span className="flex flex-wrap items-baseline gap-x-sm font-mono text-[0.78rem]">
+          <span className="font-semibold [overflow-wrap:anywhere] text-text-primary">
+            {row.commandName}
+          </span>
+          <span className="text-[0.7rem] [overflow-wrap:anywhere] text-text-tertiary group-hover:text-text-secondary">
+            {row.projectName}
+          </span>
+        </span>
+        <RunOwner row={row} />
       </span>
-      <span className="min-w-[72px] shrink-0 truncate font-mono text-[0.78rem] font-semibold text-text-primary">
-        {row.commandName}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[0.72rem] font-normal text-text-secondary">
-        {row.projectName}
-      </span>
-      <span className="shrink-0 font-mono text-[0.7rem] font-normal text-text-tertiary">
-        {row.cost}u
-      </span>
+      <Badge tier="count">{row.cost}u</Badge>
+      {row.href !== null && <ArrowIcon />}
     </RunRowShell>
   );
 }
@@ -123,6 +190,15 @@ export function ValidationBudgetPanel({
 }: {
   view: ValidationBudgetView;
 }): React.JSX.Element {
+  const [now, setNow] = useState(() => Date.now());
+  const hasRunning = view.running.length > 0;
+  useEffect(() => {
+    if (!hasRunning) return;
+    // The server's start timestamp is fixed; ticking needs no network request.
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasRunning]);
+
   return (
     <>
       <div className="flex items-center gap-lg border-x-0 border-t-0 border-b border-solid border-b-border-subtle p-lg pb-[14px]">
@@ -185,9 +261,9 @@ export function ValidationBudgetPanel({
           >
             Running now
           </div>
-          <div className="flex flex-col gap-xs px-[10px] pb-[10px]">
+          <div className="flex flex-col gap-sm px-md pb-md">
             {view.running.map((row) => (
-              <RunningRow key={row.runId} row={row} />
+              <RunningRow key={row.runId} row={row} now={now} />
             ))}
           </div>
         </>
@@ -201,7 +277,7 @@ export function ValidationBudgetPanel({
               {view.queueDepth} queued
             </span>
           </div>
-          <div className="flex flex-col px-lg pb-[14px]">
+          <div className="flex flex-col gap-xs px-sm pb-md">
             {view.queued.map((row) => (
               <QueuedRow key={row.runId} row={row} />
             ))}

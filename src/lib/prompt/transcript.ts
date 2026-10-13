@@ -1,12 +1,6 @@
-import {
-  appendFile,
-  readFile,
-  writeFile,
-  mkdir,
-  open,
-  stat,
-} from "node:fs/promises";
-import { createReadStream, existsSync } from "node:fs";
+import { appendFile, mkdir, open, stat } from "node:fs/promises";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import type {
   TranscriptMessage,
@@ -25,7 +19,12 @@ import { timed } from "@/lib/logging/timed";
 
 const transcriptLogger = createLogger("transcript");
 import { getErrorMessage } from "@/lib/shared/errors";
-import { parseJsonl } from "@/lib/shared/read-jsonl";
+import {
+  parseJsonl,
+  readFileLines,
+  readLines,
+  type ByteRangeReader,
+} from "@/lib/shared/read-jsonl";
 import {
   commandBlockForEntry,
   groupLogicalUnits,
@@ -392,29 +391,29 @@ export async function appendNotice(input: AppendNoticeInput): Promise<void> {
 // ============================================================
 
 /**
- * Project already-split, non-blank JSONL lines into the grouping owner's
- * normalized entry shape for the raw-line walk. `seq` is the index into the
- * passed `lines` array (not the original file line index), so a cutoff `seq`
- * slices `lines` directly. Unparseable lines are skipped entirely — they never
- * become a boundary but a later cutoff still slices over them.
+ * Read a transcript's non-blank lines into the grouping owner's normalized
+ * entry shape for the raw-line walk. `seq` counts non-blank lines (not the
+ * original file line index), so a cutoff `seq` names the same line for
+ * {@link nonBlankLinesThrough}. Unparseable lines are skipped entirely — they
+ * never become a boundary but a later cutoff still copies over them.
  */
-function* toCopyEntries(
-  lines: string[],
-  isVisible: (entry: TranscriptEntry) => entry is TranscriptEntry & {
-    role: "user" | "assistant" | "notice";
-    content: MessageContentBlock[];
-  },
-): Generator<LogicalUnitEntry> {
-  for (let i = 0; i < lines.length; i++) {
+async function readCopyEntries(
+  transcriptPath: string,
+): Promise<LogicalUnitEntry[]> {
+  const entries: LogicalUnitEntry[] = [];
+  let index = -1;
+  for await (const line of readFileLines(transcriptPath)) {
+    if (line.trim().length === 0) continue;
+    index += 1;
     let entry: TranscriptEntry;
     try {
-      entry = JSON.parse(lines[i]!) as TranscriptEntry;
+      entry = JSON.parse(line) as TranscriptEntry;
     } catch {
       continue;
     }
-    if (isVisible(entry)) {
-      yield {
-        seq: i,
+    if (isVisibleEntry(entry)) {
+      entries.push({
+        seq: index,
         kind: "message",
         role: entry.role,
         content: entry.content,
@@ -422,10 +421,29 @@ function* toCopyEntries(
         entryId: entry.id ?? null,
         timestamp: entry.timestamp ?? null,
         ...(entry.uuid !== undefined ? { uuid: entry.uuid } : {}),
-      };
+      });
     } else {
-      yield { seq: i, kind: "nonvisible" };
+      entries.push({ seq: index, kind: "nonvisible" });
     }
+  }
+  return entries;
+}
+
+/**
+ * Each non-blank transcript line through non-blank index `lastIndex`, with its
+ * LF. Streamed because a copy can be larger than the maximum string length.
+ */
+async function* nonBlankLinesThrough(
+  transcriptPath: string,
+  lastIndex: number,
+): AsyncGenerator<string> {
+  if (lastIndex < 0) return;
+  let index = -1;
+  for await (const line of readFileLines(transcriptPath)) {
+    if (line.trim().length === 0) continue;
+    index += 1;
+    yield `${line}\n`;
+    if (index === lastIndex) return;
   }
 }
 
@@ -468,9 +486,6 @@ export async function copyTranscriptUpTo(
     configDir,
   } = input;
 
-  const raw = await readFile(sourceTranscriptPath, "utf-8");
-  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-
   // Walk the raw lines through the shared grouping owner
   // (transcript-logical-units), which threads the merged-visible-message index
   // and unit boundary onto every line — the same rule the read/render grouping
@@ -481,7 +496,7 @@ export async function copyTranscriptUpTo(
   let includedAnyVisible = false;
 
   for (const row of iterateLineClassifications(
-    toCopyEntries(lines, isVisibleEntry),
+    await readCopyEntries(sourceTranscriptPath),
   )) {
     if (row.visible) {
       const stop =
@@ -498,14 +513,11 @@ export async function copyTranscriptUpTo(
     }
   }
 
-  // Build the copied content
-  const copiedLines =
-    cutoffLineIndex >= 0 ? lines.slice(0, cutoffLineIndex + 1) : [];
-
-  // Write to target file
   const targetPath = await getTranscriptPath(targetConversationId, configDir);
-  const content = copiedLines.length > 0 ? copiedLines.join("\n") + "\n" : "";
-  await writeFile(targetPath, content, "utf-8");
+  await pipeline(
+    nonBlankLinesThrough(sourceTranscriptPath, cutoffLineIndex),
+    createWriteStream(targetPath),
+  );
 }
 
 // ============================================================
@@ -521,9 +533,7 @@ export async function copyTranscriptUpTo(
 export async function readTranscriptLineClassifications(
   transcriptPath: string,
 ): Promise<LineClassification[]> {
-  const raw = await readFile(transcriptPath, "utf-8");
-  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-  return [...iterateLineClassifications(toCopyEntries(lines, isVisibleEntry))];
+  return [...iterateLineClassifications(await readCopyEntries(transcriptPath))];
 }
 
 // ============================================================
@@ -667,13 +677,7 @@ export async function readLastAssistantContent(
  * file, so leaving it outside would make "bytes consumed" unobservable exactly
  * where it matters.
  */
-export interface TranscriptRangeReader {
-  read(
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<{ bytesRead: number }>;
+export interface TranscriptRangeReader extends ByteRangeReader {
   close(): Promise<void>;
 }
 
@@ -995,15 +999,13 @@ interface EntryIdIndexEntry extends EntryIdScan {
   size: number;
 }
 
-function collectEntryIds(text: string, ids: Set<string>): void {
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    try {
-      const id = (JSON.parse(line) as { id?: unknown }).id;
-      if (typeof id === "string") ids.add(id);
-    } catch {
-      continue;
-    }
+function collectEntryId(line: string, ids: Set<string>): void {
+  if (line.trim() === "") return;
+  try {
+    const id = (JSON.parse(line) as { id?: unknown }).id;
+    if (typeof id === "string") ids.add(id);
+  } catch {
+    return;
   }
 }
 
@@ -1035,44 +1037,55 @@ export function createTranscriptEntryIdIndex(
     cache.set(filePath, entry);
   }
 
-  async function readFrom(
-    filePath: string,
-    start: number,
+  /** Adds the ids of `[scanned, size)`, where `scanned` is a line boundary. */
+  async function absorb(
+    reader: TranscriptRangeReader,
+    scanned: number,
     size: number,
-  ): Promise<Buffer> {
+    ids: Set<string>,
+  ): Promise<EntryIdScan> {
+    const tailIds = new Set<string>();
+    let next = scanned;
+    for await (const line of readLines(reader, scanned, size)) {
+      if (line.terminated) {
+        collectEntryId(line.text, ids);
+        next = line.end;
+      } else {
+        collectEntryId(line.text, tailIds);
+      }
+    }
+    return { scanned: next, ids, tailIds };
+  }
+
+  async function scanFull(
+    filePath: string,
+    size: number,
+  ): Promise<EntryIdScan> {
     const reader = await io.openRange(filePath);
     try {
-      return await readRange(reader, start, size - start);
+      return await absorb(reader, 0, size, new Set());
     } finally {
       await reader.close();
     }
   }
 
-  /** Adds the ids of `bytes`, which begin at line-boundary offset `scanned`. */
-  function absorb(
-    bytes: Buffer,
-    scanned: number,
-    ids: Set<string>,
-  ): EntryIdScan {
-    const lastNewline = bytes.lastIndexOf(0x0a);
-    collectEntryIds(bytes.subarray(0, lastNewline + 1).toString("utf-8"), ids);
-    const tailIds = new Set<string>();
-    collectEntryIds(bytes.subarray(lastNewline + 1).toString("utf-8"), tailIds);
-    return { scanned: scanned + lastNewline + 1, ids, tailIds };
-  }
-
-  async function readAppended(
+  async function scanAppended(
     filePath: string,
-    cached: EntryIdIndexEntry,
+    cached: EntryIdScan,
     size: number,
   ): Promise<EntryIdScan | null> {
-    if (cached.scanned === 0)
-      return absorb(await readFrom(filePath, 0, size), 0, cached.ids);
-    // Read one byte before the scanned end so the append can be proven to
-    // start on a line boundary.
-    const bytes = await readFrom(filePath, cached.scanned - 1, size);
-    if (bytes[0] !== 0x0a) return null;
-    return absorb(bytes.subarray(1), cached.scanned, cached.ids);
+    const reader = await io.openRange(filePath);
+    try {
+      if (cached.scanned > 0) {
+        // Read one byte before the scanned end so the append can be proven to
+        // start on a line boundary.
+        const [before] = await readRange(reader, cached.scanned - 1, 1);
+        if (before !== 0x0a) return null;
+      }
+      return await absorb(reader, cached.scanned, size, cached.ids);
+    } finally {
+      await reader.close();
+    }
   }
 
   return {
@@ -1091,14 +1104,13 @@ export function createTranscriptEntryIdIndex(
       ) {
         current = cached;
       } else if (cached && stats.size > cached.size) {
-        current = await readAppended(filePath, cached, stats.size);
+        current = await scanAppended(filePath, cached, stats.size);
       }
       current ??= await timed(
         transcriptLogger,
         "transcript.entry_ids.scan",
         { bytes: stats.size },
-        async () =>
-          absorb(await readFrom(filePath, 0, stats.size), 0, new Set()),
+        () => scanFull(filePath, stats.size),
         (result) => ({ ids: result.ids.size }),
       );
       remember(filePath, {
@@ -1221,9 +1233,6 @@ export async function readConversationMessagesWithSeq(
 async function readConversationMessagesWithSeqImpl(
   transcriptPath: string,
 ): Promise<Array<TranscriptMessage & { seq: number }>> {
-  const raw = await readFile(transcriptPath, "utf-8");
-  const lines = raw.split("\n");
-
   // Parse the raw lines into the grouping owner's normalized entry shape,
   // Track each visible line's complete model selection so merged units resolve
   // the settings active for their turn. The map is keyed by the raw line index
@@ -1233,9 +1242,10 @@ async function readConversationMessagesWithSeqImpl(
   let currentModelSelection: BackendModelSelection | undefined;
   let openRole: LogicalUnitRole | null = null;
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    if (!line || line.trim().length === 0) continue;
+  let lineIndex = -1;
+  for await (const line of readFileLines(transcriptPath)) {
+    lineIndex += 1;
+    if (line.trim().length === 0) continue;
     let entry: TranscriptEntry;
     try {
       entry = JSON.parse(line) as TranscriptEntry;
@@ -1481,15 +1491,14 @@ export async function readTranscriptEntriesWithSeq(
 async function readTranscriptEntriesWithSeqImpl(
   transcriptPath: string,
 ): Promise<TranscriptEntriesResult> {
-  const raw = await readFile(transcriptPath, "utf-8");
-  const lines = raw.split("\n");
   const entries: TranscriptEntryWithSeq[] = [];
   const toolNamesById = new Map<string, string>();
   let maxSeq = -1;
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    if (!line || line.trim().length === 0) continue;
+  let lineIndex = -1;
+  for await (const line of readFileLines(transcriptPath)) {
+    lineIndex += 1;
+    if (line.trim().length === 0) continue;
     let entry: TranscriptEntry;
     try {
       entry = JSON.parse(line) as TranscriptEntry;

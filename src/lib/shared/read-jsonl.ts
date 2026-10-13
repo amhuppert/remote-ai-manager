@@ -1,3 +1,5 @@
+import { open } from "node:fs/promises";
+
 /**
  * Parse a JSONL (newline-delimited JSON) blob into one parsed value per line.
  *
@@ -68,4 +70,85 @@ export function parseJsonl(
   options: ReadJsonlOptions = {},
 ): unknown[] {
   return parseJsonlWithIndex(text, options).map((entry) => entry.value);
+}
+
+/** Positional reads, as `FileHandle` offers them. */
+export interface ByteRangeReader {
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+}
+
+/** One `split("\n")` segment of a byte range. */
+export interface ByteRangeLine {
+  /** The segment decoded as UTF-8, without its LF. */
+  text: string;
+  /** Offset just past the segment's LF; the range end for the final segment. */
+  end: number;
+  /** False only for the final segment: the bytes after the range's last LF. */
+  terminated: boolean;
+}
+
+const LINE_READ_CHUNK_BYTES = 1024 * 1024;
+
+/**
+ * Yield the `split("\n")` segments of the byte range `[start, end)`, decoding
+ * each one on its own. A JSONL file can outgrow V8's maximum string length
+ * (~512 MiB), and decoding it whole then throws `RangeError: Invalid string
+ * length`; segment order and count still match `split("\n")` of the whole
+ * range. Lines split on the LF byte, not with `readline`, which also splits on
+ * U+2028/U+2029 that JSON leaves raw inside strings. A range that ends early
+ * because the file is shorter yields what was read.
+ */
+export async function* readLines(
+  reader: ByteRangeReader,
+  start: number,
+  end: number,
+): AsyncGenerator<ByteRangeLine> {
+  let pending: Buffer[] = [];
+  let position = start;
+  while (position < end) {
+    const chunk = Buffer.allocUnsafe(
+      Math.min(LINE_READ_CHUNK_BYTES, end - position),
+    );
+    const { bytesRead } = await reader.read(chunk, 0, chunk.length, position);
+    if (bytesRead <= 0) break;
+    const bytes = chunk.subarray(0, bytesRead);
+    let lineStart = 0;
+    for (
+      let newline = bytes.indexOf(0x0a);
+      newline !== -1;
+      newline = bytes.indexOf(0x0a, lineStart)
+    ) {
+      const piece = bytes.subarray(lineStart, newline);
+      const text =
+        pending.length === 0
+          ? piece.toString("utf-8")
+          : Buffer.concat([...pending, piece]).toString("utf-8");
+      pending = [];
+      lineStart = newline + 1;
+      yield { text, end: position + lineStart, terminated: true };
+    }
+    if (lineStart < bytes.length) pending.push(bytes.subarray(lineStart));
+    position += bytesRead;
+  }
+  yield {
+    text: Buffer.concat(pending).toString("utf-8"),
+    end: position,
+    terminated: false,
+  };
+}
+
+/** The text of every `split("\n")` segment of a file; see {@link readLines}. */
+export async function* readFileLines(filePath: string): AsyncGenerator<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const { size } = await handle.stat();
+    for await (const line of readLines(handle, 0, size)) yield line.text;
+  } finally {
+    await handle.close();
+  }
 }

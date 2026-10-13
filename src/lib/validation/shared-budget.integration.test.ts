@@ -165,6 +165,7 @@ describe("ValidationService shared global budget", () => {
       };
       let id = 0;
       const service = createValidationService({
+        getConversationName: async () => null,
         repo,
         transact,
         scheduler,
@@ -504,6 +505,7 @@ describe("ValidationService shared global budget", () => {
       });
       let restartId = 0;
       const restartedService = createValidationService({
+        getConversationName: async () => null,
         repo: restartRepo,
         transact,
         scheduler: restartScheduler,
@@ -627,6 +629,7 @@ describe("ValidationService shared global budget", () => {
       };
       let id = 0;
       const service = createValidationService({
+        getConversationName: async () => null,
         repo,
         transact,
         scheduler,

@@ -130,6 +130,11 @@ export interface ValidationServiceDeps {
     spawn(params: SpawnValidationParams): Promise<SpawnValidationResult>;
   };
   resolver: ValidationCallerResolver;
+  getConversationName(
+    projectPath: string,
+    sessionName: string | null,
+    conversationId: string,
+  ): Promise<string | null>;
   config: {
     readRepoValidation(
       projectPath: string,
@@ -1320,16 +1325,26 @@ export function createValidationService(
         limit: global.concurrencyLimit,
         ...deps.scheduler.snapshot(),
       },
-      runs: [...deps.repo.findRunning(), ...queue].map((row) => ({
-        runId: row.runId,
-        commandName: row.commandName,
-        status: row.status as "queued" | "running",
-        cost: row.cost,
-        projectName: projectNameFromPath(row.projectPath),
-        sessionName: row.sessionName,
-        conversationId: row.conversationId,
-        position: queuePositions.get(row.runId) ?? null,
-      })),
+      runs: await Promise.all(
+        [...deps.repo.findRunning(), ...queue].map(async (row) => ({
+          runId: row.runId,
+          commandName: row.commandName,
+          status: row.status as "queued" | "running",
+          cost: row.cost,
+          projectName: projectNameFromPath(row.projectPath),
+          sessionName: row.sessionName,
+          conversationId: row.conversationId,
+          conversationName: row.conversationId
+            ? await deps.getConversationName(
+                row.projectPath,
+                row.sessionName,
+                row.conversationId,
+              )
+            : null,
+          startedAt: row.startedAt,
+          position: queuePositions.get(row.runId) ?? null,
+        })),
+      ),
     };
   }
 
