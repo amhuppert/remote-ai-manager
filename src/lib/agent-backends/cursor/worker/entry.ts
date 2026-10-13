@@ -1002,7 +1002,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
   ): Promise<void> {
     const current = activeRun;
     const reply = (
-      outcome: "complete_delivered" | "revert_to_followup" | "uncertain",
+      outcome: Extract<CursorWorkerFrame, { type: "steerResult" }>["outcome"],
     ) => {
       logger.info("cursor-worker.steer_settled", {
         runId: frame.runId,
@@ -1022,7 +1022,8 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       current.runId !== frame.runId ||
       !current.run.steer
     ) {
-      reply("revert_to_followup");
+      // Nothing reached Cursor, so this answer is final, unlike the SDK's revert.
+      reply("not_sent");
       return;
     }
     if (current.steerRequests.has(frame.requestId)) return;

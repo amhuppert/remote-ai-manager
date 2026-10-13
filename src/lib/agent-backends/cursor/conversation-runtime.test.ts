@@ -1,5 +1,5 @@
 import { CURSOR_BACKGROUND_INSTRUCTIONS } from "./background-tasks";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { elementAt } from "@/lib/shared/testing/element-at";
 import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import type {
@@ -9,7 +9,7 @@ import type {
   ConversationBackendTurnResult,
 } from "../conversation";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
-import { turnContinuationSchema } from "../errors";
+import { isInputDeliveryUncertain, turnContinuationSchema } from "../errors";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import type { PortableMcpConfig } from "../portable-mcp";
 import {
@@ -145,6 +145,202 @@ describe("Cursor in-turn steering", () => {
     } finally {
       harness.transport.workers[0]?.settle("run-1", "completed");
       await running;
+      await harness.runtime.close();
+    }
+  });
+
+  function deliveryOutcome(
+    delivery: Promise<void>,
+  ): Promise<"delivered" | "uncertain" | "refused"> {
+    return delivery.then(
+      () => "delivered" as const,
+      (error: unknown) =>
+        isInputDeliveryUncertain(error)
+          ? ("uncertain" as const)
+          : ("refused" as const),
+    );
+  }
+
+  it("takes a steer Cursor acknowledges after a long response as delivered", async () => {
+    vi.useFakeTimers();
+    const started = Promise.withResolvers<void>();
+    const harness = createHarness({
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          started.resolve();
+        },
+        onSteer: () => {},
+      },
+      deps: { stallTimeoutMs: 20 * 60_000 },
+    });
+    try {
+      const running = harness.send();
+      await started.promise;
+      let archived = 0;
+      const outcome = deliveryOutcome(
+        harness.runtime.queueUserInput({
+          content: [{ type: "text", text: "Reply STEER-9" }],
+          onAccepted: async () => {
+            archived += 1;
+          },
+        }),
+      );
+      // Cursor appends a steer only when the current response ends.
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      const worker = elementAt(harness.transport.workers, 0);
+      const steer = elementAt(worker.steers, 0);
+      worker.send({
+        type: "steerResult",
+        runId: steer.runId,
+        requestId: steer.requestId,
+        outcome: "complete_delivered",
+      });
+      worker.settle("run-1", "completed");
+      expect(await outcome).toBe("delivered");
+      expect(archived).toBe(1);
+      expect((await running).failure).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      await harness.runtime.close();
+    }
+  });
+
+  it("sends a reverted steer with the next turn only once its run ends without echoing it", async () => {
+    const started = Promise.withResolvers<void>();
+    const harness = createHarness({
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          started.resolve();
+        },
+        onSteer: (input, worker) =>
+          worker.send({
+            type: "steerResult",
+            runId: input.runId,
+            requestId: input.requestId,
+            outcome: "revert_to_followup",
+          }),
+      },
+      deps: { stallTimeoutMs: 5_000 },
+    });
+    try {
+      const running = harness.send();
+      await started.promise;
+      let archived = 0;
+      const outcome = deliveryOutcome(
+        harness.runtime.queueUserInput({
+          content: [{ type: "text", text: "Reply STEER-10" }],
+          onAccepted: async () => {
+            archived += 1;
+          },
+        }),
+      );
+      const whileRunning = await Promise.race([
+        outcome,
+        new Promise<"pending">((resolve) =>
+          setTimeout(() => resolve("pending"), 100),
+        ),
+      ]);
+      expect(whileRunning).toBe("pending");
+      elementAt(harness.transport.workers, 0).settle("run-1", "completed");
+      expect(await outcome).toBe("refused");
+      expect(archived).toBe(0);
+      expect((await running).failure).toBeNull();
+    } finally {
+      await harness.runtime.close();
+    }
+  });
+
+  it.each(["a failed stream", "a cancelled run", "the local cancel bound"])(
+    "leaves a reverted steer uncertain, and unarchived, when its run ends with %s",
+    async (end) => {
+      const started = Promise.withResolvers<void>();
+      const harness = createHarness({
+        worker: {
+          onTurn: (turn, worker) => {
+            worker.sendInputAccepted(turn.runId);
+            started.resolve();
+          },
+          onSteer: (input, worker) =>
+            worker.send({
+              type: "steerResult",
+              runId: input.runId,
+              requestId: input.requestId,
+              outcome: "revert_to_followup",
+            }),
+        },
+        deps: { stallTimeoutMs: 5_000, cancelSettleTimeoutMs: 20 },
+      });
+      try {
+        const running = harness.send();
+        await started.promise;
+        let archived = 0;
+        const outcome = deliveryOutcome(
+          harness.runtime.queueUserInput({
+            content: [{ type: "text", text: "Reply STEER-10" }],
+            onAccepted: async () => {
+              archived += 1;
+            },
+          }),
+        );
+        const worker = elementAt(harness.transport.workers, 0);
+        await waitFor(() => worker.steers.length === 1);
+        if (end === "a failed stream")
+          worker.settle("run-1", "failed", {
+            name: "Error",
+            code: null,
+            status: null,
+            message: "stream_buffer_overflow",
+          });
+        if (end === "a cancelled run") worker.settle("run-1", "aborted");
+        if (end === "the local cancel bound") harness.controller.abort();
+        expect(await outcome).toBe("uncertain");
+        expect(archived).toBe(0);
+        await running;
+      } finally {
+        await harness.runtime.close();
+      }
+    },
+  );
+
+  it("leaves a steer its run ended without acknowledging uncertain, and unarchived", async () => {
+    const started = Promise.withResolvers<void>();
+    const steered = Promise.withResolvers<void>();
+    const harness = createHarness({
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          started.resolve();
+        },
+        onSteer: () => steered.resolve(),
+      },
+      deps: { stallTimeoutMs: 5_000 },
+    });
+    try {
+      const running = harness.send();
+      await started.promise;
+      let archived = 0;
+      const outcome = deliveryOutcome(
+        harness.runtime.queueUserInput({
+          content: [{ type: "text", text: "Reply STEER-9" }],
+          onAccepted: async () => {
+            archived += 1;
+          },
+        }),
+      );
+      await steered.promise;
+      elementAt(harness.transport.workers, 0).settle("run-1", "completed");
+      const settled = await Promise.race([
+        outcome,
+        new Promise<"pending">((resolve) =>
+          setTimeout(() => resolve("pending"), 500),
+        ),
+      ]);
+      expect(settled).toBe("uncertain");
+      expect(archived).toBe(0);
+      expect((await running).failure).toBeNull();
+    } finally {
       await harness.runtime.close();
     }
   });

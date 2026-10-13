@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { elementAt } from "@/lib/shared/testing/element-at";
 import { z } from "zod";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -219,6 +219,14 @@ const ASSISTANT = (text: string) => ({
   agent_id: "agent-1",
   run_id: "run-1",
   message: { role: "assistant", content: [{ type: "text", text }] },
+});
+
+/** Cursor's echo of a steer its turn has appended. */
+const USER_ECHO = (text: string) => ({
+  type: "user",
+  agent_id: "agent-1",
+  run_id: "run-1",
+  message: { role: "user", content: [{ type: "text", text }] },
 });
 
 // ============================================================
@@ -1006,6 +1014,150 @@ it("preserves native transcript and reports accounting failure when the task led
     JSON.stringify(lines.filter((line) => line.type === "notice")),
   ).toContain("Task recovery after restart is unavailable");
   await harness.runtime.close();
+});
+
+describe("live input while Cursor finishes its response", () => {
+  it("streams the response and records the input where Cursor takes it", async () => {
+    const steered = deferredSignal();
+    const harness = createPersistingHarness({
+      deps: { stallTimeoutMs: 10_000 },
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendNativeEvent(turn.runId, 0, ASSISTANT("Once upon"));
+        },
+        // Cursor answers a steer only when the current response ends.
+        onSteer: () => steered.resolve(),
+      },
+    });
+    const turn = harness.send();
+    await vi.waitFor(() =>
+      expect(harness.events.some((event) => event.type === "content")).toBe(
+        true,
+      ),
+    );
+    const delivery = harness.runtime.queueUserInput({
+      content: [{ type: "text", text: "Reply STEER-9" }],
+      // The core's archival: the person's message, appended once.
+      onAccepted: () =>
+        safeAppendTranscriptEntryOnce(
+          CONVERSATION_ID,
+          {
+            id: "queued-steer",
+            timestamp: new Date(1_000).toISOString(),
+            type: "user",
+            role: "user",
+            content: [{ type: "text", text: "Reply STEER-9" }],
+          },
+          undefined,
+          TEST_DIR,
+          BROADCAST_META,
+        ).then(() => undefined),
+    });
+    await steered.promise;
+    const worker = elementAt(harness.transport.workers, 0);
+    const steer = elementAt(worker.steers, 0);
+    worker.sendNativeEvent("run-1", 1, ASSISTANT(" a time."));
+
+    await vi.waitFor(() =>
+      expect(
+        harness.events.filter((event) => event.type === "content"),
+      ).toHaveLength(2),
+    );
+
+    worker.send({
+      type: "steerResult",
+      runId: steer.runId,
+      requestId: steer.requestId,
+      outcome: "complete_delivered",
+    });
+    worker.sendNativeEvent("run-1", 2, USER_ECHO("Reply STEER-9"));
+    worker.sendNativeEvent("run-1", 3, ASSISTANT("STEER-9"));
+    worker.settle("run-1", "completed");
+
+    await delivery;
+    expect((await turn).failure).toBeNull();
+    const order = (await harness.transcriptLines()).map((line) =>
+      line.id === "queued-steer"
+        ? "person"
+        : `${String(line.type)}:${String(line.id).split(":").at(-1)}`,
+    );
+    expect(order).toEqual([
+      "assistant:0",
+      "assistant:1",
+      "person",
+      "user:2",
+      "assistant:3",
+    ]);
+    await harness.runtime.close();
+  });
+
+  it("takes a steer its run echoes as delivered, though the SDK answered revert", async () => {
+    const harness = createPersistingHarness({
+      deps: { stallTimeoutMs: 10_000 },
+      worker: {
+        onTurn: (turn, worker) => {
+          worker.sendInputAccepted(turn.runId);
+          worker.sendNativeEvent(turn.runId, 0, ASSISTANT("Once upon"));
+        },
+        // The SDK's 15 s admission timer answers revert while the server keeps the steer.
+        onSteer: (input, worker) =>
+          worker.send({
+            type: "steerResult",
+            runId: input.runId,
+            requestId: input.requestId,
+            outcome: "revert_to_followup",
+          }),
+      },
+    });
+    const turn = harness.send();
+    await vi.waitFor(() =>
+      expect(harness.events.some((event) => event.type === "content")).toBe(
+        true,
+      ),
+    );
+    let archived = 0;
+    const delivery = harness.runtime
+      .queueUserInput({
+        content: [{ type: "text", text: "Reply STEER-10" }],
+        onAccepted: async () => {
+          archived += 1;
+          await safeAppendTranscriptEntryOnce(
+            CONVERSATION_ID,
+            {
+              id: "queued-steer",
+              timestamp: new Date(1_000).toISOString(),
+              type: "user",
+              role: "user",
+              content: [{ type: "text", text: "Reply STEER-10" }],
+            },
+            undefined,
+            TEST_DIR,
+            BROADCAST_META,
+          );
+        },
+      })
+      .then(
+        () => "delivered",
+        (error: unknown) => `rejected: ${String(error)}`,
+      );
+    const worker = elementAt(harness.transport.workers, 0);
+    await vi.waitFor(() => expect(worker.steers).toHaveLength(1));
+    worker.sendNativeEvent("run-1", 1, USER_ECHO("Reply STEER-10"));
+    worker.sendNativeEvent("run-1", 2, ASSISTANT("STEER-10"));
+    worker.settle("run-1", "completed");
+
+    expect(await delivery).toBe("delivered");
+    expect(archived).toBe(1);
+    expect((await turn).failure).toBeNull();
+    const order = (await harness.transcriptLines()).map((line) =>
+      line.id === "queued-steer"
+        ? "person"
+        : `${String(line.type)}:${String(line.id).split(":").at(-1)}`,
+    );
+    expect(order).toEqual(["assistant:0", "person", "user:1", "assistant:2"]);
+    await harness.runtime.close();
+  });
 });
 
 describe("live input archive barrier", () => {

@@ -47,6 +47,11 @@ export interface CursorNativeEventProjection {
   blocks: readonly MessageContentBlock[];
   /** Native summary observed; the SDK does not expose replacement completion. */
   compacted: boolean;
+  /**
+   * The text of a user message the run appended, which is how Cursor shows it
+   * has taken a steer; null for every other event.
+   */
+  userMessageText: string | null;
 }
 
 /**
@@ -266,7 +271,23 @@ export function projectCursorNativeEvent(
     },
     blocks,
     compacted,
+    userMessageText: userMessageText(source),
   };
+}
+
+function userMessageText(
+  source: Record<string, unknown> | null,
+): string | null {
+  if (source?.type !== "user") return null;
+  const content = record(source.message)?.content;
+  if (!Array.isArray(content)) return null;
+  const texts = content.flatMap((candidate) => {
+    const block = record(candidate);
+    return block?.type === "text" && typeof block.text === "string"
+      ? [block.text]
+      : [];
+  });
+  return texts.length > 0 ? texts.join("") : null;
 }
 
 /**

@@ -904,7 +904,13 @@ const steerResultFrameSchema = z
     type: z.literal("steerResult"),
     runId: z.string().min(1),
     requestId: z.string().min(1),
-    outcome: z.enum(["complete_delivered", "revert_to_followup", "uncertain"]),
+    // `not_sent`: the worker refused the steer itself and gave Cursor nothing.
+    outcome: z.enum([
+      "complete_delivered",
+      "revert_to_followup",
+      "uncertain",
+      "not_sent",
+    ]),
   })
   .strict();
 

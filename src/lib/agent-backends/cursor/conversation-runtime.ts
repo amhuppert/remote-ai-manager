@@ -157,7 +157,6 @@ async function settlesWithin(
 }
 
 export interface CursorConversationRuntimeDeps {
-  steerTimeoutMs?: number;
   taskStore?(
     conversationId: string,
   ): import("./background-tasks").CursorTaskStore;
@@ -273,7 +272,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
-  private liveInputBarrier: Promise<void> = Promise.resolve();
   private liveInputArchiveFailure: Error | null = null;
   private readonly conversationId: string;
   private readonly conversationTarget: ConversationTarget;
@@ -392,7 +390,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       : null;
     this.instructionsPending = true;
     this.deps = deps;
-    this.steering = new CursorSteering(deps.steerTimeoutMs);
+    this.steering = new CursorSteering();
     this.taskStore = deps.taskStore?.(input.conversationId);
     this.onCostSettled = input.onCostSettled;
     this.billingStore = deps.billingStore?.(input.conversationId);
@@ -727,33 +725,41 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         .map((block) => block.text),
     ].join("\n\n");
     if (!text.trim()) throw new Error("Cursor steering requires text");
-    const previous = this.liveInputBarrier;
-    const barrier = Promise.withResolvers<void>();
-    this.liveInputBarrier = previous.then(() => barrier.promise);
-    try {
-      await previous;
-      if (turn.settled || turn.aborted) {
-        throw new Error("Cursor turn ended before steering");
-      }
-      await this.steering.deliver(
-        turn.runId,
-        (requestId) => session.steer(turn.runId, requestId, text),
-        input.signal,
-      );
+    await this.steering.deliver({
+      runId: turn.runId,
+      text,
+      send: (requestId) => session.steer(turn.runId, requestId, text),
+      onDelivered: () => this.archiveAcceptedInput(input),
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    });
+    if (this.liveInputArchiveFailure !== null) {
+      await this.close();
+      throw this.liveInputArchiveFailure;
+    }
+  }
+
+  /**
+   * Archives accepted input where Cursor showed it took it, in event order.
+   * Cursor takes a steer only when its current response ends, so output before
+   * that belongs to that response and streams on; output after it answers the
+   * input and waits for the archive. A failed archive suppresses every later
+   * event of this runtime.
+   */
+  private archiveAcceptedInput(
+    input: ConversationQueuedUserInput,
+  ): Promise<void> {
+    const archived = this.emitChain.then(async () => {
+      if (this.liveInputArchiveFailure !== null) return;
       try {
         await input.onAccepted?.();
       } catch (error) {
         this.liveInputArchiveFailure = new InputDeliveryUncertainError(
           `Accepted input could not be archived: ${getErrorMessage(error)}`,
         );
-        // close drains the event chain, so release its suppressed events first.
-        barrier.resolve();
-        await this.close();
-        throw this.liveInputArchiveFailure;
       }
-    } finally {
-      barrier.resolve();
-    }
+    });
+    this.emitChain = archived;
+    return archived;
   }
 
   async sendTurn(
@@ -847,7 +853,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     await this.discarding;
     await this.settleTurnBilling(turn.state, turn.outcome);
     // Every accepted input and event is durable before the caller sees the result.
-    await this.liveInputBarrier;
     await this.emitChain;
     await this.ledgerWriting;
     if (this.acceptedThisPrompt && !this.captureRestricted)
@@ -1973,6 +1978,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       },
     );
 
+    // A steer this echo shows delivered is archived ahead of the echo itself.
+    if (projection.userMessageText !== null)
+      this.steering.echoed(turn.runId, projection.userMessageText);
     // Envelope first, interpretation second: the lossless record is durable
     // before any block derived from it reaches a consumer.
     this.emit({ type: "transcript_entry", entry: projection.entry });
@@ -2110,6 +2118,11 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     if (turn.settled) return;
     turn.questionController.abort();
     turn.settled = true;
+    // Only the worker's report of a completed run means its events were all seen.
+    this.steering.endRun(
+      turn.runId,
+      outcome.kind === "completed" && !turn.aborted,
+    );
     this.clearTurnTimers(turn);
     turn.settlement.resolve(turn.aborted ? { kind: "aborted" } : outcome);
   }
@@ -2119,7 +2132,6 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     if (handler === null) return;
     this.emitChain = this.emitChain
       .then(async () => {
-        await this.liveInputBarrier;
         if (this.liveInputArchiveFailure === null) await handler(event);
       })
       .catch((error: unknown) => {

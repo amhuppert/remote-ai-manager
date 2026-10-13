@@ -402,6 +402,28 @@ describe("worker steering", () => {
     gate.resolve();
     await settle();
   });
+
+  it("answers a steer for a run it is not running as not sent, without asking Cursor", async () => {
+    const harness = createHarness();
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit({
+      type: "steer",
+      runId: "run-1",
+      requestId: "input-1",
+      text: "Use blue",
+    });
+    await settle();
+    expect(harness.sdk.agent.run.steering).toEqual([]);
+    expect(harness.channel.ofType("steerResult")).toEqual([
+      {
+        type: "steerResult",
+        runId: "run-1",
+        requestId: "input-1",
+        outcome: "not_sent",
+      },
+    ]);
+  });
 });
 
 /**
