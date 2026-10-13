@@ -33,6 +33,7 @@ import type {
   RunEdge,
   RunLane,
   RunLoop,
+  SeatSummary,
 } from "@/components/runs/model";
 import {
   contextState,
@@ -46,8 +47,18 @@ import { ContextGlyph, SeatMark } from "./parts";
 /** How the diagram frames itself on mount, and again on Fit. */
 const FIT_VIEW = { padding: 0.06, maxZoom: 1 };
 
+/**
+ * A context as a diagram node shows it. A template's implementer may be the
+ * Command Center default (null), resolved only at launch, and its reviewers
+ * are only counted.
+ */
+export type DiagramContext = Omit<RunContext, "implementer" | "reviewers"> & {
+  implementer: SeatSummary | null;
+  reviewers: ReadonlyArray<Pick<SeatSummary, "assignment">>;
+};
+
 type ContextNodeData = {
-  context: RunContext;
+  context: DiagramContext;
   selected: boolean;
   guards: string[];
   template: boolean;
@@ -147,7 +158,11 @@ function ContextNode({ data }: NodeProps<Node<ContextNodeData>>) {
         </span>
         {template ? (
           <span className="flex min-w-0 items-center gap-[6px] truncate font-mono text-[0.7rem] text-text-secondary">
-            <SeatMark seat={context.implementer} showEffort={false} />
+            {context.implementer === null ? (
+              <span className="truncate">Command Center default</span>
+            ) : (
+              <SeatMark seat={context.implementer} showEffort={false} />
+            )}
             {context.reviewers.length > 0 ? (
               <span className="shrink-0 text-text-tertiary">
                 + {context.reviewers.length}
@@ -290,7 +305,7 @@ const edgeTypes = { dependency: DependencyEdge };
 
 function edgeStatus(
   edge: RunEdge,
-  byKey: Map<string, RunContext>,
+  byKey: Map<string, DiagramContext>,
 ): DependencyData["status"] {
   if (edge.guard?.state === "not_taken") return "not_taken";
   const source = byKey.get(edge.from);
@@ -320,7 +335,7 @@ export function RunDiagram({
   onSelect,
   template = false,
 }: {
-  contexts: RunContext[];
+  contexts: readonly DiagramContext[];
   edges: RunEdge[];
   lanes: RunLane[];
   loops: RunLoop[];

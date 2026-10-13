@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { materializeRunTemplate } from "@/lib/run-templates/document";
 import { checkoutTemplate } from "./template-fixtures";
+import { contentOf } from "./template-model";
+import { dependenciesOf } from "./template-structure";
 import type {
   CandidateChanges,
   ContextDetail,
@@ -20,19 +23,15 @@ import type {
  */
 
 const day = (time: string): string => `2026-10-08T${time}:00.000Z`;
-function trueGuard(field: string): Record<string, unknown> {
-  // Keep generated schemas in the compiler's supported JSON subset.
-  return {
-    ...z.toJSONSchema(z.object({ [field]: z.literal(true) }), {
-      io: "input",
-      override: ({ jsonSchema }) => {
-        if ("const" in jsonSchema) delete jsonSchema.type;
-      },
-    }),
-  };
-}
-const publicChangesGuard = trueGuard("publicChanges");
-const copyApprovedGuard = trueGuard("approved");
+/** The workflow a person launched from the checkout template, as its run recorded it. */
+const launched = materializeRunTemplate(contentOf(checkoutTemplate), {
+  flag: "checkout-v2",
+});
+if (!launched.ok)
+  throw new Error(
+    `The checkout template does not launch: ${launched.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`,
+  );
+const launchedDefinition = launched.request;
 
 function configuration(
   overrides: Partial<ContextConfiguration> = {},
@@ -1114,15 +1113,15 @@ export const checkoutRun: RunDetail = {
     },
   ],
   contexts: checkoutContexts,
-  edges: checkoutTemplate.contexts.flatMap((context) =>
-    context.dependsOn.map((key) => ({
-      from: key,
+  edges: checkoutTemplate.workflow.contexts.flatMap((context) =>
+    dependenciesOf(context).map((dependency) => ({
+      from: dependency.key,
       to: context.key,
       guard:
-        context.guards[key] === undefined
+        dependency.guard === null
           ? null
-          : { label: context.guards[key], state: "not_taken" as const },
-      outputOnly: context.outputOnly.includes(key),
+          : { label: dependency.guard, state: "not_taken" as const },
+      outputOnly: dependency.outputOnly,
     })),
   ),
   lanes: [
@@ -1310,45 +1309,8 @@ export const checkoutRun: RunDetail = {
     },
   ],
   definition: {
+    ...launchedDefinition,
     title: "Checkout v2 rollout",
-    contexts: checkoutTemplate.contexts.map((context) => ({
-      key: context.key,
-      title: context.title,
-      brief: context.brief.replaceAll("{{flag}}", "checkout-v2"),
-      scope: context.scope,
-      ...(context.lane === null ? {} : { lane: context.lane }),
-      dependsOn: context.dependsOn.map((key) =>
-        context.guards[key] !== undefined
-          ? {
-              key,
-              outputOnly: context.outputOnly.includes(key),
-              when: { schema: publicChangesGuard },
-            }
-          : context.outputOnly.includes(key)
-            ? { key, outputOnly: true }
-            : key,
-      ),
-      ...(context.outputSchema === ""
-        ? {}
-        : {
-            outputSchema: z
-              .record(z.string(), z.unknown())
-              .parse(JSON.parse(context.outputSchema)),
-          }),
-      checks: context.config.checks.value,
-      humanApproval: context.config.humanApproval.value,
-    })),
-    loops: [
-      {
-        key: "polish",
-        body: ["polish"],
-        entry: "polish",
-        exit: "polish",
-        until: { schema: copyApprovedGuard },
-        maxPasses: 3,
-      },
-    ],
-    lanes: checkoutTemplate.lanes,
     documents: [
       { path: "plan.md", revision: 2, description: "The rollout plan" },
       { path: "api-contract.md", revision: 1, description: "v2 orders API" },

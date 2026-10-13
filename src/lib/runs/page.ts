@@ -12,6 +12,7 @@ import type { ContextHost } from "@/lib/execution-context/host";
 import type { WorkspaceScope } from "@/lib/workspace/schemas";
 import { currentDocuments, withCurrentDocuments } from "./documents";
 import { contextBoundaryOccurrence } from "./notices";
+import { guardLabel, schemaLabel } from "./labels";
 import { laneView } from "./observation";
 import type { RunHost, RunInspection } from "./host";
 import { guardOf } from "./schedule";
@@ -21,7 +22,6 @@ import {
   type ActiveRun,
   type ContextDetail,
   type ContextInvocation,
-  type RouteGuard,
   type RunBoundary,
   type RunCharterRevision,
   type RunDefinitionContext,
@@ -377,21 +377,6 @@ async function contextsOf(
     });
   }
   return details;
-}
-
-/** A guard as the diagram labels it: its schema's own title or description, else the schema itself. */
-function guardLabel(guard: RouteGuard): string {
-  if ("else" in guard) return "else";
-  return schemaLabel(guard.schema);
-}
-
-function schemaLabel(schema: Record<string, unknown>): string {
-  for (const field of ["title", "description"]) {
-    const value = schema[field];
-    if (typeof value === "string" && value.trim() !== "") return value;
-  }
-  const text = JSON.stringify(schema);
-  return text.length > 80 ? `${text.slice(0, 79)}…` : text;
 }
 
 function edgesOf(

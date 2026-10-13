@@ -187,6 +187,28 @@ export const runDocumentSchema = z
   .strict();
 export type RunDocument = z.infer<typeof runDocumentSchema>;
 
+/** A document a launch or an amendment declares; frozen into a `RunDocument` before anything is recorded. */
+export const runDocumentRequestSchema = z
+  .object({
+    /** Where the document appears under the run's documents directory. */
+    path: z.string(),
+    /** A file in the session worktree, read when the run launches or is amended. */
+    from: z.string().min(1).optional(),
+    contents: z.string().optional(),
+    /**
+     * The run's current revision of this path the declaration was written
+     * against (an amendment, from `run definition`): alone, it keeps that
+     * revision as it is; with from or contents, it replaces it.
+     */
+    revision: z.number().int().min(1).optional(),
+    description: z.string().trim().min(1),
+    readWhen: z.string().trim().min(1).optional(),
+    /** The context keys it is for; every context when absent. */
+    appliesTo: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .strict();
+export type RunDocumentRequest = z.infer<typeof runDocumentRequestSchema>;
+
 /** One revision of a run document; a later revision of the same path supersedes it. */
 export const runDocumentRevisionSchema = z
   .object({

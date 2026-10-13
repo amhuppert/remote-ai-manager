@@ -5,6 +5,7 @@ import { MultilineInput } from "@/components/MultilineInput";
 import { CloseIcon, PlusIcon, UndoIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
+import { StatusChip } from "@/components/ui/StatusChip";
 import {
   SegmentedControl,
   SegmentedControlItem,
@@ -17,20 +18,36 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { WithTooltip } from "@/components/ui/WithTooltip";
+import type { SettingsTier } from "@/lib/config/settings-cascade";
 import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
+import type { ProjectBackendModelOptions } from "@/lib/agent-backends/project-model-options-schema";
+import type {
+  AgentProfileLibraryItem,
+  AgentProfileRef,
+} from "@/lib/agent-profiles/schemas";
+import {
+  DEFAULT_REVIEWER_PROFILE,
+  type ReviewerSetting,
+} from "@/lib/runs/settings";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { cn } from "@/lib/ui/cn";
 import { BackendDiamond } from "../parts";
-import type {
-  CatalogOption,
-  ReviewerConfig,
-  SeatConfig,
-  Tier,
-} from "../../template-model";
+import {
+  catalogFor,
+  effortParameterOf,
+  modelOf,
+  profileKey,
+  profileRefOf,
+  seatOf,
+  withBackend,
+  withEffort,
+  withModel,
+  type Seat,
+} from "../../seat-model";
 
 /**
- * The editor's field kit: a setting row that states where its value comes
- * from, and the controls for seats, reviewers, checks and ordered lists.
+ * The editor's field kit: a setting row that states which tier its value
+ * comes from, and the controls for seats, reviewers, checks and lists.
  */
 
 /** A text field's box; the caller sets its width. */
@@ -40,6 +57,16 @@ export const FIELD =
 export const INPUT = cn(FIELD, "w-full");
 
 export const TEXTAREA = cn(FIELD, "w-full resize-y leading-[1.55]");
+
+/** What the editor offers a seat, a reviewer and a check. */
+export interface TemplateEditorOptions {
+  /** The project's model options by backend. */
+  models: readonly ProjectBackendModelOptions[];
+  /** Profiles a seat may name; a global template's are the builtin and global tiers. */
+  profiles: readonly AgentProfileLibraryItem[];
+  /** Validation commands a check may name. */
+  checks: readonly string[];
+}
 
 type NumberFieldProps = {
   label: string;
@@ -53,9 +80,15 @@ type NumberFieldProps = {
     }
 );
 
-/** Keep intermediate keystrokes local; the setting is committed as an integer on blur. */
+/**
+ * Keeps keystrokes local and commits a changed value as a whole number on
+ * blur. Only typing starts a local draft: an untouched field, focused or not,
+ * shows the current value and writes nothing, so an inherited value stays
+ * inherited.
+ */
 export function NumberField(props: NumberFieldProps) {
   const [raw, setRaw] = useState<string | null>(null);
+  const shown = props.value === null ? "" : String(props.value);
   return (
     <input
       type="number"
@@ -64,14 +97,14 @@ export function NumberField(props: NumberFieldProps) {
       aria-label={props.label}
       className={cn(FIELD, "w-[72px] text-right")}
       placeholder={props.nullable ? "None" : undefined}
-      value={raw ?? props.value ?? ""}
-      onFocus={() => setRaw(props.value === null ? "" : String(props.value))}
+      value={raw ?? shown}
       onChange={(event) => setRaw(event.target.value)}
-      onBlur={(event) => {
-        const text = event.target.value;
+      onBlur={() => {
+        const text = raw;
         setRaw(null);
+        if (text === null || text === shown) return;
         if (props.nullable && text.trim() === "") {
-          if (props.value !== null) props.onChange(null);
+          props.onChange(null);
           return;
         }
         const number = Number(text);
@@ -84,43 +117,56 @@ export function NumberField(props: NumberFieldProps) {
   );
 }
 
-/** Where a value comes from, and the way back to the inherited one. */
+const TIER_LABEL: Record<SettingsTier, string> = {
+  global: "Command Center",
+  template: "template",
+  context: "context",
+};
+
+/** Where a value comes from, and the way back to the one it would inherit. */
 export function TierBadge({
   from,
   scope,
+  resetLabel,
   onReset,
 }: {
-  from: Tier;
+  from: SettingsTier;
   /** The tier being edited: a context, or the template's defaults. */
   scope: "context" | "template";
+  /** What a reset falls back to, e.g. "Use the template default". */
+  resetLabel: string;
   onReset(): void;
 }) {
-  const setHere = from === scope;
-  if (!setHere)
+  if (from !== scope)
     return (
-      <span
-        className="inline-flex shrink-0 items-center rounded-sm border border-solid border-border-default px-[6px] py-px font-mono text-[0.7rem] text-text-tertiary"
+      <StatusChip
+        tone="neutral"
         title={
           from === "global"
-            ? "Inherited from the global defaults"
+            ? "Inherited from the Command Center defaults"
             : "Inherited from this template's defaults"
         }
       >
-        {from === "global" ? "global" : "template"}
-      </span>
+        {TIER_LABEL[from]}
+      </StatusChip>
     );
-  const back =
-    scope === "context" ? "Use the template default" : "Use the global default";
   return (
     <span className="inline-flex shrink-0 items-center gap-[4px]">
-      <span className="inline-flex items-center gap-[5px] rounded-sm border border-solid border-[var(--cc-cyan-a25)] bg-cyan-glow px-[6px] py-px font-mono text-[0.7rem] text-cyan">
-        <span className="size-[5px] rounded-full bg-cyan" />
+      <StatusChip
+        tone="cyan"
+        icon={
+          <span
+            aria-hidden="true"
+            className="size-[5px] rounded-full bg-cyan"
+          />
+        }
+      >
         set here
-      </span>
-      <WithTooltip label={back}>
+      </StatusChip>
+      <WithTooltip label={resetLabel}>
         <button
           type="button"
-          aria-label={back}
+          aria-label={resetLabel}
           onClick={onReset}
           className="inline-flex size-[22px] cursor-pointer items-center justify-center rounded-sm border border-solid border-transparent bg-transparent text-text-tertiary transition-colors duration-150 hover:border-border-default hover:bg-bg-hover hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
         >
@@ -144,7 +190,10 @@ export function FieldSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface">
+    <section
+      aria-label={title}
+      className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
+    >
       <header className="flex items-start gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-lg py-md">
         <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
           <h3 className="m-0 font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">
@@ -197,9 +246,11 @@ export function SettingRow({
       </div>
       <div className="flex shrink-0 items-center gap-md">
         {children}
-        <span className="flex w-[118px] justify-end max-768:w-auto">
-          {badge}
-        </span>
+        {badge !== undefined ? (
+          <span className="flex w-[124px] justify-end max-768:w-auto">
+            {badge}
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -214,40 +265,50 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="flex min-w-0 flex-col gap-[6px]">
-      <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
+    <div className="flex min-w-0 flex-col gap-[6px]">
+      <span
+        aria-hidden="true"
+        className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase"
+      >
         {label}
       </span>
       {children}
-    </label>
+    </div>
   );
 }
 
-function OptionSelect({
-  value,
-  options,
+interface Choice {
+  value: string;
+  label: React.ReactNode;
+  disabled?: boolean;
+}
+
+function ChoiceSelect({
   label,
+  value,
+  choices,
+  disabled = false,
   onChange,
 }: {
-  value: string;
-  options: readonly string[];
   label: string;
+  value: string;
+  choices: readonly Choice[];
+  disabled?: boolean;
   onChange(next: string): void;
 }) {
   return (
-    <Select value={value} onValueChange={onChange}>
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger aria-label={label} layoutClassName="w-full">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {!options.includes(value) && value !== "" ? (
-          <SelectItem value={value} disabled>
-            {value} · unavailable
-          </SelectItem>
-        ) : null}
-        {options.map((option) => (
-          <SelectItem key={option} value={option}>
-            {option}
+        {choices.map((choice) => (
+          <SelectItem
+            key={choice.value}
+            value={choice.value}
+            disabled={choice.disabled}
+          >
+            {choice.label}
           </SelectItem>
         ))}
       </SelectContent>
@@ -255,145 +316,203 @@ function OptionSelect({
   );
 }
 
-function BackendChoice({
-  value,
-  catalog,
-  onChange,
-}: {
-  value: AgentBackendId;
-  catalog: readonly CatalogOption[];
-  onChange(next: AgentBackendId): void;
-}) {
+const DEFAULT = "__default";
+
+function backendLabel(backend: AgentBackendId): string {
+  return findBackendCatalogEntry(backend)?.label ?? backend;
+}
+
+function BackendName({ backend }: { backend: AgentBackendId }) {
   return (
-    <SegmentedControl
-      value={value}
-      aria-label="Backend"
-      layoutClassName="self-start"
-      onValueChange={(next) => {
-        const option = catalog.find((entry) => entry.backend === next);
-        if (option !== undefined) onChange(option.backend);
-      }}
-    >
-      {catalog.map((entry) => (
-        <SegmentedControlItem
-          key={entry.backend}
-          value={entry.backend}
-          tone={
-            findBackendCatalogEntry(entry.backend)?.toneToken === "violet"
-              ? "violet"
-              : "cyan"
-          }
-        >
-          <BackendDiamond backend={entry.backend} />
-          {findBackendCatalogEntry(entry.backend)?.label ?? entry.backend}
-        </SegmentedControlItem>
-      ))}
-    </SegmentedControl>
+    <span className="inline-flex items-center gap-[6px]">
+      <BackendDiamond backend={backend} />
+      {backendLabel(backend)}
+    </span>
   );
 }
 
-/** Backend, model, effort and profile for one seat; changing the backend picks its first model. */
+/** The backend, model and effort of one seat; each left to its default until chosen. */
 export function SeatFields({
   seat,
-  catalog,
-  efforts,
-  profiles,
+  options,
   onChange,
-  showProfile = true,
+  children,
 }: {
-  seat: Pick<SeatConfig, "backend" | "model" | "effort"> & { profile?: string };
-  catalog: readonly CatalogOption[];
-  efforts: readonly string[];
-  profiles: readonly string[];
-  onChange(
-    next: Pick<SeatConfig, "backend" | "model" | "effort"> & {
-      profile?: string;
-    },
-  ): void;
-  showProfile?: boolean;
+  seat: Seat;
+  options: TemplateEditorOptions;
+  onChange(next: Seat): void;
+  /** Further fields in the same grid, such as the seat's profile. */
+  children?: React.ReactNode;
 }) {
-  const entry = catalog.find((option) => option.backend === seat.backend);
-  const models = entry?.models ?? [];
-  const supportedEfforts = entry?.effortsByModel?.[seat.model] ?? efforts;
-  const selectModel = (backend: AgentBackendId, model: string) => {
-    const levels =
-      catalog.find((option) => option.backend === backend)?.effortsByModel?.[
-        model
-      ] ?? efforts;
-    onChange({
-      ...seat,
-      backend,
-      model,
-      effort: levels.includes(seat.effort) ? seat.effort : (levels[0] ?? ""),
-    });
-  };
+  const backends = options.models.map((entry) => entry.backend);
+  const catalog = catalogFor(options.models, seat.backend);
+  const selection = seat.modelSelection;
+  const model =
+    catalog === null || selection === undefined
+      ? null
+      : modelOf(catalog, selection.modelId);
+  const effort =
+    catalog === null || model === null
+      ? null
+      : effortParameterOf(catalog, model.id);
+
+  const backendChoices: Choice[] = [
+    { value: DEFAULT, label: "Command Center default" },
+    ...(seat.backend !== undefined && !backends.includes(seat.backend)
+      ? [
+          {
+            value: seat.backend,
+            label: `${backendLabel(seat.backend)} · unavailable`,
+            disabled: true,
+          },
+        ]
+      : []),
+    ...backends.map((backend) => ({
+      value: backend,
+      label: <BackendName backend={backend} />,
+    })),
+  ];
+  const modelChoices: Choice[] =
+    seat.backend === undefined
+      ? [
+          selection === undefined
+            ? { value: DEFAULT, label: "Command Center default" }
+            : { value: selection.modelId, label: selection.modelId },
+        ]
+      : [
+          { value: DEFAULT, label: `${backendLabel(seat.backend)} default` },
+          ...(selection !== undefined && model === null
+            ? [
+                {
+                  value: selection.modelId,
+                  label: `${selection.modelId} · unavailable`,
+                  disabled: true,
+                },
+              ]
+            : []),
+          ...(catalog?.models ?? []).map((option) => ({
+            value: option.id,
+            label: option.label,
+          })),
+        ];
+  const effortValue =
+    effort === null || selection === undefined
+      ? DEFAULT
+      : (selection.parameters[effort.id] ?? DEFAULT);
+  const effortChoices: Choice[] =
+    effort === null
+      ? [
+          {
+            value: DEFAULT,
+            label: selection === undefined ? "Model default" : "None",
+          },
+        ]
+      : effort.values.map((value) => ({
+          value: value.value,
+          label: value.label,
+        }));
+
   return (
-    <div className="flex flex-col gap-md">
-      <BackendChoice
-        value={seat.backend}
-        catalog={catalog}
-        onChange={(backend) =>
-          selectModel(
-            backend,
-            catalog.find((entry) => entry.backend === backend)?.models[0] ?? "",
-          )
-        }
-      />
-      <div
-        className={cn(
-          "grid gap-md max-768:grid-cols-1",
-          showProfile ? "grid-cols-3" : "grid-cols-2",
-        )}
-      >
-        <Field label="Model">
-          <OptionSelect
-            value={seat.model}
-            options={models}
-            label="Model"
-            onChange={(model) => selectModel(seat.backend, model)}
-          />
-        </Field>
-        <Field label="Effort">
-          <OptionSelect
-            value={seat.effort}
-            options={supportedEfforts}
-            label="Effort"
-            onChange={(effort) => onChange({ ...seat, effort })}
-          />
-        </Field>
-        {showProfile && seat.profile !== undefined ? (
-          <Field label="Profile">
-            <OptionSelect
-              value={seat.profile}
-              options={profiles}
-              label="Profile"
-              onChange={(profile) => onChange({ ...seat, profile })}
-            />
-          </Field>
-        ) : null}
-      </div>
+    <div className="grid grid-cols-2 gap-md max-768:grid-cols-1">
+      <Field label="Backend">
+        <ChoiceSelect
+          label="Backend"
+          value={seat.backend ?? DEFAULT}
+          choices={backendChoices}
+          onChange={(next) =>
+            onChange(
+              withBackend(
+                seat,
+                next === DEFAULT
+                  ? null
+                  : (backends.find((backend) => backend === next) ?? null),
+              ),
+            )
+          }
+        />
+      </Field>
+      <Field label="Model">
+        <ChoiceSelect
+          label="Model"
+          // An authored alias shows as the catalog model it names; the document keeps the alias until an edit.
+          value={model?.id ?? selection?.modelId ?? DEFAULT}
+          choices={modelChoices}
+          disabled={seat.backend === undefined}
+          onChange={(next) => {
+            if (catalog === null) return;
+            onChange(withModel(seat, catalog, next === DEFAULT ? null : next));
+          }}
+        />
+      </Field>
+      <Field label={effort?.label ?? "Effort"}>
+        <ChoiceSelect
+          label={effort?.label ?? "Effort"}
+          value={effortValue}
+          choices={effortChoices}
+          disabled={effort === null}
+          onChange={(next) => {
+            if (catalog === null) return;
+            onChange(withEffort(seat, catalog, next));
+          }}
+        />
+      </Field>
+      {children}
     </div>
   );
 }
 
-/** The review cohort: each reviewer's authority, focus and seat. */
-export function ReviewersEditor({
-  reviewers,
-  catalog,
-  efforts,
+/** A seat's agent profile, as a qualified reference. */
+export function ProfileField({
+  value,
   profiles,
   onChange,
 }: {
-  reviewers: ReviewerConfig[];
-  catalog: readonly CatalogOption[];
-  efforts: readonly string[];
-  profiles: readonly string[];
-  onChange(next: ReviewerConfig[]): void;
+  value: AgentProfileRef;
+  profiles: readonly AgentProfileLibraryItem[];
+  onChange(next: AgentProfileRef): void;
 }) {
-  const update = (id: string, change: Partial<ReviewerConfig>) =>
+  const key = profileKey(value);
+  const listed = profiles.some((profile) => profileKey(profile.ref) === key);
+  return (
+    <Field label="Profile">
+      <ChoiceSelect
+        label="Profile"
+        value={key}
+        choices={[
+          ...(listed
+            ? []
+            : [{ value: key, label: `${key} · unavailable`, disabled: true }]),
+          ...profiles.map((profile) => ({
+            value: profileKey(profile.ref),
+            label: `${profile.name} · ${profile.ref.tier}`,
+          })),
+        ]}
+        onChange={(next) => {
+          const ref = profileRefOf(next);
+          if (ref !== null) onChange(ref);
+        }}
+      />
+    </Field>
+  );
+}
+
+/** The reviewer list: each reviewer's authority, focus, seat and profile. */
+export function ReviewersEditor({
+  reviewers,
+  options,
+  onChange,
+}: {
+  reviewers: readonly ReviewerSetting[];
+  options: TemplateEditorOptions;
+  onChange(next: ReviewerSetting[]): void;
+}) {
+  const update = (
+    index: number,
+    change: (r: ReviewerSetting) => ReviewerSetting,
+  ) =>
     onChange(
-      reviewers.map((reviewer) =>
-        reviewer.id === id ? { ...reviewer, ...change } : reviewer,
+      reviewers.map((reviewer, at) =>
+        at === index ? change(reviewer) : reviewer,
       ),
     );
   return (
@@ -405,7 +524,10 @@ export function ReviewersEditor({
       ) : null}
       {reviewers.map((reviewer, index) => (
         <div
-          key={reviewer.id}
+          // Reviewers have no identity of their own; their position is it.
+          key={index}
+          role="group"
+          aria-label={`Reviewer ${index + 1}`}
           className="flex flex-col gap-md rounded-md border border-solid border-border-dim bg-bg-base p-md"
         >
           <div className="flex flex-wrap items-center gap-md">
@@ -416,9 +538,10 @@ export function ReviewersEditor({
               value={reviewer.authority}
               aria-label="Authority"
               onValueChange={(value) =>
-                update(reviewer.id, {
+                update(index, (current) => ({
+                  ...current,
                   authority: value === "advisory" ? "advisory" : "blocking",
-                })
+                }))
               }
             >
               <SegmentedControlItem value="blocking">
@@ -431,11 +554,16 @@ export function ReviewersEditor({
             <input
               aria-label="Focus"
               className={cn(FIELD, "min-w-[160px] flex-1")}
-              value={reviewer.focus}
+              value={reviewer.focus ?? ""}
               placeholder="Focus, e.g. Correctness"
-              onChange={(event) =>
-                update(reviewer.id, { focus: event.target.value })
-              }
+              onChange={(event) => {
+                const focus = event.target.value;
+                update(index, (current) => {
+                  const next: ReviewerSetting = { ...current, focus };
+                  if (focus.trim() === "") delete next.focus;
+                  return next;
+                });
+              }}
             />
             <WithTooltip label="Remove reviewer">
               <IconButton
@@ -443,9 +571,7 @@ export function ReviewersEditor({
                 tone="danger"
                 aria-label={`Remove reviewer ${index + 1}`}
                 onClick={() =>
-                  onChange(
-                    reviewers.filter((other) => other.id !== reviewer.id),
-                  )
+                  onChange(reviewers.filter((_, at) => at !== index))
                 }
               >
                 <CloseIcon />
@@ -453,17 +579,27 @@ export function ReviewersEditor({
             </WithTooltip>
           </div>
           <SeatFields
-            seat={reviewer}
-            catalog={catalog}
-            efforts={efforts}
-            profiles={profiles}
+            seat={seatOf(reviewer)}
+            options={options}
             onChange={(seat) =>
-              update(reviewer.id, {
+              update(index, (current) => ({
+                authority: current.authority,
+                ...(current.focus === undefined
+                  ? {}
+                  : { focus: current.focus }),
+                profile: current.profile,
                 ...seat,
-                profile: seat.profile ?? reviewer.profile,
-              })
+              }))
             }
-          />
+          >
+            <ProfileField
+              value={reviewer.profile}
+              profiles={options.profiles}
+              onChange={(profile) =>
+                update(index, (current) => ({ ...current, profile }))
+              }
+            />
+          </SeatFields>
         </div>
       ))}
       <Button
@@ -473,20 +609,7 @@ export function ReviewersEditor({
         onClick={() =>
           onChange([
             ...reviewers,
-            {
-              id: `r-${reviewers.length + 1}-${Date.now()}`,
-              authority: "blocking",
-              profile:
-                profiles.find(
-                  (profile) => profile === "builtin:general-reviewer",
-                ) ??
-                profiles[0] ??
-                "builtin:general-reviewer",
-              focus: "",
-              backend: catalog[0]?.backend ?? "claude",
-              model: catalog[0]?.models[0] ?? "",
-              effort: "medium",
-            },
+            { authority: "blocking", profile: DEFAULT_REVIEWER_PROFILE },
           ])
         }
       >
@@ -501,10 +624,12 @@ export function ReviewersEditor({
 export function ChecksEditor({
   checks,
   available,
+  label = "Add a check",
   onChange,
 }: {
-  checks: string[];
+  checks: readonly string[];
   available: readonly string[];
+  label?: string;
   onChange(next: string[]): void;
 }) {
   const remaining = available.filter((command) => !checks.includes(command));
@@ -533,7 +658,7 @@ export function ChecksEditor({
           value=""
           onValueChange={(command) => onChange([...checks, command])}
         >
-          <SelectTrigger aria-label="Add a check" layoutClassName="w-[150px]">
+          <SelectTrigger aria-label={label} layoutClassName="w-[150px]">
             <SelectValue placeholder="Add a check" />
           </SelectTrigger>
           <SelectContent>
@@ -554,79 +679,70 @@ export function ChecksEditor({
   );
 }
 
-/** An ordered list of short text items, each removable, with an add row. */
+export interface ListItem {
+  text: string;
+  instructions: string;
+}
+
+/** An ordered list of short text items, each removable, with an add row; tasks also carry instructions. */
 export function ListEditor({
   items,
-  idPrefix,
-  addLabel,
+  noun,
   placeholder,
   onChange,
   instructions = false,
 }: {
-  items: Array<{ id: string; text: string; instructions?: string }>;
-  idPrefix: string;
-  addLabel: string;
+  items: readonly ListItem[];
+  /** What one item is, e.g. "Task": it names each item's field. */
+  noun: string;
   placeholder: string;
-  onChange(
-    next: Array<{ id: string; text: string; instructions?: string }>,
-  ): void;
+  onChange(next: ListItem[]): void;
   instructions?: boolean;
 }) {
+  const replace = (index: number, change: Partial<ListItem>) =>
+    onChange(
+      items.map((item, at) => (at === index ? { ...item, ...change } : item)),
+    );
   return (
     <ol className="m-0 flex list-none flex-col gap-sm p-0">
       {items.map((item, index) => (
-        <li key={item.id} className="flex flex-col gap-sm">
+        // Items have no identity of their own; their position is it.
+        <li key={index} className="flex flex-col gap-sm">
           <div className="flex items-center gap-sm">
-            <span className="w-[34px] shrink-0 font-mono text-[0.7rem] text-text-tertiary">
-              {item.id}
+            <span className="w-[22px] shrink-0 text-right font-mono text-[0.7rem] text-text-tertiary">
+              {index + 1}
             </span>
             <input
-              aria-label={`${addLabel.replace(/^Add /, "")} ${index + 1}`}
+              aria-label={`${noun} ${index + 1}`}
               className={INPUT}
               value={item.text}
               placeholder={placeholder}
-              onChange={(event) =>
-                onChange(
-                  items.map((other) =>
-                    other.id === item.id
-                      ? { ...other, text: event.target.value }
-                      : other,
-                  ),
-                )
-              }
+              onChange={(event) => replace(index, { text: event.target.value })}
             />
-            <WithTooltip label="Remove">
+            <WithTooltip label={`Remove ${noun.toLowerCase()}`}>
               <IconButton
                 variant="ghost"
-                aria-label={`Remove ${item.id}`}
-                onClick={() =>
-                  onChange(items.filter((other) => other.id !== item.id))
-                }
+                aria-label={`Remove ${noun.toLowerCase()} ${index + 1}`}
+                onClick={() => onChange(items.filter((_, at) => at !== index))}
               >
                 <CloseIcon />
               </IconButton>
             </WithTooltip>
           </div>
           {instructions ? (
-            <details className="ml-[42px] rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm">
+            <details className="ml-[30px] rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm">
               <summary className="cursor-pointer font-mono text-[0.7rem] text-text-secondary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2">
-                Instructions for {item.id}
-                {item.instructions ? (
+                Instructions for {noun.toLowerCase()} {index + 1}
+                {item.instructions !== "" ? (
                   <span className="ml-sm text-text-tertiary">· added</span>
                 ) : null}
               </summary>
               <MultilineInput
-                aria-label={`Task ${item.id} instructions`}
+                aria-label={`${noun} ${index + 1} instructions`}
                 className={cn(TEXTAREA, "mt-sm min-h-[80px]")}
-                value={item.instructions ?? ""}
+                value={item.instructions}
                 placeholder="Optional details for this task"
-                onValueChange={(instructions) =>
-                  onChange(
-                    items.map((other) =>
-                      other.id === item.id ? { ...other, instructions } : other,
-                    ),
-                  )
-                }
+                onValueChange={(text) => replace(index, { instructions: text })}
               />
             </details>
           ) : null}
@@ -637,15 +753,10 @@ export function ListEditor({
           size="sm"
           variant="ghost"
           layoutClassName="-ml-[12px]"
-          onClick={() => {
-            let next = items.length + 1;
-            while (items.some((item) => item.id === `${idPrefix}${next}`))
-              next += 1;
-            onChange([...items, { id: `${idPrefix}${next}`, text: "" }]);
-          }}
+          onClick={() => onChange([...items, { text: "", instructions: "" }])}
         >
           <PlusIcon size={12} />
-          {addLabel}
+          Add {noun.toLowerCase()}
         </Button>
       </li>
     </ol>

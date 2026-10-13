@@ -1,7 +1,7 @@
 /**
- * Run template identity, parameters and wire shapes. Browser-safe: the
- * template document itself, which reuses the workflow launch request's
- * server-side schemas, lives in `document.ts`.
+ * Run template identity, parameters and wire shapes. The template document
+ * itself, which reuses the workflow launch request's schemas, lives in
+ * `document.ts`.
  */
 import { z } from "zod";
 import { runTemplateTierSchema } from "@/lib/runs/schemas";

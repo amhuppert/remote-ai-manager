@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { TemplateSummary } from "../../template-model";
+import type { RunTemplateSummary } from "@/lib/run-templates/schemas";
 import { TemplateLibrary } from "./TemplateLibrary";
 
-const templates: TemplateSummary[] = [
+const templates: RunTemplateSummary[] = [
   {
     id: "review",
     name: "Release review",
@@ -12,6 +12,8 @@ const templates: TemplateSummary[] = [
     tier: "project",
     contexts: 3,
     updatedAt: "2026-10-08T10:00:00Z",
+    parameters: [],
+    revision: 1,
   },
   {
     id: "review",
@@ -20,6 +22,8 @@ const templates: TemplateSummary[] = [
     tier: "global",
     contexts: 1,
     updatedAt: "2026-10-07T10:00:00Z",
+    parameters: [],
+    revision: 1,
   },
   {
     id: "docs",
@@ -28,6 +32,8 @@ const templates: TemplateSummary[] = [
     tier: "project",
     contexts: 2,
     updatedAt: "2026-10-06T10:00:00Z",
+    parameters: [],
+    revision: 1,
   },
 ];
 
@@ -89,7 +95,32 @@ describe("TemplateLibrary", () => {
         onConfigure={vi.fn()}
       />,
     );
-    expect(screen.getByText("No saved templates")).toBeVisible();
+    expect(screen.getByText("No run templates")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Launch" })).toBeNull();
+  });
+
+  it("names each unreadable template file to fix or remove", () => {
+    render(
+      <TemplateLibrary
+        templates={templates}
+        diagnostics={[
+          {
+            tier: "global",
+            id: "broken",
+            path: "/cfg/run-templates/global.shared/broken.json",
+            reason: "not JSON",
+          },
+        ]}
+        onLaunch={vi.fn()}
+        onConfigure={vi.fn()}
+      />,
+    );
+    const unreadable = screen.getByRole("region", {
+      name: "Unreadable templates",
+    });
+    expect(unreadable).toHaveTextContent("1 template file cannot be read");
+    expect(unreadable).toHaveTextContent(
+      "/cfg/run-templates/global.shared/broken.json",
+    );
   });
 });

@@ -284,7 +284,7 @@ export function SessionRunsCard({
   runs: RunSummary[];
   /** The run page, at a run when one is named. */
   hrefOf(runId?: string): string;
-  /** Absent until runs launch from saved templates. */
+  /** The session's run templates, offered beside its runs. */
   onBrowseTemplates?(): void;
 }) {
   const current = runs.filter((run) => run.finishedAt === null);
@@ -303,7 +303,7 @@ export function SessionRunsCard({
       {runs.length === 0 ? (
         <p className="m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary">
           {onBrowseTemplates !== undefined
-            ? "Launch a saved template, or ask a conversation to start a run."
+            ? "Launch a run template, or ask a conversation to start a run."
             : "Ask a conversation to start a run."}{" "}
           Progress and decisions appear here.
         </p>

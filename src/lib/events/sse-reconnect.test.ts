@@ -15,6 +15,7 @@ import { beginTicketMutation } from "../tickets/mutation-coordinator";
 import { ticketKeys } from "../tickets/query-keys";
 import { checkpointKeys } from "../conversation-checkpoints/query-keys";
 import { runKeys } from "../runs/query-keys";
+import { runTemplateKeys } from "../run-templates/query-keys";
 
 type StampedMessage = {
   role: "user" | "assistant";
@@ -247,6 +248,23 @@ describe("reconnectReconcile", () => {
 
     expect(client.getQueryState(list)?.isInvalidated).toBe(true);
     expect(client.getQueryState(page)?.isInvalidated).toBe(true);
+  });
+
+  it("marks every run template list and detail stale, since a missed frame may have changed one", async () => {
+    const client = makeClient();
+    const list = runTemplateKeys.list("proj");
+    const detail = runTemplateKeys.detail("proj", "global", "review");
+    client.setQueryData(list, { items: [], diagnostics: [] });
+    client.setQueryData(detail, {});
+
+    await reconnectReconcile(
+      client,
+      () => {},
+      async () => jsonResponse({ jobs: [] }),
+    );
+
+    expect(client.getQueryState(list)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(detail)?.isInvalidated).toBe(true);
   });
 
   it("defers ticket refetches until a pending optimistic mutation settles", async () => {

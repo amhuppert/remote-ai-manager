@@ -13,8 +13,7 @@ import type { WorkspaceScope } from "@/lib/workspace/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import type { RunLaunchInput } from "./host";
-import { runDocumentRequestSchema } from "./documents";
-import type { RunDocument } from "./schemas";
+import { runDocumentRequestSchema, type RunDocument } from "./schemas";
 import {
   DEFAULT_REVIEWER_PROFILE,
   RUN_SETTING_DEFAULTS,

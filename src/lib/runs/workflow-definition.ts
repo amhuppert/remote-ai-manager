@@ -12,7 +12,6 @@ import {
   type WorkspaceScope,
 } from "@/lib/workspace/schemas";
 import type { RunLaunchInput } from "./host";
-import { runDocumentRequestSchema } from "./documents";
 import type { FrozenCharter } from "./charter";
 import {
   agentLaunchRequestSchema,
@@ -23,6 +22,7 @@ import {
 import {
   routeCardinalitySchema,
   routeGuardSchema,
+  runDocumentRequestSchema,
   runLoopSchema,
   runCharterSchema,
   type RouteGuard,

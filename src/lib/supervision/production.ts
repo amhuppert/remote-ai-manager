@@ -475,7 +475,8 @@ function composeProductionSupervision(): Supervision {
           conversationId: run.ownerConversationId,
         },
         source: { kind: "run", id: run.runId },
-        reason: "Run launched by this conversation",
+        // A person may launch a run for another conversation to own, so the reason names ownership.
+        reason: "Run owned by this conversation",
         initialCursor: "0",
         wakes: true,
       });

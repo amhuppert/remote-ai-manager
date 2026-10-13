@@ -1,5 +1,8 @@
 import type { RunContext, RunLane, RunLoop } from "@/components/runs/model";
 
+/** What the layout reads of a context: where it works and what it waits for. */
+type LaidOutContext = Pick<RunContext, "key" | "dependsOn" | "placement">;
+
 /**
  * Where the read-only diagram draws each context: a column per dependency
  * depth, a band per placement (the session worktree, then each lane), rows
@@ -49,7 +52,7 @@ export interface DiagramLayout {
   height: number;
 }
 
-function depths(contexts: readonly RunContext[]): Map<string, number> {
+function depths(contexts: readonly LaidOutContext[]): Map<string, number> {
   const byKey = new Map(contexts.map((context) => [context.key, context]));
   const memo = new Map<string, number>();
   const visit = (key: string, seen: ReadonlySet<string>): number => {
@@ -72,7 +75,7 @@ function depths(contexts: readonly RunContext[]): Map<string, number> {
 }
 
 export function layoutDiagram(input: {
-  contexts: readonly RunContext[];
+  contexts: readonly LaidOutContext[];
   lanes: readonly RunLane[];
   loops: readonly RunLoop[];
 }): DiagramLayout {
@@ -87,13 +90,13 @@ export function layoutDiagram(input: {
       id: "session",
       label: "Session worktree",
       lane: null as RunLane | null,
-      match: (c: RunContext) => c.placement.kind === "session",
+      match: (c: LaidOutContext) => c.placement.kind === "session",
     },
     ...input.lanes.map((lane) => ({
       id: `lane:${lane.key}`,
       label: `Lane ${lane.key}`,
       lane,
-      match: (c: RunContext) =>
+      match: (c: LaidOutContext) =>
         c.placement.kind === "lane" && c.placement.lane === lane.key,
     })),
   ];

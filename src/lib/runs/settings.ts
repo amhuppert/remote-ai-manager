@@ -149,7 +149,8 @@ export function requestFieldsOf(
   };
 }
 
-const RUN_SETTING_KEYS = [
+/** Every setting key, in the order a form lists them. */
+export const RUN_SETTING_KEYS = [
   "implementer",
   "reviewers",
   "checks",

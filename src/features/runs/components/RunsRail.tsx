@@ -6,11 +6,12 @@ import {
   ChevronRightIcon,
   CloseIcon,
 } from "@/components/icons";
+import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { WithTooltip } from "@/components/ui/WithTooltip";
-import { PauseIcon } from "@/components/runs/icons";
+import { DiagramIcon, PauseIcon } from "@/components/runs/icons";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { cn } from "@/lib/ui/cn";
 import type { RunSummary } from "@/components/runs/model";
@@ -195,12 +196,15 @@ export function RunsRail({
   onSelect,
   collapsed = false,
   onToggle,
+  onBrowseTemplates,
 }: {
   runs: RunSummary[];
   selectedId: string;
   onSelect(runId: string): void;
   collapsed?: boolean;
   onToggle?(): void;
+  /** The session's run templates, to launch another run from. */
+  onBrowseTemplates?(): void;
 }) {
   if (collapsed && onToggle !== undefined)
     return (
@@ -245,6 +249,17 @@ export function RunsRail({
         selectedId={selectedId}
         onSelect={onSelect}
       />
+      {onBrowseTemplates !== undefined ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          layoutClassName="self-start"
+          onClick={onBrowseTemplates}
+        >
+          <DiagramIcon size={13} />
+          Run templates
+        </Button>
+      ) : null}
     </nav>
   );
 }

@@ -10,7 +10,9 @@
  * every topology rule. A setting neither tier sets stays out of the request,
  * so the launch resolver supplies the global tier as for any workflow launch.
  *
- * Server-side: it reuses the workflow request schemas, which reach Node I/O.
+ * Browser-safe, so the template editor validates a draft with the function
+ * the server saves with (`browser-safety.arch.test.ts` keeps its imports free
+ * of Node built-ins).
  */
 import { z } from "zod";
 import {
@@ -18,8 +20,7 @@ import {
   type SettingsTier,
 } from "@/lib/config/settings-cascade";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
-import { runDocumentRequestSchema } from "@/lib/runs/documents";
-import { runCharterSchema } from "@/lib/runs/schemas";
+import { runCharterSchema, runDocumentRequestSchema } from "@/lib/runs/schemas";
 import {
   RUN_SETTING_DEFAULTS,
   SETTING_REQUEST_FIELD_MASK,

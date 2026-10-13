@@ -11,32 +11,36 @@ import {
   DialogTitle,
 } from "@/components/ui/Dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/RadioGroup";
+import type { RunTemplateLaunchRefusal } from "@/lib/run-templates/mutations";
+import type { RunTemplateSummary } from "@/lib/run-templates/schemas";
+import type { RunTemplateLaunchRequest } from "@/lib/runs/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { cn } from "@/lib/ui/cn";
 import { BackendDiamond } from "../parts";
-import type { Template } from "../../template-model";
 import { INPUT } from "./fields";
 
+/** A conversation of the session that can own the run. */
 export interface OwnerChoice {
   conversationId: string;
   title: string;
   backend: AgentBackendId;
+  /** In a turn now: the run's first update waits for it to end. */
   busy: boolean;
 }
 
-export interface LaunchRequest {
-  owner:
-    | { kind: "existing"; conversationId: string }
-    | { kind: "new"; title: string };
-  parameters: Record<string, string>;
-}
+/** What the dialog shows of the template, and the revision it launches. */
+export type LaunchableTemplate = Pick<
+  RunTemplateSummary,
+  "tier" | "id" | "name" | "revision" | "parameters" | "contexts"
+>;
 
 const NEW = "__new";
 
 /**
  * Launching a template from the UI: the run needs an owner conversation, which
  * receives its questions, halts and result, so the person picks one or starts
- * a new one; then the template's parameters.
+ * a new one; then the template's parameters. The request names the revision
+ * the dialog showed, so a template changed since is refused, not launched.
  */
 function LaunchDialogBody({
   open,
@@ -50,40 +54,37 @@ function LaunchDialogBody({
   onLaunch,
 }: {
   open: boolean;
-  template: Template;
+  template: LaunchableTemplate;
   sessionName: string;
-  owners: OwnerChoice[];
+  owners: readonly OwnerChoice[];
   submitting?: boolean;
-  /** The launch's refusal, located at its field when it has one. */
-  refusal?: { message: string; parameter?: string } | null;
+  refusal?: RunTemplateLaunchRefusal | null;
   /** Values the person entered before, such as the ones a refused launch sent. */
   initialValues?: Record<string, string>;
   onOpenChange(open: boolean): void;
-  onLaunch(request: LaunchRequest): void;
+  onLaunch(request: RunTemplateLaunchRequest): void;
 }) {
   const [owner, setOwner] = useState<string>(owners[0]?.conversationId ?? NEW);
   const [newTitle, setNewTitle] = useState(`${template.name} owner`);
   const [values, setValues] = useState<Record<string, string>>(initialValues);
   const [touched, setTouched] = useState(false);
   const [dismissedRefusal, setDismissedRefusal] =
-    useState<typeof refusal>(null);
+    useState<RunTemplateLaunchRefusal | null>(null);
   const activeRefusal = refusal === dismissedRefusal ? null : refusal;
   const formId = useId();
   const missing = template.parameters.filter(
     (parameter) =>
       parameter.required && (values[parameter.name] ?? "").trim() === "",
   );
-  const lanes = template.lanes.length;
   const missingOwnerName = owner === NEW && newTitle.trim() === "";
+  const contexts = `${template.contexts} ${template.contexts === 1 ? "context" : "contexts"}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="wide" mobileSheet>
         <DialogTitle>Launch {template.name}</DialogTitle>
         <DialogDescription>
-          {template.contexts.length} contexts
-          {lanes > 0 ? ` · ${lanes} isolated lanes` : ""} · session{" "}
-          {sessionName}.
+          {contexts} · revision {template.revision} · session {sessionName}.
         </DialogDescription>
         <form
           id={formId}
@@ -93,15 +94,28 @@ function LaunchDialogBody({
             setTouched(true);
             if (submitting || missing.length > 0 || missingOwnerName) return;
             onLaunch({
+              template: {
+                tier: template.tier,
+                id: template.id,
+                revision: template.revision,
+              },
               owner:
                 owner === NEW
                   ? { kind: "new", title: newTitle.trim() }
                   : { kind: "existing", conversationId: owner },
-              parameters: values,
+              parameters: Object.fromEntries(
+                template.parameters.map(({ name }) => [
+                  name,
+                  values[name] ?? "",
+                ]),
+              ),
             });
           }}
         >
-          <fieldset className="m-0 flex flex-col gap-sm border-0 p-0">
+          <fieldset
+            disabled={submitting}
+            className="m-0 flex flex-col gap-sm border-0 p-0"
+          >
             <legend className="mb-sm p-0 font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">
               Owner
             </legend>
@@ -120,11 +134,10 @@ function LaunchDialogBody({
                 {
                   conversationId: NEW,
                   title: "New conversation",
-                  backend: "claude" as const,
+                  backend: null,
                   busy: false,
                 },
               ].map((choice) => {
-                const isNew = choice.conversationId === NEW;
                 const checked = owner === choice.conversationId;
                 return (
                   <label
@@ -137,14 +150,14 @@ function LaunchDialogBody({
                       aria-label={choice.title}
                     />
                     <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
-                      <span className="flex items-center gap-sm font-mono text-[0.78rem] font-medium text-text-primary">
-                        {isNew ? null : (
+                      <span className="flex min-w-0 items-center gap-sm font-mono text-[0.78rem] font-medium text-text-primary">
+                        {choice.backend === null ? null : (
                           <BackendDiamond backend={choice.backend} />
                         )}
-                        {choice.title}
+                        <span className="truncate">{choice.title}</span>
                       </span>
                       <span className="font-mono text-[0.7rem] text-text-tertiary">
-                        {isNew
+                        {choice.backend === null
                           ? "Created without a model turn; it wakes when the run first needs it."
                           : choice.busy
                             ? "Working now; the run's first update waits for its turn to end."
@@ -163,6 +176,7 @@ function LaunchDialogBody({
                 <input
                   className={INPUT}
                   value={newTitle}
+                  maxLength={200}
                   aria-invalid={touched && missingOwnerName}
                   aria-describedby={
                     touched && missingOwnerName
@@ -184,7 +198,10 @@ function LaunchDialogBody({
           </fieldset>
 
           {template.parameters.length > 0 ? (
-            <fieldset className="m-0 flex flex-col gap-md border-0 p-0">
+            <fieldset
+              disabled={submitting}
+              className="m-0 flex flex-col gap-md border-0 p-0"
+            >
               <legend className="mb-sm p-0 font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-secondary uppercase">
                 Parameters
               </legend>
@@ -259,7 +276,11 @@ function LaunchDialogBody({
           ) : null}
         </form>
         <DialogActions layoutClassName="mt-lg">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="ghost"
+            disabled={submitting}
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
           <Button
@@ -269,7 +290,7 @@ function LaunchDialogBody({
             loading={submitting}
           >
             <PlayIcon size={12} />
-            Launch run
+            {submitting ? "Launching…" : "Launch run"}
           </Button>
         </DialogActions>
       </DialogContent>

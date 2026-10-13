@@ -253,6 +253,12 @@ function RunContent({
           {otherAttention === 1 ? "run needs" : "runs need"} you
         </span>
       ) : null}
+      {actions.onBrowseTemplates !== undefined ? (
+        <Button size="sm" variant="ghost" onClick={actions.onBrowseTemplates}>
+          <DiagramIcon size={13} />
+          Run templates
+        </Button>
+      ) : null}
     </div>
   ) : undefined;
 
@@ -269,6 +275,9 @@ function RunContent({
             onSelect={actions.onSelectRun}
             collapsed={railCollapsed}
             onToggle={() => setRailCollapsed((collapsed) => !collapsed)}
+            {...(actions.onBrowseTemplates === undefined
+              ? {}
+              : { onBrowseTemplates: actions.onBrowseTemplates })}
           />
         </aside>
       )}
@@ -483,6 +492,9 @@ export function RunPage(props: {
           runs={props.runs}
           selectedId={props.selectedRunId ?? ""}
           onSelect={props.actions.onSelectRun}
+          {...(props.actions.onBrowseTemplates === undefined
+            ? {}
+            : { onBrowseTemplates: props.actions.onBrowseTemplates })}
         />
       </aside>
       <div className="flex min-w-0 flex-1">{notice}</div>
@@ -528,7 +540,7 @@ function NoRun(props: Parameters<typeof RunPage>[0]) {
                 (forRun
                   ? "Pick one of this session's runs to follow its progress and decisions."
                   : props.actions.onBrowseTemplates !== undefined
-                    ? "Launch a saved workflow, or ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."
+                    ? "Launch a run template, or ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."
                     : "Ask a conversation to delegate a task. Follow progress, inspect the work, and make decisions here."))}
           </p>
         </div>

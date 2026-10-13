@@ -14,19 +14,56 @@ import {
   SegmentedControl,
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
+import type {
+  RunTemplateDiagnostic,
+  RunTemplateSummary,
+} from "@/lib/run-templates/schemas";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { DiagramIcon, PlayIcon } from "@/components/runs/icons";
-import type { TemplateSummary } from "../../template-model";
 
 export interface TemplateLibraryProps {
-  templates: TemplateSummary[];
-  onConfigure(template: TemplateSummary): void;
-  onLaunch(template: TemplateSummary): void;
+  templates: readonly RunTemplateSummary[];
+  /** Template files that could not be read, to fix or remove. */
+  diagnostics?: readonly RunTemplateDiagnostic[];
+  onConfigure(template: RunTemplateSummary): void;
+  onLaunch(template: RunTemplateSummary): void;
 }
 
-/** Discovery before configuration or launch; both actions retain the template's scope. */
+function Unreadable({
+  diagnostics,
+}: {
+  diagnostics: readonly RunTemplateDiagnostic[];
+}) {
+  return (
+    <section
+      aria-label="Unreadable templates"
+      className="flex flex-col gap-sm rounded-lg border border-solid border-[var(--cc-amber-a25)] bg-bg-surface px-lg py-md"
+    >
+      <h2 className="m-0 font-mono text-[0.75rem] font-semibold text-amber">
+        {diagnostics.length === 1
+          ? "1 template file cannot be read"
+          : `${diagnostics.length} template files cannot be read`}
+      </h2>
+      <ul className="m-0 flex list-none flex-col gap-[4px] p-0">
+        {diagnostics.map((diagnostic) => (
+          <li
+            key={`${diagnostic.tier}:${diagnostic.id}`}
+            className="font-mono text-[0.72rem] leading-[1.5] break-all text-text-secondary"
+          >
+            <span className="text-text-primary">{diagnostic.id}</span> ·{" "}
+            {diagnostic.tier} · {diagnostic.reason}. Fix or remove{" "}
+            <code>{diagnostic.path}</code>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Discovery before configuration or launch; both actions keep the template's tier. */
 export function TemplateLibrary({
   templates,
+  diagnostics = [],
   onConfigure,
   onLaunch,
 }: TemplateLibraryProps) {
@@ -46,20 +83,20 @@ export function TemplateLibrary({
   ).length;
   return (
     <section
-      aria-label="Saved templates"
+      aria-label="Run templates"
       className="mx-auto flex w-full max-w-[1080px] flex-col gap-xl px-2xl py-2xl max-768:px-lg max-768:py-xl"
     >
       <header className="flex flex-wrap items-end gap-lg">
         <div className="flex min-w-0 flex-1 flex-col gap-sm">
           <span className="font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-cyan uppercase">
-            Workflows
+            Runs
           </span>
           <h1 className="m-0 font-display text-[1.75rem] font-extrabold tracking-[-0.01em] text-text-primary max-768:text-[1.4rem]">
-            Saved templates
+            Run templates
           </h1>
           <p className="m-0 max-w-[640px] font-mono text-[0.78rem] leading-[1.6] text-text-secondary">
-            Choose a workflow, review its configuration, then launch it with an
-            owner conversation.
+            Choose a template, review its settings, then launch it with an owner
+            conversation.
           </p>
         </div>
         <div className="flex gap-xl max-640:hidden">
@@ -81,6 +118,8 @@ export function TemplateLibrary({
           </div>
         </div>
       </header>
+
+      {diagnostics.length > 0 ? <Unreadable diagnostics={diagnostics} /> : null}
 
       {templates.length > 0 ? (
         <div className="flex flex-wrap items-center gap-md border-x-0 border-y border-solid border-border-dim py-lg">
@@ -120,13 +159,13 @@ export function TemplateLibrary({
             </EmptyStateIcon>
             <EmptyStateTitle>
               {templates.length === 0
-                ? "No saved templates"
+                ? "No run templates"
                 : "No matching templates"}
             </EmptyStateTitle>
             <EmptyStateDesc>
               {templates.length === 0
-                ? "Ask a conversation to save a workflow as a template. It will appear here for configuration and launch."
-                : "Try another name or scope to find a workflow."}
+                ? "Ask a conversation to save a workflow as a run template with cctl run template save. It appears here to configure and launch."
+                : "Try another name or scope to find a template."}
             </EmptyStateDesc>
             {templates.length > 0 ? (
               <Button
@@ -171,18 +210,32 @@ export function TemplateLibrary({
                         {template.contexts}{" "}
                         {template.contexts === 1 ? "context" : "contexts"}
                       </span>
+                      {template.parameters.length > 0 ? (
+                        <span className="min-w-0 truncate text-text-tertiary">
+                          ·{" "}
+                          {template.parameters
+                            .map(
+                              (parameter) =>
+                                `${parameter.name}${parameter.required ? "" : "?"}`,
+                            )
+                            .join(", ")}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
-                <p className="m-0 font-mono text-[0.78rem] leading-[1.6] text-text-secondary">
-                  {template.description}
-                </p>
+                {template.description !== "" ? (
+                  <p className="m-0 font-mono text-[0.78rem] leading-[1.6] text-text-secondary">
+                    {template.description}
+                  </p>
+                ) : null}
                 <div className="mt-auto flex flex-wrap items-center gap-sm border-x-0 border-t border-b-0 border-solid border-border-dim pt-md">
                   <time
                     dateTime={template.updatedAt}
                     className="mr-auto font-mono text-[0.7rem] text-text-tertiary max-640:w-full"
                   >
-                    Updated {formatLocalTime(template.updatedAt)}
+                    Revision {template.revision} · updated{" "}
+                    {formatLocalTime(template.updatedAt)}
                   </time>
                   <Button
                     variant="default"

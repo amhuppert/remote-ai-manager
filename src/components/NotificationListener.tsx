@@ -27,6 +27,7 @@ import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import { registerTicketSseReactions } from "@/lib/tickets/sse-reactions";
 import { registerValidationSseReactions } from "@/lib/validation/sse-reactions";
 import { registerRunSseReactions } from "@/lib/runs/sse-reactions";
+import { registerRunTemplateSseReactions } from "@/lib/run-templates/sse-reactions";
 import { registerWorkflowSseReactions } from "@/lib/workflows/sse-reactions";
 import {
   useAddOrUpdateJob,
@@ -129,6 +130,7 @@ export default function NotificationListener(): null {
     registerConversationCheckpointSseReactions(es, { queryClient });
     registerValidationSseReactions(es, { queryClient });
     registerRunSseReactions(es, { queryClient });
+    registerRunTemplateSseReactions(es, { queryClient });
     registerJobsReconnectReconciliation(es, {
       queryClient,
       reconcileJobs: (jobs) => actionsRef.current.reconcileJobs(jobs),

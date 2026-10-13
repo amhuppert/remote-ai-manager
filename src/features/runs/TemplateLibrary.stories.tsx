@@ -22,6 +22,18 @@ type Story = StoryObj<typeof meta>;
 
 export const SavedTemplates: Story = {};
 export const Empty: Story = { args: { templates: [] } };
+export const Unreadable: Story = {
+  args: {
+    diagnostics: [
+      {
+        tier: "project",
+        id: "release-train",
+        path: "/Users/alex/Library/Application Support/cc/run-templates/L1VzZXJzL2FsZXgvcmVwbw/release-train.json",
+        reason: "Unexpected token } in JSON at position 412",
+      },
+    ],
+  },
+};
 export const LongNames: Story = {
   args: {
     templates: templateList.map((template, index) =>

@@ -73,6 +73,7 @@ import {
   type RunTemplateTier,
   type RunCharter,
   type RunDefinitionContext,
+  type RunDocumentRequest,
   type RunDocumentRevision,
   type RunPrincipal,
   type RunRecord,
@@ -81,7 +82,6 @@ import {
   withCurrentDocuments,
   type DocumentIssue,
   type ProposedDocument,
-  type RunDocumentRequest,
 } from "./documents";
 import type { FrozenCharter } from "./charter";
 import {

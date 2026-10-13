@@ -1,11 +1,14 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { z } from "zod";
 import type { ArtifactStore } from "@/lib/artifacts/store";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ContractDocument } from "@/lib/execution-context/schemas";
-import type { RunDocument, RunDocumentRevision } from "./schemas";
+import type {
+  RunDocument,
+  RunDocumentRequest,
+  RunDocumentRevision,
+} from "./schemas";
 
 /**
  * A run's documents: declared at launch (or amendment), frozen as artifact
@@ -19,27 +22,6 @@ export const MAX_DOCUMENT_BYTES = 262_144;
 export const MAX_RUN_DOCUMENTS_BYTES = 1_048_576;
 /** Where a context's charter is copied, beside its documents; no declared document may take it. */
 export const RESERVED_CHARTER_DOCUMENT = "charter.md";
-
-export const runDocumentRequestSchema = z
-  .object({
-    /** Where the document appears under the run's documents directory. */
-    path: z.string(),
-    /** A file in the session worktree, read when the run launches or is amended. */
-    from: z.string().min(1).optional(),
-    contents: z.string().optional(),
-    /**
-     * The run's current revision of this path the declaration was written
-     * against (an amendment, from `run definition`): alone, it keeps that
-     * revision as it is; with from or contents, it replaces it.
-     */
-    revision: z.number().int().min(1).optional(),
-    description: z.string().trim().min(1),
-    readWhen: z.string().trim().min(1).optional(),
-    /** The context keys it is for; every context when absent. */
-    appliesTo: z.array(z.string().min(1)).min(1).optional(),
-  })
-  .strict();
-export type RunDocumentRequest = z.infer<typeof runDocumentRequestSchema>;
 
 /**
  * A declared document as frozen, and the revision of its path it was written

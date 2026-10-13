@@ -1,369 +1,235 @@
+import { z } from "zod";
+import type { ProjectBackendModelOptions } from "@/lib/agent-backends/project-model-options-schema";
+import {
+  getBackendCatalogEntry,
+  getStaticBackendModelCatalog,
+} from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+import type { AgentProfileLibraryItem } from "@/lib/agent-profiles/schemas";
 import type {
-  CatalogOption,
-  ConfigBlock,
-  ReviewerConfig,
-  SeatConfig,
-  Template,
-  TemplateContext,
-  TemplateSummary,
-} from "./template-model";
+  RunTemplateContext,
+  RunTemplateRecord,
+} from "@/lib/run-templates/document";
+import type { RunTemplateSummary } from "@/lib/run-templates/schemas";
+import type { ReviewerSetting } from "@/lib/runs/settings";
+import type { OwnerChoice } from "./components/template/LaunchDialog";
 
-/** The authored topology shared by the checkout run snapshots and editor stories. */
+/**
+ * A saved run template as the server stores it, and the options its editor
+ * offers. The run snapshots in `fixtures.ts` are launched from this template,
+ * so the editor, the diagram and the run page show one authored topology.
+ */
 
-export const catalog: CatalogOption[] = [
-  { backend: "claude", models: ["Opus 5.5", "Sonnet 5.5", "Haiku 4.5"] },
-  { backend: "codex", models: ["GPT-6 Sol", "GPT-6 Astra"] },
-];
-
-export const efforts = ["low", "medium", "high", "xhigh", "max"];
-export const profiles = [
-  "builtin:standard-agent",
-  "builtin:general-reviewer",
-  "project:careful-implementer",
-];
-export const validationCommands = ["typecheck", "lint", "test", "seams"];
-
-const opusHigh: SeatConfig = {
-  backend: "claude",
-  model: "Opus 5.5",
-  effort: "high",
-  profile: "builtin:standard-agent",
-};
-const correctness: ReviewerConfig = {
-  id: "r-correctness",
-  profile: "builtin:general-reviewer",
-  authority: "blocking",
-  focus: "Correctness",
-  backend: "codex",
-  model: "GPT-6 Sol",
-  effort: "high",
-};
-
-const globals: Template["globals"] = {
-  implementer: {
-    backend: "claude",
-    model: "Sonnet 5.5",
-    effort: "medium",
-    profile: "builtin:standard-agent",
-  },
-  reviewers: [],
-  checks: ["typecheck"],
-  humanApproval: false,
-  ownerQuestions: true,
-  unfinishedTaskRetries: 2,
-  validationRetries: 2,
-  captureRepairLimit: 1,
-  instabilityLimit: 3,
-  adviceCorrectionLimit: 1,
-  timeoutMinutes: null,
-};
-
-const defaults: ConfigBlock = {
-  implementer: { value: opusHigh, from: "template" },
-  reviewers: { value: [correctness], from: "template" },
-  checks: { value: ["typecheck", "lint"], from: "template" },
-  humanApproval: { value: false, from: "global" },
-  ownerQuestions: { value: true, from: "global" },
-  unfinishedTaskRetries: { value: 2, from: "global" },
-  validationRetries: { value: 3, from: "template" },
-  captureRepairLimit: { value: 1, from: "global" },
-  instabilityLimit: { value: 3, from: "global" },
-  adviceCorrectionLimit: { value: 1, from: "global" },
-  timeoutMinutes: { value: null, from: "global" },
-};
-
-/** A context that takes every default as it is. */
-const inherited = (): ConfigBlock => ({
-  implementer: { value: defaults.implementer.value, from: "template" },
-  reviewers: { value: defaults.reviewers.value, from: "template" },
-  checks: { value: defaults.checks.value, from: "template" },
-  humanApproval: {
-    value: defaults.humanApproval.value,
-    from: defaults.humanApproval.from,
-  },
-  ownerQuestions: {
-    value: defaults.ownerQuestions.value,
-    from: defaults.ownerQuestions.from,
-  },
-  unfinishedTaskRetries: {
-    value: defaults.unfinishedTaskRetries.value,
-    from: defaults.unfinishedTaskRetries.from,
-  },
-  validationRetries: {
-    value: defaults.validationRetries.value,
-    from: "template",
-  },
-  captureRepairLimit: { ...defaults.captureRepairLimit },
-  instabilityLimit: { ...defaults.instabilityLimit },
-  adviceCorrectionLimit: { ...defaults.adviceCorrectionLimit },
-  timeoutMinutes: { ...defaults.timeoutMinutes },
-});
-
-function context(
-  fields: Omit<
-    TemplateContext,
-    "config" | "outputOnly" | "guards" | "scope"
-  > & {
-    config?: Partial<ConfigBlock>;
-    outputOnly?: string[];
-    guards?: Record<string, string>;
-    scope?: TemplateContext["scope"];
-  },
-): TemplateContext {
+/** A guard or loop exit: true when the accepted output's field is true. */
+function whenTrue(field: string, title: string): Record<string, unknown> {
   return {
-    outputOnly: [],
-    guards: {},
-    scope: { mode: "full" },
-    ...fields,
-    config: { ...inherited(), ...fields.config },
+    title,
+    type: "object",
+    properties: { [field]: { const: true } },
+    required: [field],
   };
 }
 
-const contexts: TemplateContext[] = [
-  context({
+/** A context's output schema from its Zod contract, as the plain JSON a stored template holds. */
+function outputSchemaOf(shape: z.ZodRawShape): Record<string, unknown> {
+  // The spread drops the generator's non-JSON `~standard` marker, which a stored document never carries.
+  return { ...z.toJSONSchema(z.object(shape)) };
+}
+
+const publicChanges = whenTrue("publicChanges", "public API changed");
+const copyApproved = whenTrue("approved", "the copy reviewer approves");
+
+const generalReviewer = { tier: "builtin", id: "general-reviewer" } as const;
+
+const correctness: ReviewerSetting = {
+  authority: "blocking",
+  focus: "Correctness",
+  profile: generalReviewer,
+  backend: "codex",
+  modelSelection: {
+    modelId: "gpt-6-sol",
+    parameters: { fast: "false", reasoning: "high" },
+  },
+};
+
+function advisory(focus: string): ReviewerSetting {
+  return {
+    authority: "advisory",
+    focus,
+    profile: generalReviewer,
+    backend: "claude",
+    modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+  };
+}
+
+const contexts: RunTemplateContext[] = [
+  {
     key: "plan",
     scope: { mode: "readOnly" },
     title: "Plan the rollout",
     brief:
-      "Read the {{flag}} spec and the current code. Return a rollout plan: the order of work, the API contract, the migration and the flag rollout.",
+      "Read the {{inputs.flag}} spec and the current code. Return a rollout plan: the order of work, the API contract, the migration and the flag rollout.",
     tasks: [
+      { title: "Read the spec and the current code" },
+      { title: "Draft the rollout plan" },
       {
-        id: "t1",
-        title: "Read the spec and the current code",
-        instructions: "",
-      },
-      { id: "t2", title: "Draft the rollout plan", instructions: "" },
-      {
-        id: "t3",
         title: "Return the rollout plan",
         instructions: "Include the complete plan in your closing response.",
       },
     ],
-    criteria: [
-      {
-        id: "ac-1",
-        text: "The rollout plan orders the work so the API lands before the UI uses it",
-      },
-      { id: "ac-2", text: "The current public API stays unchanged" },
+    acceptanceCriteria: [
+      "The rollout plan orders the work so the API lands before the UI uses it",
+      "The current public API stays unchanged",
     ],
-    outputSchema: "",
-    dependsOn: [],
-    lane: null,
-    loop: null,
-    config: {
-      reviewers: {
-        value: [{ ...correctness, id: "r-feasibility", focus: "Feasibility" }],
-        from: "context",
-      },
-    },
-  }),
-  context({
+    settings: { reviewers: [{ ...correctness, focus: "Feasibility" }] },
+  },
+  {
     key: "api",
     scope: { mode: "owned", paths: ["src/api", "src/orders"] },
-    outputOnly: ["plan"],
+    dependsOn: [{ key: "plan", outputOnly: true }],
+    lane: "api",
     title: "Build the API",
     brief:
-      "Add the endpoints described in the accepted rollout plan behind the {{flag}} flag. Keep the current handlers as they are.",
+      "Add the endpoints described in the accepted rollout plan behind the {{inputs.flag}} flag. Keep the current handlers as they are.",
     tasks: [
-      { id: "t1", title: "Add the endpoints", instructions: "" },
-      { id: "t2", title: "Contract tests", instructions: "" },
-      { id: "t3", title: "Publish api-contract.md", instructions: "" },
+      { title: "Add the endpoints" },
+      { title: "Contract tests" },
+      { title: "Publish api-contract.md" },
     ],
-    criteria: [
-      {
-        id: "ac-1",
-        text: "Every endpoint validates input with the shared schemas",
-      },
+    acceptanceCriteria: [
+      "Every endpoint validates input with the shared schemas",
     ],
-    outputSchema:
-      '{\n  "type": "object",\n  "properties": {\n    "endpoints": { "type": "array", "items": { "type": "string" } },\n    "publicChanges": { "type": "boolean" }\n  },\n  "required": ["endpoints", "publicChanges"]\n}',
-    dependsOn: ["plan"],
-    lane: "api",
-    loop: null,
-    config: {
-      reviewers: {
-        value: [
-          correctness,
-          {
-            id: "r-api",
-            profile: "builtin:general-reviewer",
-            authority: "advisory",
-            focus: "API design",
-            backend: "claude",
-            model: "Sonnet 5.5",
-            effort: "medium",
-          },
-        ],
-        from: "context",
-      },
-      checks: { value: ["typecheck", "test"], from: "context" },
+    outputSchema: outputSchemaOf({
+      endpoints: z.array(z.string()),
+      publicChanges: z.boolean(),
+    }),
+    settings: {
+      reviewers: [correctness, advisory("API design")],
+      checks: ["typecheck", "test"],
     },
-  }),
-  context({
+  },
+  {
     key: "migrate",
     scope: { mode: "owned", paths: ["db"] },
-    outputOnly: ["plan"],
+    dependsOn: [{ key: "plan", outputOnly: true }, "api", "ui"],
     title: "Migrate the data",
     brief:
       "Add the new columns with a reversible migration. Backfill in batches; never lock the table.",
     tasks: [
-      { id: "t1", title: "Write the migration", instructions: "" },
-      { id: "t2", title: "Batch backfill", instructions: "" },
-      { id: "t3", title: "Rollback test", instructions: "" },
+      { title: "Write the migration" },
+      { title: "Batch backfill" },
+      { title: "Rollback test" },
     ],
-    criteria: [
-      { id: "ac-1", text: "No statement holds a table lock longer than 1s" },
-    ],
-    outputSchema: "",
-    dependsOn: ["plan", "api", "ui"],
-    lane: null,
-    loop: null,
-    config: {
-      checks: { value: ["typecheck", "test"], from: "context" },
+    acceptanceCriteria: ["No statement holds a table lock longer than 1s"],
+    settings: {
+      checks: ["typecheck", "test"],
       implementer: {
-        value: {
-          backend: "codex",
-          model: "GPT-6 Sol",
-          effort: "high",
-          profile: "project:careful-implementer",
+        profile: { tier: "project", id: "careful-implementer" },
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-6-sol",
+          parameters: { fast: "false", reasoning: "high" },
         },
-        from: "context",
       },
-      reviewers: {
-        value: [
-          {
-            id: "r-data",
-            profile: "builtin:general-reviewer",
-            authority: "blocking",
-            focus: "Data safety",
-            backend: "claude",
-            model: "Sonnet 5.5",
-            effort: "medium",
+      reviewers: [
+        {
+          authority: "blocking",
+          focus: "Data safety",
+          profile: generalReviewer,
+          backend: "claude",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
           },
-        ],
-        from: "context",
-      },
+        },
+      ],
     },
-  }),
-  context({
+  },
+  {
     key: "ui",
     scope: {
       mode: "owned",
       paths: ["src/checkout/ui", "src/checkout/copy.ts"],
     },
-    outputOnly: ["plan"],
+    dependsOn: [{ key: "plan", outputOnly: true }, "api"],
+    lane: "ui",
     title: "Build the UI",
     brief:
       "Build the steps on the new API. Follow the copy in the spec; empty states point at the next action.",
     tasks: [
-      { id: "t1", title: "Payment step", instructions: "" },
-      { id: "t2", title: "Review and confirmation steps", instructions: "" },
-      { id: "t3", title: "Empty and error states", instructions: "" },
+      { title: "Payment step" },
+      { title: "Review and confirmation steps" },
+      { title: "Empty and error states" },
     ],
-    criteria: [
-      { id: "ac-1", text: "Every step works with the keyboard alone" },
-      { id: "ac-2", text: "A missing payment method offers to add one" },
+    acceptanceCriteria: [
+      "Every step works with the keyboard alone",
+      "A missing payment method offers to add one",
     ],
-    outputSchema: "",
-    dependsOn: ["plan", "api"],
-    lane: "ui",
-    loop: null,
-    config: {
-      humanApproval: { value: true, from: "context" },
-      reviewers: {
-        value: [
-          correctness,
-          {
-            id: "r-a11y",
-            profile: "builtin:general-reviewer",
-            authority: "advisory",
-            focus: "Accessibility",
-            backend: "claude",
-            model: "Sonnet 5.5",
-            effort: "medium",
-          },
-        ],
-        from: "context",
-      },
+    settings: {
+      humanApproval: true,
+      reviewers: [correctness, advisory("Accessibility")],
     },
-  }),
-  context({
+  },
+  {
     key: "polish",
     scope: { mode: "owned", paths: ["src/checkout/copy.ts"] },
+    dependsOn: ["migrate"],
     title: "Polish copy and empty states",
     brief:
       "Bring the copy and empty states in line with the content guide. The reviewer approves when nothing is left to change.",
     tasks: [
-      { id: "t1", title: "Apply the content guide", instructions: "" },
-      { id: "t2", title: "Review every empty state", instructions: "" },
+      { title: "Apply the content guide" },
+      { title: "Review every empty state" },
     ],
-    criteria: [{ id: "ac-1", text: "Copy follows the content guide" }],
-    outputSchema:
-      '{\n  "type": "object",\n  "properties": { "approved": { "type": "boolean" } },\n  "required": ["approved"]\n}',
-    dependsOn: ["migrate"],
-    lane: null,
-    loop: "polish",
-    config: {
-      checks: { value: ["lint"], from: "context" },
+    acceptanceCriteria: ["Copy follows the content guide"],
+    outputSchema: outputSchemaOf({ approved: z.boolean() }),
+    settings: {
+      checks: ["lint"],
       implementer: {
-        value: {
-          backend: "claude",
-          model: "Sonnet 5.5",
-          effort: "medium",
-          profile: "builtin:standard-agent",
-        },
-        from: "context",
+        profile: { tier: "builtin", id: "standard-agent" },
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
       },
     },
-  }),
-  context({
+  },
+  {
     key: "integrate",
     scope: { mode: "readOnly" },
+    dependsOn: ["ui", "migrate", "polish"],
     title: "Check the assembled journey",
     brief:
       "Run the full journey against the migrated schema with the flag on and off. Report what breaks.",
     tasks: [
-      { id: "t1", title: "Journey with the flag on", instructions: "" },
-      { id: "t2", title: "Journey with the flag off", instructions: "" },
+      { title: "Journey with the flag on" },
+      { title: "Journey with the flag off" },
     ],
-    criteria: [
-      {
-        id: "ac-1",
-        text: "Both journeys complete; any failure is reported with its step",
-      },
+    acceptanceCriteria: [
+      "Both journeys complete; any failure is reported with its step",
     ],
-    outputSchema: "",
-    dependsOn: ["ui", "migrate", "polish"],
-    lane: null,
-    loop: null,
-    config: {
-      checks: { value: ["typecheck", "lint", "test"], from: "context" },
-    },
-  }),
-  context({
+    settings: { checks: ["typecheck", "lint", "test"] },
+  },
+  {
     key: "docs",
+    scope: { mode: "owned", paths: ["docs"] },
+    dependsOn: [
+      { key: "api", outputOnly: true, when: { schema: publicChanges } },
+      "integrate",
+    ],
     title: "Update the public API docs",
     brief:
       "Update the public API reference after the assembled journey passes, when the API reports public changes.",
-    tasks: [{ id: "t1", title: "Update the reference", instructions: "" }],
-    criteria: [],
-    outputSchema: "",
-    dependsOn: ["api", "integrate"],
-    outputOnly: ["api"],
-    guards: { api: "public API changed" },
-    scope: { mode: "owned", paths: ["docs"] },
-    lane: null,
-    loop: null,
-    config: { reviewers: { value: [], from: "context" } },
-  }),
+    tasks: [{ title: "Update the reference" }],
+    settings: { reviewers: [] },
+  },
 ];
 
-export const checkoutTemplate: Template = {
-  id: "tpl-checkout-rollout",
-  name: "Checkout rollout",
-  tier: "project",
+export const checkoutTemplate: RunTemplateRecord = {
+  format: 1,
+  id: "checkout-rollout",
   revision: 4,
+  createdAt: "2026-09-30T09:00:00.000Z",
   updatedAt: "2026-10-07T16:20:00.000Z",
+  name: "Checkout rollout",
   description:
     "Ships a change behind a flag: plan, the API and UI in their own lanes, a migration, a polish loop and an integration check.",
   parameters: [
@@ -373,83 +239,166 @@ export const checkoutTemplate: Template = {
       required: true,
     },
   ],
-  defaults,
-  globals,
-  contexts,
-  lanes: [
-    { key: "api", checks: ["typecheck", "test"] },
-    { key: "ui", checks: ["typecheck", "lint"] },
-  ],
-  loops: [
-    {
-      key: "polish",
-      body: ["polish"],
-      maxPasses: 3,
-      until: "the copy reviewer approves",
+  defaults: {
+    implementer: {
+      profile: { tier: "builtin", id: "standard-agent" },
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "high" } },
     },
-  ],
+    reviewers: [correctness],
+    checks: ["typecheck", "lint"],
+  },
+  workflow: {
+    contexts,
+    loops: [
+      {
+        key: "polish",
+        body: ["polish"],
+        entry: "polish",
+        exit: "polish",
+        until: { schema: copyApproved },
+        maxPasses: 3,
+      },
+    ],
+    lanes: [
+      { key: "api", checks: ["typecheck", "test"] },
+      { key: "ui", checks: ["typecheck", "lint"] },
+    ],
+  },
 };
 
-export const templateList: TemplateSummary[] = [
-  {
-    id: "tpl-checkout-rollout",
-    description:
-      "Plan a feature flag rollout with isolated API and UI work, then validate the assembled journey.",
-    name: "Checkout rollout",
-    tier: "project",
-    contexts: contexts.length,
-    updatedAt: "2026-10-07T16:20:00.000Z",
+/** A one-context template that sets nothing: every setting is the Command Center default. */
+export const quickCheckTemplate: RunTemplateRecord = {
+  format: 1,
+  id: "quick-check",
+  revision: 1,
+  createdAt: "2026-10-02T11:05:00.000Z",
+  updatedAt: "2026-10-02T11:05:00.000Z",
+  name: "Quick check",
+  description: "One agent answers a question about the session's code.",
+  parameters: [
+    { name: "question", description: "What to find out", required: true },
+  ],
+  defaults: {},
+  workflow: {
+    contexts: [
+      {
+        key: "answer",
+        scope: { mode: "readOnly" },
+        brief: "Answer this about the code: {{inputs.question}}",
+      },
+    ],
   },
-  {
-    id: "tpl-bug-fix",
-    description:
-      "Reproduce a defect, implement the fix and run an independent correctness review.",
-    name: "Bug fix with review",
+};
+
+function summaryOf(template: RunTemplateRecord): RunTemplateSummary {
+  return {
     tier: "project",
-    contexts: 1,
-    updatedAt: "2026-10-02T11:05:00.000Z",
-  },
+    id: template.id,
+    name: template.name,
+    description: template.description,
+    contexts: template.workflow.contexts.length,
+    parameters: template.parameters,
+    revision: template.revision,
+    updatedAt: template.updatedAt,
+  };
+}
+
+export const templateList: RunTemplateSummary[] = [
+  summaryOf(checkoutTemplate),
+  summaryOf(quickCheckTemplate),
   {
-    id: "tpl-two-lanes",
+    tier: "project",
+    id: "two-lanes",
     description:
       "Run independent changes in parallel lanes, then check the combined result.",
     name: "Two lanes and an integration check",
-    tier: "project",
     contexts: 3,
+    parameters: [],
+    revision: 2,
     updatedAt: "2026-09-28T09:40:00.000Z",
   },
   {
-    id: "tpl-agent-reviewer",
+    tier: "global",
+    id: "agent-reviewer",
     description:
       "One implementer and one blocking reviewer, with no workflow topology to configure.",
     name: "Agent with a blocking reviewer",
-    tier: "global",
     contexts: 1,
+    parameters: [{ name: "task", description: "The change", required: true }],
+    revision: 3,
     updatedAt: "2026-09-20T14:12:00.000Z",
   },
   {
-    id: "tpl-docs-refresh",
+    tier: "global",
+    id: "docs-refresh",
     description:
       "Audit the documentation, update it and verify links and examples.",
     name: "Docs refresh",
-    tier: "global",
     contexts: 2,
+    parameters: [],
+    revision: 1,
     updatedAt: "2026-09-11T10:00:00.000Z",
   },
 ];
 
+function catalogOptions(
+  backend: "claude" | "codex",
+): ProjectBackendModelOptions {
+  const catalog = getStaticBackendModelCatalog(backend);
+  return {
+    backend,
+    models: [...getBackendCatalogEntry(backend).models],
+    defaultModelId: catalog.defaultModelId,
+    source: "catalog",
+    modelCatalog: catalog,
+    defaultSelection: defaultSelectionForModel(catalog, catalog.defaultModelId),
+    diagnostics: [],
+  };
+}
+
+/** The project's model options, as `GET /api/projects/[name]/model-options` answers them. */
+export const modelOptions: ProjectBackendModelOptions[] = [
+  catalogOptions("claude"),
+  catalogOptions("codex"),
+];
+
+function profile(
+  tier: AgentProfileLibraryItem["ref"]["tier"],
+  id: string,
+  name: string,
+): AgentProfileLibraryItem {
+  return {
+    ref: { tier, id },
+    name,
+    description: name,
+    revision: 1,
+    recommendedFor: [],
+    tags: [],
+    readOnly: tier === "builtin",
+  };
+}
+
+export const profileOptions: AgentProfileLibraryItem[] = [
+  profile("builtin", "standard-agent", "Standard agent"),
+  profile("builtin", "general-reviewer", "General reviewer"),
+  profile("project", "careful-implementer", "Careful implementer"),
+];
+
+export const validationCommands = ["typecheck", "lint", "test", "seams"];
+
 /** The conversations a launch can make the run's owner. */
-export const ownerChoices = [
+export const ownerChoices: OwnerChoice[] = [
   {
     conversationId: "c-7f3a9e21",
     title: "Release readiness review",
-    backend: "claude" as const,
+    backend: "claude",
     busy: false,
   },
   {
     conversationId: "c-11aa22bb",
     title: "Lane merge investigation",
-    backend: "codex" as const,
+    backend: "codex",
     busy: true,
   },
 ];

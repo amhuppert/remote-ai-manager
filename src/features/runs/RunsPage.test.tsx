@@ -182,4 +182,32 @@ describe("runs page", () => {
       checkoutRun.title,
     );
   });
+
+  it("leads from the session's runs to its run templates", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: checkoutRun.title });
+
+    await user.click(screen.getByRole("button", { name: "Run templates" }));
+    expect(routerPush).toHaveBeenCalledWith("/projects/plc/fx/runs/templates");
+  });
+
+  it("at compact width, leads from a run to its session's run templates beside the run picker", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches:
+        query === "(max-width: 960px)" || query === "(max-width: 1180px)",
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: checkoutRun.title });
+    expect(screen.queryByRole("navigation", { name: "Runs" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Run" })).toBeInTheDocument();
+
+    routerPush.mockClear();
+    await user.click(screen.getByRole("button", { name: "Run templates" }));
+    expect(routerPush).toHaveBeenCalledWith("/projects/plc/fx/runs/templates");
+  });
 });

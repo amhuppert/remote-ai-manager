@@ -265,7 +265,7 @@ export const AgentRunAwaitingApproval: Story = {
   },
 };
 
-/** The first visit still provides a route to saved workflows. */
+/** The first visit still provides a route to run templates. */
 export const Empty: Story = { args: { runs: [], run: null } };
 export const Loading: Story = { args: { run: null, loading: true } };
 export const LoadFailed: Story = {

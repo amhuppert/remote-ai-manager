@@ -11,6 +11,11 @@ vi.mock(
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
 
+const routerPush = vi.hoisted(() => vi.fn<(href: string) => void>());
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: routerPush, replace: vi.fn(), back: vi.fn() }),
+}));
+
 const run: RunSummary = {
   runId: "run-a",
   title: "Checkout v2 rollout",
@@ -52,6 +57,19 @@ describe("the session's runs on its overview", () => {
       "href",
       "/projects/plc/fx/runs",
     );
+  });
+
+  it("leads to the session's run templates", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SessionRuns projectName="plc" sessionName="fx" />,
+      createTestQueryClient(),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Browse templates" }),
+    );
+    expect(routerPush).toHaveBeenCalledWith("/projects/plc/fx/runs/templates");
   });
 
   it("says when the runs could not be read, and shows a retry reading until the runs arrive", async () => {

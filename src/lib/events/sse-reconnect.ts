@@ -6,6 +6,7 @@ import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import { checkpointKeys } from "@/lib/conversation-checkpoints/query-keys";
 import { runKeys } from "@/lib/runs/query-keys";
+import { runTemplateKeys } from "@/lib/run-templates/query-keys";
 import { collaborationKeys } from "@/lib/workflows/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
@@ -104,6 +105,8 @@ export async function reconnectReconcile(
   // A missed run-changed frame names a run the client cannot know now; any run
   // may have finished, paused or been restored paused by a restart meanwhile.
   void queryClient.invalidateQueries({ queryKey: runKeys.all });
+  // A missed run-template-changed frame leaves a library or a clean editor on an old revision.
+  void queryClient.invalidateQueries({ queryKey: runTemplateKeys.all });
   const ticketDetails = queryClient
     .getQueriesData({ queryKey: ticketKeys.details() })
     .flatMap(([queryKey]) => {

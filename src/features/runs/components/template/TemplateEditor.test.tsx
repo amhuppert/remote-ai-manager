@@ -10,252 +10,483 @@ import {
   within,
 } from "@testing-library/react";
 import { TooltipProvider } from "@/components/ui/Tooltip";
-import type { Template } from "../../template-model";
-import { TemplateEditor } from "./TemplateEditor";
-import { LaunchDialog } from "./LaunchDialog";
+import type {
+  RunTemplateContent,
+  RunTemplateRecord,
+} from "@/lib/run-templates/document";
+import { backendModelCatalogSchema } from "@/lib/agent-backends/schemas";
+import { RUN_SETTING_DEFAULTS } from "@/lib/runs/settings";
 import {
-  catalog,
   checkoutTemplate,
-  efforts,
-  profiles,
+  modelOptions,
+  profileOptions,
+  quickCheckTemplate,
   templateList,
   validationCommands,
 } from "../../template-fixtures";
+import { contentOf, TEMPLATE_PART } from "../../template-model";
+import {
+  TemplateEditor,
+  type TemplateEditorActions,
+  type TemplateSaveResult,
+} from "./TemplateEditor";
+import { LaunchDialog } from "./LaunchDialog";
 
-const options = { catalog, efforts, profiles, checks: validationCommands };
-function editor(initialSelection = "defaults", template = checkoutTemplate) {
-  const actions = {
-    onReload: vi.fn(() => checkoutTemplate),
-    onSelectTemplate: vi.fn(),
-    onSave: vi.fn(),
-    onLaunch: vi.fn(),
+const options = {
+  models: modelOptions,
+  profiles: profileOptions,
+  checks: validationCommands,
+};
+
+/** Saves stay pending unless a test settles them, so no update lands after it ends. */
+function stubActions(
+  overrides: {
+    onSave?: TemplateEditorActions["onSave"];
+    onReload?: TemplateEditorActions["onReload"];
+  } = {},
+) {
+  return {
+    onSelectTemplate: vi.fn<TemplateEditorActions["onSelectTemplate"]>(),
+    onReload: vi.fn<TemplateEditorActions["onReload"]>(
+      overrides.onReload ?? (() => checkoutTemplate),
+    ),
+    onSave: vi.fn<TemplateEditorActions["onSave"]>(
+      overrides.onSave ?? (() => new Promise<TemplateSaveResult>(() => {})),
+    ),
+    onLaunch: vi.fn<TemplateEditorActions["onLaunch"]>(),
   };
-  render(
+}
+
+function editorElement(
+  actions: TemplateEditorActions,
+  props: {
+    template?: RunTemplateRecord;
+    initialSelection?: string;
+    initialDraft?: RunTemplateContent;
+    initialSaveState?: "idle" | "conflict";
+  } = {},
+) {
+  return (
     <TooltipProvider>
       <TemplateEditor
         templates={templateList}
-        template={template}
+        template={props.template ?? checkoutTemplate}
+        tier="project"
+        globals={RUN_SETTING_DEFAULTS}
         options={options}
         actions={actions}
-        initialSelection={initialSelection}
+        initialSelection={props.initialSelection ?? TEMPLATE_PART}
+        {...(props.initialDraft === undefined
+          ? {}
+          : { initialDraft: props.initialDraft })}
+        {...(props.initialSaveState === undefined
+          ? {}
+          : { initialSaveState: props.initialSaveState })}
       />
-    </TooltipProvider>,
+    </TooltipProvider>
   );
+}
+
+function editor(
+  initialSelection = TEMPLATE_PART,
+  template: RunTemplateRecord = checkoutTemplate,
+) {
+  const actions = stubActions();
+  render(editorElement(actions, { initialSelection, template }));
   return actions;
 }
 
+function savedContent(actions: ReturnType<typeof stubActions>) {
+  const call = actions.onSave.mock.calls.at(-1);
+  if (call === undefined) throw new Error("not saved");
+  return { content: call[0], baseRevision: call[1] };
+}
+
+function contextIn(content: RunTemplateContent, key: string) {
+  const context = content.workflow.contexts.find((each) => each.key === key);
+  if (context === undefined) throw new Error(`no context ${key}`);
+  return context;
+}
+
+const saveButton = (revision = 5) =>
+  screen.getByRole("button", { name: `Save as revision ${revision}` });
+
 afterEach(cleanup);
 
-describe("template acknowledgments", () => {
-  it("adopts the saved base revision while preserving edits made after submission", async () => {
-    const pending = Promise.withResolvers<Template>();
-    const actions = {
-      onReload: vi.fn(() => checkoutTemplate),
-      onSelectTemplate: vi.fn(),
-      onSave: vi.fn().mockReturnValueOnce(pending.promise),
-      onLaunch: vi.fn(),
-    };
-    const view = render(
-      <TooltipProvider>
-        <TemplateEditor
-          templates={templateList}
-          template={checkoutTemplate}
-          options={options}
-          actions={actions}
-        />
-      </TooltipProvider>,
+describe("saving the authored document", () => {
+  it("writes a default changed at the template tier to the defaults only, never into inheriting contexts", () => {
+    const actions = editor();
+    fireEvent.click(screen.getByRole("switch", { name: "Human approval" }));
+    fireEvent.click(saveButton());
+    const { content, baseRevision } = savedContent(actions);
+    expect(baseRevision).toBe(4);
+    expect(content).toEqual({
+      ...contentOf(checkoutTemplate),
+      defaults: { ...checkoutTemplate.defaults, humanApproval: true },
+    });
+    expect(content).not.toHaveProperty("revision");
+  });
+
+  it("deletes a context override when it is reset to the template default", () => {
+    const actions = editor("migrate");
+    const implementer = screen.getByRole("region", { name: "Implementer" });
+    fireEvent.click(
+      within(implementer).getByRole("button", {
+        name: "Use the template default",
+      }),
     );
+    fireEvent.click(saveButton());
+    const migrate = contextIn(savedContent(actions).content, "migrate");
+    expect(migrate.settings).not.toHaveProperty("implementer");
+    expect(migrate.settings?.checks).toEqual(["typecheck", "test"]);
+  });
+
+  it("names each setting's tier, and resets an override to the tier below it", () => {
+    editor("ui");
+    const approval = screen.getByRole("group", { name: "Human approval" });
+    expect(approval).toHaveTextContent("set here");
+    expect(
+      within(approval).getByRole("button", {
+        name: "Use the Command Center default",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "Agent questions" }),
+    ).toHaveTextContent("Command Center");
+    const checks = screen.getByRole("region", { name: "Checks" });
+    expect(within(checks).getByText("template")).toBeInTheDocument();
+    const reviewers = screen.getByRole("region", { name: "Reviewers" });
+    expect(
+      within(reviewers).getByRole("button", {
+        name: "Use the template default",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves a setting nobody set at the Command Center default, shown symbolically", () => {
+    editor(TEMPLATE_PART, quickCheckTemplate);
+    const implementer = screen.getByRole("region", { name: "Implementer" });
+    expect(
+      within(implementer).getByRole("combobox", { name: "Backend" }),
+    ).toHaveTextContent("Command Center default");
+    expect(
+      within(implementer).getByRole("combobox", { name: "Model" }),
+    ).toHaveTextContent("Command Center default");
+    expect(
+      screen.queryByRole("region", { name: "Unsaved changes" }),
+    ).toBeNull();
+  });
+});
+
+describe("template acknowledgments", () => {
+  it("adopts the saved revision while keeping edits made after submission", async () => {
+    const pending = Promise.withResolvers<TemplateSaveResult>();
+    const actions = stubActions();
+    actions.onSave.mockReturnValueOnce(pending.promise);
+    const view = render(editorElement(actions));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
       target: { value: "First edit" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
+    fireEvent.click(saveButton());
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox", { name: "Description" }), {
       target: { value: "A later edit" },
     });
-    const snapshot = { ...checkoutTemplate, revision: 5, name: "First edit" };
-    await act(async () => pending.resolve(snapshot));
-    view.rerender(
-      <TooltipProvider>
-        <TemplateEditor
-          templates={templateList}
-          template={snapshot}
-          options={options}
-          actions={actions}
-        />
-      </TooltipProvider>,
-    );
+    const stored = { ...checkoutTemplate, revision: 5, name: "First edit" };
+    await act(async () => pending.resolve({ kind: "saved", template: stored }));
+    view.rerender(editorElement(actions, { template: stored }));
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
       "A later edit",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 6" }));
-    expect(actions.onSave).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        revision: 5,
+    fireEvent.click(saveButton(6));
+    expect(savedContent(actions)).toEqual({
+      content: expect.objectContaining({
         name: "First edit",
         description: "A later edit",
       }),
-    );
+      baseRevision: 5,
+    });
   });
 
-  it("replaces same-template values when an explicit reload is acknowledged", async () => {
-    const snapshot = {
-      ...checkoutTemplate,
-      revision: 5,
-      name: "Reloaded title",
-    };
-    const actions = {
-      onReload: vi.fn().mockResolvedValue(snapshot),
-      onSelectTemplate: vi.fn(),
-      onSave: vi.fn(),
-      onLaunch: vi.fn(),
-    };
-    const view = render(
-      <TooltipProvider>
-        <TemplateEditor
-          templates={templateList}
-          template={checkoutTemplate}
-          initialDraft={{ ...checkoutTemplate, name: "Local edit" }}
-          saveState="conflict"
-          options={options}
-          actions={actions}
-        />
-      </TooltipProvider>,
-    );
+  it("turns a refused save into a conflict, and replaces the draft only after a confirmed reload", async () => {
+    const latest = { ...checkoutTemplate, revision: 5, name: "Reloaded" };
+    const actions = stubActions({
+      onSave: () => ({ kind: "conflict" }),
+      onReload: async () => latest,
+    });
+    render(editorElement(actions));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Local edit" },
+    });
+    fireEvent.click(saveButton());
+    await screen.findByText("A newer revision was saved while you edited");
     fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
     expect(actions.onReload).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
       "Local edit",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(actions.onReload).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
     fireEvent.click(screen.getByRole("button", { name: "Discard and reload" }));
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
-        "Reloaded title",
+        "Reloaded",
       ),
     );
     expect(actions.onReload).toHaveBeenCalledTimes(1);
-    expect(actions.onSelectTemplate).not.toHaveBeenCalled();
-    view.rerender(
-      <TooltipProvider>
-        <TemplateEditor
-          templates={templateList}
-          template={snapshot}
-          options={options}
-          actions={actions}
-        />
-      </TooltipProvider>,
-    );
     expect(
       screen.queryByRole("region", { name: "Unsaved changes" }),
-    ).not.toBeInTheDocument();
+    ).toBeNull();
   });
 
-  it("preserves dirty values and their base revision across an unsolicited refresh", () => {
-    const actions = {
-      onReload: vi.fn(() => checkoutTemplate),
-      onSelectTemplate: vi.fn(),
-      onSave: vi.fn(),
-      onLaunch: vi.fn(),
-    };
+  it("keeps dirty values and their base revision across an unsolicited refresh", () => {
+    const actions = stubActions();
     const view = render(
-      <TooltipProvider>
-        <TemplateEditor
-          templates={templateList}
-          template={checkoutTemplate}
-          initialDraft={{ ...checkoutTemplate, name: "Local edit" }}
-          options={options}
-          actions={actions}
-        />
-      </TooltipProvider>,
+      editorElement(actions, {
+        initialDraft: { ...contentOf(checkoutTemplate), name: "Local edit" },
+      }),
     );
     view.rerender(
-      <TooltipProvider>
-        <TemplateEditor
-          templates={templateList}
-          template={{ ...checkoutTemplate, revision: 5, name: "Remote edit" }}
-          options={options}
-          actions={actions}
-        />
-      </TooltipProvider>,
+      editorElement(actions, {
+        template: { ...checkoutTemplate, revision: 5, name: "Remote edit" },
+        initialDraft: { ...contentOf(checkoutTemplate), name: "Local edit" },
+      }),
     );
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
       "Local edit",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    expect(actions.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ revision: 4, name: "Local edit" }),
+    fireEvent.click(saveButton());
+    expect(savedContent(actions).baseRevision).toBe(4);
+  });
+
+  it("follows a newer stored revision while it has no changes", () => {
+    const actions = stubActions();
+    const view = render(editorElement(actions));
+    view.rerender(
+      editorElement(actions, {
+        template: { ...checkoutTemplate, revision: 5, name: "Remote edit" },
+      }),
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Remote edit",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(actions.onLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 5 }),
     );
   });
 });
 
-describe("template editing", () => {
-  it("keeps a cleared number empty until blur and saves the replacement value", () => {
-    const actions = editor();
-    const input = screen.getByRole("spinbutton", { name: "Candidate changes" });
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: "" } });
-    expect(input).toHaveValue(null);
-    fireEvent.change(input, { target: { value: "4" } });
-    fireEvent.blur(input);
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    expect(actions.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        defaults: expect.objectContaining({
-          instabilityLimit: { value: 4, from: "template" },
-        }),
-      }),
+describe("converging on the newest revision", () => {
+  it("adopts a newer revision once the edits that held it back are undone", () => {
+    const actions = stubActions();
+    const view = render(editorElement(actions));
+    const name = () => screen.getByRole("textbox", { name: "Name" });
+    fireEvent.change(name(), { target: { value: "Local edit" } });
+    const remote = { ...checkoutTemplate, revision: 5, name: "Remote edit" };
+    view.rerender(editorElement(actions, { template: remote }));
+    expect(name()).toHaveValue("Local edit");
+
+    fireEvent.change(name(), { target: { value: checkoutTemplate.name } });
+
+    expect(name()).toHaveValue("Remote edit");
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(actions.onLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 5 }),
     );
   });
 
-  it("clamps a number only on blur and allows an empty time limit", () => {
-    const actions = editor();
-    const retries = screen.getByRole("spinbutton", { name: "Task retries" });
-    fireEvent.focus(retries);
-    fireEvent.change(retries, { target: { value: "-2" } });
-    expect(retries).toHaveValue(-2);
-    fireEvent.blur(retries);
-    expect(retries).toHaveValue(0);
+  it("adopts a newer revision that arrived while its own save was pending", async () => {
+    const pending = Promise.withResolvers<TemplateSaveResult>();
+    const actions = stubActions({ onSave: () => pending.promise });
+    const view = render(editorElement(actions));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "First edit" },
+    });
+    fireEvent.click(saveButton());
+    const theirs = { ...checkoutTemplate, revision: 6, name: "Their edit" };
+    view.rerender(editorElement(actions, { template: theirs }));
+
+    await act(async () =>
+      pending.resolve({
+        kind: "saved",
+        template: { ...checkoutTemplate, revision: 5, name: "First edit" },
+      }),
+    );
+
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Their edit",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(actions.onLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 6 }),
+    );
+  });
+
+  it("never steps back to an older revision a refresh brings", () => {
+    const actions = stubActions();
+    const view = render(
+      editorElement(actions, {
+        template: { ...checkoutTemplate, revision: 5, name: "Current" },
+      }),
+    );
+    view.rerender(editorElement(actions, { template: checkoutTemplate }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Current",
+    );
+  });
+});
+
+describe("model aliases", () => {
+  it("shows an authored alias as its canonical model, leaving the document as authored", () => {
+    const catalog = backendModelCatalogSchema.parse({
+      backend: "cursor",
+      defaultModelId: "composer-2.5",
+      models: [
+        {
+          id: "composer-2.5",
+          label: "Composer 2.5",
+          aliases: ["composer"],
+          parameters: [],
+          variants: [
+            {
+              selection: { modelId: "composer-2.5", parameters: {} },
+              label: "Composer 2.5",
+              isDefault: true,
+            },
+          ],
+        },
+      ],
+      provenance: { source: "test" },
+    });
+    const aliased = {
+      ...quickCheckTemplate,
+      defaults: {
+        implementer: {
+          profile: { tier: "builtin", id: "standard-agent" },
+          backend: "cursor",
+          modelSelection: { modelId: "composer", parameters: {} },
+        },
+      },
+    } satisfies RunTemplateRecord;
+    render(
+      <TooltipProvider>
+        <TemplateEditor
+          templates={templateList}
+          template={aliased}
+          tier="project"
+          globals={RUN_SETTING_DEFAULTS}
+          options={{
+            ...options,
+            models: [
+              ...modelOptions,
+              {
+                backend: "cursor",
+                models: [],
+                defaultModelId: "composer-2.5",
+                source: "catalog",
+                modelCatalog: catalog,
+                defaultSelection: { modelId: "composer-2.5", parameters: {} },
+                diagnostics: [],
+              },
+            ],
+          }}
+          actions={stubActions()}
+        />
+      </TooltipProvider>,
+    );
+    const implementer = screen.getByRole("region", { name: "Implementer" });
+    expect(
+      within(implementer).getByRole("combobox", { name: "Model" }),
+    ).toHaveTextContent("Composer 2.5");
+    expect(
+      screen.queryByRole("region", { name: "Unsaved changes" }),
+    ).toBeNull();
+  });
+});
+
+describe("focus is not an edit", () => {
+  it("follows a newer inherited value in a focused, untouched field, and writes nothing on blur", () => {
+    const actions = stubActions();
+    const inheriting = {
+      ...checkoutTemplate,
+      defaults: { ...checkoutTemplate.defaults, timeoutMs: 600_000 },
+    };
+    const view = render(
+      editorElement(actions, {
+        template: inheriting,
+        initialSelection: "plan",
+      }),
+    );
+    const input = screen.getByRole("spinbutton", {
+      name: "Turn time limit in minutes",
+    });
+    fireEvent.focus(input);
+    view.rerender(
+      editorElement(actions, {
+        template: {
+          ...inheriting,
+          revision: 5,
+          defaults: { ...inheriting.defaults, timeoutMs: 1_200_000 },
+        },
+        initialSelection: "plan",
+      }),
+    );
+    expect(input).toHaveValue(20);
+
+    fireEvent.blur(input);
+
+    expect(
+      screen.queryByRole("region", { name: "Unsaved changes" }),
+    ).toBeNull();
+  });
+});
+
+describe("template editing", () => {
+  it("does not create an override by focusing and leaving an inherited field", () => {
+    editor("plan");
+    const input = screen.getByRole("spinbutton", {
+      name: "Turn time limit in minutes",
+    });
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+    expect(
+      screen.queryByRole("region", { name: "Unsaved changes" }),
+    ).toBeNull();
+  });
+
+  it("edits the time limit in minutes, stores milliseconds, and clears it to none", async () => {
+    const actions = stubActions({
+      onSave: (content, baseRevision) => ({
+        kind: "saved",
+        template: {
+          ...checkoutTemplate,
+          ...content,
+          revision: baseRevision + 1,
+        },
+      }),
+    });
+    render(editorElement(actions));
     const timeout = screen.getByRole("spinbutton", {
       name: "Turn time limit in minutes",
     });
     fireEvent.focus(timeout);
+    fireEvent.change(timeout, { target: { value: "" } });
+    expect(timeout).toHaveValue(null);
     fireEvent.change(timeout, { target: { value: "12" } });
     fireEvent.blur(timeout);
+    fireEvent.click(saveButton());
+    expect(savedContent(actions).content.defaults.timeoutMs).toBe(720_000);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Unsaved changes" }),
+      ).toBeNull(),
+    );
     fireEvent.focus(timeout);
     fireEvent.change(timeout, { target: { value: "" } });
     fireEvent.blur(timeout);
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    expect(actions.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        defaults: expect.objectContaining({
-          timeoutMinutes: { value: null, from: "template" },
-        }),
-      }),
-    );
-  });
-
-  it("saves a context override reset with its inherited provenance", () => {
-    const actions = editor("migrate");
-    fireEvent.click(
-      screen.getAllByRole("button", {
-        name: "Use the template default",
-      })[0] as HTMLElement,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    expect(actions.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contexts: expect.arrayContaining([
-          expect.objectContaining({
-            key: "migrate",
-            config: expect.objectContaining({
-              implementer: checkoutTemplate.defaults.implementer,
-            }),
-          }),
-        ]),
-      }),
-    );
+    fireEvent.click(saveButton(6));
+    expect(savedContent(actions).content.defaults.timeoutMs).toBeNull();
   });
 
   it("keeps the parameter input focused across edits", () => {
@@ -268,49 +499,25 @@ describe("template editing", () => {
     ).toHaveFocus();
   });
 
-  it("does not reuse a surviving task ID after deleting a task", () => {
+  it("saves task instructions, and leaves empty ones out", () => {
     const actions = editor("plan");
-    fireEvent.click(screen.getByRole("button", { name: "Remove t2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "task 3" }), {
-      target: { value: "Check the rollout" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    const saved = actions.onSave.mock.calls[0]?.[0];
-    const tasks = saved.contexts.find(
-      (context: { key: string }) => context.key === "plan",
-    ).tasks;
-    expect(new Set(tasks.map((task: { id: string }) => task.id)).size).toBe(
-      tasks.length,
-    );
-    expect(tasks.find((task: { id: string }) => task.id === "t3").title).toBe(
-      "Return the rollout plan",
-    );
-  });
-
-  it("exposes and saves task instructions", () => {
-    const actions = editor("plan");
-    fireEvent.click(screen.getByText("Instructions for t3"));
+    fireEvent.click(screen.getByText("Instructions for task 1"));
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Task t3 instructions" }),
-      { target: { value: "Publish the agreed rollout plan." } },
+      screen.getByRole("textbox", { name: "Task 1 instructions" }),
+      { target: { value: "Start from the spec's summary." } },
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    expect(actions.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contexts: expect.arrayContaining([
-          expect.objectContaining({
-            key: "plan",
-            tasks: expect.arrayContaining([
-              expect.objectContaining({
-                id: "t3",
-                instructions: "Publish the agreed rollout plan.",
-              }),
-            ]),
-          }),
-        ]),
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove task 2" }));
+    fireEvent.click(saveButton());
+    expect(contextIn(savedContent(actions).content, "plan").tasks).toEqual([
+      {
+        title: "Read the spec and the current code",
+        instructions: "Start from the spec's summary.",
+      },
+      {
+        title: "Return the rollout plan",
+        instructions: "Include the complete plan in your closing response.",
+      },
+    ]);
   });
 
   it("blocks saving malformed output JSON and launching an unsaved revision", () => {
@@ -318,13 +525,25 @@ describe("template editing", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /Output schema/ }), {
       target: { value: "{" },
     });
-    expect(
-      screen.getByRole("button", { name: "Save as revision 5" }),
-    ).toBeDisabled();
+    expect(saveButton()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("api · outputSchema");
   });
 
-  it("includes reviewer profiles in the editable seat configuration", () => {
+  it("commits a corrected output schema as an object", () => {
+    const actions = editor("plan");
+    fireEvent.change(screen.getByRole("textbox", { name: /Output schema/ }), {
+      target: {
+        value: '{"type":"object","properties":{"done":{"type":"boolean"}}}',
+      },
+    });
+    fireEvent.click(saveButton());
+    expect(
+      contextIn(savedContent(actions).content, "plan").outputSchema,
+    ).toEqual({ type: "object", properties: { done: { type: "boolean" } } });
+  });
+
+  it("gives every seat, reviewers included, a profile", () => {
     editor("api");
     expect(screen.getAllByRole("combobox", { name: "Profile" })).toHaveLength(
       3,
@@ -339,55 +558,16 @@ describe("template editing", () => {
         { name: "unused", description: "Unused", required: false },
       ],
     };
-    const actions = editor("defaults", template);
+    const actions = editor(TEMPLATE_PART, template);
     fireEvent.click(screen.getByRole("button", { name: "Remove parameter 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save as revision 5" }));
-    expect(actions.onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ parameters: checkoutTemplate.parameters }),
+    fireEvent.click(saveButton());
+    expect(savedContent(actions).content.parameters).toEqual(
+      checkoutTemplate.parameters,
     );
   });
 
-  it("locates undeclared references across every editable context content field", () => {
-    const template: Template = {
-      ...checkoutTemplate,
-      contexts: checkoutTemplate.contexts.map((context) =>
-        context.key === "plan"
-          ? {
-              ...context,
-              title: "Title {{missing_title}}",
-              brief: "Brief {{missing_brief}}",
-              tasks: [
-                {
-                  id: "t1",
-                  title: "Task {{missing_task}}",
-                  instructions: "Follow {{missing_instructions}}",
-                },
-              ],
-              criteria: [{ id: "ac-1", text: "Prove {{missing_criterion}}" }],
-              outputSchema:
-                '{"type":"object","description":"{{missing_schema}}"}',
-            }
-          : context,
-      ),
-    };
-    editor("plan", template);
-    const alert = screen.getByRole("alert");
-    for (const [field, parameter] of [
-      ["Title", "missing_title"],
-      ["Brief", "missing_brief"],
-      ["Task t1 title", "missing_task"],
-      ["Task t1 instructions", "missing_instructions"],
-      ["Criterion ac-1", "missing_criterion"],
-      ["Output schema", "missing_schema"],
-    ]) {
-      expect(alert).toHaveTextContent(
-        `plan: ${field} references undeclared parameter {{${parameter}}}.`,
-      );
-    }
-  });
-
   it.each(["remove", "rename"])(
-    "blocks saving when parameter %s leaves a reference undeclared",
+    "blocks saving when parameter %s leaves an {{inputs.<name>}} reference undeclared",
     (operation) => {
       editor();
       if (operation === "remove")
@@ -399,26 +579,68 @@ describe("template editing", () => {
           screen.getByRole("textbox", { name: "Parameter 1 name" }),
           { target: { value: "feature" } },
         );
-      expect(
-        screen.getByRole("button", { name: "Save as revision 5" }),
-      ).toBeDisabled();
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "plan: Brief references undeclared parameter {{flag}}.",
+      expect(saveButton()).toBeDisabled();
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent(
+        'plan · brief: {{inputs.flag}} names parameter "flag", which the template does not declare',
       );
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "api: Brief references undeclared parameter {{flag}}.",
-      );
+      expect(alert).toHaveTextContent("api · brief");
     },
   );
+
+  it("refuses a token in the old {{name}} grammar where parameters are substituted", () => {
+    editor("plan");
+    fireEvent.change(screen.getByRole("textbox", { name: "Brief" }), {
+      target: { value: "Read the {{flag}} spec." },
+    });
+    expect(saveButton()).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      'plan · brief: "{{flag}} spec." is not a parameter token',
+    );
+  });
 });
 
 describe("template launch", () => {
+  const launchable = {
+    tier: "project" as const,
+    id: checkoutTemplate.id,
+    name: checkoutTemplate.name,
+    revision: checkoutTemplate.revision,
+    parameters: checkoutTemplate.parameters,
+    contexts: checkoutTemplate.workflow.contexts.length,
+  };
+
+  it("sends the revision it showed, the owner and the parameter values", () => {
+    const onLaunch = vi.fn();
+    render(
+      <TooltipProvider>
+        <LaunchDialog
+          open
+          template={launchable}
+          sessionName="Test session"
+          owners={[]}
+          onOpenChange={vi.fn()}
+          onLaunch={onLaunch}
+        />
+      </TooltipProvider>,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: /^flag/ }), {
+      target: { value: "checkout-v3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Launch run" }));
+    expect(onLaunch).toHaveBeenCalledWith({
+      template: { tier: "project", id: checkoutTemplate.id, revision: 4 },
+      owner: { kind: "new", title: "Checkout rollout owner" },
+      parameters: { flag: "checkout-v3" },
+    });
+  });
+
   it("clears a field refusal when that parameter is corrected", () => {
     render(
       <TooltipProvider>
         <LaunchDialog
           open
-          template={checkoutTemplate}
+          template={launchable}
           sessionName="Test session"
           owners={[]}
           initialValues={{ flag: "old" }}
@@ -447,7 +669,7 @@ describe("template launch", () => {
       <TooltipProvider>
         <LaunchDialog
           {...props}
-          template={checkoutTemplate}
+          template={launchable}
           initialValues={{ flag: "old" }}
         />
       </TooltipProvider>,
@@ -455,24 +677,17 @@ describe("template launch", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
       target: { value: "Previous owner" },
     });
-    fireEvent.change(screen.getByRole("textbox", { name: /^flag/ }), {
-      target: { value: "edited" },
-    });
     view.rerender(
       <TooltipProvider>
         <LaunchDialog
           {...props}
-          template={{
-            ...checkoutTemplate,
-            tier: "global",
-            name: "Another template",
-          }}
+          template={{ ...launchable, tier: "global", name: "Another" }}
           initialValues={{ flag: "fresh" }}
         />
       </TooltipProvider>,
     );
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
-      "Another template owner",
+      "Another owner",
     );
     expect(screen.getByRole("textbox", { name: /^flag/ })).toHaveValue("fresh");
   });
@@ -483,7 +698,7 @@ describe("template launch", () => {
       <TooltipProvider>
         <LaunchDialog
           open
-          template={checkoutTemplate}
+          template={launchable}
           sessionName="Test session"
           owners={[]}
           initialValues={{ flag: "checkout-v3" }}
@@ -502,17 +717,5 @@ describe("template launch", () => {
         "Enter a name for the owner conversation.",
       ),
     ).toBeVisible();
-  });
-});
-
-describe("numeric setting provenance", () => {
-  it("does not create an override just by focusing and leaving an inherited field", () => {
-    editor();
-    const input = screen.getByRole("spinbutton", { name: "Candidate changes" });
-    fireEvent.focus(input);
-    fireEvent.blur(input);
-    expect(
-      screen.queryByRole("region", { name: "Unsaved changes" }),
-    ).not.toBeInTheDocument();
   });
 });

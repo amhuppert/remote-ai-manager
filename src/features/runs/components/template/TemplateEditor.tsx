@@ -23,6 +23,16 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
+import type { CascadedSettings } from "@/lib/config/settings-cascade";
+import type {
+  RunTemplateContent,
+  RunTemplateContext,
+  RunTemplateRecord,
+} from "@/lib/run-templates/document";
+import type { RunTemplateSummary } from "@/lib/run-templates/schemas";
+import type { RunTemplateTier } from "@/lib/runs/schemas";
+import type { RunSettingKey, RunSettings } from "@/lib/runs/settings";
+import { deepEqualJson } from "@/lib/shared/deep-equal";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
 import { cn } from "@/lib/ui/cn";
@@ -32,16 +42,31 @@ import {
   LoopIcon,
   PlayIcon,
 } from "@/components/runs/icons";
-import type { RunContext, RunEdge } from "@/components/runs/model";
-import type {
-  CatalogOption,
-  ConfigBlock,
-  ConfigKey,
-  Template,
-  TemplateContext,
-  TemplateSummary,
-  Tier,
+import {
+  TEMPLATE_PART,
+  changeCounts,
+  contentOf,
+  contextSettings,
+  draftProblems,
+  editContext,
+  minutesOf,
+  resetContextSetting,
+  resetDefault,
+  setContextSetting,
+  setDefault,
+  setLaneChecks,
+  templateSettings,
+  timeoutMsOf,
+  type DraftProblem,
 } from "../../template-model";
+import { seatOf } from "../../seat-model";
+import {
+  contextTitle,
+  dependenciesOf,
+  loopOf,
+  templateDiagram,
+  untitledName,
+} from "../../template-structure";
 import { RunDiagram } from "../RunDiagram";
 import {
   ChecksEditor,
@@ -50,101 +75,65 @@ import {
   INPUT,
   ListEditor,
   NumberField,
+  ProfileField,
   ReviewersEditor,
   SeatFields,
   SettingRow,
   TEXTAREA,
   TierBadge,
+  type TemplateEditorOptions,
 } from "./fields";
 
-export interface TemplateEditorOptions {
-  catalog: CatalogOption[];
-  efforts: string[];
-  profiles: string[];
-  checks: string[];
-}
+export type { TemplateEditorOptions } from "./fields";
+
+/** How a save ended: stored, or refused because someone saved a newer revision first. */
+export type TemplateSaveResult =
+  | { kind: "saved"; template: RunTemplateRecord }
+  | { kind: "conflict" };
 
 export interface TemplateEditorActions {
-  onSelectTemplate(template: TemplateSummary): void;
-  /** Fetch the current template; the editor applies it after explicit discard confirmation. */
-  onReload(): Template | Promise<Template>;
-  /** The draft carries its base revision. Return the persisted snapshot to acknowledge saving. */
-  onSave(draft: Template): Template | void | Promise<Template | void>;
-  onLaunch(): void;
+  onSelectTemplate(template: RunTemplateSummary): void;
+  /** Read the template again; the editor adopts it after an explicit discard confirmation. */
+  onReload(): RunTemplateRecord | Promise<RunTemplateRecord>;
+  /** Save the authored content at the revision it was edited from. Any other refusal throws. */
+  onSave(
+    content: RunTemplateContent,
+    baseRevision: number,
+  ): TemplateSaveResult | Promise<TemplateSaveResult>;
+  /** Launch the saved revision the editor shows. */
+  onLaunch(template: RunTemplateRecord): void;
 }
 
-type Selection = "defaults" | string;
 type View = "edit" | "diagram";
 
-/** One setting replaced; `{ value, from }` is exactly `ConfigBlock[K]` for every key. */
-function withSetting<K extends ConfigKey>(
-  block: ConfigBlock,
-  key: K,
-  value: ConfigBlock[K]["value"],
-  from: Tier,
-): ConfigBlock {
-  const next = { ...block };
-  next[key] = { value, from } as ConfigBlock[K];
-  return next;
-}
-
-const CONFIG_KEYS: ConfigKey[] = [
-  "implementer",
-  "reviewers",
-  "checks",
-  "humanApproval",
-  "ownerQuestions",
-  "unfinishedTaskRetries",
-  "validationRetries",
-  "captureRepairLimit",
-  "instabilityLimit",
-  "adviceCorrectionLimit",
-  "timeoutMinutes",
-];
-
-const same = (a: unknown, b: unknown) =>
-  JSON.stringify(a) === JSON.stringify(b);
-
-/** How many fields differ from the saved revision, by context or the defaults. */
-function changes(saved: Template, draft: Template): Map<Selection, number> {
-  const counts = new Map<Selection, number>();
-  const bump = (selection: Selection) =>
-    counts.set(selection, (counts.get(selection) ?? 0) + 1);
-  for (const key of CONFIG_KEYS)
-    if (!same(saved.defaults[key], draft.defaults[key])) bump("defaults");
-  for (const field of ["name", "description", "parameters", "lanes"] as const)
-    if (!same(saved[field], draft[field])) bump("defaults");
-  for (const context of draft.contexts) {
-    const before = saved.contexts.find((other) => other.key === context.key);
-    if (before === undefined) continue;
-    for (const field of [
-      "title",
-      "brief",
-      "tasks",
-      "criteria",
-      "outputSchema",
-    ] as const)
-      if (!same(before[field], context[field])) bump(context.key);
-    for (const key of CONFIG_KEYS)
-      if (
-        !same(before.config[key], context.config[key]) &&
-        (before.config[key].from === "context" ||
-          context.config[key].from === "context")
-      )
-        bump(context.key);
-  }
-  return counts;
-}
-
-function schemaProblem(text: string): string | null {
-  if (text.trim() === "") return null;
+/** An output schema typed in the editor: committed to the draft only once it is a schema the server accepts. */
+function schemaTextOutcome(
+  text: string,
+):
+  | { ok: true; schema: Record<string, unknown> | null }
+  | { ok: false; message: string } {
+  if (text.trim() === "") return { ok: true, schema: null };
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(text);
-    const issue = validateOutputSchemaDeclaration(parsed)[0];
-    return issue === undefined ? null : `${issue.path}: ${issue.message}`;
+    parsed = JSON.parse(text);
   } catch (error) {
-    return error instanceof Error ? error.message : "Not valid JSON";
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Not valid JSON",
+    };
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return { ok: false, message: "An output schema is a JSON object" };
+  const issue = validateOutputSchemaDeclaration(parsed)[0];
+  if (issue !== undefined)
+    return { ok: false, message: `${issue.path}: ${issue.message}` };
+  return { ok: true, schema: Object.fromEntries(Object.entries(parsed)) };
+}
+
+function schemaText(context: RunTemplateContext): string {
+  return context.outputSchema === undefined
+    ? ""
+    : JSON.stringify(context.outputSchema, null, 2);
 }
 
 function TemplatesRail({
@@ -154,65 +143,63 @@ function TemplatesRail({
   disabled,
   onSelect,
 }: {
-  templates: TemplateSummary[];
+  templates: readonly RunTemplateSummary[];
   selectedId: string;
-  selectedTier: Template["tier"];
+  selectedTier: RunTemplateTier;
   disabled: boolean;
-  onSelect(template: TemplateSummary): void;
+  onSelect(template: RunTemplateSummary): void;
 }) {
-  const tiers: Array<{ tier: TemplateSummary["tier"]; label: string }> = [
+  const tiers: Array<{ tier: RunTemplateTier; label: string }> = [
     { tier: "project", label: "This project" },
     { tier: "global", label: "Every project" },
   ];
   return (
-    <nav aria-label="Templates" className="flex flex-col gap-xl">
+    <nav aria-label="Run templates" className="flex flex-col gap-xl">
       <span className="px-md font-display text-[1.05rem] font-bold text-text-primary">
-        Templates
+        Run templates
       </span>
-      {tiers.map(({ tier, label }) => (
-        <section key={tier} className="flex flex-col gap-[4px]">
-          <h2 className="m-0 px-md font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-tertiary uppercase">
-            {label}
-          </h2>
-          <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
-            {templates
-              .filter((template) => template.tier === tier)
-              .map((template) => (
-                <li key={`${template.tier}:${template.id}`}>
-                  <button
-                    type="button"
-                    data-selected={
-                      template.id === selectedId &&
-                      template.tier === selectedTier
-                    }
-                    aria-current={
-                      template.id === selectedId &&
-                      template.tier === selectedTier
-                        ? "page"
-                        : undefined
-                    }
-                    disabled={disabled}
-                    onClick={() => onSelect(template)}
-                    className="group relative flex w-full cursor-pointer flex-col gap-[4px] rounded-md border border-solid border-transparent bg-transparent px-md py-[9px] text-left transition-colors duration-150 hover:border-border-subtle hover:bg-bg-surface focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[selected=true]:border-border-default data-[selected=true]:bg-bg-raised"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-full bg-transparent group-data-[selected=true]:bg-cyan"
-                    />
-                    <span className="font-mono text-[0.78rem] leading-[1.35] font-medium text-text-primary">
-                      {template.name}
-                    </span>
-                    <span className="font-mono text-[0.7rem] text-text-tertiary">
-                      {template.contexts}{" "}
-                      {template.contexts === 1 ? "context" : "contexts"} ·{" "}
-                      {formatLocalTime(template.updatedAt)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-          </ul>
-        </section>
-      ))}
+      {tiers.map(({ tier, label }) => {
+        const listed = templates.filter((template) => template.tier === tier);
+        if (listed.length === 0) return null;
+        return (
+          <section key={tier} className="flex flex-col gap-[4px]">
+            <h2 className="m-0 px-md font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-tertiary uppercase">
+              {label}
+            </h2>
+            <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
+              {listed.map((template) => {
+                const selected =
+                  template.id === selectedId && template.tier === selectedTier;
+                return (
+                  <li key={`${template.tier}:${template.id}`}>
+                    <button
+                      type="button"
+                      data-selected={selected}
+                      aria-current={selected ? "page" : undefined}
+                      disabled={disabled}
+                      onClick={() => onSelect(template)}
+                      className="group relative flex w-full cursor-pointer flex-col gap-[4px] rounded-md border border-solid border-transparent bg-transparent px-md py-[9px] text-left transition-colors duration-150 hover:border-border-subtle hover:bg-bg-surface focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 disabled:cursor-not-allowed data-[selected=true]:border-border-default data-[selected=true]:bg-bg-raised"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-full bg-transparent group-data-[selected=true]:bg-cyan"
+                      />
+                      <span className="font-mono text-[0.78rem] leading-[1.35] font-medium text-text-primary">
+                        {template.name}
+                      </span>
+                      <span className="font-mono text-[0.7rem] text-text-tertiary">
+                        {template.contexts}{" "}
+                        {template.contexts === 1 ? "context" : "contexts"} ·{" "}
+                        {formatLocalTime(template.updatedAt)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
     </nav>
   );
 }
@@ -269,32 +256,42 @@ function NavItem({
   );
 }
 
-function overrides(context: TemplateContext): number {
-  return CONFIG_KEYS.filter((key) => context.config[key].from === "context")
-    .length;
-}
+/** The settings every context inherits, or one context's, each with the tier its value comes from. */
+/** Why a global template's checks are offered from this project only. */
+const GLOBAL_CHECKS_NOTE =
+  "A global template runs in every project: these are this project's commands, and its checks are verified when the template is launched.";
 
-/** The settings every context inherits, or one context's, with the tier each value comes from. */
-function ConfigFields({
-  block,
+function SettingsFields({
+  settings,
   scope,
+  inherited,
+  globalTemplate,
   options,
   onSet,
   onReset,
 }: {
-  block: ConfigBlock;
+  settings: CascadedSettings<RunSettings>;
   scope: "context" | "template";
+  globalTemplate: boolean;
+  /** For a context: where each setting comes from once its override is reset. */
+  inherited: CascadedSettings<RunSettings> | null;
   options: TemplateEditorOptions;
-  onSet<K extends ConfigKey>(key: K, value: ConfigBlock[K]["value"]): void;
-  onReset(key: ConfigKey): void;
+  onSet<K extends RunSettingKey>(key: K, value: RunSettings[K]): void;
+  onReset(key: RunSettingKey): void;
 }) {
-  const badge = (key: ConfigKey) => (
+  const badge = (key: RunSettingKey) => (
     <TierBadge
-      from={block[key].from}
+      from={settings[key].from}
       scope={scope}
+      resetLabel={
+        inherited !== null && inherited[key].from === "template"
+          ? "Use the template default"
+          : "Use the Command Center default"
+      }
       onReset={() => onReset(key)}
     />
   );
+  const implementer = settings.implementer.value;
   return (
     <>
       <FieldSection
@@ -303,14 +300,20 @@ function ConfigFields({
         badge={badge("implementer")}
       >
         <SeatFields
-          seat={block.implementer.value}
-          catalog={options.catalog}
-          efforts={options.efforts}
-          profiles={options.profiles}
+          seat={seatOf(implementer)}
+          options={options}
           onChange={(seat) =>
-            onSet("implementer", { ...block.implementer.value, ...seat })
+            onSet("implementer", { profile: implementer.profile, ...seat })
           }
-        />
+        >
+          <ProfileField
+            value={implementer.profile}
+            profiles={options.profiles}
+            onChange={(profile) =>
+              onSet("implementer", { ...implementer, profile })
+            }
+          />
+        </SeatFields>
       </FieldSection>
       <FieldSection
         title="Reviewers"
@@ -318,20 +321,18 @@ function ConfigFields({
         badge={badge("reviewers")}
       >
         <ReviewersEditor
-          reviewers={block.reviewers.value}
-          catalog={options.catalog}
-          efforts={options.efforts}
-          profiles={options.profiles}
+          reviewers={settings.reviewers.value}
+          options={options}
           onChange={(reviewers) => onSet("reviewers", reviewers)}
         />
       </FieldSection>
       <FieldSection
         title="Checks"
-        description="Validation commands that run before reviewers read the work."
+        description={`Validation commands that run before reviewers read the work.${globalTemplate ? ` ${GLOBAL_CHECKS_NOTE}` : ""}`}
         badge={badge("checks")}
       >
         <ChecksEditor
-          checks={block.checks.value}
+          checks={settings.checks.value}
           available={options.checks}
           onChange={(checks) => onSet("checks", checks)}
         />
@@ -343,7 +344,7 @@ function ConfigFields({
           badge={badge("humanApproval")}
         >
           <Switch
-            checked={block.humanApproval.value}
+            checked={settings.humanApproval.value}
             onCheckedChange={(checked) => onSet("humanApproval", checked)}
             aria-label="Human approval"
           />
@@ -354,83 +355,23 @@ function ConfigFields({
           badge={badge("ownerQuestions")}
         >
           <Switch
-            checked={block.ownerQuestions.value}
+            checked={settings.ownerQuestions.value}
             onCheckedChange={(checked) => onSet("ownerQuestions", checked)}
             aria-label="Agent questions"
           />
         </SettingRow>
-      </FieldSection>
-      <FieldSection
-        title="Limits"
-        description="Each allowance is independent. Exhausting one halts the context for a decision."
-      >
-        <SettingRow
-          label="Task retries"
-          hint="Extra work turns after the first turn to finish open tasks."
-          badge={badge("unfinishedTaskRetries")}
-        >
-          <NumberField
-            label="Task retries"
-            min={0}
-            value={block.unfinishedTaskRetries.value}
-            onChange={(value) => onSet("unfinishedTaskRetries", value)}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Review retries"
-          hint="Rounds of fixes after a failed review before the context halts."
-          badge={badge("validationRetries")}
-        >
-          <NumberField
-            label="Review retries"
-            min={0}
-            value={block.validationRetries.value}
-            onChange={(value) => onSet("validationRetries", value)}
-          />
-        </SettingRow>
-        {(
-          [
-            {
-              key: "captureRepairLimit",
-              label: "Output repairs",
-              hint: "Retries when an agent's output does not match its schema.",
-              min: 0,
-            },
-            {
-              key: "instabilityLimit",
-              label: "Candidate changes",
-              hint: "Changed candidates before the context halts for a decision.",
-              min: 1,
-            },
-            {
-              key: "adviceCorrectionLimit",
-              label: "Advice corrections",
-              hint: "Retries to obtain a valid response to advisory findings.",
-              min: 0,
-            },
-          ] as const
-        ).map(({ key, label, hint, min }) => (
-          <SettingRow key={key} label={label} hint={hint} badge={badge(key)}>
-            <NumberField
-              label={label}
-              min={min}
-              value={block[key].value}
-              onChange={(value) => onSet(key, value)}
-            />
-          </SettingRow>
-        ))}
         <SettingRow
           label="Turn time limit"
           hint="Per agent invocation. Leave empty for no time limit."
-          badge={badge("timeoutMinutes")}
+          badge={badge("timeoutMs")}
         >
           <span className="flex items-center gap-sm">
             <NumberField
               label="Turn time limit in minutes"
               min={1}
-              value={block.timeoutMinutes.value}
+              value={minutesOf(settings.timeoutMs.value)}
               nullable
-              onChange={(value) => onSet("timeoutMinutes", value)}
+              onChange={(minutes) => onSet("timeoutMs", timeoutMsOf(minutes))}
             />
             <span className="font-mono text-[0.72rem] text-text-tertiary">
               min
@@ -442,107 +383,108 @@ function ConfigFields({
   );
 }
 
+const LABEL =
+  "font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase";
+
 function ContentFields({
   context,
-  onChange,
+  schemaText: text,
+  onEdit,
+  onSchemaText,
 }: {
-  context: TemplateContext;
-  onChange(change: Partial<TemplateContext>): void;
+  context: RunTemplateContext;
+  schemaText: string;
+  onEdit(change: Parameters<typeof editContext>[2]): void;
+  onSchemaText(text: string): void;
 }) {
-  const problem = schemaProblem(context.outputSchema);
+  const outcome = schemaTextOutcome(text);
+  const problem = outcome.ok ? null : outcome.message;
+  const empty = text.trim() === "";
   return (
     <FieldSection
       title="Work"
-      description="What the context is asked to do. {{name}} inserts a parameter at launch."
+      description="What the context is asked to do. {{inputs.<name>}} inserts a parameter at launch, in the title, brief, tasks and criteria."
     >
       <label className="flex flex-col gap-[6px]">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Title
-        </span>
+        <span className={LABEL}>Title</span>
         <input
           className={INPUT}
-          value={context.title}
-          onChange={(event) => onChange({ title: event.target.value })}
+          value={context.title ?? ""}
+          placeholder={untitledName(context)}
+          onChange={(event) => onEdit({ title: event.target.value })}
         />
       </label>
       <label className="flex flex-col gap-[6px]">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Brief
-        </span>
+        <span className={LABEL}>Brief</span>
         <MultilineInput
           className={cn(TEXTAREA, "min-h-[96px]")}
           rows={4}
           value={context.brief}
-          onValueChange={(brief) => onChange({ brief })}
+          onValueChange={(brief) => onEdit({ brief })}
         />
       </label>
       <div className="flex flex-col gap-sm">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Tasks
-        </span>
+        <span className={LABEL}>Tasks</span>
         <ListEditor
-          items={context.tasks.map((task) => ({
-            id: task.id,
+          items={(context.tasks ?? []).map((task) => ({
             text: task.title,
-            instructions: task.instructions,
+            instructions: task.instructions ?? "",
           }))}
           instructions
-          idPrefix="t"
-          addLabel="Add task"
+          noun="Task"
           placeholder="What the agent marks done"
           onChange={(items) =>
-            onChange({
+            onEdit({
               tasks: items.map((item) => ({
-                id: item.id,
                 title: item.text,
-                instructions: item.instructions ?? "",
+                instructions: item.instructions,
               })),
             })
           }
         />
       </div>
       <div className="flex flex-col gap-sm">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Acceptance criteria
-        </span>
+        <span className={LABEL}>Acceptance criteria</span>
         <ListEditor
-          items={context.criteria}
-          idPrefix="ac-"
-          addLabel="Add criterion"
+          items={(context.acceptanceCriteria ?? []).map((text) => ({
+            text,
+            instructions: "",
+          }))}
+          noun="Criterion"
           placeholder="What a reviewer checks"
-          onChange={(criteria) => onChange({ criteria })}
+          onChange={(items) =>
+            onEdit({ acceptanceCriteria: items.map((item) => item.text) })
+          }
         />
       </div>
       <label className="flex flex-col gap-[6px]">
         <span className="flex items-center gap-sm">
-          <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-            Output schema
-          </span>
+          <span className={LABEL}>Output schema</span>
           <span
             className={cn(
               "font-mono text-[0.7rem]",
               problem !== null
                 ? "text-red-text"
-                : context.outputSchema.trim() === ""
+                : empty
                   ? "text-text-tertiary"
                   : "text-green",
             )}
           >
             {problem !== null
               ? "Needs correction"
-              : context.outputSchema.trim() === ""
+              : empty
                 ? "optional"
                 : "Schema validated"}
           </span>
         </span>
         <MultilineInput
           className={cn(TEXTAREA, "min-h-[88px] text-[0.72rem]")}
-          rows={context.outputSchema.trim() === "" ? 2 : 8}
+          rows={empty ? 2 : 8}
           spellCheck={false}
-          value={context.outputSchema}
+          value={text}
           placeholder='{ "type": "object", "properties": { … } }'
           aria-invalid={problem !== null}
-          onValueChange={(outputSchema) => onChange({ outputSchema })}
+          onValueChange={onSchemaText}
         />
         <span
           className={cn(
@@ -560,41 +502,51 @@ function ContentFields({
 
 function Placement({
   context,
-  template,
+  draft,
 }: {
-  context: TemplateContext;
-  template: Template;
+  context: RunTemplateContext;
+  draft: RunTemplateContent;
 }) {
-  const loop = template.loops.find(
-    (candidate) => candidate.key === context.loop,
-  );
+  const dependencies = dependenciesOf(context);
+  const loop = loopOf(draft, context.key);
+  const scope = context.scope ?? { mode: "full" };
+  const outputOnly = dependencies.filter((dependency) => dependency.outputOnly);
   return (
     <div className="flex flex-wrap items-center gap-x-lg gap-y-[6px] rounded-lg border border-dashed border-border-default px-lg py-md font-mono text-[0.72rem] text-text-secondary">
       <span>
-        {context.dependsOn.length === 0
+        {dependencies.length === 0
           ? "Starts first"
-          : `After ${context.dependsOn.join(", ")}`}
+          : `After ${dependencies.map((dependency) => dependency.key).join(", ")}`}
       </span>
       <span>
-        {context.scope.mode === "readOnly"
+        {scope.mode === "readOnly"
           ? "Read-only"
-          : context.scope.mode === "owned"
-            ? `Writes ${context.scope.paths.join(", ")}`
+          : scope.mode === "owned"
+            ? `Writes ${scope.paths.join(", ")}`
             : "Full worktree access"}
       </span>
-      {context.outputOnly.length > 0 ? (
-        <span>Output only from {context.outputOnly.join(", ")}</span>
-      ) : null}
-      {Object.entries(context.guards).map(([source, guard]) => (
-        <span key={source}>
-          Route from {source}: {guard}
+      {outputOnly.length > 0 ? (
+        <span>
+          Output only from{" "}
+          {outputOnly.map((dependency) => dependency.key).join(", ")}
         </span>
-      ))}
+      ) : null}
+      {dependencies.flatMap((dependency) =>
+        dependency.guard === null
+          ? []
+          : [
+              <span key={dependency.key}>
+                Route from {dependency.key}: {dependency.guard}
+              </span>,
+            ],
+      )}
       <span className="inline-flex items-center gap-[6px]">
         <BranchIcon size={12} />
-        {context.lane === null ? "session worktree" : `lane ${context.lane}`}
+        {context.lane === undefined
+          ? "session worktree"
+          : `lane ${context.lane}`}
       </span>
-      {loop !== undefined ? (
+      {loop !== null ? (
         <span className="inline-flex items-center gap-[6px]">
           <LoopIcon size={12} />
           loop {loop.key} · up to {loop.maxPasses} passes until {loop.until}
@@ -602,7 +554,7 @@ function Placement({
       ) : null}
       <span className="basis-full text-text-tertiary">
         Contexts, dependencies, routes, loops and lanes change when an agent
-        edits the definition.
+        saves a new definition.
       </span>
     </div>
   );
@@ -612,25 +564,32 @@ function DetailsFields({
   draft,
   onChange,
 }: {
-  draft: Template;
-  onChange(change: Partial<Template>): void;
+  draft: RunTemplateContent;
+  onChange(change: Partial<RunTemplateContent>): void;
 }) {
+  const parameters = draft.parameters;
+  const replace = (
+    index: number,
+    change: Partial<RunTemplateContent["parameters"][number]>,
+  ) =>
+    onChange({
+      parameters: parameters.map((other, at) =>
+        at === index ? { ...other, ...change } : other,
+      ),
+    });
   return (
     <FieldSection title="Details">
       <label className="flex flex-col gap-[6px]">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Name
-        </span>
+        <span className={LABEL}>Name</span>
         <input
           className={INPUT}
           value={draft.name}
+          maxLength={120}
           onChange={(event) => onChange({ name: event.target.value })}
         />
       </label>
       <label className="flex flex-col gap-[6px]">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Description
-        </span>
+        <span className={LABEL}>Description</span>
         <MultilineInput
           className={cn(TEXTAREA, "min-h-[64px]")}
           rows={2}
@@ -639,11 +598,16 @@ function DetailsFields({
         />
       </label>
       <div className="flex flex-col gap-sm">
-        <span className="font-mono text-[0.7rem] font-medium tracking-[0.08em] text-text-tertiary uppercase">
-          Parameters
-        </span>
-        {draft.parameters.map((parameter, index) => (
+        <span className={LABEL}>Parameters</span>
+        {parameters.length === 0 ? (
+          <span className="font-mono text-[0.72rem] text-text-tertiary">
+            None. A parameter is a value the person launching gives, which
+            {" {{inputs.<name>}}"} inserts.
+          </span>
+        ) : null}
+        {parameters.map((parameter, index) => (
           <div
+            // Parameters are renamed in place; their position is their identity while editing.
             key={index}
             className="grid grid-cols-[130px_minmax(0,1fr)_auto_auto] items-center gap-sm rounded-md border border-solid border-border-dim bg-bg-base p-md max-768:grid-cols-[minmax(0,1fr)_auto]"
           >
@@ -651,28 +615,15 @@ function DetailsFields({
               aria-label={`Parameter ${index + 1} name`}
               className={cn(FIELD, "w-full max-768:col-span-2")}
               value={parameter.name}
-              onChange={(event) =>
-                onChange({
-                  parameters: draft.parameters.map((other, at) =>
-                    at === index
-                      ? { ...other, name: event.target.value }
-                      : other,
-                  ),
-                })
-              }
+              onChange={(event) => replace(index, { name: event.target.value })}
             />
             <input
               aria-label={`Parameter ${index + 1} description`}
               className={cn(INPUT, "max-768:col-span-2")}
               value={parameter.description}
+              placeholder="What the person launching gives"
               onChange={(event) =>
-                onChange({
-                  parameters: draft.parameters.map((other, at) =>
-                    at === index
-                      ? { ...other, description: event.target.value }
-                      : other,
-                  ),
-                })
+                replace(index, { description: event.target.value })
               }
             />
             <label className="flex shrink-0 items-center gap-sm font-mono text-[0.72rem] text-text-secondary">
@@ -680,13 +631,7 @@ function DetailsFields({
                 size="sm"
                 checked={parameter.required}
                 aria-label={`Parameter ${index + 1} required`}
-                onCheckedChange={(required) =>
-                  onChange({
-                    parameters: draft.parameters.map((other, at) =>
-                      at === index ? { ...other, required } : other,
-                    ),
-                  })
-                }
+                onCheckedChange={(required) => replace(index, { required })}
               />
               required
             </label>
@@ -697,9 +642,7 @@ function DetailsFields({
                 aria-label={`Remove parameter ${index + 1}`}
                 onClick={() =>
                   onChange({
-                    parameters: draft.parameters.filter(
-                      (_, at) => at !== index,
-                    ),
+                    parameters: parameters.filter((_, at) => at !== index),
                   })
                 }
               >
@@ -715,7 +658,7 @@ function DetailsFields({
           onClick={() =>
             onChange({
               parameters: [
-                ...draft.parameters,
+                ...parameters,
                 { name: "", description: "", required: false },
               ],
             })
@@ -742,7 +685,7 @@ function SaveBar({
   pending: boolean;
   count: number;
   invalid: boolean;
-  state: "idle" | "saving" | "conflict";
+  state: "idle" | "conflict";
   revision: number;
   onDiscard(): void;
   onSave(): void;
@@ -783,7 +726,7 @@ function SaveBar({
           size="sm"
           variant={conflict ? "default" : "ghost"}
           loading={pending && conflict}
-          disabled={pending || state === "saving"}
+          disabled={pending}
           onClick={
             conflict
               ? () => (count > 0 ? setConfirmReload(true) : onReload())
@@ -795,11 +738,13 @@ function SaveBar({
         <Button
           size="sm"
           variant={conflict ? "default" : "primary"}
-          loading={state === "saving" || (pending && !conflict)}
+          loading={pending && !conflict}
           disabled={pending || invalid || conflict}
           onClick={onSave}
         >
-          {`Save as revision ${revision + 1}`}
+          {pending && !conflict
+            ? "Saving…"
+            : `Save as revision ${revision + 1}`}
         </Button>
       </span>
       {conflict && confirmReload ? (
@@ -839,49 +784,8 @@ function SaveBar({
   );
 }
 
-function asRunContext(context: TemplateContext): RunContext {
-  const implementer = context.config.implementer.value;
-  return {
-    key: context.key,
-    title: context.title,
-    placement:
-      context.lane === null
-        ? { kind: "session" }
-        : { kind: "lane", lane: context.lane },
-    loop:
-      context.loop !== null
-        ? { key: context.loop, pass: 1, maxPasses: 1 }
-        : null,
-    dependsOn: context.dependsOn,
-    state: {
-      kind: "waiting",
-      dependencies: context.dependsOn,
-      provisionLanes: [],
-      publicationLanes: [],
-    },
-    tasks: { done: 0, total: context.tasks.length },
-    questions: [],
-    costUsd: null,
-    costComplete: true,
-    implementer: {
-      assignment: "implementer",
-      role: "implementer",
-      backend: implementer.backend,
-      model: implementer.model,
-      effort: implementer.effort,
-    },
-    reviewers: context.config.reviewers.value.map((reviewer, index) => ({
-      assignment: `reviewer-${index + 1}`,
-      role: "reviewer",
-      backend: reviewer.backend,
-      model: reviewer.model,
-      effort: reviewer.effort,
-      authority: reviewer.authority,
-      focus: reviewer.focus,
-    })),
-    humanApproval: context.config.humanApproval.value,
-    startedAt: null,
-  };
+function errorText(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 /**
@@ -892,105 +796,90 @@ function asRunContext(context: TemplateContext): RunContext {
 function TemplateEditorBody({
   templates,
   template,
+  tier,
+  globals,
   options,
   actions,
-  initialSelection = "defaults",
+  initialSelection = TEMPLATE_PART,
   initialView = "edit",
   initialDraft,
-  saveState = "idle",
+  initialSaveState = "idle",
 }: {
-  templates: TemplateSummary[];
-  template: Template;
+  templates: readonly RunTemplateSummary[];
+  /** The stored template; a newer revision is adopted while the draft has no changes. */
+  template: RunTemplateRecord;
+  tier: RunTemplateTier;
+  /** The Command Center defaults: what a setting no tier sets falls back to. */
+  globals: RunSettings;
   options: TemplateEditorOptions;
   actions: TemplateEditorActions;
-  initialSelection?: Selection;
+  /** A context key, or the template part. */
+  initialSelection?: string;
   initialView?: View;
   /** Stories open the editor mid-edit. */
-  initialDraft?: Template;
-  saveState?: "idle" | "saving" | "conflict";
+  initialDraft?: RunTemplateContent;
+  initialSaveState?: "idle" | "conflict";
 }) {
   const [saved, setSaved] = useState(template);
-  const [draft, setDraft] = useState<Template>(initialDraft ?? template);
-  const [pending, setPending] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection>(initialSelection);
-  const [view, setView] = useState<View>(initialView);
-  const counts = useMemo(() => changes(saved, draft), [saved, draft]);
-  const declaredParameters = new Set(
-    draft.parameters.map((parameter) => parameter.name),
+  const [draft, setDraft] = useState<RunTemplateContent>(
+    initialDraft ?? contentOf(template),
   );
-  const problems = [
-    ...(draft.name.trim() === ""
-      ? [{ selection: "defaults", message: "Give the template a name." }]
-      : []),
-    ...draft.parameters.flatMap((parameter, index) =>
-      parameter.name.trim() === ""
-        ? [
+  // Output schema text being typed, by context key, until it is a schema the draft can hold.
+  const [schemaTexts, setSchemaTexts] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState(false);
+  const [saveState, setSaveState] = useState(initialSaveState);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [selection, setSelection] = useState(initialSelection);
+  const [view, setView] = useState<View>(initialView);
+
+  const counts = useMemo(
+    () => changeCounts(contentOf(saved), draft),
+    [saved, draft],
+  );
+  const schemaProblems: DraftProblem[] = Object.entries(schemaTexts).flatMap(
+    ([key, text]) => {
+      const outcome = schemaTextOutcome(text);
+      return outcome.ok
+        ? []
+        : [
             {
-              selection: "defaults",
-              message: `Parameter ${index + 1} needs a name.`,
+              part: key,
+              location: `${key} · outputSchema`,
+              message: outcome.message,
             },
-          ]
-        : draft.parameters.some(
-              (other, at) => at !== index && other.name === parameter.name,
-            )
-          ? [
-              {
-                selection: "defaults",
-                message: `Parameter ${parameter.name} appears more than once.`,
-              },
-            ]
-          : [],
-    ),
-    ...draft.contexts.flatMap((context) => {
-      const errors = [
-        ...(context.title.trim() === "" ? ["Add a title."] : []),
-        ...(context.brief.trim() === "" ? ["Add a brief."] : []),
-        ...context.tasks
-          .filter((task) => task.title.trim() === "")
-          .map((task) => `Task ${task.id} needs a title.`),
-        ...context.criteria
-          .filter((criterion) => criterion.text.trim() === "")
-          .map((criterion) => `Criterion ${criterion.id} needs text.`),
-        ...(schemaProblem(context.outputSchema) === null
-          ? []
-          : ["Correct the output schema."]),
-        ...[
-          { label: "Title", text: context.title },
-          { label: "Brief", text: context.brief },
-          ...context.tasks.flatMap((task) => [
-            { label: `Task ${task.id} title`, text: task.title },
-            { label: `Task ${task.id} instructions`, text: task.instructions },
-          ]),
-          ...context.criteria.map((criterion) => ({
-            label: `Criterion ${criterion.id}`,
-            text: criterion.text,
-          })),
-          { label: "Output schema", text: context.outputSchema },
-        ].flatMap(({ label, text }) => {
-          // This form promises {{name}} references; the converter owns substitution at cutover.
-          const names = new Set(
-            [...text.matchAll(/\{\{([^{}]+)\}\}/g)].map((match) =>
-              match[1]?.trim(),
-            ),
-          );
-          return [...names].flatMap((name) =>
-            name && !declaredParameters.has(name)
-              ? [`${label} references undeclared parameter {{${name}}}.`]
-              : [],
-          );
-        }),
-      ];
-      return errors.map((message) => ({
-        selection: context.key,
-        message: `${context.key}: ${message}`,
-      }));
-    }),
-  ];
+          ];
+    },
+  );
+  const validation = useMemo(() => draftProblems(draft), [draft]);
+  const problems = [...schemaProblems, ...validation];
+  const changedParts = new Map(counts);
+  for (const problem of schemaProblems)
+    changedParts.set(problem.part, (changedParts.get(problem.part) ?? 0) + 1);
+  const total = [...changedParts.values()].reduce(
+    (sum, count) => sum + count,
+    0,
+  );
   const invalid = problems.length > 0;
-  const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+
+  // Whenever the editor is clean, idle and behind the newest stored revision
+  // it knows of, it moves to that revision; a dirty, saving or conflicted
+  // editor keeps its draft and base revision until that changes. Only a
+  // strictly newer revision is taken, so a stale refresh never steps back.
+  if (
+    template.revision > saved.revision &&
+    total === 0 &&
+    !pending &&
+    saveState === "idle"
+  ) {
+    setSaved(template);
+    setDraft(contentOf(template));
+    setSchemaTexts({});
+  }
+
   const selected =
-    draft.contexts.find((context) => context.key === selection) ?? null;
+    draft.workflow.contexts.find((context) => context.key === selection) ??
+    null;
+  const shownTemplate = templateSettings(globals, draft);
 
   const save = async () => {
     if (pending || invalid || saveState !== "idle") return;
@@ -998,25 +887,19 @@ function TemplateEditorBody({
     setPending(true);
     setActionError(null);
     try {
-      const acknowledgment = actions.onSave(submitted);
-      if (acknowledgment === undefined) return;
-      const snapshot = await acknowledgment;
-      if (snapshot !== undefined) {
-        setSaved(snapshot);
-        setDraft((current) =>
-          same(current, submitted)
-            ? snapshot
-            : {
-                ...current,
-                revision: snapshot.revision,
-                updatedAt: snapshot.updatedAt,
-              },
-        );
+      const result = await actions.onSave(submitted, saved.revision);
+      if (result.kind === "conflict") {
+        setSaveState("conflict");
+        return;
       }
-    } catch (error) {
-      setActionError(
-        error instanceof Error ? error.message : "Could not save the template.",
+      setSaved(result.template);
+      setDraft((current) =>
+        deepEqualJson(current, submitted)
+          ? contentOf(result.template)
+          : current,
       );
+    } catch (error) {
+      setActionError(errorText(error, "Could not save the template."));
     } finally {
       setPending(false);
     }
@@ -1027,142 +910,93 @@ function TemplateEditorBody({
     setPending(true);
     setActionError(null);
     try {
-      const snapshot = await actions.onReload();
-      setSaved(snapshot);
-      setDraft(snapshot);
+      const latest = await actions.onReload();
+      setSaved(latest);
+      setDraft(contentOf(latest));
+      setSchemaTexts({});
+      setSaveState("idle");
     } catch (error) {
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : "Could not reload the template.",
-      );
+      setActionError(errorText(error, "Could not reload the template."));
     } finally {
       setPending(false);
     }
   };
 
-  const updateContext = (
-    key: string,
-    change: (context: TemplateContext) => TemplateContext,
-  ) =>
-    setDraft((current) => ({
-      ...current,
-      contexts: current.contexts.map((context) =>
-        context.key === key ? change(context) : context,
-      ),
-    }));
-
-  // A default reaches every context that has not set its own value.
-  const setDefault = <K extends ConfigKey>(
-    key: K,
-    value: ConfigBlock[K]["value"],
-    from: Tier,
-  ) =>
-    setDraft((current) => ({
-      ...current,
-      defaults: withSetting(current.defaults, key, value, from),
-      contexts: current.contexts.map((context) =>
-        context.config[key].from === "context"
-          ? context
-          : {
-              ...context,
-              config: withSetting(
-                context.config,
-                key,
-                value,
-                from === "global" ? "global" : "template",
-              ),
-            },
-      ),
-    }));
-
-  const edges: RunEdge[] = draft.contexts.flatMap((context) =>
-    context.dependsOn.map((from) => ({
-      from,
-      to: context.key,
-      guard:
-        context.guards[from] === undefined
-          ? null
-          : { label: context.guards[from], state: "undecided" as const },
-      outputOnly: context.outputOnly.includes(from),
-    })),
+  const diagram = useMemo(
+    () => templateDiagram(globals, draft, options.models),
+    [globals, draft, options.models],
   );
-  const loops = draft.loops.map((loop) => ({
-    ...loop,
-    pass: 0,
-    state: "unstarted" as const,
-  }));
-  const lanes = draft.lanes.map((lane) => ({
-    key: lane.key,
-    branch: `lane ${lane.key}`,
-    worktreePath: "",
-    state: "waiting" as const,
-    attempt: null,
-    detail: null,
-    commit: null,
-    checks: lane.checks,
-  }));
+  const lanes = draft.workflow.lanes ?? [];
+  const loops = draft.workflow.loops ?? [];
 
   return (
     <div className="flex h-full min-h-0 w-full bg-bg-void">
       <aside className="w-[248px] shrink-0 overflow-y-auto border-y-0 border-r border-l-0 border-solid border-border-dim bg-bg-base px-sm py-xl max-1080:hidden">
         <TemplatesRail
           templates={templates}
-          selectedId={template.id}
-          selectedTier={template.tier}
+          selectedId={saved.id}
+          selectedTier={tier}
           disabled={total > 0 || pending}
           onSelect={actions.onSelectTemplate}
         />
       </aside>
-      <main className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1 flex-col gap-xl overflow-y-auto px-2xl py-xl max-768:px-lg">
-          <div className="hidden max-1080:block">
-            <Select
-              value={`${template.tier}:${template.id}`}
-              onValueChange={(value) => {
-                const next = templates.find(
-                  (item) => `${item.tier}:${item.id}` === value,
-                );
-                if (next !== undefined) actions.onSelectTemplate(next);
-              }}
-              disabled={total > 0 || pending}
-            >
-              <SelectTrigger aria-label="Template" layoutClassName="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {templates.map((item) => (
-                  <SelectItem
-                    key={`${item.tier}:${item.id}`}
-                    value={`${item.tier}:${item.id}`}
-                  >
-                    {item.name} · {item.tier}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {templates.length > 1 ? (
+            <div className="hidden max-1080:block">
+              <Select
+                value={`${tier}:${saved.id}`}
+                onValueChange={(value) => {
+                  const next = templates.find(
+                    (item) => `${item.tier}:${item.id}` === value,
+                  );
+                  if (next !== undefined) actions.onSelectTemplate(next);
+                }}
+                disabled={total > 0 || pending}
+              >
+                <SelectTrigger aria-label="Template" layoutClassName="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {templates.map((item) => (
+                    <SelectItem
+                      key={`${item.tier}:${item.id}`}
+                      value={`${item.tier}:${item.id}`}
+                    >
+                      {item.name} · {item.tier}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           <header className="flex flex-wrap items-start gap-lg">
             <div className="flex min-w-0 flex-1 flex-col gap-sm max-768:basis-full">
               <span className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
-                {template.tier === "project"
-                  ? "Project template"
-                  : "Global template"}{" "}
-                · revision {saved.revision} · saved{" "}
+                {tier === "project" ? "Project template" : "Global template"} ·
+                revision {saved.revision} · saved{" "}
                 {formatLocalTime(saved.updatedAt)}
               </span>
-              <h1 className="m-0 font-display text-[1.75rem] leading-[1.1] font-extrabold text-text-primary max-768:text-[1.35rem]">
-                {draft.name}
+              <h1 className="m-0 font-display text-[1.75rem] leading-[1.1] font-extrabold break-words text-text-primary max-768:text-[1.35rem]">
+                {draft.name.trim() === "" ? saved.name : draft.name}
               </h1>
-              <p className="m-0 max-w-[720px] font-mono text-[0.75rem] leading-[1.55] text-text-secondary">
-                {draft.description}
-              </p>
+              {draft.description !== "" ? (
+                <p className="m-0 max-w-[720px] font-mono text-[0.75rem] leading-[1.55] text-text-secondary">
+                  {draft.description}
+                </p>
+              ) : null}
               <span className="flex flex-wrap items-center gap-x-lg gap-y-[4px] font-mono text-[0.72rem] text-text-tertiary">
-                <span>{draft.contexts.length} contexts</span>
-                <span>{draft.lanes.length} lanes</span>
                 <span>
-                  {draft.loops.length}{" "}
-                  {draft.loops.length === 1 ? "loop" : "loops"}
+                  {draft.workflow.contexts.length}{" "}
+                  {draft.workflow.contexts.length === 1
+                    ? "context"
+                    : "contexts"}
+                </span>
+                <span>
+                  {lanes.length} {lanes.length === 1 ? "lane" : "lanes"}
+                </span>
+                <span>
+                  {loops.length} {loops.length === 1 ? "loop" : "loops"}
                 </span>
                 <span>
                   parameters:{" "}
@@ -1196,10 +1030,8 @@ function TemplateEditorBody({
                 <Button
                   size="sm"
                   variant="primary"
-                  disabled={
-                    total > 0 || pending || invalid || saveState !== "idle"
-                  }
-                  onClick={actions.onLaunch}
+                  disabled={total > 0 || pending || saveState !== "idle"}
+                  onClick={() => actions.onLaunch(saved)}
                 >
                   <PlayIcon size={12} />
                   Launch
@@ -1221,10 +1053,10 @@ function TemplateEditorBody({
               <div className="h-[520px]">
                 <RunDiagram
                   template
-                  contexts={draft.contexts.map(asRunContext)}
-                  edges={edges}
-                  lanes={lanes}
-                  loops={loops}
+                  contexts={diagram.contexts}
+                  edges={diagram.edges}
+                  lanes={diagram.lanes}
+                  loops={diagram.loops}
                   selectedKey={selected?.key ?? null}
                   onSelect={(key) => {
                     setSelection(key);
@@ -1245,12 +1077,12 @@ function TemplateEditorBody({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="defaults">
+                    <SelectItem value={TEMPLATE_PART}>
                       Details and defaults
                     </SelectItem>
-                    {draft.contexts.map((context) => (
+                    {draft.workflow.contexts.map((context) => (
                       <SelectItem key={context.key} value={context.key}>
-                        {context.key} · {context.title}
+                        {context.key} · {contextTitle(context)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1262,11 +1094,11 @@ function TemplateEditorBody({
               >
                 <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
                   <NavItem
-                    selected={selection === "defaults"}
-                    onSelect={() => setSelection("defaults")}
+                    selected={selection === TEMPLATE_PART}
+                    onSelect={() => setSelection(TEMPLATE_PART)}
                     overline="template"
                     title="Details and defaults"
-                    changed={counts.get("defaults") ?? 0}
+                    changed={changedParts.get(TEMPLATE_PART) ?? 0}
                     trailing={
                       <span className="text-text-tertiary">
                         <DocumentIcon size={12} />
@@ -1277,22 +1109,25 @@ function TemplateEditorBody({
                 <section className="flex flex-col gap-[4px]">
                   <h2 className="m-0 px-md font-mono text-[0.7rem] font-semibold tracking-[0.1em] text-text-tertiary uppercase">
                     Contexts{" "}
-                    <span className="font-normal">{draft.contexts.length}</span>
+                    <span className="font-normal">
+                      {draft.workflow.contexts.length}
+                    </span>
                   </h2>
                   <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
-                    {draft.contexts.map((context) => {
-                      const set = overrides(context);
+                    {draft.workflow.contexts.map((context) => {
+                      const set = Object.keys(context.settings ?? {}).length;
+                      const loop = loopOf(draft, context.key);
                       return (
                         <NavItem
                           key={context.key}
                           selected={selection === context.key}
                           onSelect={() => setSelection(context.key)}
                           overline={context.key}
-                          title={context.title}
-                          changed={counts.get(context.key) ?? 0}
+                          title={contextTitle(context)}
+                          changed={changedParts.get(context.key) ?? 0}
                           trailing={
                             <>
-                              {context.lane !== null ? (
+                              {context.lane !== undefined ? (
                                 <span
                                   className="text-text-tertiary"
                                   title={`lane ${context.lane}`}
@@ -1300,10 +1135,10 @@ function TemplateEditorBody({
                                   <BranchIcon size={11} />
                                 </span>
                               ) : null}
-                              {context.loop !== null ? (
+                              {loop !== null ? (
                                 <span
                                   className="text-text-tertiary"
-                                  title={`loop ${context.loop}`}
+                                  title={`loop ${loop.key}`}
                                 >
                                   <LoopIcon size={11} />
                                 </span>
@@ -1338,43 +1173,47 @@ function TemplateEditorBody({
                       <h2 className="m-0 font-mono text-[0.82rem] font-semibold text-text-primary">
                         Defaults
                       </h2>
-                      <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
-                        Every context uses these unless it sets its own. Unset
-                        ones come from the global defaults.
+                      <p className="m-0 max-w-[680px] font-mono text-[0.72rem] leading-[1.55] text-text-tertiary">
+                        Every context uses these unless it sets its own. A
+                        setting this template leaves unset takes the Command
+                        Center default; Settings → Workflow does not change run
+                        templates yet.
                       </p>
                     </div>
-                    <ConfigFields
-                      block={draft.defaults}
+                    <SettingsFields
+                      settings={shownTemplate}
                       scope="template"
+                      inherited={null}
+                      globalTemplate={tier === "global"}
                       options={options}
-                      onSet={(key, value) => setDefault(key, value, "template")}
+                      onSet={(key, value) =>
+                        setDraft((current) => setDefault(current, key, value))
+                      }
                       onReset={(key) =>
-                        setDefault(key, draft.globals[key], "global")
+                        setDraft((current) => resetDefault(current, key))
                       }
                     />
-                    <FieldSection
-                      title="Lane checks"
-                      description="Run on each lane's merged tree before it publishes into the session branch."
-                    >
-                      {draft.lanes.map((lane) => (
-                        <SettingRow key={lane.key} label={`Lane ${lane.key}`}>
-                          <ChecksEditor
-                            checks={lane.checks}
-                            available={options.checks}
-                            onChange={(checks) =>
-                              setDraft((current) => ({
-                                ...current,
-                                lanes: current.lanes.map((other) =>
-                                  other.key === lane.key
-                                    ? { ...other, checks }
-                                    : other,
-                                ),
-                              }))
-                            }
-                          />
-                        </SettingRow>
-                      ))}
-                    </FieldSection>
+                    {lanes.length > 0 ? (
+                      <FieldSection
+                        title="Lane checks"
+                        description={`Run on each lane's merged tree before it publishes into the session branch.${tier === "global" ? ` ${GLOBAL_CHECKS_NOTE}` : ""}`}
+                      >
+                        {lanes.map((lane) => (
+                          <SettingRow key={lane.key} label={`Lane ${lane.key}`}>
+                            <ChecksEditor
+                              checks={lane.checks ?? []}
+                              available={options.checks}
+                              label={`Add a check to lane ${lane.key}`}
+                              onChange={(checks) =>
+                                setDraft((current) =>
+                                  setLaneChecks(current, lane.key, checks),
+                                )
+                              }
+                            />
+                          </SettingRow>
+                        ))}
+                      </FieldSection>
+                    ) : null}
                   </>
                 ) : (
                   <>
@@ -1382,50 +1221,50 @@ function TemplateEditorBody({
                       <span className="font-mono text-[0.7rem] text-cyan">
                         CONTEXT / {selected.key}
                       </span>
-                      <h2 className="m-0 font-display text-[1.15rem] font-bold text-text-primary">
-                        {selected.title}
+                      <h2 className="m-0 font-display text-[1.15rem] font-bold break-words text-text-primary">
+                        {contextTitle(selected)}
                       </h2>
                     </div>
-                    <Placement context={selected} template={draft} />
+                    <Placement context={selected} draft={draft} />
                     <ContentFields
                       context={selected}
-                      onChange={(change) =>
-                        updateContext(selected.key, (context) => ({
-                          ...context,
-                          ...change,
-                        }))
+                      schemaText={
+                        schemaTexts[selected.key] ?? schemaText(selected)
                       }
+                      onEdit={(change) =>
+                        setDraft((current) =>
+                          editContext(current, selected.key, change),
+                        )
+                      }
+                      onSchemaText={(text) => {
+                        setSchemaTexts((current) => ({
+                          ...current,
+                          [selected.key]: text,
+                        }));
+                        const outcome = schemaTextOutcome(text);
+                        if (outcome.ok)
+                          setDraft((current) =>
+                            editContext(current, selected.key, {
+                              outputSchema: outcome.schema,
+                            }),
+                          );
+                      }}
                     />
-                    <ConfigFields
-                      block={selected.config}
+                    <SettingsFields
+                      settings={contextSettings(globals, draft, selected.key)}
                       scope="context"
+                      inherited={shownTemplate}
+                      globalTemplate={tier === "global"}
                       options={options}
                       onSet={(key, value) =>
-                        updateContext(selected.key, (context) => ({
-                          ...context,
-                          config: withSetting(
-                            context.config,
-                            key,
-                            value,
-                            "context",
-                          ),
-                        }))
+                        setDraft((current) =>
+                          setContextSetting(current, selected.key, key, value),
+                        )
                       }
                       onReset={(key) =>
-                        updateContext(selected.key, (context) => {
-                          const inherited = draft.defaults[key];
-                          return {
-                            ...context,
-                            config: withSetting(
-                              context.config,
-                              key,
-                              inherited.value,
-                              inherited.from === "global"
-                                ? "global"
-                                : "template",
-                            ),
-                          };
-                        })
+                        setDraft((current) =>
+                          resetContextSetting(current, selected.key, key),
+                        )
                       }
                     />
                   </>
@@ -1437,7 +1276,7 @@ function TemplateEditorBody({
         {invalid ? (
           <div
             role="alert"
-            className="flex flex-wrap items-center gap-sm border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-2xl py-sm max-768:px-lg"
+            className="flex max-h-[30vh] flex-wrap items-center gap-sm overflow-y-auto border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-2xl py-sm max-768:px-lg"
           >
             <span className="font-mono text-[0.72rem] text-red-text">
               Fix before saving:
@@ -1447,12 +1286,12 @@ function TemplateEditorBody({
                 key={index}
                 type="button"
                 onClick={() => {
-                  setSelection(problem.selection);
+                  setSelection(problem.part);
                   setView("edit");
                 }}
-                className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[0.72rem] text-red-text underline underline-offset-2 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                className="cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[0.72rem] text-red-text underline underline-offset-2 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
               >
-                {problem.message}
+                {problem.location}: {problem.message}
               </button>
             ))}
           </div>
@@ -1460,7 +1299,7 @@ function TemplateEditorBody({
         {actionError !== null ? (
           <p
             role="alert"
-            className="m-0 px-2xl py-sm font-mono text-[0.72rem] text-red-text"
+            className="m-0 px-2xl py-sm font-mono text-[0.72rem] whitespace-pre-line text-red-text"
           >
             {actionError}
           </p>
@@ -1471,7 +1310,14 @@ function TemplateEditorBody({
           invalid={invalid}
           state={saveState}
           revision={saved.revision}
-          onDiscard={() => setDraft(saved)}
+          onDiscard={() => {
+            // Discarding returns to the newest stored revision the editor knows of.
+            const latest =
+              template.revision > saved.revision ? template : saved;
+            setSaved(latest);
+            setDraft(contentOf(latest));
+            setSchemaTexts({});
+          }}
           onReload={() => {
             void reload();
           }}
@@ -1479,7 +1325,7 @@ function TemplateEditorBody({
             void save();
           }}
         />
-      </main>
+      </div>
     </div>
   );
 }
@@ -1489,9 +1335,6 @@ export function TemplateEditor(
   props: Parameters<typeof TemplateEditorBody>[0],
 ) {
   return (
-    <TemplateEditorBody
-      key={`${props.template.tier}:${props.template.id}`}
-      {...props}
-    />
+    <TemplateEditorBody key={`${props.tier}:${props.template.id}`} {...props} />
   );
 }

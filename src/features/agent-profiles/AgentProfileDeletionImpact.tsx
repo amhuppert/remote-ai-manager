@@ -72,10 +72,10 @@ function HolderList({
 }): React.JSX.Element {
   const captionId = useId();
   return (
-    <div className="flex flex-col gap-2xs">
+    <div className="flex flex-col gap-xs">
       <p
         id={captionId}
-        className="m-0 font-mono text-[0.72rem] text-text-tertiary"
+        className="m-0 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
       >
         {caption}
       </p>
@@ -139,7 +139,7 @@ export default function AgentProfileDeletionImpact({
   }
 
   return (
-    <section className="flex flex-col gap-2xs">
+    <section className="flex flex-col gap-sm">
       <p className="m-0 font-mono text-[0.72rem] text-amber">
         These saved artifacts still reference this profile, and may need
         updating before they launch:

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Topbar from "@/components/Topbar";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import { runsPageHref } from "@/lib/runs/hrefs";
+import { runsPageHref, runTemplatesHref } from "@/lib/runs/hrefs";
 import {
   useRunControlMutation,
   useRunDecisionMutation,
@@ -109,6 +109,8 @@ function RunsPageContent() {
         decision: "rejected",
         ...(notes.trim() !== "" ? { notes: notes.trim() } : {}),
       }),
+    onBrowseTemplates: () =>
+      router.push(runTemplatesHref(projectName, sessionName)),
     onOpenConversation: (conversationId) =>
       router.push(
         conversationsPageHref({ conversationId, projectName, sessionName }),

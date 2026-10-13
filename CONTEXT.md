@@ -331,6 +331,22 @@ locality); domain terms name the concepts the code is about.
   whose composition reads storage through
   `run-templates/profile-references.ts` to list the run templates that name a
   profile, beside the graph workflow holders it keeps until deploy 2.
+- **Run template editor** — the person's surface for a template's settings
+  and text (`/projects/<p>/<s>/runs/templates`, its `[tier]/[id]` editor,
+  `features/runs/template-model.ts`). Its draft is the authored document: an
+  edit writes one tier's patch (`defaults` or a context's `settings`), a
+  reset deletes the key, and unsaved changes compare patches; every value it
+  shows comes from `cascadeSettings` with its tier, so the browser holds no
+  second cascade. Displaying, refreshing, resetting and editing another
+  setting never write an untouched setting into a nearer tier; editing a
+  setting authors it whole there, as the cascade replaces it whole. The
+  Command Center defaults are shown symbolically (no backend or model is
+  pinned). What blocks a save is the server's own `validateRunTemplate`,
+  which the document module keeps browser-safe; a save sends the revision it
+  was edited from, and a newer one is a conflict the person resolves by
+  reloading. A clean, idle editor moves to any newer stored revision; a
+  failed refresh keeps the editor and its draft. Structure stays read-only;
+  lane checks are editable.
 - **Template launch** — `POST …/sessions/<s>/runs/template` and
   `cctl run template launch`: the template library prepares the workflow
   request and the run's origin (`prepareLaunch`, refusing a revision the
