@@ -212,6 +212,11 @@ function buildService(
     readRepoValidation?(
       projectPath: string,
     ): Promise<RepoValidationConfig | null>;
+    getConversationName?(
+      projectPath: string,
+      sessionName: string | null,
+      conversationId: string,
+    ): Promise<string | null>;
     wrapScheduler?(scheduler: ValidationScheduler): ValidationScheduler;
     logger?: Logger;
   } = {},
@@ -233,6 +238,7 @@ function buildService(
     resolver: {
       resolveCaller: opts.resolveCaller ?? (async () => resolved),
     },
+    getConversationName: opts.getConversationName ?? (async () => null),
     config: {
       readRepoValidation:
         opts.readRepoValidation ?? (async () => REPO_VALIDATION),
@@ -667,6 +673,7 @@ describe("submission lifecycle", () => {
       }),
       runner: { spawn: (params) => runner.spawn(params) },
       resolver: { resolveCaller: async () => resolved },
+      getConversationName: async () => null,
       config: {
         readRepoValidation: async () => REPO_VALIDATION,
         readGlobal: async () => ({
@@ -2022,6 +2029,8 @@ describe("graceful shutdown", () => {
 
 describe("global budget read", () => {
   it("reports capacity and every active run, naming projects rather than paths", async () => {
+    const startedAt = "2026-10-13T15:30:00.000Z";
+    service = buildService({ now: () => new Date(startedAt) });
     // `test` costs 8 against a limit of 8, so the second submission queues.
     const running = await service.submit(request({ commandName: "test" }));
     const queued = await service.submit(
@@ -2045,6 +2054,8 @@ describe("global budget read", () => {
         projectName: "app",
         sessionName: "s1",
         conversationId: "c1",
+        conversationName: null,
+        startedAt,
         position: null,
       },
       {
@@ -2055,8 +2066,61 @@ describe("global budget read", () => {
         projectName: "app",
         sessionName: "s1",
         conversationId: "c1",
+        conversationName: null,
+        startedAt: null,
         position: 0,
       },
+    ]);
+  });
+
+  it("resolves the current conversation name each time the budget is read", async () => {
+    let conversationName: string | null = "Investigate validation";
+    service = buildService({
+      getConversationName: async (projectPath, sessionName, conversationId) =>
+        projectPath === "/projects/app" &&
+        sessionName === "s1" &&
+        conversationId === "c1"
+          ? conversationName
+          : null,
+    });
+    await service.submit(request());
+    await flush();
+
+    expect((await service.budget()).runs[0]?.conversationName).toBe(
+      "Investigate validation",
+    );
+    conversationName = "Improve validation monitor";
+    expect((await service.budget()).runs[0]?.conversationName).toBe(
+      "Improve validation monitor",
+    );
+    conversationName = null;
+    expect((await service.budget()).runs[0]?.conversationName).toBeNull();
+  });
+
+  it("resolves project conversation names and leaves unowned commands unnamed", async () => {
+    service = buildService({
+      getConversationName: async (_projectPath, sessionName, conversationId) =>
+        sessionName === null && conversationId === "project-conversation"
+          ? "Project maintenance"
+          : null,
+    });
+    await service.submitSystem(
+      systemRequest({
+        conversationId: "project-conversation",
+        target: {
+          worktreePath: "/projects/app",
+          sessionName: null,
+          branchName: null,
+          targetBranch: null,
+        },
+      }),
+    );
+    await service.submitSystem(systemRequest({ conversationId: null }));
+    await flush();
+
+    expect((await service.budget()).runs).toMatchObject([
+      { sessionName: null, conversationName: "Project maintenance" },
+      { conversationId: null, conversationName: null },
     ]);
   });
 

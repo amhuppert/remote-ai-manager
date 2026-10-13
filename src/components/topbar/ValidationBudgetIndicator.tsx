@@ -29,7 +29,7 @@ import { ValidationBudgetPanel } from "./ValidationBudgetPanel";
  * explain, and CC's density rules drop ornament before structure.
  *
  * Mobile keeps only the ring: at ≤768px the bar has no room for the count or
- * an anchored 400px panel, so the ring stays as a glanceable signal and the
+ * an anchored 440px panel, so the ring stays as a glanceable signal and the
  * full detail opens as a bottom sheet from the overflow menu
  * (`ValidationBudgetMenuItem` + `ValidationBudgetSheet`, which the topbar
  * mounts outside the menu so the sheet outlives the menu's unmount).
@@ -83,7 +83,7 @@ export function ValidationBudgetIndicator(): React.JSX.Element | null {
           unstyled
           align="end"
           aria-label="Validation budget detail"
-          contentClassName="z-popover w-[400px] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border border-solid border-border-default bg-bg-elevated text-text-primary shadow-menu outline-none origin-[var(--radix-popover-content-transform-origin)] data-[state=open]:motion-safe:animate-[fadeIn_0.12s_ease]"
+          contentClassName="z-popover w-[440px] max-w-[calc(100vw-16px)] max-h-[min(720px,calc(100dvh-80px))] overflow-y-auto rounded-md border border-solid border-border-default bg-bg-elevated text-text-primary shadow-menu outline-none origin-[var(--radix-popover-content-transform-origin)] data-[state=open]:motion-safe:animate-[fadeIn_0.12s_ease]"
         >
           <ValidationBudgetPanel view={view} />
         </PopoverContent>

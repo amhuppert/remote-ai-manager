@@ -5,7 +5,12 @@ import { readRepoConfig } from "@/lib/projects/repo-config";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
-import { getActiveGraphWorkflowExecution, getSession } from "@/lib/state-store";
+import {
+  getActiveGraphWorkflowExecution,
+  getConversation,
+  getProjectConversation,
+  getSession,
+} from "@/lib/state-store";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { getStateDb } from "@/lib/state-store/store";
 import {
@@ -363,6 +368,12 @@ export function getValidationService(): ValidationService {
       scheduler: createValidationScheduler({ repo, transact }),
       runner: { spawn: (params) => spawnValidation(params) },
       resolver: createProductionValidationCallerResolver(),
+      getConversationName: async (projectPath, sessionName, conversationId) => {
+        const conversation = sessionName
+          ? await getConversation(projectPath, sessionName, conversationId)
+          : await getProjectConversation(projectPath, conversationId);
+        return conversation?.name ?? null;
+      },
       config: {
         readRepoValidation: async (projectPath) =>
           (await readRepoConfig(projectPath))?.validation ?? null,

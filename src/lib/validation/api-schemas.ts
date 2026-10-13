@@ -182,9 +182,9 @@ export type ValidationListResponse = z.infer<
  * One active run as the budget indicator needs it. Deliberately narrower than
  * `validationActiveRunSchema`: no scopes, no source, and `projectName` rather
  * than `projectPath` — the indicator names and links to work, it does not
- * reproduce the agent CLI's listing. `sessionName`/`conversationId` are both
- * nullable because system-owned runs (lane merge, Smart Merge, Smart Commit,
- * script validator) belong to a project and nothing finer.
+ * reproduce the agent CLI's listing. Session and conversation metadata are
+ * nullable because a run may belong only to a project; a conversation can
+ * also be unnamed or deleted while its command is still active.
  */
 export const validationBudgetRunSchema = z.object({
   runId: z.string().min(1),
@@ -194,6 +194,9 @@ export const validationBudgetRunSchema = z.object({
   projectName: z.string().min(1),
   sessionName: z.string().min(1).nullable(),
   conversationId: z.string().min(1).nullable(),
+  conversationName: z.string().nullable(),
+  /** Execution start from the ledger; queued commands have not started. */
+  startedAt: z.string().min(1).nullable(),
   /** FIFO index among queued runs; null while running. */
   position: z.number().int().nonnegative().nullable(),
 });

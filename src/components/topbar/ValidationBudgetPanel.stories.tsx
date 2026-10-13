@@ -27,6 +27,9 @@ function running(
     projectName,
     sessionName,
     conversationId,
+    conversationName:
+      conversationId === null ? null : "Review validation monitor",
+    startedAt: new Date(Date.now() - 307_000).toISOString(),
     position: null,
   };
 }
@@ -40,6 +43,8 @@ function queued(index: number, commandName: string, cost: number) {
     projectName: index % 2 === 0 ? "taskgarden" : "command-center",
     sessionName: "csm/spec-import",
     conversationId: `queued-conv-${index}`,
+    conversationName: "Review validation monitor",
+    startedAt: null,
     position: index,
   };
 }
@@ -53,7 +58,7 @@ const meta = {
   },
   decorators: [
     (Story) => (
-      <div className="w-[400px] overflow-hidden rounded-md border border-solid border-border-default bg-bg-elevated">
+      <div className="w-[440px] max-w-[calc(100vw-32px)] overflow-hidden rounded-md border border-solid border-border-default bg-bg-elevated">
         <Story />
       </div>
     ),
@@ -131,6 +136,29 @@ export const SystemOwnedRun: Story = {
       runs: [
         running("r-merge", "test", 4, "command-center", null, null),
         running("r-lint", "lint", 2, "taskgarden", "csm/spec-import"),
+      ],
+    }),
+  },
+};
+
+/** Names remain readable when the owner spans several lines. */
+export const LongOwnerNames: Story = {
+  args: {
+    view: view({
+      available: true,
+      capacity: { limit: 8, inUse: 4, queueDepth: 0 },
+      runs: [
+        {
+          ...running(
+            "r-long",
+            "typecheck",
+            4,
+            "command-center",
+            "Improve validation command monitor across sessions and conversations",
+          ),
+          conversationName:
+            "Investigate and review validation command metadata, timing, and global capacity",
+        },
       ],
     }),
   },

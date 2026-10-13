@@ -521,6 +521,8 @@ describe("Topbar", () => {
           projectName: "command-center",
           sessionName: "csm/budget",
           conversationId: "conv-1",
+          conversationName: "Review validation monitor",
+          startedAt: "2026-10-13T15:00:00.000Z",
           position: null,
         },
       ],

@@ -564,6 +564,7 @@ function createPersistedPolicyService(
   };
   let id = 0;
   return createValidationService({
+    getConversationName: async () => null,
     repo,
     transact,
     scheduler: createValidationScheduler({ repo, transact }),

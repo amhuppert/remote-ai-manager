@@ -79,6 +79,8 @@ const QUEUE_BLOCKED: ValidationBudgetResponse = {
       projectName: "command-center",
       sessionName: "csm/validation-budget",
       conversationId: "conv-1",
+      conversationName: "Review validation monitor",
+      startedAt: "2026-10-13T15:00:00.000Z",
       position: null,
     },
     {
@@ -89,6 +91,8 @@ const QUEUE_BLOCKED: ValidationBudgetResponse = {
       projectName: "taskgarden",
       sessionName: "csm/spec-import",
       conversationId: "conv-2",
+      conversationName: "Review validation monitor",
+      startedAt: "2026-10-13T15:00:00.000Z",
       position: null,
     },
     {
@@ -99,6 +103,8 @@ const QUEUE_BLOCKED: ValidationBudgetResponse = {
       projectName: "command-center",
       sessionName: "csm/merge-hardening",
       conversationId: "conv-3",
+      conversationName: "Review validation monitor",
+      startedAt: "2026-10-13T15:00:00.000Z",
       position: null,
     },
     ...Array.from({ length: 9 }, (_, index) => ({
@@ -109,6 +115,8 @@ const QUEUE_BLOCKED: ValidationBudgetResponse = {
       projectName: index === 1 ? "command-center" : "taskgarden",
       sessionName: "csm/spec-import",
       conversationId: `queued-conv-${index}`,
+      conversationName: "Review validation monitor",
+      startedAt: null,
       position: index,
     })),
   ],
