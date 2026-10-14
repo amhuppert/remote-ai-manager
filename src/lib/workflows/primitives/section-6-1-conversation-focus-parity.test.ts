@@ -67,7 +67,7 @@ import type {
   ArtifactRegisterRequest,
   ArtifactWriteOutcome,
 } from "./artifact-registry";
-import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/pre-turn/focus-memory";
+import { registerFocusMemoryIfPresent } from "@/lib/conversation-core/contributions/focus-memory";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   AskQuestionEvent,

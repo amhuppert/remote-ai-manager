@@ -18,7 +18,7 @@
 import type { WorkflowLaneIdentity } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import type { CheckpointOperation } from "@/lib/conversation-checkpoints/schemas";
-import { ManagedConversationRuntime } from "./runtime-binding";
+import { ManagedConversationRuntime } from "@/lib/conversation-core/turn/runtime-binding";
 import type { TurnAttempt } from "./turn-attempt";
 import type { ConversationEvent } from "./types";
 

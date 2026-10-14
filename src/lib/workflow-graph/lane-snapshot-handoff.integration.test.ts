@@ -53,7 +53,7 @@ import type {
   ConversationBackendCreateInput,
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
-import type { ExecutePromptInput } from "@/lib/workflows/conversation/types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 import { agentAssignmentSchema } from "./config-schemas";
 import { assignmentFingerprint } from "./lane-identity";
 import { createGraphLaneContinuity } from "./lane-continuity";

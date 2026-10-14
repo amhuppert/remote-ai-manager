@@ -133,6 +133,12 @@ export interface AgentTaskResult {
     outputTokens?: number | null;
     /** Estimated from token usage — backends that report tokens but not USD. */
     costUsd?: number | null;
+    /**
+     * The session's running total after this run, for a backend whose session
+     * totals are cumulative (`backendRef` names the session): a run that
+     * resumed a session reports the session's whole spend in `costUsd`.
+     */
+    cumulativeCostUsd?: number | null;
   } | null;
   error: string | null;
   timedOut: boolean;

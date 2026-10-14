@@ -123,6 +123,7 @@ function resolverDeps(opts: {
   execution?: GraphWorkflowExecution | null;
 }): ProductionValidationResolverDeps {
   return {
+    seatWorkplace: async () => null,
     getSession: async () => opts.session ?? null,
     getActiveGraphWorkflowExecution: async () => opts.execution ?? null,
     readRepoValidation: async () =>
@@ -318,6 +319,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
   /** The resolver reading the SAME store the production start wrote to. */
   function storeBackedResolver() {
     return createProductionValidationCallerResolver({
+      seatWorkplace: async () => null,
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,

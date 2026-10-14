@@ -5,6 +5,7 @@ import { importSubscriptionDelivery } from "./subscription-delivery-import";
 import {
   ensureFiniteWaitSourceCursor,
   retireConsumedFiniteWaitSources,
+  retireFinishedRunFollows,
 } from "./subscription-wait-lifecycle";
 import {
   conversationSubscriptionSchema,
@@ -51,6 +52,16 @@ export interface ConversationSubscriptionsRepo {
   listDeliveriesReservedForActiveWait(
     recipient: SubscriptionRecipient,
   ): Promise<string[]>;
+  /** Unsent facts of the recipient's waking follows, oldest first, with their follow. */
+  listWakeDeliveries(
+    recipient: SubscriptionRecipient,
+    at: string,
+  ): Promise<
+    Array<{
+      delivery: SubscriptionDelivery;
+      subscription: ConversationSubscription;
+    }>
+  >;
   findDeliveryByOccurrence(
     recipient: SubscriptionRecipient,
     source: SubscriptionSourceRef,
@@ -156,6 +167,7 @@ const subscriptionRowSchema = z
     source_id: z.string(),
     reason: z.string(),
     mode: z.string(),
+    wakes: z.number().int(),
     event_kinds_json: z.string().nullable(),
     expires_at: z.string().nullable(),
     status: z.string(),
@@ -188,6 +200,9 @@ const deliveryRowSchema = z
     last_error: z.string().nullable(),
   })
   .strict();
+/** `s` is a follow whose new facts wake its recipient now. */
+export const WAKING_FOLLOW = `s.wakes=1 AND s.status='following' AND s.paused_at IS NULL AND (s.expires_at IS NULL OR s.expires_at>@at)`;
+
 function subscriptionFromRow(raw: unknown): ConversationSubscription {
   const row = subscriptionRowSchema.parse(raw);
   return conversationSubscriptionSchema.parse({
@@ -199,6 +214,7 @@ function subscriptionFromRow(raw: unknown): ConversationSubscription {
     source: { kind: row.source_kind, id: row.source_id },
     reason: row.reason,
     mode: row.mode,
+    wakes: row.wakes === 1,
     eventKinds:
       row.event_kinds_json === null
         ? null
@@ -279,8 +295,8 @@ export function createConversationSubscriptionsRepo(
     `SELECT * FROM conversation_subscriptions WHERE project_path=@project_path AND conversation_id=@conversation_id ORDER BY created_at,id`,
   );
   const create =
-    db.prepare(`INSERT INTO conversation_subscriptions (id,project_path,conversation_id,source_kind,source_id,reason,mode,event_kinds_json,expires_at,status,cursor,created_at,updated_at,unfollowed_at,paused_at,missing_at,last_error)
-    VALUES (@id,@project_path,@conversation_id,@source_kind,@source_id,@reason,@mode,@event_kinds_json,@expires_at,@status,@cursor,@created_at,@updated_at,@unfollowed_at,@paused_at,@missing_at,@last_error)
+    db.prepare(`INSERT INTO conversation_subscriptions (id,project_path,conversation_id,source_kind,source_id,reason,mode,wakes,event_kinds_json,expires_at,status,cursor,created_at,updated_at,unfollowed_at,paused_at,missing_at,last_error)
+    VALUES (@id,@project_path,@conversation_id,@source_kind,@source_id,@reason,@mode,@wakes,@event_kinds_json,@expires_at,@status,@cursor,@created_at,@updated_at,@unfollowed_at,@paused_at,@missing_at,@last_error)
     ON CONFLICT(project_path,conversation_id,source_kind,source_id) DO NOTHING`);
   const insertDelivery =
     db.prepare(`INSERT INTO conversation_subscription_deliveries (id,subscription_id,project_path,conversation_id,source_kind,source_id,occurrence_id,fact_json,recorded_at,state,attempt_id,attempt_count,queued_at,accepted_at,finished_at,last_error)
@@ -428,6 +444,7 @@ export function createConversationSubscriptionsRepo(
       source_id: value.source.id,
       reason: value.reason,
       mode: value.mode,
+      wakes: Number(value.wakes),
       event_kinds_json:
         value.eventKinds === null ? null : JSON.stringify(value.eventKinds),
       expires_at: value.expiresAt,
@@ -517,6 +534,23 @@ export function createConversationSubscriptionsRepo(
             .all(scope(recipient)),
         )
         .map((row) => row.id);
+    },
+    async listWakeDeliveries(recipient, at) {
+      const rows = db
+        .prepare(
+          `SELECT d.* FROM conversation_subscription_deliveries d JOIN conversation_subscriptions s ON s.id=d.subscription_id
+        WHERE d.project_path=@project_path AND d.conversation_id=@conversation_id AND d.state IN ('pending','failed')
+          AND ${WAKING_FOLLOW} ORDER BY d.recorded_at,d.rowid`,
+        )
+        .all({ ...scope(recipient), at }) as unknown[];
+      return rows.map((raw) => {
+        const delivery = deliveryFromRow(raw);
+        const subscription = find.get({
+          ...scope(recipient),
+          id: delivery.subscriptionId,
+        });
+        return { delivery, subscription: subscriptionFromRow(subscription) };
+      });
     },
     async findDeliveryByOccurrence(recipient, source, occurrenceId) {
       const row: unknown = db
@@ -715,7 +749,8 @@ export function createConversationSubscriptionsRepo(
                   `UPDATE conversation_subscription_deliveries
         SET state=@state,attempt_id=NULL,queued_at=NULL,accepted_at=NULL,finished_at=@finished_at,last_error=@error
         WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND state IN ('pending','failed','uncertain')
-          AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w JOIN conversation_subscription_wake_batches b ON b.id=w.batch_id WHERE w.delivery_id=conversation_subscription_deliveries.id AND b.state NOT IN ('accepted','cancelled'))`,
+          AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w JOIN conversation_subscription_wake_batches b ON b.id=w.batch_id WHERE w.delivery_id=conversation_subscription_deliveries.id AND b.state NOT IN ('accepted','cancelled'))
+          AND NOT EXISTS (SELECT 1 FROM conversation_subscription_wake_batches b WHERE b.id=conversation_subscription_deliveries.attempt_id AND b.state NOT IN ('accepted','cancelled'))`,
                 )
                 .run({
                   ...scope(recipient),
@@ -727,8 +762,10 @@ export function createConversationSubscriptionsRepo(
                       ? null
                       : "Delivery explicitly dismissed after inspection",
                 }).changes > 0;
-            if (changed && action === "dismiss")
+            if (changed && action === "dismiss") {
               retireConsumedFiniteWaitSources(db, recipient);
+              retireFinishedRunFollows(db, recipient);
+            }
             return changed;
           })
           .immediate(),

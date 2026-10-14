@@ -6,7 +6,7 @@ import type {
 import { createConversationSubscriptionsRepo } from "@/lib/state-store/conversation-subscriptions-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { createSubscriptionService } from "@/lib/subscriptions/service";
-import { createBackgroundTasksLostHandler } from "./pre-turn/background-tasks-lost";
+import { createBackgroundTasksLostHandler } from "@/lib/conversation-core/contributions/background-tasks-lost";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { createLifecycleFixture } from "./testing/lifecycle-fixture";
 import { createMockBackendRuntime } from "./testing/actor-deps-fixture";

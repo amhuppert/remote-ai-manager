@@ -11,7 +11,7 @@ import {
   getTranscriptPath,
   readConversationMessages,
 } from "@/lib/prompt/transcript";
-import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
+import { buildUserTranscriptBlocks } from "@/lib/conversation-core/turn/build-user-transcript-blocks";
 import type { ConversationImageRef } from "../../conversation";
 import { conversationTranscriptFrame } from "../../transcript";
 import { translateCursorImages } from "../image-input";

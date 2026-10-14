@@ -6,8 +6,8 @@ import {
   WorkflowDocumentDeliveryError,
   isTypedWorkflowError,
   toHaltReason,
-  type DirtyPath,
 } from "./errors";
+import type { DirtyPath } from "@/lib/git/worktree";
 import {
   IterationFailureWithProgressError,
   hasPartialIterationProgress,

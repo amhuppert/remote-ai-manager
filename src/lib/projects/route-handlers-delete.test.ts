@@ -4,6 +4,7 @@ import {
   createProjectRouteHandlers,
   type ProjectRouteDeps,
 } from "./route-handlers";
+import { CurrentRunError } from "@/lib/runs/session-guard";
 
 function createTestDeps(): ProjectRouteDeps {
   return {
@@ -52,6 +53,31 @@ describe("DELETE /api/projects/[name]", () => {
       deletedTicketNumbers: [2, 7],
     });
     expect(deps.deleteProject).toHaveBeenCalledWith("/projects/test-proj");
+  });
+
+  it("answers 409 with the run's refusal while one of the project's runs has not finished", async () => {
+    vi.mocked(deps.deleteProject).mockRejectedValue(
+      new CurrentRunError({
+        code: "RUN_CURRENT",
+        runId: "run-1",
+        progress: "running",
+        message: "Run run-1 is running.",
+      }),
+    );
+
+    const response = await handlers.DELETE(
+      makeRequest(
+        "http://localhost/api/projects/test-proj?projectPath=%2Fprojects%2Ftest-proj",
+      ),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Run run-1 is running.",
+      code: "RUN_CURRENT",
+      details: { runId: "run-1", progress: "running" },
+    });
   });
 
   it("returns 400 when projectPath query parameter is missing", async () => {

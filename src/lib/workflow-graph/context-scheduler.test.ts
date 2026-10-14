@@ -25,7 +25,7 @@ import type {
   ProvisionInput,
   ProvisionLaneInput,
   ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "@/lib/workspace/parallel-worktrees";
 
 import {
   SESSION_LANE_ID,

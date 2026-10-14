@@ -51,10 +51,22 @@ function harness() {
         sessionName: "session space",
       };
     },
+    findRun() {
+      return { projectPath: recipient.projectPath, title: "Fix the notice" };
+    },
   };
   return { deps, read: createSubscriptionSourcePresentationReader(deps) };
 }
 describe("subscription source presentation", () => {
+  it("names a run by its title, without a page to link", async () => {
+    expect(
+      await harness().read(recipient, { kind: "run", id: "run-1" }),
+    ).toEqual({
+      title: "Fix the notice",
+      href: null,
+    });
+  });
+
   it("resolves all source titles and existing browser destinations with encoded identities", async () => {
     const h = harness();
     expect(await h.read(recipient, { kind: "notepad", id: "notes" })).toEqual({

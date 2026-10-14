@@ -1175,8 +1175,6 @@ export async function finalizeFinal(
     }
   }
 
-  await releaseOriginatingConversationOwner(input, deps);
-
   if (input.conversationId && deps.markConversationAwaiting) {
     try {
       await deps.markConversationAwaiting(input.conversationId, {
@@ -1215,6 +1213,10 @@ export async function finalizeFinal(
       }
     }
   }
+
+  // Last: a prompt admitted once the conversation is free finds it awaiting and
+  // resuming the session this run advanced.
+  await releaseOriginatingConversationOwner(input, deps);
 
   await updateEnvelope(input, deps, now, (existing) => {
     const previous = (existing.featureSnapshot ?? {}) as Record<
@@ -1267,12 +1269,8 @@ async function markOriginatingConversationAwaiting(
 ): Promise<void> {
   if (!input.conversationId) return;
 
-  await releaseOriginatingConversationOwner(input, deps);
-
-  if (!deps.markConversationAwaiting) return;
-
   try {
-    await deps.markConversationAwaiting(input.conversationId, {
+    await deps.markConversationAwaiting?.(input.conversationId, {
       workflowId: input.workflowId,
       timestamp,
     });
@@ -1287,6 +1285,7 @@ async function markOriginatingConversationAwaiting(
       error: getErrorMessage(err),
     });
   }
+  await releaseOriginatingConversationOwner(input, deps);
 }
 
 /**

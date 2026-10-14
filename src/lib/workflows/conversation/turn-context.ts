@@ -1,111 +1,42 @@
 import { appendLiveReferenceSummaries } from "@/lib/live-references/service";
 import { buildDebugPromptContext } from "@/lib/workflows/debug/prompt-policy";
-
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import type { ExecutePromptInput } from "./types";
-import type { ConversationActorDependencies } from "./actor-dependencies";
-import type { ConversationExecutionContext } from "./turn-spec";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
-import { getErrorMessage } from "@/lib/shared/errors";
 import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
-
 import { getDebugManifestPath } from "@/lib/debug-log/service";
-import { prepareNotepadContext } from "./pre-turn/notepad-context";
-import { prepareMemoryContext } from "./pre-turn/memory-context";
+import { getErrorMessage } from "@/lib/shared/errors";
+import type { ConversationTurnDependencies } from "@/lib/conversation-core/turn/dependencies";
+import type { ConversationExecutionContext } from "@/lib/conversation-core/turn/turn-spec";
+import {
+  assembleTurnPrompt,
+  type TurnContextExecution,
+} from "@/lib/conversation-core/turn/turn-context";
+import { prepareNotepadContext } from "@/lib/conversation-core/contributions/notepad-context";
+import { prepareMemoryContext } from "@/lib/conversation-core/contributions/memory-context";
 import {
   preparePassiveSubscriptionContext,
   prepareAcceptedNotepadReferences,
-} from "./pre-turn/passive-subscription-context";
-import { acknowledgeSyntheticForkSeed } from "./pre-turn/fork-seed";
-import { createRequiredInputReceipt } from "./pre-turn/required-input-receipt";
-import type { ContinuationSeed } from "./pre-turn/continuation-seed";
-import type { PreparedCheckpointSeed } from "./pre-turn/checkpoint-seed";
-
-export interface PreparedTurnContribution {
-  block: string | null;
-  onInputAccepted?(): Promise<void>;
-  finish?(): Promise<void>;
-}
-
-/**
- * Build the effective prompt, prepending debug mode instructions on the
- * first debug turn and phase-specific context on subsequent turns.
- *
- * `activeTicketBlock` is the linked ticket's current view (5.4); it is
- * rebuilt and prepended per turn — transient by design, never baked into
- * session instructions or the persistent runtime, so attachment changes
- * appear on the next turn without runtime recreation (5.5).
- *
- * `memoryIndexBlock` is the fourth (spec `memory` R5/D4): the conversation's
- * generated `<memory-index>`, rebuilt per turn from live rows and placed
- * directly below the ticket block so the artifact being worked on reads
- * before the memory about it. Transient like the rest, never baked in.
- *
- * `checkpointSeedBlock` is the frozen CC checkpoint a fresh runtime is seeded
- * from, delivered exactly once on the first ordinary turn after readiness. It
- * leads everything else because it IS the conversation's prior history — the
- * transient blocks describe the present — and it is passed through byte for
- * byte: the saved payload's hash is what acceptance is later recorded against.
- */
-export function assembleTurnPrompt(input: {
-  userText: string;
-  debugContext: string | null;
-  activeTicketBlock: string | null;
-  memoryIndexBlock: string | null;
-  checkpointSeedBlock: string | null;
-  passiveBriefingBlock?: string | null;
-}): string {
-  return [
-    input.checkpointSeedBlock,
-    input.passiveBriefingBlock,
-    input.activeTicketBlock,
-    input.memoryIndexBlock,
-    input.debugContext,
-    input.userText,
-  ]
-    .filter((block) => block !== null && block !== undefined && block !== "")
-    .join("\n\n");
-}
+} from "@/lib/conversation-core/contributions/passive-subscription-context";
+import { createRequiredInputReceipt } from "@/lib/conversation-core/contributions/required-input-receipt";
+import { acknowledgeSyntheticForkSeed } from "@/lib/conversation-checkpoints/fork-seed";
+import type { ContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
+import type { PreparedCheckpointSeed } from "@/lib/conversation-checkpoints/checkpoint-seed";
 
 type TurnContextDependencies = Pick<
-  ConversationActorDependencies,
+  ConversationTurnDependencies,
   "context" | "effects" | "log" | "subscriptions"
 > & {
   transcript: Pick<
-    ConversationActorDependencies["transcript"],
+    ConversationTurnDependencies["transcript"],
     "readConversationMessages"
   >;
-  debug: Pick<ConversationActorDependencies["debug"], "getDebugLogUrl">;
+  debug: Pick<ConversationTurnDependencies["debug"], "getDebugLogUrl">;
 };
-
-export async function prepareTaskPrompt(
-  deps: Pick<TurnContextDependencies, "context" | "log">,
-  input: Pick<ExecutePromptInput, "projectPath" | "target"> & {
-    promptText: string;
-  },
-): Promise<string> {
-  if (input.target.scope === "project") return input.promptText;
-  try {
-    const block = await deps.context.getLiveTicketBlock(
-      input.projectPath,
-      input.target.sessionName,
-    );
-    return block === null
-      ? input.promptText
-      : `${block}\n\n${input.promptText}`;
-  } catch (error) {
-    deps.log.warn("task_run.live_ticket_block_failed", {
-      ...input.target,
-      error: getErrorMessage(error),
-    });
-    return input.promptText;
-  }
-}
 
 export async function prepareConversationTurnContext(
   deps: TurnContextDependencies,
   input: {
-    execution: ExecutePromptInput;
+    execution: TurnContextExecution;
     promptText: string;
     /** The one continuation this turn runs under; see `resolveContinuationSeed`. */
     continuation: ContinuationSeed;

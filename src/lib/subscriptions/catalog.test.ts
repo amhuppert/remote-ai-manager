@@ -35,6 +35,7 @@ describe("subscription catalog selections", () => {
       "ticket",
       "spec",
       "workflow",
+      "run",
       "validation",
       "git_job",
     ]);

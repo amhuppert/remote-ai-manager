@@ -52,6 +52,7 @@ import WorkRailMain from "@/components/WorkRailMain";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SessionTicketIndicator from "@/components/SessionTicketIndicator";
 import GraphWorkflowCard from "./GraphWorkflowCard";
+import { SessionRuns } from "./SessionRuns";
 import SessionPromotionCandidateCount from "./SessionPromotionCandidateCount";
 import SessionOverview, { SessionOverviewPending } from "./SessionOverview";
 import SessionWorkspaceTools from "./SessionWorkspaceTools";
@@ -137,15 +138,21 @@ export default function ConversationList({
   // hotkey) stays on the Standard Agent the server resolves for an omitted
   // selection, and the picker beside it names one when the user wants one.
   const handleNewConversation = useCallback(
-    (profile?: AgentProfileRef) => {
+    (profile?: AgentProfileRef, engine?: "core") => {
       if (createConvoMutation.isPending || !session) return;
       log.info("session_overview.conversation_create", {
         projectName,
         sessionName,
         profile,
+        engine: engine ?? "actor",
       });
       createConvoMutation.mutate(
-        profile === undefined ? undefined : { profile },
+        profile === undefined && engine === undefined
+          ? undefined
+          : {
+              ...(profile !== undefined ? { profile } : {}),
+              ...(engine !== undefined ? { engine } : {}),
+            },
         {
           onSuccess: (conversation) =>
             router.push(
@@ -319,6 +326,9 @@ export default function ConversationList({
                   <NewConversationProfileButton
                     projectName={projectName}
                     onCreate={handleNewConversation}
+                    onCreateCore={(profile) =>
+                      handleNewConversation(profile, "core")
+                    }
                     pending={createConvoMutation.isPending}
                   />
                 </div>
@@ -404,6 +414,12 @@ export default function ConversationList({
                     execution={graphWorkflowExecutionQuery.data ?? null}
                   />
                 )
+              }
+              runs={
+                <SessionRuns
+                  projectName={projectName}
+                  sessionName={sessionName}
+                />
               }
               workspaceTools={
                 <SessionWorkspaceTools

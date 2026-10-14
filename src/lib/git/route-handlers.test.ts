@@ -109,6 +109,7 @@ function makeDeps(overrides: Partial<GitRouteDeps> = {}): GitRouteDeps {
     resolveProjectPath: vi.fn().mockResolvedValue("/repo"),
     getSession: vi.fn().mockResolvedValue(makeSession()),
     getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue(null),
+    currentRuns: () => [],
     computeDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
     getCommitLog: vi.fn().mockResolvedValue([]),
     getCommitDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
@@ -482,6 +483,32 @@ describe("mergeSession", () => {
       expect(dispatchMergeJob).not.toHaveBeenCalled();
     });
   }
+
+  it("refuses the merge while one of the session's runs has not finished, naming the run", async () => {
+    const dispatchMergeJob = vi
+      .fn()
+      .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
+    const handlers = createGitRouteHandlers(
+      makeDeps({
+        dispatchMergeJob,
+        currentRuns: () => [
+          { runId: "run-1", sessionName: "my-session", progress: "running" },
+        ],
+      }),
+    );
+
+    const res = await handlers.mergeSession(
+      postRequest({ autoResolve: true }),
+      routeContext(sessionParams),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "RUN_CURRENT",
+      details: { runId: "run-1", progress: "running" },
+    });
+    expect(dispatchMergeJob).not.toHaveBeenCalled();
+  });
 
   /**
    * History never blocks delivery (R13.2), including the halts a status-only

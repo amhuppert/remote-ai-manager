@@ -2,10 +2,8 @@ import {
   contextPlacementSchema,
   type ContextPlacement,
 } from "@/lib/workflow-graph/definition-schemas";
-import {
-  laneIdViolation,
-  SESSION_LANE_NAME,
-} from "@/lib/workflow-graph/lane-identity";
+import { SESSION_LANE_NAME } from "@/lib/workflow-graph/lane-identity";
+import { laneIdViolation } from "@/lib/workspace/lane-id";
 
 // Where a context runs and what it may write (lwp R1): a lane name plus a
 // write grade. Both authoring tiers — the builder's draft definition and the

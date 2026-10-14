@@ -1,5 +1,5 @@
 import { conversationTargetStoreSessionName } from "./conversation-target";
-import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import { describe, expect, it } from "vitest";
 import {
   createCapturingLogger,

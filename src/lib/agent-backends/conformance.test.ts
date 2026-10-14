@@ -26,7 +26,11 @@ import {
   type ContinuityConformanceHarness,
   type ConversationTurnConformanceHarness,
 } from "./conformance";
-import type { ConversationBackendCreateInput } from "./conversation";
+import type {
+  ConversationBackendCreateInput,
+  ConversationQueuedUserInput,
+} from "./conversation";
+import { InputDeliveryUncertainError } from "./errors";
 import type { AgentTaskRequest } from "./task";
 import type { BackendRuntimeConfigAdapter } from "./runtime-config";
 import type { BackendModelSelection } from "./schemas";
@@ -214,6 +218,7 @@ describeBackendConformance(claudeDescriptor, {
   },
   task: {
     buildRequest: () => buildTaskRequest(true, CLAUDE_MODEL_SELECTION),
+    hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -301,6 +306,7 @@ describeBackendConformance(codexDescriptor, {
   },
   task: {
     buildRequest: () => buildTaskRequest(true, CODEX_MODEL_SELECTION),
+    hangingPromptText: FAKE_CODEX_HANGING_PROMPT,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -467,6 +473,10 @@ describeBackendConformance(cursorDescriptor, {
 // ============================================================
 
 const testfake = createTestFakeBackend();
+const claudeConversation = claudeDescriptor.conversation;
+if (!claudeConversation) {
+  throw new Error("claude must expose a conversation facet");
+}
 const testfakeConversation = testfake.descriptor.conversation;
 if (!testfakeConversation) {
   throw new Error("testfake must expose a conversation facet");
@@ -535,6 +545,58 @@ describe("conformance behavior checks reject lying descriptors", () => {
       }),
     ).rejects.toThrow();
   });
+
+  it("fails a runtime that declares turn-bound live input yet keeps input sent after its turn", async () => {
+    await expect(
+      checkQueueCoherence(claudeConversation, {
+        buildCreateInput: () =>
+          buildCreateInput(
+            "conformance-claude-lying-live",
+            CLAUDE_MODEL_SELECTION,
+          ),
+        hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
+        queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
+        // Claude's input channel may take input up after the turn's result.
+        createRuntime: async (input) =>
+          Object.assign(
+            await claudeConversationBackendFactory.createRuntime(input),
+            {
+              liveInput: "running_turn" as const,
+            },
+          ),
+      }),
+    ).rejects.toThrow(/after its turn/);
+  }, 10_000);
+
+  it("fails a runtime that declares turn-bound live input when its late input may have been delivered", async () => {
+    await expect(
+      checkQueueCoherence(claudeConversation, {
+        buildCreateInput: () =>
+          buildCreateInput(
+            "conformance-claude-uncertain-live",
+            CLAUDE_MODEL_SELECTION,
+          ),
+        hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
+        queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
+        createRuntime: async (input) => {
+          const runtime =
+            await claudeConversationBackendFactory.createRuntime(input);
+          const deliver = runtime.queueUserInput?.bind(runtime);
+          let sends = 0;
+          return Object.assign(runtime, {
+            liveInput: "running_turn" as const,
+            async queueUserInput(queued: ConversationQueuedUserInput) {
+              sends += 1;
+              // The late send reaches the provider, but its acknowledgement is lost.
+              if (sends > 1)
+                throw new InputDeliveryUncertainError("acknowledgement lost");
+              await deliver?.(queued);
+            },
+          });
+        },
+      }),
+    ).rejects.toThrow(/after its turn was uncertain/);
+  }, 10_000);
 
   it("fails a descriptor that declares externalTurns but never emits one", async () => {
     const lying = createTestFakeBackend({

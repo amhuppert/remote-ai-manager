@@ -23,10 +23,7 @@ import type {
   Settings,
   SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
-import type {
-  MessageContentBlock,
-  ToolResultMetrics,
-} from "@/lib/conversations/schemas";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
@@ -45,8 +42,10 @@ import {
   extractContextTokens,
   extractContextWindow,
 } from "@/lib/conversations/context-fill";
-import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
-import { mapAssistantContentBlocks } from "./map-content-blocks";
+import {
+  mapAssistantContentBlocks,
+  mapToolResultBlocks,
+} from "./map-content-blocks";
 import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
@@ -269,6 +268,12 @@ export interface QuerySessionOptions {
     append: string | undefined;
   };
   resume: string | undefined;
+  /**
+   * The cumulative cost the resumed session's last result reported. A resumed
+   * session continues from its saved total, so its first result already
+   * carries every earlier turn's spend.
+   */
+  costBaseline?: { sessionId: string; cumulativeCostUsd: number };
   forkSession: boolean | undefined;
   resumeSessionAt?: string | undefined;
   mcpServers: Record<string, unknown>;
@@ -420,8 +425,9 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // each turn carries only its delta. Advanced only when a result is
   // attributed to a turn, so a discarded between-turns segment's cost rides
   // into the next attributed turn instead of vanishing.
-  let attributedCostBaseline = 0;
-  let attributedCostSessionId: string | null = null;
+  let attributedCostBaseline = options.costBaseline?.cumulativeCostUsd ?? 0;
+  let attributedCostSessionId: string | null =
+    options.costBaseline?.sessionId ?? null;
 
   // The persistent input channel: the SDK consumes this generator for the
   // session's whole life. It never returns, so the SDK never closes the CLI's
@@ -1433,48 +1439,28 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
       case "user": {
         const userMsg = message as SDKUserMessage;
-        const content = userMsg.message.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              block != null &&
-              typeof block === "object" &&
-              "type" in block &&
-              block.type === "tool_result" &&
-              "tool_use_id" in block &&
-              typeof block.tool_use_id === "string"
-            ) {
-              const resultBlock = buildToolResultBlock(
-                block as SdkToolResultBlock,
-                turn.toolNamesById,
-              );
-              turn.contentBlocks.push(resultBlock);
-            }
-          }
-        }
+        turn.contentBlocks.push(
+          ...mapToolResultBlocks(userMsg.message.content, turn.toolNamesById),
+        );
         break;
       }
 
       case "result": {
-        awaitingSubsequentPromptDelivery = false;
         const resultMsg = message as SDKResultSuccess | SDKResultError;
-        turn.sessionId = resultMsg.session_id;
-        if (
-          attributedCostSessionId !== resultMsg.session_id ||
-          resultMsg.total_cost_usd < attributedCostBaseline
-        ) {
-          // New lineage: fresh/forked session, or a restarted subprocess that
-          // resumed the SAME session id with its cumulative reset — the
-          // cumulative can only decrease on such a restart, so a drop below
-          // the baseline is the lineage boundary.
-          attributedCostBaseline = 0;
-          attributedCostSessionId = resultMsg.session_id;
+        if (!turn.external && answersProviderNotification(resultMsg)) {
+          // The CLI answered its own notification (a background task the
+          // previous process left behind, replayed on resume) without calling
+          // the model; the caller's prompt is still outstanding. The baseline
+          // stays put, so spend this result reports reaches the caller's turn.
+          logger.info("query-session.notification_result_skipped", {
+            conversationId: options.conversationId,
+            origin: resultMsg.origin?.kind,
+          });
+          break;
         }
-        turn.costUsd = Math.max(
-          0,
-          resultMsg.total_cost_usd - attributedCostBaseline,
-        );
-        attributedCostBaseline = resultMsg.total_cost_usd;
+        awaitingSubsequentPromptDelivery = false;
+        turn.sessionId = resultMsg.session_id;
+        turn.costUsd = attributeCost(resultMsg);
         turn.durationMs = resultMsg.duration_ms;
         turn.numTurns = resultMsg.num_turns;
 
@@ -1525,6 +1511,27 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     }
   }
 
+  /** This result's share of the lineage-cumulative cost, advancing the baseline. */
+  function attributeCost(resultMsg: SDKResultSuccess | SDKResultError): number {
+    // A crash or startup result can carry zeroed counters; it reports nothing
+    // spent and must not reset the lineage the next result is charged against.
+    if (resultMsg.total_cost_usd === 0) return 0;
+    if (
+      attributedCostSessionId !== resultMsg.session_id ||
+      resultMsg.total_cost_usd < attributedCostBaseline
+    ) {
+      // New lineage: fresh/forked session, or a restarted subprocess that
+      // resumed the SAME session id with its cumulative reset — the
+      // cumulative can only decrease on such a restart, so a drop below
+      // the baseline is the lineage boundary.
+      attributedCostBaseline = 0;
+      attributedCostSessionId = resultMsg.session_id;
+    }
+    const cost = Math.max(0, resultMsg.total_cost_usd - attributedCostBaseline);
+    attributedCostBaseline = resultMsg.total_cost_usd;
+    return cost;
+  }
+
   /**
    * A caller prompt that arrives while the CLI is in its own auto-continuation
    * is folded into that turn, and the one `result` that follows answers the
@@ -1560,6 +1567,24 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // ============================================================
 // Helpers
 // ============================================================
+
+/**
+ * A result the CLI produced for its own notification without a model call. A
+ * notification the model acts on is folded into the caller's turn and answered
+ * by one result, so only a model-less one can be told apart from the answer.
+ */
+function answersProviderNotification(
+  result: SDKResultSuccess | SDKResultError,
+): boolean {
+  const origin = result.origin?.kind;
+  // A failure is never set aside: it may be the only answer the prompt gets.
+  return (
+    (origin === "task-notification" || origin === "auto-continuation") &&
+    result.num_turns === 0 &&
+    result.subtype === "success" &&
+    !result.is_error
+  );
+}
 
 /**
  * Whether an SDK message received between turns means the agent has actually
@@ -1639,52 +1664,6 @@ function buildTurnResult(
     aborted: outcome.aborted,
     compacted: turn.compacted,
     error: outcome.error,
-  };
-}
-
-interface SdkToolResultBlock {
-  type: "tool_result";
-  tool_use_id: string;
-  is_error?: boolean;
-  content?:
-    | string
-    | Array<{ type: string; text?: string; [k: string]: unknown }>;
-}
-
-function extractToolResultText(
-  content: SdkToolResultBlock["content"],
-): string | undefined {
-  if (typeof content === "string") return content || undefined;
-  if (!Array.isArray(content)) return undefined;
-  const textParts: string[] = [];
-  for (const block of content) {
-    if (
-      block != null &&
-      typeof block === "object" &&
-      block.type === "text" &&
-      typeof block.text === "string"
-    ) {
-      textParts.push(block.text);
-    }
-  }
-  return textParts.length > 0 ? textParts.join("\n") : undefined;
-}
-
-function buildToolResultBlock(
-  block: SdkToolResultBlock,
-  toolNamesById: Map<string, string>,
-): MessageContentBlock {
-  const text = extractToolResultText(block.content);
-  const toolName = toolNamesById.get(block.tool_use_id);
-  const metrics: ToolResultMetrics = toolName
-    ? parseToolResultMetrics(toolName, text)
-    : {};
-  return {
-    type: "tool_result",
-    tool_use_id: block.tool_use_id,
-    ...(text ? { content: text } : {}),
-    ...(block.is_error ? { isError: true } : {}),
-    ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
   };
 }
 

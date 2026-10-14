@@ -1,7 +1,5 @@
-import type {
-  CollaborationAutonomousResolutionThreshold,
-  WorkflowCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/collaboration/schemas";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigNumericInput } from "../../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../../components/ConfigPillGroup";

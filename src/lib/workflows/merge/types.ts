@@ -12,7 +12,7 @@ import type {
   MergeHaltReason as PersistedMergeHaltReason,
 } from "@/lib/jobs/schemas";
 import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
-import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type { AgentTurnDispatch } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   MergeValidationMode,
   ValidationWorkflowRef,

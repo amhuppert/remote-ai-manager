@@ -1,27 +1,14 @@
-import {
-  createCapabilityRuntimeApplyService,
-  type ApplyServiceDeps,
-} from "@/lib/agent-capabilities/apply";
-import { type ConversationStartCapabilityComposerInput } from "@/lib/agent-capabilities/default-deps";
+import { createCapabilityRuntimeApplyService } from "@/lib/agent-capabilities/apply";
 import {
   createCapabilityConfigComposer,
   type ComposedProjectConversationCapabilitySeed,
 } from "@/lib/agent-capabilities/runtime-seed";
-import type { ComposeConversationStartResult } from "@/lib/agent-capabilities/runtime-composer";
 import { createMcpRuntimeApplyService } from "@/lib/mcp/runtime-apply";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
+import type { ConversationPolicyInfrastructure } from "@/lib/conversation-core/turn/dependencies";
 import type { ConversationPolicyDependencies } from "./actor-dependencies";
 import type { ConversationPolicyState } from "./policy-state";
-
-export interface ConversationPolicyInfrastructure {
-  composePortableMcp: ConversationPolicyDependencies["composePortableMcpForConversation"];
-  composeCapabilities(
-    input: ConversationStartCapabilityComposerInput,
-  ): Promise<ComposeConversationStartResult>;
-  composeDurableProject: ConversationPolicyDependencies["composeCapabilityConfigForProjectConversation"];
-  applyRuntimeConfig: NonNullable<ApplyServiceDeps["applyRuntimeConfig"]>;
-}
 
 export function createConversationRuntimePolicy(
   deps: ConversationPolicyInfrastructure,

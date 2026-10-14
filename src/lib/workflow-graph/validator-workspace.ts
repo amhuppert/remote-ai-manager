@@ -1,7 +1,10 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { isInsideLanePath, toLanePathSegment } from "./lane-path-segments";
+import {
+  isInsideLanePath,
+  toLanePathSegment,
+} from "@/lib/workspace/lane-path-segments";
 
 export interface ValidatorWorkspace {
   worktreePath: string;

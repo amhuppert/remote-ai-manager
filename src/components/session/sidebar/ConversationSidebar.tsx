@@ -26,6 +26,8 @@ import type {
   SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import { useSidebarConversationsQuery } from "@/lib/active-conversations/queries";
+import { useActiveRunsQuery } from "@/lib/runs/queries";
+import { failedRead, ReadFailure } from "@/components/runs/ReadFailure";
 import { PlusIcon } from "@/components/icons";
 import NewConversationProfileButton from "@/components/agent-profiles/NewConversationProfileButton";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
@@ -98,6 +100,7 @@ import type {
 import {
   adaptCollaborations,
   adaptGraphWorkflows,
+  adaptRuns,
   adaptSpecExecutions,
   adaptStoreJobs,
   deriveNotificationOutcomes,
@@ -313,6 +316,13 @@ function ConversationSidebar({
     () => (clientStateReady ? (activeData?.specExecutions ?? []) : []),
     [activeData, clientStateReady],
   );
+  const activeRunsQuery = useActiveRunsQuery();
+  const activeRunsRead = failedRead(activeRunsQuery);
+  const activeRunsData = activeRunsQuery.data;
+  const activeRuns = useMemo(
+    () => (clientStateReady ? (activeRunsData ?? []) : []),
+    [activeRunsData, clientStateReady],
+  );
 
   // --- Active work (jobs + workflows + collabs + durable actionables) ---
   const storeJobsMap = useNotificationJobs();
@@ -332,6 +342,7 @@ function ConversationSidebar({
       ...adaptGraphWorkflows(activeGraphWorkflows),
       ...adaptCollaborations(activeCollaborations),
       ...adaptSpecExecutions(activeSpecExecutions),
+      ...adaptRuns(activeRuns),
       ...notificationOutcomes.needsAction,
     ],
     [
@@ -339,6 +350,7 @@ function ConversationSidebar({
       activeGraphWorkflows,
       activeCollaborations,
       activeSpecExecutions,
+      activeRuns,
       notificationOutcomes,
     ],
   );
@@ -465,10 +477,15 @@ function ConversationSidebar({
   // hotkey stay one action, and the picker beside the button supplies a
   // reference when the author wants a specialist.
   const handleNewConversation = useCallback(
-    (profile?: AgentProfileRef) => {
+    (profile?: AgentProfileRef, engine?: "core") => {
       if (createConvoMutation.isPending) return;
       createConvoMutation.mutate(
-        profile === undefined ? undefined : { profile },
+        profile === undefined && engine === undefined
+          ? undefined
+          : {
+              ...(profile !== undefined ? { profile } : {}),
+              ...(engine !== undefined ? { engine } : {}),
+            },
         {
           onSuccess: (convo) => {
             openSessionScopedConversation(
@@ -1064,6 +1081,9 @@ function ConversationSidebar({
                 projectName={projectName}
                 pending={createConvoMutation.isPending}
                 onCreate={handleNewConversation}
+                onCreateCore={(profile) =>
+                  handleNewConversation(profile, "core")
+                }
               />
             )}
             {showNewConversationButton && (
@@ -1244,6 +1264,17 @@ function ConversationSidebar({
                 )}
                 nowMs={nowMs}
                 onAction={handleActiveWorkAction}
+                {...(activeRunsRead.failed
+                  ? {
+                      notice: (
+                        <ReadFailure
+                          message="Could not load runs."
+                          retrying={activeRunsRead.retrying}
+                          onRetry={() => void activeRunsQuery.refetch()}
+                        />
+                      ),
+                    }
+                  : {})}
                 onDismissAttention={handleDismissAttention}
               />
               <SubscriptionWakeRail project={projectFilter ?? undefined} />

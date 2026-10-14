@@ -15,6 +15,11 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 
 export class ResetAssignmentError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is ResetAssignmentError {
+    return error instanceof Error && error.name === "ResetAssignmentError";
+  }
+
   constructor(
     readonly code:
       | "invalid_execution_status"

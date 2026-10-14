@@ -19,7 +19,7 @@ import {
   type RouteCardinalityOutcome,
   type RouteEdgeEvaluation,
   type RouteProjection,
-} from "@/lib/workflow-graph/route-projection";
+} from "@/lib/runs/route-projection";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import {
   collectLandGatedSkips,

@@ -93,6 +93,7 @@ function seedConfigRoutes(
     unreadCount: 0,
   });
   api.json("GET", "/api/conversations/active", { conversations: [] });
+  api.json("GET", "/api/runs/active", []);
   api.pending("GET", "/api/config/mcp");
   api.json("GET", "/api/agent-backends", {
     backends: listBackendCatalogEntries(),

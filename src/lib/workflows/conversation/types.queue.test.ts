@@ -1,12 +1,9 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { describe, expect, it } from "vitest";
 
-import type {
-  ConversationEvent,
-  ConversationTurnActive,
-  ExecutePromptInput,
-} from "./types";
-import type { QueuedDeliveryMetadata } from "./turn-spec";
+import type { ConversationEvent, ConversationTurnActive } from "./types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
+import type { QueuedDeliveryMetadata } from "@/lib/conversation-core/turn/turn-spec";
 
 /**
  * Type-level proof that queued delivery metadata threads through the

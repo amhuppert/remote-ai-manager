@@ -1,7 +1,10 @@
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import { assertCheckpointForkBackend } from "./fork-submission";
+import {
+  checkpointForkSelection,
+  createCheckpointForkTurnAdmission,
+} from "./fork-submission";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
@@ -13,6 +16,7 @@ import {
   getConversation,
   getProjectConversation,
   getSession,
+  mutateConversation,
   getStateDb,
   getGraphWorkflowExecutionById,
 } from "@/lib/state-store";
@@ -68,18 +72,19 @@ export async function admitCheckpointForkTurnSelection(input: {
   modelSelection?: BackendModelSelection;
 }): Promise<BackendModelSelection> {
   const { projectPath, conversation, backend, modelSelection } = input;
-  assertCheckpointForkBackend(conversation, backend);
-  const initial =
-    conversation.promptCount === 0 &&
-    conversation.checkpointFork?.initialSelection.backend === backend
-      ? conversation.checkpointFork.initialSelection.modelSelection
-      : undefined;
   return admitCheckpointForkSelection(
     projectPath,
     backend,
-    modelSelection ?? initial,
+    checkpointForkSelection(conversation, backend, modelSelection),
   );
 }
+
+/** A checkpoint fork's turn admission over the stored rows, for whichever engine runs the conversation. */
+export const admitCheckpointForkTurn = createCheckpointForkTurnAdmission({
+  getConversation,
+  mutateConversation,
+  admitSelection: admitCheckpointForkSelection,
+});
 
 const resolveWork = createCheckpointWorkResolver({
   ticket: (projectPath, number) => getTicketsRepo().find(projectPath, number),
@@ -137,5 +142,10 @@ export function getCheckpointForkService() {
       });
     },
     now: () => new Date().toISOString(),
+    async enrollWithSource(placement) {
+      const { enrollForkWithSource } =
+        await import("@/lib/supervision/handles");
+      enrollForkWithSource(placement);
+    },
   });
 }

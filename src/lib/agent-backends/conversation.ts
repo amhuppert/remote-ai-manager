@@ -278,6 +278,14 @@ export interface ConversationBackendRuntime {
   prepareForTurnStart?(): Promise<ReadyResult>;
   /** Resolves on acceptance; ambiguous delivery rejects with InputDeliveryUncertainError. */
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
+  /**
+   * Where `queueUserInput` lands: `running_turn` when the input joins the turn
+   * running when it is sent and is answered within it, or is refused once that
+   * turn has ended. Absent when the provider may take the input up after the
+   * turn's result and answer it separately, which only a host that keeps the
+   * runtime between turns can follow.
+   */
+  readonly liveInput?: "running_turn";
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
   supportedCommands?(): Promise<readonly { name: string }[]>;
   supportedAgents?(): Promise<readonly { name: string }[]>;

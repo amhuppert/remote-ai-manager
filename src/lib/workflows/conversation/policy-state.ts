@@ -6,8 +6,8 @@ import {
 } from "@/lib/conversations/conversation-target";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { McpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
-import type { ManagedConversationRuntime } from "./runtime-binding";
-import type { ConversationDurableEffects } from "./effects";
+import type { ManagedConversationRuntime } from "@/lib/conversation-core/turn/runtime-binding";
+import type { ConversationDurableEffects } from "@/lib/conversation-core/turn/effects";
 
 export interface ConversationPolicyState {
   mcp: McpRuntimeApplicationStore;

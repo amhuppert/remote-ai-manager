@@ -1,7 +1,7 @@
 import path from "node:path";
 import { buildGraphWorkflowExecutionDeepLink } from "./execution-deep-link";
 import type { LeaseAdmissionDecision } from "./lifecycle-classifier";
-import type { DirtyPath } from "./errors";
+import type { DirtyPath } from "@/lib/git/worktree";
 import type { GraphWorkflowLeaseBlocker } from "./schemas";
 
 /**
@@ -24,9 +24,16 @@ export type WorkflowStartGuard =
   // The symmetric half of the session delivery gate (R13): the session is
   // already being finalized by a merge, so seeding a run into it would install
   // live work in a session that is about to be marked finished.
-  | "session_finalizing";
+  | "session_finalizing"
+  // Launches are frozen while the old engine drains before its removal.
+  | "launches_frozen";
 
 export class WorkflowStartGuardError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowStartGuardError {
+    return error instanceof Error && error.name === "WorkflowStartGuardError";
+  }
+
   readonly guard: WorkflowStartGuard;
   readonly dirtyPaths?: DirtyPath[];
   readonly blocker?: GraphWorkflowLeaseBlocker;

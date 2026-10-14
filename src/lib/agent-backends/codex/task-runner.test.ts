@@ -65,19 +65,21 @@ function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
 
 describe("CodexTaskRunner", () => {
   let runner: CodexTaskRunner;
-  let listNativeCodexMcpServers: ReturnType<typeof vi.fn>;
+  let discoverNativeCodexMcpServers: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     logState.entries = [];
-    listNativeCodexMcpServers = vi.fn().mockResolvedValue([]);
+    discoverNativeCodexMcpServers = vi
+      .fn()
+      .mockResolvedValue({ kind: "complete", servers: [] });
     runner = new CodexTaskRunner({
       createCodex: (options) =>
         new Codex(options) as unknown as ReturnType<
           CodexTaskRunnerDeps["createCodex"]
         >,
       buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
-      listNativeCodexMcpServers,
+      discoverNativeCodexMcpServers,
       getCodexPricingOverrides: async () => null,
       getServerUrl: () => null,
       getApiToken: () => null,
@@ -150,7 +152,7 @@ describe("CodexTaskRunner", () => {
           CC_API_TOKEN: "ambient-token",
           PATH: "/usr/bin",
         }) as NodeJS.ProcessEnv,
-      listNativeCodexMcpServers,
+      discoverNativeCodexMcpServers,
       getCodexPricingOverrides: async () => null,
       getServerUrl: () => null,
       getApiToken: () => null,
@@ -185,7 +187,7 @@ describe("CodexTaskRunner", () => {
     const capturing = new CodexTaskRunner({
       createCodex,
       buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
-      listNativeCodexMcpServers,
+      discoverNativeCodexMcpServers,
       getCodexPricingOverrides: async () => null,
       getServerUrl: () => null,
       getApiToken: () => null,
@@ -241,7 +243,7 @@ describe("CodexTaskRunner", () => {
         runner: new CodexTaskRunner({
           createCodex,
           buildChildEnv: () => ({ ...AMBIENT_ENV }) as NodeJS.ProcessEnv,
-          listNativeCodexMcpServers,
+          discoverNativeCodexMcpServers,
           getCodexPricingOverrides: async () => null,
           getServerUrl: () => RESOLVED_SERVER_URL,
           getApiToken: () => RESOLVED_TOKEN,
@@ -491,23 +493,29 @@ describe("CodexTaskRunner", () => {
   });
 
   it("passes enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
-    listNativeCodexMcpServers.mockResolvedValue([
-      {
-        name: "playwright",
-        configEntry: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
-      },
-      {
-        name: "test-server",
-        configEntry: { command: "node", args: ["server.js"] },
-      },
-      {
-        name: "next-devtools",
-        configEntry: {
-          command: "npx",
-          args: ["-y", "next-devtools-mcp@latest"],
+    discoverNativeCodexMcpServers.mockResolvedValue({
+      kind: "complete",
+      servers: [
+        {
+          name: "playwright",
+          configEntry: {
+            command: "npx",
+            args: ["-y", "@playwright/mcp@latest"],
+          },
         },
-      },
-    ]);
+        {
+          name: "test-server",
+          configEntry: { command: "node", args: ["server.js"] },
+        },
+        {
+          name: "next-devtools",
+          configEntry: {
+            command: "npx",
+            args: ["-y", "next-devtools-mcp@latest"],
+          },
+        },
+      ],
+    });
 
     await runner.run(
       makeRequest({
@@ -526,7 +534,7 @@ describe("CodexTaskRunner", () => {
       }),
     );
 
-    expect(listNativeCodexMcpServers).toHaveBeenCalledWith({
+    expect(discoverNativeCodexMcpServers).toHaveBeenCalledWith({
       cwd: "/test/workspace",
       env: { CLAUDECODE: "" },
     });
@@ -556,6 +564,45 @@ describe("CodexTaskRunner", () => {
       },
       service_tier: "default",
       features: { fast_mode: false },
+    });
+  });
+
+  it("refuses an isolated one-shot run when native MCP discovery is incomplete", async () => {
+    discoverNativeCodexMcpServers.mockResolvedValue({
+      kind: "incomplete",
+      reason: "codex mcp list did not return an array",
+      reconstructed: [],
+    });
+
+    const result = await runner.run(
+      makeRequest({ executionProfile: "isolated-one-shot" }),
+    );
+
+    expect(runMock).not.toHaveBeenCalled();
+    expect(result.error).toContain("codex mcp list did not return an array");
+  });
+
+  it("suppresses the reconstructable servers of an incomplete discovery on an ordinary run", async () => {
+    discoverNativeCodexMcpServers.mockResolvedValue({
+      kind: "incomplete",
+      reason: "unreadable native MCP server entries: legacy-sse",
+      reconstructed: [{ name: "playwright", configEntry: { command: "npx" } }],
+    });
+
+    const result = await runner.run(
+      makeRequest({
+        tooling: {
+          portableMcp: {
+            servers: [],
+          },
+        },
+      }),
+    );
+
+    expect(result.error).toBeNull();
+    const passedOptions = vi.mocked(Codex).mock.calls[0]?.[0];
+    expect(passedOptions?.config).toMatchObject({
+      mcp_servers: { playwright: { command: "npx", enabled: false } },
     });
   });
 
@@ -628,12 +675,15 @@ describe("CodexTaskRunner", () => {
       usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
       items,
     });
-    listNativeCodexMcpServers.mockResolvedValue([
-      {
-        name: "native-tools",
-        configEntry: { command: "native-server" },
-      },
-    ]);
+    discoverNativeCodexMcpServers.mockResolvedValue({
+      kind: "complete",
+      servers: [
+        {
+          name: "native-tools",
+          configEntry: { command: "native-server" },
+        },
+      ],
+    });
 
     const result = await runner.run(
       makeRequest({
@@ -741,7 +791,7 @@ describe("CodexTaskRunner", () => {
       "additionalDirectories",
     );
     expect(resumeThreadMock).not.toHaveBeenCalled();
-    expect(listNativeCodexMcpServers).toHaveBeenCalledTimes(1);
+    expect(discoverNativeCodexMcpServers).toHaveBeenCalledTimes(1);
     expect(result.backendRef).toBeNull();
     expect(result.text).toBe("done");
     expect(result.error).toBeNull();
@@ -1329,7 +1379,7 @@ describe("CodexTaskRunner", () => {
             CodexTaskRunnerDeps["createCodex"]
           >,
         buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
-        listNativeCodexMcpServers,
+        discoverNativeCodexMcpServers,
         getCodexPricingOverrides: async () => ({
           "gpt-5.5": {
             inputPerMillion: 10,
@@ -1383,7 +1433,7 @@ describe("CodexTaskRunner", () => {
         runner: new CodexTaskRunner({
           createCodex,
           buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
-          listNativeCodexMcpServers,
+          discoverNativeCodexMcpServers,
           getCodexPricingOverrides: async () => null,
           getServerUrl: () => null,
           getApiToken: () => null,
@@ -1519,7 +1569,7 @@ describe("CodexTaskRunner", () => {
               TMPDIR: "/ambient/tmp",
               PATH: "/usr/bin",
             }) as NodeJS.ProcessEnv,
-          listNativeCodexMcpServers,
+          discoverNativeCodexMcpServers,
           getCodexPricingOverrides: async () => null,
           getServerUrl: () => null,
           getApiToken: () => null,
@@ -1580,9 +1630,12 @@ describe("CodexTaskRunner", () => {
     });
 
     it("suppresses MCP servers the machine configured but CC did not compose", async () => {
-      listNativeCodexMcpServers.mockResolvedValue([
-        { name: "ambient-server", configEntry: { command: "ambient" } },
-      ]);
+      discoverNativeCodexMcpServers.mockResolvedValue({
+        kind: "complete",
+        servers: [
+          { name: "ambient-server", configEntry: { command: "ambient" } },
+        ],
+      });
       const { runner: restricted, createCodex } = restrictedRunner();
 
       await restricted.run(makeRequest({ fsWritePolicy: POLICY }));
@@ -1592,6 +1645,25 @@ describe("CodexTaskRunner", () => {
           "ambient-server": { command: "ambient", enabled: false },
         },
       });
+    });
+
+    it("refuses before dispatch when native MCP discovery is incomplete", async () => {
+      discoverNativeCodexMcpServers.mockResolvedValue({
+        kind: "incomplete",
+        reason: "codex mcp list failed: spawn ENOENT",
+        reconstructed: [
+          { name: "ambient-server", configEntry: { command: "ambient" } },
+        ],
+      });
+      const { runner: restricted, createCodex } = restrictedRunner();
+
+      const result = await restricted.run(
+        makeRequest({ fsWritePolicy: POLICY }),
+      );
+
+      expect(createCodex).not.toHaveBeenCalled();
+      expect(result.text).toBeNull();
+      expect(result.error).toContain("codex mcp list failed: spawn ENOENT");
     });
 
     it("names the candidate worktree by absolute path, since the run no longer sits in it", async () => {

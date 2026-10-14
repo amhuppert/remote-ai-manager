@@ -11,9 +11,9 @@ import {
   seedAssignment,
   makeStubValidatorContinuityService,
 } from "./test-fixtures";
-import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
-import { prepareRuntimeInstructions } from "@/lib/workflows/conversation/runtime-instructions";
+import type { ConversationTurnSubmission } from "@/lib/conversation-core/turn/turn-spec";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
+import { prepareRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import {
   createActorDependenciesFixture,
   groupActorFixtureDependencies,

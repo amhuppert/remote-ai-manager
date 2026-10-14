@@ -13,10 +13,6 @@ import {
   DIFF_LINE_BASE,
   DIFF_LINE_TYPE,
 } from "@/components/git/diff-row-classes";
-import {
-  AlertTriangleIcon,
-  CheckIcon,
-} from "@/components/workflow-config-panel/icons";
 import { Spinner } from "@/components/ui/Spinner";
 import type { SessionDiff } from "@/lib/git/schemas";
 import { cn } from "@/lib/ui/cn";
@@ -60,22 +56,51 @@ interface ApprovalGatePanelProps {
   iteration?: number | null;
   /** ISO timestamp of when the gate parked; drives the wait-time readout. */
   requestedAt: string;
+  now?: number;
   isSubmitting: boolean;
   conversationBusy: boolean;
   executionSuspended: boolean;
   scopedChanges?: ApprovalScopedChanges | null;
+  /** How the decision reads for the host's engine; the graph engine's meanings when absent. */
+  wording?: ApprovalWording;
   voiceProjectName?: string;
   onApprove(): void;
   onReject(message: string): void;
 }
 
-function diffSummary(ownedPaths: string[] | null, diff: SessionDiff): string {
+export interface ApprovalWording {
+  /** What a ready candidate's changes are measured from. */
+  changes: string;
+  /** A candidate that may change the whole worktree it works in. */
+  wholeTree: string;
+  /** What approving does, and does not, do. */
+  approving: string;
+  /** What follows a rejection. */
+  afterReject: string;
+  /** What the decision leaves running meanwhile. */
+  meanwhile: string;
+}
+
+const GRAPH_WORDING: ApprovalWording = {
+  changes: "Changes since this context began, including committed work.",
+  wholeTree: "whole lane worktree",
+  approving:
+    "Approving lets orchestration continue; it does not land the lane or publish it.",
+  afterReject: "rejection reruns validators",
+  meanwhile: "Sibling contexts keep running — nothing here pauses the run.",
+};
+
+function diffSummary(
+  ownedPaths: string[] | null,
+  diff: SessionDiff,
+  wholeTree: string,
+): string {
   const fileCount = diff.files.length;
   const files = `${fileCount} ${fileCount === 1 ? "file" : "files"}`;
   const lines = `+${diff.totalAdditions} −${diff.totalDeletions}`;
   const scope =
     ownedPaths === null
-      ? "whole lane worktree"
+      ? wholeTree
       : ownedPaths.length > 0
         ? `scoped to ${ownedPaths.join(", ")}`
         : "owns no writable path";
@@ -91,8 +116,10 @@ function diffSummary(ownedPaths: string[] | null, diff: SessionDiff): string {
  */
 function CandidateState({
   scopedChanges,
+  wording,
 }: {
   scopedChanges: ApprovalScopedChanges;
+  wording: ApprovalWording;
 }) {
   const { tone, icon, label, aside, detail } = ((): {
     tone: string;
@@ -120,8 +147,9 @@ function CandidateState({
               ? scopedChanges.candidate.ownedPaths
               : null,
             scopedChanges.candidate.diff,
+            wording.wholeTree,
           ),
-          detail: "Changes since this context began, including committed work.",
+          detail: wording.changes,
         };
       case "drifted":
         return {
@@ -157,12 +185,12 @@ function CandidateState({
           {icon}
         </span>
         <span className="font-mono text-[0.72rem] font-medium">{label}</span>
-        <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+        <span className="ml-auto font-mono text-[0.7rem] text-text-primary">
           {aside}
         </span>
       </div>
       {detail !== null && (
-        <span className="font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+        <span className="font-mono text-[0.7rem] leading-[1.5] text-text-primary">
           {detail}
         </span>
       )}
@@ -196,7 +224,12 @@ function ScopedChangesSection({
           )}
         </div>
       ) : (
-        <div className="max-h-[320px] overflow-auto py-sm font-mono text-[0.7rem] leading-[1.5]">
+        <div
+          role="region"
+          aria-label="Candidate diff"
+          tabIndex={0}
+          className="max-h-[320px] overflow-auto rounded-md py-sm font-mono text-[0.7rem] leading-[1.5] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:-outline-offset-2"
+        >
           {diff.files.map((file) => (
             <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
               <div className={DIFF_FILE_HEADER_CLASS}>
@@ -228,10 +261,10 @@ function ScopedChangesSection({
   );
 }
 
-function formatWaitTime(isoDate: string): string | null {
+function formatWaitTime(isoDate: string, now?: number): string | null {
   const timestamp = new Date(isoDate).getTime();
   if (!Number.isFinite(timestamp)) return null;
-  const diffMs = Math.max(0, Date.now() - timestamp);
+  const diffMs = Math.max(0, (now ?? Date.now()) - timestamp);
   const minutes = Math.floor(diffMs / 60_000);
   if (minutes < 1) return "waiting <1m";
   if (minutes < 60) return `waiting ${minutes}m`;
@@ -255,10 +288,12 @@ export default function ApprovalGatePanel({
   workflowName,
   iteration = null,
   requestedAt,
+  now,
   isSubmitting,
   conversationBusy,
   executionSuspended,
   scopedChanges = null,
+  wording = GRAPH_WORDING,
   voiceProjectName,
   onApprove,
   onReject,
@@ -278,7 +313,7 @@ export default function ApprovalGatePanel({
     scopedChanges.status !== "ready";
   const trimmedMessage = message.trim();
   const needsFeedback = trimmedMessage === "" && !rejectVoiceBusy;
-  const waitLabel = formatWaitTime(requestedAt);
+  const waitLabel = formatWaitTime(requestedAt, now);
 
   const busyHint = conversationBusy
     ? "Chat turn in progress — actions re-enable when it completes."
@@ -322,7 +357,7 @@ export default function ApprovalGatePanel({
               : "Context approval"}
           </span>
           {meta.length > 0 && (
-            <span className="ml-auto flex items-baseline gap-sm font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
+            <span className="ml-auto flex items-baseline gap-sm font-mono text-[0.7rem] whitespace-nowrap text-text-secondary">
               {meta.map((part) => (
                 <span key={part}>{part}</span>
               ))}
@@ -332,14 +367,13 @@ export default function ApprovalGatePanel({
 
         <div className="flex flex-col gap-[10px] px-3 py-[11px]">
           {scopedChanges !== null && (
-            <CandidateState scopedChanges={scopedChanges} />
+            <CandidateState scopedChanges={scopedChanges} wording={wording} />
           )}
 
           <p className={NOTE_CLASS}>
             You are reviewing the candidate{" "}
-            <span className="text-text-primary">frozen for this gate</span>.
-            Approving lets orchestration continue; it does not land the lane or
-            publish it.
+            <span className="text-text-primary">frozen for this gate</span>.{" "}
+            {wording.approving}
           </p>
 
           {scopedChanges?.status === "ready" && (
@@ -403,13 +437,13 @@ export default function ApprovalGatePanel({
               {needsFeedback ? "Reject — needs feedback" : "Reject"}
             </button>
             <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
-              rejection reruns validators
+              {wording.afterReject}
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-sm">
             <span className="font-mono text-[0.7rem] text-text-tertiary">
-              Sibling contexts keep running — nothing here pauses the run.
+              {wording.meanwhile}
             </span>
             <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
               ⌘↵ reject · esc clear
@@ -418,5 +452,53 @@ export default function ApprovalGatePanel({
         </div>
       </section>
     </div>
+  );
+}
+
+function Glyph({
+  size = 13,
+  children,
+}: {
+  size?: number;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function AlertTriangleIcon(props: { size?: number }): React.JSX.Element {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M8 2.8 14.2 13.2H1.8Z"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path d="M8 6.6v3M8 11.4v.1" strokeWidth="1.4" strokeLinecap="round" />
+    </Glyph>
+  );
+}
+
+function CheckIcon(props: { size?: number }): React.JSX.Element {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M3.2 8.4 6.4 11.6 12.8 4.8"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Glyph>
   );
 }

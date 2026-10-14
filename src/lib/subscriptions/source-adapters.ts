@@ -1,6 +1,7 @@
 import { gitJobSourceFact } from "./git-job-source";
 import { createNotepadSourceReader } from "./notepad-source";
 import { createWorkflowSourceReader } from "./workflow-source";
+import { createRunSourceReader, type RunSourceDeps } from "./run-source";
 import type { NotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import type { NotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
 import type { GraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
@@ -41,6 +42,7 @@ export interface SubscriptionSourceDeps {
   jobs: JobsRepo;
   queries: SubscriptionSourceQueriesRepo;
   ticketChanges: TicketStatusChangesRepo;
+  runs: RunSourceDeps;
 }
 
 const ticketCursorSchema = z
@@ -126,6 +128,7 @@ export function projectSpecSourceFact(input: {
 export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
   const readNotepad = createNotepadSourceReader(deps);
   const readWorkflow = createWorkflowSourceReader(deps);
+  const readRun = createRunSourceReader(deps.runs);
   return async function readSource(
     recipient: SubscriptionRecipient,
     source: SubscriptionSourceRef,
@@ -140,6 +143,7 @@ export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
     }
     if (source.kind === "notepad")
       return readNotepad(recipient, source, cursor);
+    if (source.kind === "run") return readRun(recipient, source, cursor);
     if (source.kind === "spec") {
       const spec = await deps.specs.findById(source.id);
       if (!spec || spec.projectPath !== recipient.projectPath)

@@ -74,7 +74,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { generalizedModelSelection } from "@/lib/state-store/migrations/0035-generalized-model-selection";
 import { createValidatorCohortRunner } from "@/lib/workflow-graph/validator-cohort-runner";

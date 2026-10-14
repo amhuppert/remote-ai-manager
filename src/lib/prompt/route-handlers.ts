@@ -21,6 +21,7 @@ import {
 } from "@/lib/state-store";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
 import {
+  sessionConversationTarget,
   storeSessionNameFromScopeRef,
   type ConversationScopeRef,
 } from "@/lib/conversations/conversation-target";
@@ -30,11 +31,12 @@ import {
 } from "@/lib/conversations/service";
 import {
   executePromptStream as defaultExecutePromptStream,
+  productionCorePromptDeps,
   BackendMismatchError,
-  ModelSelectionValidationError,
   CollabBriefRequiredError,
   CollabDispatcherUnavailableError,
 } from "@/lib/prompt/sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import {
   hasCollabPrefix,
   stripCollabPrefix,
@@ -67,6 +69,12 @@ import type { RunPromptRequest } from "@/lib/prompt/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
+import {
+  admitCoreCollaboration,
+  promptCoreConversation,
+  type CoreConversationPrompts,
+} from "@/lib/conversation-core/prompt-route";
+import { coreOwnsConversation } from "@/lib/supervision/handles";
 
 const logger = createLogger("prompt");
 
@@ -149,6 +157,24 @@ export interface PromptRouteDeps {
     conversationId: string,
     expectedText: string,
   ): Promise<boolean>;
+  /** Conversations the shared core runs take their prompts there, not to the actor. */
+  coreConversations: CoreConversationPrompts;
+}
+
+/**
+ * The core's prompt route over the production core, shared by every route that
+ * addresses a conversation (session and project scope alike).
+ */
+export function productionCoreConversationPrompts(
+  log: Pick<Logger, "info" | "warn">,
+): CoreConversationPrompts {
+  return {
+    owns: coreOwnsConversation,
+    prompt: (input) =>
+      promptCoreConversation(productionCorePromptDeps(log), input),
+    admitCollaboration: (input) =>
+      admitCoreCollaboration(productionCorePromptDeps(log), input),
+  };
 }
 
 const defaultDeps: PromptRouteDeps = {
@@ -164,6 +190,7 @@ const defaultDeps: PromptRouteDeps = {
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
   clearConversationPendingPromptTextIfMatches:
     defaultClearConversationPendingPromptTextIfMatches,
+  coreConversations: productionCoreConversationPrompts(logger),
 };
 
 // ---------------------------------------------------------------------------
@@ -344,6 +371,116 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     });
   }
 
+  /** `/collab <brief>` starts Collaboration Mode on the conversation, on either engine. */
+  async function startCollaborationFromPrompt(args: {
+    name: string;
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    body: RunPromptRequest;
+    trimmedPrompt: string;
+  }): Promise<Response> {
+    const {
+      name,
+      projectPath,
+      sessionName,
+      conversationId,
+      body,
+      trimmedPrompt,
+    } = args;
+    const brief = stripCollabPrefix(trimmedPrompt).trim();
+    if (brief.length === 0) {
+      return NextResponse.json(
+        {
+          error: "/collab prompt must include a brief after the slash command",
+          code: "COLLAB_BRIEF_REQUIRED",
+        } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+    try {
+      const manager = deps.getCollaborationManager();
+      const result = await manager.start({
+        projectPath,
+        sessionName,
+        conversationId,
+        brief,
+        negotiationRounds:
+          body.collab?.negotiationRounds ?? DEFAULT_NEGOTIATION_ROUNDS,
+        autonomousResolutionThreshold:
+          body.collab?.autonomousResolutionThreshold ??
+          DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
+        ...(body.modelSelection !== undefined
+          ? { modelSelection: body.modelSelection }
+          : {}),
+        ...(body.collab?.agentTwo !== undefined
+          ? { agentTwo: body.collab.agentTwo }
+          : {}),
+        ...(body.images?.length ? { images: body.images } : {}),
+      });
+      try {
+        await deps.clearConversationPendingPromptTextIfMatches(
+          projectPath,
+          sessionName,
+          conversationId,
+          body.submittedPendingPromptText ?? body.prompt,
+        );
+      } catch (error) {
+        logger.warn("collaboration.pending_draft_clear_failed", {
+          projectPath,
+          sessionName,
+          conversationId,
+          workflowId: result.workflowId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const statusUrl = `/api/projects/${encodeURIComponent(name)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
+      return NextResponse.json(
+        { workflowId: result.workflowId, status: result.status, statusUrl },
+        { status: 202 },
+      );
+    } catch (err) {
+      if (err instanceof CollaborationSessionNotFoundError) {
+        return notFound(err.message);
+      }
+      if (err instanceof CollaborationConversationNotFoundError) {
+        return notFound(err.message);
+      }
+      if (err instanceof CollaborationStartConflictError) {
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: "COLLABORATION_START_CONFLICT",
+          } satisfies ApiError,
+          { status: 409 },
+        );
+      }
+      if (err instanceof CollaborationModelSelectionValidationError) {
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: "COLLABORATION_INVALID_MODEL_EFFORT",
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      if (err instanceof CollaborationProfileResolutionError) {
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: "COLLABORATION_PROFILE_RESOLUTION_FAILED",
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      const message =
+        err instanceof Error ? err.message : "Failed to start collaboration";
+      return NextResponse.json({ error: message } satisfies ApiError, {
+        status: 500,
+      });
+    }
+  }
+
   /**
    * POST handler for conversation-specific prompts.
    * Resolves conversationId from route params and guards against
@@ -372,7 +509,13 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       return notFound("Conversation not found");
     }
 
-    if (conversation.role === "iteration") {
+    // The open-approval-gate exception belongs to the old engine's iteration
+    // conversations; a conversation the core runs (a run's seat) is refused by
+    // the core itself, below.
+    if (
+      conversation.role === "iteration" &&
+      !deps.coreConversations.owns(conversationId)
+    ) {
       const activeExecution = await deps.getActiveGraphWorkflowExecution(
         projectPath,
         sessionName,
@@ -411,6 +554,42 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       );
     }
 
+    if (deps.coreConversations.owns(conversationId)) {
+      let coreBody: RunPromptRequest;
+      try {
+        coreBody = runPromptRequestSchema.parse(await request.json());
+      } catch {
+        return NextResponse.json(
+          { error: "Prompt text is required" } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      const trimmedCorePrompt = coreBody.prompt.trim();
+      if (hasCollabPrefix(trimmedCorePrompt)) {
+        const refused = await deps.coreConversations.admitCollaboration({
+          projectPath,
+          target: sessionConversationTarget(name, sessionName, conversationId),
+          conversation,
+          body: coreBody,
+        });
+        if (refused) return refused;
+        return startCollaborationFromPrompt({
+          name,
+          projectPath,
+          sessionName,
+          conversationId,
+          body: coreBody,
+          trimmedPrompt: trimmedCorePrompt,
+        });
+      }
+      return deps.coreConversations.prompt({
+        projectPath,
+        target: sessionConversationTarget(name, sessionName, conversationId),
+        conversation,
+        body: coreBody,
+      });
+    }
+
     if (deps.isConversationBusy(projectPath, sessionName, conversationId)) {
       return NextResponse.json(
         {
@@ -440,98 +619,14 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     );
     if (commandRefusal) return commandRefusal;
     if (hasCollabPrefix(trimmedPrompt)) {
-      const brief = stripCollabPrefix(trimmedPrompt).trim();
-      if (brief.length === 0) {
-        return NextResponse.json(
-          {
-            error:
-              "/collab prompt must include a brief after the slash command",
-            code: "COLLAB_BRIEF_REQUIRED",
-          } satisfies ApiError,
-          { status: 400 },
-        );
-      }
-      try {
-        const manager = deps.getCollaborationManager();
-        const result = await manager.start({
-          projectPath,
-          sessionName,
-          conversationId,
-          brief,
-          negotiationRounds:
-            body.collab?.negotiationRounds ?? DEFAULT_NEGOTIATION_ROUNDS,
-          autonomousResolutionThreshold:
-            body.collab?.autonomousResolutionThreshold ??
-            DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
-          ...(body.modelSelection !== undefined
-            ? { modelSelection: body.modelSelection }
-            : {}),
-          ...(body.collab?.agentTwo !== undefined
-            ? { agentTwo: body.collab.agentTwo }
-            : {}),
-          ...(body.images?.length ? { images: body.images } : {}),
-        });
-        try {
-          await deps.clearConversationPendingPromptTextIfMatches(
-            projectPath,
-            sessionName,
-            conversationId,
-            body.submittedPendingPromptText ?? body.prompt,
-          );
-        } catch (error) {
-          logger.warn("collaboration.pending_draft_clear_failed", {
-            projectPath,
-            sessionName,
-            conversationId,
-            workflowId: result.workflowId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-        const statusUrl = `/api/projects/${encodeURIComponent(name)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(result.workflowId)}`;
-        return NextResponse.json(
-          { workflowId: result.workflowId, status: result.status, statusUrl },
-          { status: 202 },
-        );
-      } catch (err) {
-        if (err instanceof CollaborationSessionNotFoundError) {
-          return notFound(err.message);
-        }
-        if (err instanceof CollaborationConversationNotFoundError) {
-          return notFound(err.message);
-        }
-        if (err instanceof CollaborationStartConflictError) {
-          return NextResponse.json(
-            {
-              error: err.message,
-              code: "COLLABORATION_START_CONFLICT",
-            } satisfies ApiError,
-            { status: 409 },
-          );
-        }
-        if (err instanceof CollaborationModelSelectionValidationError) {
-          return NextResponse.json(
-            {
-              error: err.message,
-              code: "COLLABORATION_INVALID_MODEL_EFFORT",
-            } satisfies ApiError,
-            { status: 400 },
-          );
-        }
-        if (err instanceof CollaborationProfileResolutionError) {
-          return NextResponse.json(
-            {
-              error: err.message,
-              code: "COLLABORATION_PROFILE_RESOLUTION_FAILED",
-            } satisfies ApiError,
-            { status: 400 },
-          );
-        }
-        const message =
-          err instanceof Error ? err.message : "Failed to start collaboration";
-        return NextResponse.json({ error: message } satisfies ApiError, {
-          status: 500,
-        });
-      }
+      return startCollaborationFromPrompt({
+        name,
+        projectPath,
+        sessionName,
+        conversationId,
+        body,
+        trimmedPrompt,
+      });
     }
 
     // Admission is the moment the turn generation moves — before the transcript

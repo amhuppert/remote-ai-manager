@@ -26,7 +26,7 @@ import type { ValidationRunResult } from "@/lib/validation/schemas";
 import type { GateFailResult } from "@/lib/workflows/primitives/gate-vocabulary";
 import { scriptValidationGateFromOutcome } from "@/lib/workflows/primitives/script-validation-gate";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { AgentTurnDispatch } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import type { AgentTurnDispatch } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   MergeValidationSource,
   ValidationCommandSelection,
@@ -35,13 +35,24 @@ import type {
 
 const logger = createLogger("validation-fix-actors");
 
+/** The first conversation, most recently active first, that takes task turns: any but a run's seat. */
+export function pickSessionConversation(
+  conversations: readonly { id: string }[],
+  isRunSeat: (conversationId: string) => boolean,
+): string | null {
+  return (
+    conversations.find((conversation) => !isRunSeat(conversation.id))?.id ??
+    null
+  );
+}
+
 /**
  * Fallback conversation for conflict-resolution and validation-fix turns
  * when the machine input carries no explicit `conversationId`: the session's
- * most-recently-active conversation. Only safe when every session
+ * most-recently-active conversation that takes task turns. Only safe when every session
  * conversation shares the session worktree (user-driven Smart Merge and
  * Smart Commit); graph joins must pass the source lane's conversation
- * explicitly instead. Throws when the session has no conversation so the
+ * explicitly instead. Throws when the session has no such conversation so the
  * workflow fails loudly rather than dispatching against an undefined
  * identifier.
  */
@@ -50,11 +61,13 @@ export async function resolveSessionConversationId(
   sessionName: string,
 ): Promise<string> {
   const { getSessionConversations } = await import("@/lib/state-store");
+  const { coreRunsSeat } = await import("@/lib/supervision/handles");
   const conversations = await getSessionConversations(projectPath, sessionName);
-  const id = conversations[0]?.id;
+  // A run's seat takes work only from its run; any other conversation, on either engine, takes task turns.
+  const id = pickSessionConversation(conversations, coreRunsSeat);
   if (!id) {
     throw new Error(
-      `No conversation found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,
+      `No conversation that takes task turns found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,
     );
   }
   return id;
@@ -511,7 +524,7 @@ export const runValidation = createRunValidationActor(async () => {
 export const fixValidation = fromPromise<
   FixValidationOutput,
   FixValidationInput
->(async ({ input }) => {
+>(async ({ input, signal }) => {
   const { fixValidationErrors } =
     await import("@/lib/workflows/validation-fix");
   const { readRepoConfig } = await import("@/lib/projects/repo-config");
@@ -558,6 +571,8 @@ export const fixValidation = fromPromise<
     agentTurnDispatch: input.agentTurnDispatch,
     branchName: input.branchName,
     isRetry: input.isRetry,
+    // Stopping the machine's fixing state stops the fresh task writing into the worktree.
+    signal,
   });
 
   logger.info("validation_fix.result", {

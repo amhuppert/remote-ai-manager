@@ -10,10 +10,12 @@ import type {
   ConversationInput,
   PrepareTurnInput,
   PrepareTurnOutput,
-  ExecutePromptInput,
-  PromptActorResult,
   RunTaskRunInput,
 } from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 // ============================================================

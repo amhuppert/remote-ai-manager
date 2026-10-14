@@ -232,6 +232,39 @@ describe("executeOptimisticWorkflow", () => {
     );
   });
 
+  it.each([
+    [{ error: "Conversation is busy" }, "Conversation is busy"],
+    [
+      { error: "The provider went away", aborted: true },
+      "The provider went away",
+    ],
+    // The actor reports a stopped turn with no error, and why it stopped.
+    [{ error: null, aborted: true, abortReason: "timeout" }, "timeout"],
+  ])(
+    "does not merge a session whose kickoff turn was refused or did not finish (%o)",
+    async (ending, message) => {
+      const deps = createTestDeps({
+        executePromptStream: vi.fn().mockResolvedValue({
+          conversationId: "conv-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+          ...ending,
+        }),
+      });
+
+      await executeOptimisticWorkflow(baseParams, deps);
+
+      expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
+      expect(deps.createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Optimistic task failed",
+          message: expect.stringContaining(message),
+        }),
+      );
+    },
+  );
+
   it("never throws even when prompt execution fails", async () => {
     const deps = createTestDeps({
       executePromptStream: vi

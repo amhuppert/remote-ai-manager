@@ -31,7 +31,7 @@ import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas"
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { TranscriptEntryWithSeq } from "@/lib/prompt/transcript";
 
-import { checkpointScopeKeyForStoreIdentity } from "../actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import {
   conversationRuntimeKey,
   getConversationRuntime,

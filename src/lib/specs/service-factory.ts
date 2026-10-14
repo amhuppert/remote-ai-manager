@@ -266,8 +266,9 @@ export async function createProductionSpecRouteServices(
           ),
         };
       } catch (error) {
-        const code =
-          error instanceof WorkflowStartInputError ? "validation" : undefined;
+        const code = WorkflowStartInputError.is(error)
+          ? "validation"
+          : undefined;
         logger.warn("specs.execution.spec-delivery-start-refused", {
           projectPath,
           sessionName: input.sessionName,

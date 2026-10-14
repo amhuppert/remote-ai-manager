@@ -11,7 +11,7 @@ import type {
   GraphWorkflowAdvisoryResponseInput,
   GraphWorkflowAdvisoryResponseOutcome,
 } from "../advisory-response-runner";
-import type { DirtyPath } from "../errors";
+import type { DirtyPath } from "@/lib/git/worktree";
 import { createTestGraphExecutionContract } from "@/lib/workflow-graph/testing/execution-contract";
 import { createGraphWorkflowEngine } from "../engine-composition";
 import { mkdir } from "node:fs/promises";
@@ -50,7 +50,7 @@ import type {
   ProvisionInput,
   ProvisionLaneInput,
   ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "@/lib/workspace/parallel-worktrees";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
 import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
 import { getEligibleContextIds } from "@/lib/workflow-graph/lane-readiness";

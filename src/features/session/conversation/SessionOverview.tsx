@@ -108,6 +108,8 @@ interface SessionOverviewProps {
   createAction: ReactNode;
   sessionActions: ReactNode;
   workflow: ReactNode;
+  /** The session's runs (design r2 amendment 17), beside the graph workflow until cutover. */
+  runs: ReactNode;
   workspaceTools: ReactNode;
   ticket?: ReactNode;
   finishedNotice?: ReactNode;
@@ -128,6 +130,7 @@ export default function SessionOverview({
   createAction,
   sessionActions,
   workflow,
+  runs,
   workspaceTools,
   ticket,
   finishedNotice,
@@ -398,6 +401,9 @@ export default function SessionOverview({
         >
           <section aria-label="Workflow" className="min-w-0">
             {workflow}
+          </section>
+          <section aria-label="Runs" className="min-w-0">
+            {runs}
           </section>
           <section
             aria-labelledby="session-workspace-title"

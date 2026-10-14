@@ -172,6 +172,48 @@ describe("Claude in-turn live-delivery flow (integration)", () => {
     expect(appended).toEqual([]);
     expect(await service.claimNextTurnBatch(KEY)).toBeNull();
   });
+  it("holds for review an uncertain delivery thrown by a runtime created at startup, from its own copy of the error class", async () => {
+    // A rehydrated conversation's runtime was created by startup code, whose
+    // copy of the error class is not the one this module imports.
+    class StartupCopyOfInputDeliveryUncertainError extends Error {
+      constructor(message: string) {
+        super(message);
+        this.name = "InputDeliveryUncertainError";
+      }
+    }
+    const store: FakeStore = { conversation: makeRunningClaudeConversation() };
+    const { deps: serviceDeps } = makeQueueServiceDeps(store);
+    const service = createMessageQueueService(serviceDeps);
+    const { runtime } = makeAcceptingClaudeRuntime();
+    runtime.queueUserInput = async () => {
+      throw new StartupCopyOfInputDeliveryUncertainError(
+        "acknowledgement lost",
+      );
+    };
+    await queueMessage({
+      ...KEY,
+      backend: "claude",
+      text: "only once",
+      inputOrigin: "user",
+      deps: {
+        subscriptions: undefined,
+        enqueue: service.enqueue,
+        claimLiveDelivery: service.claimLiveDelivery,
+        markPending: service.markPending,
+        markDelivered: service.markDelivered,
+        markUncertain: service.markUncertain,
+        getRuntime: () => runtime,
+        appendTranscriptEntry: async () => {},
+        getProjectDisplayName: () => "my-project",
+      },
+    });
+
+    expect(store.conversation?.pendingQueue).toMatchObject([
+      { status: "uncertain", error: "acknowledgement lost" },
+    ]);
+    expect(await service.claimNextTurnBatch(KEY)).toBeNull();
+  });
+
   it("queues during a running Claude turn, accepts live delivery, appends once after acceptance, and transitions pending -> delivered", async () => {
     // --- Compose the REAL queue service over an in-memory running Claude
     //     conversation, and the REAL queueMessage over that same service.

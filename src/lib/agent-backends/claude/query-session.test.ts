@@ -288,6 +288,176 @@ describe("QuerySession.sendPrompt", () => {
     session.close();
   });
 
+  it("does not answer the prompt with the result of a background-task notification replayed on resume", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(
+      makeDefaultOptions({ resume: "sess-abc" }),
+    );
+    const turnPromise = session.sendPrompt("hi", vi.fn());
+    let settled = false;
+    void turnPromise.then(() => (settled = true));
+
+    // A task the previous process left running is reported first, with a
+    // result of its own that never reached the model.
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "bcqc7w88h",
+      status: "stopped",
+      session_id: "sess-abc",
+      uuid: "n1",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-abc",
+      uuid: "n2",
+      total_cost_usd: 0.26,
+      duration_ms: 67,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+      origin: { kind: "task-notification" },
+    } as unknown as SDKMessage);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-abc",
+      uuid: "a1",
+      message: { content: [{ type: "text", text: "Hello!" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-abc",
+      uuid: "r1",
+      total_cost_usd: 0.3,
+      duration_ms: 1500,
+      num_turns: 1,
+      result: "Hello!",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+    expect(result.finalText).toBe("Hello!");
+    expect(result.numTurns).toBe(1);
+    session.close();
+  });
+
+  it("charges a resumed session's first turn only the spend since the total its transcript saved", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(
+      makeDefaultOptions({
+        resume: "sess-abc",
+        costBaseline: { sessionId: "sess-abc", cumulativeCostUsd: 0.26 },
+      }),
+    );
+    const turnPromise = session.sendPrompt("hi", vi.fn());
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-abc",
+      uuid: "r1",
+      total_cost_usd: 0.3,
+      duration_ms: 1500,
+      num_turns: 1,
+      result: "Hello!",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    expect((await turnPromise).costUsd).toBeCloseTo(0.04, 10);
+    session.close();
+  });
+
+  it("lets a failed notification turn answer the prompt it may have absorbed, rather than leave it waiting", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const turnPromise = session.sendPrompt("hi", vi.fn());
+    mock.pushMessage({
+      type: "result",
+      subtype: "error_during_execution",
+      session_id: "sess-abc",
+      uuid: "n1",
+      total_cost_usd: 0.1,
+      duration_ms: 5,
+      num_turns: 0,
+      result: "",
+      is_error: true,
+      errors: ["the API is overloaded"],
+      origin: { kind: "task-notification" },
+    } as unknown as SDKMessage);
+
+    expect((await turnPromise).error).toContain("overloaded");
+    session.close();
+  });
+
+  it("charges the caller the background spend a skipped notification result reported", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(
+      makeDefaultOptions({
+        resume: "sess-abc",
+        costBaseline: { sessionId: "sess-abc", cumulativeCostUsd: 0.26 },
+      }),
+    );
+    const turnPromise = session.sendPrompt("hi", vi.fn());
+    const result = (
+      uuid: string,
+      total: number,
+      numTurns: number,
+      origin?: { kind: string },
+    ) =>
+      ({
+        type: "result",
+        subtype: "success",
+        session_id: "sess-abc",
+        uuid,
+        total_cost_usd: total,
+        duration_ms: 10,
+        num_turns: numTurns,
+        result: "",
+        is_error: false,
+        ...(origin ? { origin } : {}),
+      }) as unknown as SDKMessage;
+    mock.pushMessage(result("n1", 0.28, 0, { kind: "task-notification" }));
+    mock.pushMessage(result("r1", 0.3, 1));
+
+    expect((await turnPromise).costUsd).toBeCloseTo(0.04, 10);
+    session.close();
+  });
+
+  it("does not let a zeroed crash result reset what later results are charged against", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const session = createQuerySession(makeDefaultOptions());
+    const turn = async (total: number, isError: boolean) => {
+      const pending = session.sendPrompt("go", vi.fn());
+      mock.pushMessage({
+        type: "result",
+        subtype: isError ? "error_during_execution" : "success",
+        session_id: "sess-abc",
+        uuid: `r-${total}`,
+        total_cost_usd: total,
+        duration_ms: 0,
+        num_turns: isError ? 0 : 1,
+        result: "",
+        is_error: isError,
+        ...(isError ? { errors: ["the CLI process exited"] } : {}),
+      } as unknown as SDKMessage);
+      return (await pending).costUsd;
+    };
+
+    expect(await turn(10, false)).toBeCloseTo(10, 10);
+    expect(await turn(0, true)).toBe(0);
+    expect(await turn(10.2, false)).toBeCloseTo(0.2, 10);
+    session.close();
+  });
+
   it("maps thinking and redacted_thinking blocks into thinking content blocks", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

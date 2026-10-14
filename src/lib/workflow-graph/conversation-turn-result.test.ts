@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
-import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
+import { toTaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import {
   adaptGraphConversationTurn,
   adaptValidatorTaskResult,
@@ -11,11 +11,11 @@ import {
   AgentTurnFailedError,
   ConversationTurnSettlementError,
 } from "./errors";
-import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
 import type {
   TurnExecutionOutcome,
   TurnInterruption,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 const scope = { contextId: "context", backend: "claude" as const };
 

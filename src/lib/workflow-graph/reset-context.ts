@@ -9,6 +9,13 @@ import type {
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 export class ResetExecutionContextError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is ResetExecutionContextError {
+    return (
+      error instanceof Error && error.name === "ResetExecutionContextError"
+    );
+  }
+
   constructor(
     readonly code:
       | "invalid_execution_status"

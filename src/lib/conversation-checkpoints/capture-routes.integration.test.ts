@@ -6,7 +6,7 @@ import {
   capturedHandoffResult,
   deferred,
 } from "@/lib/workflows/conversation/testing/checkpoint-harness";
-import type { ConversationCheckpointStart } from "@/lib/workflows/conversation/manager";
+import type { ConversationCheckpointStart } from "@/lib/conversation-checkpoints/operation-contract";
 
 function compose(h: Awaited<ReturnType<typeof createCheckpointHarness>>) {
   const { identity, manager } = h.fixture;

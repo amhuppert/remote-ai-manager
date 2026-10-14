@@ -20,7 +20,7 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
-import { isAlignmentEligibleContext } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
+import { isAlignmentEligibleContext } from "@/lib/conversation-core/contributions/alignment-gate";
 
 const logger = createLogger("workflows.collaboration.session-context");
 

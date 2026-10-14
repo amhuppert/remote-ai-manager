@@ -266,6 +266,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly backend = CURSOR_BACKEND_ID;
   readonly mcpConfigDelivery = "input-accepted" as const;
   readonly capabilityConfigDelivery = "input-accepted" as const;
+  /** A steer names its run, and is refused once that run has settled. */
+  readonly liveInput = "running_turn" as const;
   readonly modelSelection: BackendModelSelection;
 
   readonly fsWritePolicy: FsWritePolicy | undefined;

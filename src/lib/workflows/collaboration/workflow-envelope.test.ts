@@ -24,12 +24,12 @@ import {
 } from "./workflow-envelope";
 import type { CollaborationPolicyDecision } from "./policy";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   CollaborationCounterProposalOutput,
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
-  ResolvedCollaborationConfig,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 import {
   makeAgentOneInitialDraft,
   makeAgentOneProposedChanges,

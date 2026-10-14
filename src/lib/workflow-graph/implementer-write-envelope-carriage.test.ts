@@ -20,8 +20,8 @@ import { executePromptStream, type PromptDeps } from "@/lib/prompt/sdk-driver";
 import type {
   ExecutePromptInput,
   PromptActorResult,
-} from "@/lib/workflows/conversation/types";
-import { shouldRecreateRuntime } from "@/lib/workflows/conversation/pre-turn/runtime-recreate";
+} from "@/lib/conversation-core/turn/types";
+import { shouldRecreateRuntime } from "@/lib/conversation-core/turn/runtime-recreate";
 import type { SessionState } from "@/lib/sessions/schemas";
 
 const POLICY: FsWritePolicy = {

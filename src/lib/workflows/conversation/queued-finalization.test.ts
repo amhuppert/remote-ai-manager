@@ -18,11 +18,11 @@ import {
   conversationRuntimeKey,
   _resetForTesting,
 } from "./runtime-state";
+import type { ConversationInput } from "./types";
 import type {
-  ConversationInput,
   ExecutePromptInput,
   PromptActorResult,
-} from "./types";
+} from "@/lib/conversation-core/turn/types";
 
 afterEach(() => {
   _resetForTesting();

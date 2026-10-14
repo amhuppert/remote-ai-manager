@@ -17,7 +17,7 @@ import {
   projectRoutes,
   type RouteProjection,
   type RouteProjectionLoop,
-} from "@/lib/workflow-graph/route-projection";
+} from "@/lib/runs/route-projection";
 import { loopInstanceId } from "@/lib/workflow-graph/loop-resolver";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {

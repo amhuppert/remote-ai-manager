@@ -1,11 +1,11 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
-  checkpointScopeKeyForStoreIdentity,
   conversationTotals,
   toConversationDurableSeed,
   type ConversationDurableSeed,
 } from "./actor-input-loader";
-import type { CheckpointAuthorityHydration } from "./checkpoint-restart";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
+import type { CheckpointAuthorityHydration } from "@/lib/conversation-checkpoints/checkpoint-restart";
 import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostics";
 import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 /**
@@ -29,7 +29,9 @@ import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas"
  * the authority: it never carries the projection, and once a retirement has
  * committed it does not carry the reference either. The seed itself is read
  * from the row after the authority is applied, because the restart rules may
- * have cleared the row's reference since the whole-state read.
+ * have cleared the row's reference since the whole-state read. A conversation
+ * the shared conversation core runs is skipped: the core's boot recovers it,
+ * its checkpoint included.
  */
 
 import { type Snapshot } from "xstate";
@@ -131,7 +133,7 @@ export async function rehydrateOneConversationActor(
   deps: {
     host: ConversationActorHost;
     queue: ConversationQueueDeps;
-    mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
+    mutateConversation: import("@/lib/conversation-core/turn/effects").ConversationDurableEffects["mutateConversation"];
     repairQueuedAcceptance?: RehydrateConversationActorsDeps["repairQueuedAcceptance"];
   },
 ): Promise<boolean> {
@@ -329,7 +331,7 @@ export function collectWorkflowResultRecoveryScopes(
 export interface RehydrateConversationActorsDeps {
   host: ConversationActorHost;
   queue: ConversationQueueDeps;
-  mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
+  mutateConversation: import("@/lib/conversation-core/turn/effects").ConversationDurableEffects["mutateConversation"];
   /**
    * The startup-only whole-state read. Assembles the project/session/
    * conversation tree without touching the snapshot sidecar — resume tokens are
@@ -387,6 +389,12 @@ export interface RehydrateConversationActorsDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<number>;
+  /**
+   * Whether the shared conversation core runs this conversation. The core's
+   * own boot recovers it, checkpoint restart rules included, so the restart
+   * rules keep one owner per conversation.
+   */
+  isCoreOwnedConversation?(conversationId: string): boolean;
 }
 
 export async function loadRehydrationInfrastructure(): Promise<
@@ -399,8 +407,11 @@ export async function loadRehydrationInfrastructure(): Promise<
     await import("@/lib/workflow-graph/result-delivery-service");
   const { getConversationCheckpointsRepo } =
     await import("@/lib/conversation-checkpoints/service-factory");
-  const { hydrateCheckpointAuthority } = await import("./checkpoint-restart");
+  const { hydrateCheckpointAuthority } =
+    await import("@/lib/conversation-checkpoints/checkpoint-restart");
+  const { coreOwnsConversation } = await import("@/lib/supervision/handles");
   return {
+    isCoreOwnedConversation: coreOwnsConversation,
     mutateConversation: stateMod.mutateConversation,
     readAllForStartup: readAllForStartupFromDb,
     listAllProjectConversations: stateMod.listAllProjectConversations,
@@ -475,6 +486,7 @@ export async function rehydrateConversationActors(
     worktreePath,
     conversation,
   } of candidates) {
+    if (resolved.isCoreOwnedConversation?.(conversation.id) === true) continue;
     const key = conversationRuntimeKey(
       projectPath,
       storeSessionName,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { laneIdViolation } from "@/lib/workflow-graph/lane-identity";
+import { laneIdViolation } from "@/lib/workspace/lane-id";
 import {
   IMPORTED_VALIDATION_STRATEGY_NOTE,
   MACHINE_VALIDATION_EVIDENCE_KINDS,

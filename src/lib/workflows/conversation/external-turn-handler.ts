@@ -2,8 +2,10 @@ import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type { ConversationBackendEvent } from "@/lib/agent-backends/conversation";
 import { conversationTranscriptFrame } from "@/lib/agent-backends/transcript";
 import { createLogger } from "@/lib/logging";
-import type { ConversationEvent, PromptActorResult } from "./types";
+import type { ConversationEvent } from "./types";
+import type { PromptActorResult } from "@/lib/conversation-core/turn/types";
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { ExternalTurnHandler } from "@/lib/conversation-core/turn/runtime-binding";
 
 const logger = createLogger("external-turn-handler");
 
@@ -32,26 +34,6 @@ export interface ExternalTurnHandlerDeps {
  * records `transcript_entry` envelopes verbatim and forwards the turn
  * lifecycle to the machine — it never reads a provider payload.
  */
-export interface ExternalTurnHandler {
-  (event: ConversationBackendEvent): void;
-  /**
-   * True from an accepted turn start until its completion, set synchronously
-   * on receipt so an observer sees the turn before any frame reaches the
-   * archive or the machine.
-   */
-  readonly activeTurn: boolean;
-  /** Accepted events so far; two equal readings bracket a window with none. */
-  readonly activity: number;
-  /**
-   * Resolves once no external turn is in flight: immediately when none is,
-   * otherwise at that turn's completion or at this handler's stop. Ordinary
-   * admission waits on it rather than polling `activeTurn`.
-   */
-  settled(): Promise<void>;
-  drain(): Promise<void>;
-  stopAndDrain(): Promise<void>;
-}
-
 export function createExternalTurnHandler(
   identity: ExternalTurnHandlerIdentity,
   runtime: ExternalTurnHandlerRuntime,

@@ -1,7 +1,10 @@
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
+import { ConfigField } from "../components/ConfigField";
 import { ConfigSubsection } from "../components/ConfigSubsection";
+import { ConfigToggle } from "../components/ConfigToggle";
 import { SettingsPage } from "../components/SettingsPage";
+import { SettingsSubSection } from "../components/SettingsSubSection";
 import { deepEqual, SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
 import type { ConfigFormController } from "./types";
 import { AgentValidationFields } from "./workflow/AgentValidationFields";
@@ -24,13 +27,34 @@ export function WorkflowSection({
   /** Registry summaries (global scope = union); undefined = unavailable. */
   commandOptions?: readonly ValidationCommandSummary[];
 }): React.JSX.Element {
-  const { formState, handleChangeBlock } = controller;
+  const { formState, handleChange, handleChangeBlock, isDefault, isModified } =
+    controller;
   return (
     <SettingsPage
       title="Workflow"
       accent="defaults"
       sub="Per-stage configuration used by every new graph workflow."
     >
+      <SettingsSubSection
+        title="Launches"
+        hint="Graph workflows are being replaced by runs. Freeze their launches to drain them: executions already started can still finish, be abandoned or be aborted."
+      >
+        <ConfigField
+          label="Freeze graph workflow launches"
+          fieldPath="graphWorkflowLaunchesFrozen"
+          isDefault={isDefault("graphWorkflowLaunchesFrozen")}
+          isModified={isModified("graphWorkflowLaunchesFrozen")}
+          hint="Refuses every new graph workflow, from the UI, cctl and spec delivery."
+        >
+          <ConfigToggle
+            label="Freeze graph workflow launches"
+            value={formState.graphWorkflowLaunchesFrozen ?? false}
+            onChange={(value) =>
+              handleChange("graphWorkflowLaunchesFrozen", value)
+            }
+          />
+        </ConfigField>
+      </SettingsSubSection>
       <WorkflowDefaultsSubsections
         defaults={formState.workflowDefaults}
         onChangeBlock={handleChangeBlock}

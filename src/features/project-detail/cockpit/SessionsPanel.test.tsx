@@ -11,6 +11,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import SessionsPanel from "./SessionsPanel";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
@@ -261,6 +262,50 @@ describe("SessionsPanel bulk actions", () => {
       expect(
         screen.queryByRole("region", { name: "Bulk actions" }),
       ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("tells the person which sessions a bulk delete refused, and why", async () => {
+    useToastStoreForTesting.setState({ toasts: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("/sessions/bulk")
+          ? new Response(
+              JSON.stringify({
+                results: [
+                  {
+                    sessionName: "auth",
+                    success: false,
+                    error: 'Run run-1 is paused in session "auth".',
+                  },
+                  { sessionName: "parser", success: true },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            )
+          : new Response("[]", {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+      ),
+    );
+
+    renderPanel(<Harness />);
+    selectRows("auth", "parser");
+    const ribbon = screen.getByRole("region", { name: "Bulk actions" });
+    fireEvent.click(within(ribbon).getByRole("button", { name: "Delete 2" }));
+    const overlay = screen.getByRole("alertdialog");
+    fireEvent.click(within(overlay).getByRole("button", { name: "Delete 2" }));
+
+    await waitFor(() =>
+      expect(
+        useToastStoreForTesting
+          .getState()
+          .toasts.some((toast) =>
+            toast.message.includes('Run run-1 is paused in session "auth"'),
+          ),
+      ).toBe(true),
     );
   });
 

@@ -11,7 +11,7 @@ import { targetFromStoreSessionName } from "@/lib/conversations/conversation-tar
 import { createConversationActorImplementations } from "./actor-implementations";
 import { createConversationPolicyState } from "./policy-state";
 import { createConversationRuntimePolicy } from "./runtime-policy";
-import { ephemeralConversationEffects } from "./effects";
+import { ephemeralConversationEffects } from "@/lib/conversation-core/turn/effects";
 import {
   conversationRuntimeKey,
   getConversationRuntime,

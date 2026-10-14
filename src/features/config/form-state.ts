@@ -113,6 +113,7 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "preMergeTimeoutMs",
   "idleQuerySessionTtlMs",
   "tailscaleEnabled",
+  "graphWorkflowLaunchesFrozen",
   "pushNotification.enabled",
   "pushNotification.provider",
   "pushNotification.serverUrl",

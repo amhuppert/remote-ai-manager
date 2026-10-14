@@ -15,7 +15,7 @@ import {
   task,
   workerJudgeDefinition,
 } from "./loop-test-fixtures";
-import { routeVerdict } from "./route-projection";
+import { routeVerdict } from "@/lib/runs/route-projection";
 
 const contexts = topology.executionContexts.map((entry) =>
   graphWorkflowExecutionContextDefinitionSchema.parse({

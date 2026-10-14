@@ -4,12 +4,14 @@ import { fromPromise } from "xstate";
 import type {
   PrepareTurnInput,
   PrepareTurnOutput,
-  ExecutePromptInput,
-  PromptActorResult,
   RunTaskRunInput,
   ConversationContext,
   SettleTurnInput,
 } from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import type { ConversationMachineDependencies } from "./actor-host";
 import type { ConversationPersistenceAdapter } from "./persistence-adapter";
 

@@ -11,7 +11,7 @@
 
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
-import type { PromptActorResult } from "../types";
+import type { PromptActorResult } from "@/lib/conversation-core/turn/types";
 
 const NULL_USAGE_FIELDS = {
   backendRef: null,

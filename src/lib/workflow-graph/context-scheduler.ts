@@ -31,13 +31,13 @@ import {
   deriveLaneWorktreePath,
   type ParallelWorktrees,
   type ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "@/lib/workspace/parallel-worktrees";
 
 import {
   SESSION_LANE_ID,
   SESSION_LANE_NAME,
-  validateLaneId,
 } from "@/lib/workflow-graph/lane-identity";
+import { validateLaneId } from "@/lib/workspace/lane-id";
 import {
   canonicalizeOwnership,
   classifyLaneAdmission,

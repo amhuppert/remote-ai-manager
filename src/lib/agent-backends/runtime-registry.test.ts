@@ -64,3 +64,15 @@ describe("getRuntime", () => {
     expect(getRuntime("nonexistent")).toBeUndefined();
   });
 });
+
+describe("one registry per process", () => {
+  it("answers a second copy of the module, as routes load it beside the boot-time supervision", async () => {
+    const runtime = makeMockRuntime();
+    registerRuntime("conv-shared", runtime);
+    vi.resetModules();
+    const routeCopy = await import("./runtime-registry");
+    expect(routeCopy.getRuntime("conv-shared")).toBe(runtime);
+    routeCopy.unregisterRuntime("conv-shared", runtime);
+    expect(getRuntime("conv-shared")).toBeUndefined();
+  });
+});

@@ -20,7 +20,7 @@ import {
 } from "./lane-readiness";
 import { executionLaneIdFor, SESSION_LANE_ID } from "./lane-identity";
 import { joinLeavesOpenLoop, openLoopLanes } from "./lane-lifecycle";
-import type { RoutePublishSettlement } from "./route-projection";
+import type { RoutePublishSettlement } from "@/lib/runs/route-projection";
 import { findValidationCertificationDebt } from "./validation-certification";
 
 type PlanningDefinition =

@@ -437,11 +437,12 @@ export default function ProjectCockpit({
   // creation: the backend follows the composer, the profile defaults to the
   // Standard Agent unless the picker names one (R7).
   const handleNewChat = useCallback(
-    (profile?: AgentProfileRef) => {
+    (profile?: AgentProfileRef, engine?: "core") => {
       createConversation.mutate(
         {
           agentBackend: selectedBackend,
           ...(profile === undefined ? {} : { profile }),
+          ...(engine === undefined ? {} : { engine }),
         },
         { onSuccess: (conv) => focusTab(conv.id) },
       );

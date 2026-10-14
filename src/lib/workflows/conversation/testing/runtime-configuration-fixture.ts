@@ -1,4 +1,4 @@
-import type { DesiredRuntimeConfiguration } from "../pre-turn/runtime-recreate";
+import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
 import {
   CC_CONTEXT,
   CC_CLI_INSTRUCTIONS,

@@ -10,16 +10,12 @@ import { createLogger } from "../logging";
 const logger = createLogger("optimistic");
 
 /**
- * The optimistic workflow turn enters the AgentCall primitive through the
- * conversation actor: `executePromptStream` ensures the conversation/actor
- * exists and dispatches a SUBMIT_PROMPT event, and the actor's
- * `executePromptForMachine` routes the underlying turn through
- * `executeAgentCall` (Task 6.1 migration).
- *
- * Calling `executeAgentCall` from this orchestrator directly would bypass the
- * conversation lifecycle (transcript writing, single-flight session lock,
- * machine-state transitions) that the optimistic-mode UI surfaces depend on.
- * The chain is asserted via the wire-contract tests in
+ * The optimistic workflow turn enters through `executePromptStream`, which
+ * hands it to whichever engine runs the conversation (the conversation core or
+ * the conversation actor), so the turn keeps that conversation's lifecycle:
+ * transcript, single-flight admission and the state the optimistic-mode UI
+ * shows. Calling an agent directly from this orchestrator would bypass it. The
+ * chain is asserted via the wire-contract tests in
  * `src/lib/workflows/primitives/status-bus-wire-contract.test.ts`.
  */
 
@@ -75,7 +71,7 @@ export async function executeOptimisticWorkflow(
     // instructions ARE the prompt.
     const autonomousPrompt = `Complete the following task autonomously. Do not ask the user any questions. Begin work immediately.\n\n${instructions}`;
 
-    await deps.executePromptStream(
+    const kickoff = await deps.executePromptStream(
       projectPath,
       session,
       autonomousPrompt,
@@ -85,6 +81,12 @@ export async function executeOptimisticWorkflow(
       images,
       { autonomous: true },
     );
+    // A turn that was refused, failed or stopped left nothing to merge as finished work.
+    if (kickoff.error || kickoff.aborted === true)
+      throw new Error(
+        kickoff.error ??
+          `The task's turn was stopped (${kickoff.abortReason ?? "unknown reason"})`,
+      );
 
     logger.info("optimistic.prompt_complete", {
       projectName,

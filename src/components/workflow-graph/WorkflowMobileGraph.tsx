@@ -4,7 +4,11 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/ui/cn";
 import type { LaneBand } from "@/lib/workflow-graph/lane-bands";
-import { FitGlyph, ZoomInGlyph, ZoomOutGlyph } from "./canvas-glyphs";
+import {
+  FitGlyph,
+  ZoomInGlyph,
+  ZoomOutGlyph,
+} from "@/components/runs/canvas-glyphs";
 import { contextNodeAccessibleName } from "./derive-graph";
 import type { ExecutionContextNodeData } from "./derive-graph";
 import { ContextNodeCard } from "./ExecutionContextNode";

@@ -36,14 +36,14 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import { DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS } from "@/lib/workflows/primitives/agent-call-facade";
-import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationTurnSubmission } from "@/lib/conversation-core/turn/turn-spec";
 
 import { createMockBackendRuntime } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
-import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
 
 const NOW = "2026-03-27T16:10:00.000Z";
 const RESUMED_BACKEND_REF = {

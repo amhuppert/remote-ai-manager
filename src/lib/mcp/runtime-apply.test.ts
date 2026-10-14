@@ -1,4 +1,4 @@
-import { recordMcpConfigReceipt } from "./runtime-apply";
+import { recordMcpConfigReceipt, seedMcpRuntimeState } from "./runtime-apply";
 import { computeEffectiveConfigHash } from "./config-hash";
 import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 import { mkdir, rm } from "node:fs/promises";
@@ -1224,5 +1224,89 @@ it("retains partial MCP initialization errors after input acceptance", async () 
     pendingConfigHash: "requested",
     lastApplyDisposition: "rejected",
     lastApplyError: "MCP servers could not be configured: unavailable",
+  });
+});
+
+describe("seedMcpRuntimeState — the baseline a new runtime is compared against", () => {
+  const portable = portableWith([{ id: "s1" }, { id: "s2" }]);
+  const created = computeEffectiveConfigHash(portable);
+
+  async function seedAndReload(
+    mcpRuntime: Record<string, unknown> | undefined,
+    delivery: "input-accepted" | undefined,
+  ) {
+    const { stateManager } = createTestHarness();
+    seedWholeState(
+      getStateDb(),
+      stateWith(mcpRuntime === undefined ? {} : { mcpRuntime }),
+    );
+    await seedMcpRuntimeState(
+      createMcpRuntimeApplicationStore(stateManager),
+      { projectPath: PROJECT_PATH, target: TARGET },
+      portable,
+      delivery,
+    );
+    return (
+      await stateManager.getConversation(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+      )
+    )?.mcpRuntime;
+  }
+
+  it("keeps a config delivered on input acceptance pending under the created hash, with its changed servers", async () => {
+    expect(
+      await seedAndReload(
+        {
+          lastAppliedConfigHash: "previous",
+          pendingConfigHash: "stale-request",
+          pendingServerKeys: ["s2"],
+          lastApplyDisposition: "no_active_runtime",
+        },
+        "input-accepted",
+      ),
+    ).toEqual({
+      lastAppliedConfigHash: "previous",
+      pendingConfigHash: created,
+      pendingServerKeys: ["s2"],
+      lastApplyDisposition: "deferred_to_next_turn",
+    });
+  });
+
+  it("records a config applied at creation and clears the pending entry it satisfies", async () => {
+    expect(
+      await seedAndReload(
+        {
+          lastAppliedConfigHash: "previous",
+          pendingConfigHash: created,
+          pendingServerKeys: ["s2"],
+          lastApplyDisposition: "rejected",
+          lastApplyError: "s2: unreachable",
+        },
+        undefined,
+      ),
+    ).toEqual({
+      lastAppliedConfigHash: created,
+      lastApplyDisposition: "applied_now",
+    });
+  });
+
+  it("keeps a different pending entry when the config applied at creation does not satisfy it", async () => {
+    expect(
+      await seedAndReload(
+        {
+          pendingConfigHash: "newer-request",
+          pendingServerKeys: ["s2"],
+          lastApplyDisposition: "no_active_runtime",
+        },
+        undefined,
+      ),
+    ).toEqual({
+      lastAppliedConfigHash: created,
+      pendingConfigHash: "newer-request",
+      pendingServerKeys: ["s2"],
+      lastApplyDisposition: "applied_now",
+    });
   });
 });

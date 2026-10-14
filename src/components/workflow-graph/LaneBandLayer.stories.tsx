@@ -17,7 +17,7 @@ import {
 import type { LaneBand } from "@/lib/workflow-graph/lane-bands";
 import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
 
-import CanvasControls from "./CanvasControls";
+import CanvasControls from "@/components/runs/CanvasControls";
 import type { ExecutionContextNodeData } from "./derive-graph";
 import type { ContextWaitState } from "./derive-wait-state";
 import ExecutionContextNode from "./ExecutionContextNode";
@@ -308,7 +308,7 @@ function BandStory({ mode }: { mode: LaneBandMode }) {
           fitViewOptions={{ padding: 0.05 }}
         >
           <LaneBandLayer bands={bands} mode={mode} />
-          <CanvasControls />
+          <CanvasControls fitViewOptions={{ padding: 0.05 }} />
         </ReactFlow>
       </div>
     </ReactFlowProvider>
@@ -405,7 +405,7 @@ function DragStory({ spec }: { spec: DragSpec }) {
               accepted: spec.accepted,
             }}
           />
-          <CanvasControls />
+          <CanvasControls fitViewOptions={{ padding: 0.05 }} />
         </ReactFlow>
       </div>
     </ReactFlowProvider>

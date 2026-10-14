@@ -8,7 +8,7 @@ import {
   markFailedTransform,
   listActiveEntries,
 } from "./message-queue-service";
-import { createQueuedDeliveryAccounting } from "@/lib/workflows/conversation/post-turn/queued-delivery-accounting";
+import { createQueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
 
 const KEY = {
   projectPath: "/queue-recovery",

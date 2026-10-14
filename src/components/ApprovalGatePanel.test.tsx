@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { SessionDiff } from "@/lib/git/schemas";
 import ApprovalGatePanel, {
   type ApprovalScopedChanges,
@@ -309,6 +310,20 @@ describe("ApprovalGatePanel candidate states (E2 · R15.2)", () => {
     expect(changes).toHaveTextContent("+2");
     expect(changes).toHaveTextContent("-1");
     expect(changes).toHaveTextContent("export const handler = 2;");
+  });
+
+  it("lets keyboard readers reach the scrollable candidate before the decision controls", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      status: "ready",
+      candidate: { scope: "whole_tree", diff: SCOPED_DIFF },
+    });
+    await user.tab();
+    expect(
+      screen.getByRole("region", { name: "Candidate diff" }),
+    ).toHaveFocus();
+    await user.tab();
+    expect(feedbackBox()).toHaveFocus();
   });
 
   it("renders the frozen baseline-relative patch for a full-access member", () => {

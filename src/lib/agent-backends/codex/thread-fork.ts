@@ -22,9 +22,11 @@ import {
 import type { CodexForkThreadInput } from "./continuity";
 import {
   buildCodexMcpServersConfig,
-  listNativeCodexMcpServers,
+  discoverNativeCodexMcpServers,
+  NativeMcpSuppressionRefusedError,
+  resolveNativeMcpSuppression,
+  type NativeCodexMcpDiscovery,
   type NativeCodexMcpListInput,
-  type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
 import { CODEX_NATIVE_MEMORY_CONFIG } from "./native-memory";
 import { toStringEnv } from "./shared";
@@ -34,15 +36,15 @@ const logger = createLogger("codex:thread-fork");
 export interface CodexThreadForkDeps {
   createAppServer(options: AppServerClientOptions): AppServerClient;
   buildEnv(): Record<string, string>;
-  listNativeMcpServers(
+  discoverNativeMcpServers(
     input: NativeCodexMcpListInput,
-  ): Promise<NativeCodexMcpServer[]>;
+  ): Promise<NativeCodexMcpDiscovery>;
 }
 
 const defaults: CodexThreadForkDeps = {
   createAppServer: createCodexAppServerClient,
   buildEnv: () => toStringEnv(buildChildEnv()),
-  listNativeMcpServers: listNativeCodexMcpServers,
+  discoverNativeMcpServers: discoverNativeCodexMcpServers,
 };
 
 const forkResponseSchema = z.object({ thread: z.object({ id: z.string() }) });
@@ -54,10 +56,16 @@ export async function forkCodexThread(
 ): Promise<string> {
   const deps = { ...defaults, ...dependencies };
   const env = deps.buildEnv();
-  const nativeServers = await deps.listNativeMcpServers({
-    cwd: input.projectPath,
-    env,
-  });
+  // A fork launches a hermetic app server: it may reach no native server, so
+  // anything short of a complete discovery refuses the fork.
+  const suppression = resolveNativeMcpSuppression(
+    await deps.discoverNativeMcpServers({ cwd: input.projectPath, env }),
+    "required",
+  );
+  if (suppression.kind === "refused") {
+    throw new NativeMcpSuppressionRefusedError(suppression.reason);
+  }
+  const nativeServers = suppression.servers;
   const config: Record<string, unknown> = { ...CODEX_NATIVE_MEMORY_CONFIG };
   if (nativeServers.length > 0)
     config.mcp_servers = buildCodexMcpServersConfig({

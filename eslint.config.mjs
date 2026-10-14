@@ -235,6 +235,12 @@ const MIGRATED_UTILITY_FIRST = [
   // utility-first from the start.
   "src/features/dev-servers/**/*.{ts,tsx}",
   "src/features/project-detail/ProjectDevServersButton.tsx",
+  // Runs and template surfaces are authored utility-first, without legacy CSS.
+  "src/features/runs/**/*.{ts,tsx}",
+  // The run presentation shared with the session's run cards, and their containers.
+  "src/components/runs/**/*.{ts,tsx}",
+  "src/features/session/conversation/OwnerRunCards.tsx",
+  "src/features/session/conversation/SessionRuns.tsx",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

@@ -1,5 +1,12 @@
-import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type {
+  SDKAssistantMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import type {
+  MessageContentBlock,
+  ToolResultMetrics,
+} from "@/lib/conversations/schemas";
+import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("claude.content-mapper");
@@ -45,5 +52,73 @@ export function mapAssistantContentBlocks(
     }
   }
 
+  return blocks;
+}
+
+interface SdkToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  is_error?: boolean;
+  content?:
+    | string
+    | Array<{ type: string; text?: string; [k: string]: unknown }>;
+}
+
+function isSdkToolResultBlock(block: unknown): block is SdkToolResultBlock {
+  return (
+    block != null &&
+    typeof block === "object" &&
+    "type" in block &&
+    block.type === "tool_result" &&
+    "tool_use_id" in block &&
+    typeof block.tool_use_id === "string"
+  );
+}
+
+function extractToolResultText(
+  content: SdkToolResultBlock["content"],
+): string | undefined {
+  if (typeof content === "string") return content || undefined;
+  if (!Array.isArray(content)) return undefined;
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (
+      block != null &&
+      typeof block === "object" &&
+      block.type === "text" &&
+      typeof block.text === "string"
+    ) {
+      textParts.push(block.text);
+    }
+  }
+  return textParts.length > 0 ? textParts.join("\n") : undefined;
+}
+
+/**
+ * Maps the tool results carried by an SDK user message. `toolNamesById` holds
+ * the names of tool calls seen earlier in the turn, so metrics can be parsed
+ * for known tools. Non-array content and non-result blocks yield nothing.
+ */
+export function mapToolResultBlocks(
+  sdkContent: SDKUserMessage["message"]["content"],
+  toolNamesById: ReadonlyMap<string, string>,
+): MessageContentBlock[] {
+  if (!Array.isArray(sdkContent)) return [];
+  const blocks: MessageContentBlock[] = [];
+  for (const block of sdkContent) {
+    if (!isSdkToolResultBlock(block)) continue;
+    const text = extractToolResultText(block.content);
+    const toolName = toolNamesById.get(block.tool_use_id);
+    const metrics: ToolResultMetrics = toolName
+      ? parseToolResultMetrics(toolName, text)
+      : {};
+    blocks.push({
+      type: "tool_result",
+      tool_use_id: block.tool_use_id,
+      ...(text ? { content: text } : {}),
+      ...(block.is_error ? { isError: true } : {}),
+      ...(Object.keys(metrics).length > 0 ? { metrics } : {}),
+    });
+  }
   return blocks;
 }

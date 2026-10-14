@@ -4,8 +4,8 @@ import {
   createValidationFixer,
   type ValidationFixDeps,
 } from "./validation-fix";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 
 const PROJECT_PATH = "/projects/repo";
 const SESSION_NAME = "feature-branch";
@@ -332,6 +332,27 @@ describe("validation-fix (fresh-run dispatch, #78)", () => {
     expect(input.worktreePath).toBe("/worktrees/merge-target");
     expect(input.prompt).toContain("error TS2304");
     expect(input.systemInstructions).toContain("fix validation errors");
+  });
+
+  it("stops the fresh fix task when its caller is stopped", async () => {
+    const executeFreshTaskRun = vi
+      .fn()
+      .mockResolvedValue(textOk("fixes applied"));
+    const { fixValidationErrors } = createValidationFixer(
+      createTestDeps({ executeFreshTaskRun }),
+    );
+    const controller = new AbortController();
+    await fixValidationErrors({
+      worktreePath: "/worktrees/merge-target",
+      validationOutput: "error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      branchName: BRANCH_NAME,
+      agentTurnDispatch: "fresh-run",
+      signal: controller.signal,
+    });
+    const [input] = executeFreshTaskRun.mock.calls[0]!;
+    expect(input.signal).toBe(controller.signal);
   });
 
   it("maps a fresh-run error result to a failed fix", async () => {

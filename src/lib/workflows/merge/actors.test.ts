@@ -192,6 +192,7 @@ function makePublishDeps(
     setSessionFinished: overrides.setSessionFinished ?? vi.fn(async () => {}),
     getActiveGraphWorkflowExecution:
       overrides.getActiveGraphWorkflowExecution ?? vi.fn(async () => null),
+    currentRuns: overrides.currentRuns ?? (() => []),
     reconcileTicketSessionLifecycle:
       overrides.reconcileTicketSessionLifecycle ?? vi.fn(async () => {}),
     finalizeSessionMemory:
@@ -282,6 +283,39 @@ describe("runPublish", () => {
     expect(publish).not.toHaveBeenCalled();
     // Order is the point: the deciding read happens after the lock is held.
     expect(events).toEqual(["lock-acquired", "in-lock-read", "lock-released"]);
+  });
+
+  it("does not finish a session one of whose runs has not finished, deciding inside the project lock", async () => {
+    const publish = vi.fn(async () => ({
+      kind: "published" as const,
+      mergeHash: "merge-abc",
+    }));
+    const setFinished = vi.fn(async () => {});
+    const events: string[] = [];
+    const deps = makePublishDeps({
+      publishPreparedMerge: publish,
+      setSessionFinished: setFinished,
+      currentRuns: (projectPath, sessionName) => {
+        events.push(`runs:${projectPath}:${sessionName}`);
+        return [{ runId: "run-1", sessionName, progress: "needs_owner" }];
+      },
+      acquireProjectLock: vi.fn(() => {
+        events.push("lock-acquired");
+        return () => events.push("lock-released");
+      }),
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toMatchObject({ status: "failed" });
+    expect(out.status === "failed" ? out.error : "").toContain("run-1");
+    expect(publish).not.toHaveBeenCalled();
+    expect(setFinished).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      "lock-acquired",
+      `runs:${basePublishInput.projectPath}:${basePublishInput.sessionName}`,
+      "lock-released",
+    ]);
   });
 
   it("allows graph-owned lane merges that do not finalize the session", async () => {

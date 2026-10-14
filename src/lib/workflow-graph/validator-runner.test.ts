@@ -25,9 +25,9 @@ import {
   splitQuestionAnswersBlock,
 } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
-import type { ConversationTurnSubmission } from "@/lib/workflows/conversation/turn-spec";
-import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
-import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import type { ConversationTurnSubmission } from "@/lib/conversation-core/turn/turn-spec";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";

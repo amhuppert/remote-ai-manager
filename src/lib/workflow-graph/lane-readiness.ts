@@ -12,7 +12,7 @@ import {
   routeVerdict,
   type RouteProjection,
   type RoutePublishSettlement,
-} from "@/lib/workflow-graph/route-projection";
+} from "@/lib/runs/route-projection";
 import type {
   ContextPlacement,
   ResolvedWorkflowSemanticDefinition,

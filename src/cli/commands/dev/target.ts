@@ -1,7 +1,12 @@
 import type { Failure } from "cli-for-agents";
 import { devServersStatusResponseSchema } from "@/lib/dev-server/schemas";
-import { cliRequest, type SessionContext } from "../../transport";
 import {
+  cliRequest,
+  type CliPrincipalIdentity,
+  type SessionContext,
+} from "../../transport";
+import {
+  resolveCcPrincipal,
   resolveCcSession,
   type CcErrorCode,
   type CcContextResult,
@@ -18,7 +23,11 @@ import {
   type DevInstance,
 } from "../dev/routing";
 export { devServerRequestPath };
-export type DevTarget = { context: SessionContext; target: DevCommandTarget };
+/** The session addressed, and who calls: a run seat in a lane is told its work is not what the session serves. */
+export type DevTarget = {
+  context: SessionContext & { principalIdentity: CliPrincipalIdentity };
+  target: DevCommandTarget;
+};
 export function invalidDev(what: string) {
   return {
     ok: false,
@@ -37,7 +46,16 @@ export async function resolveDevTarget(
   if (!inferred.ok) return devUsage(inferred.message);
   const resolved = await resolveCcSession(app);
   return resolved.ok
-    ? { ok: true, value: { context: resolved.value, target: inferred.target } }
+    ? {
+        ok: true,
+        value: {
+          context: {
+            ...resolved.value,
+            principalIdentity: resolveCcPrincipal(app),
+          },
+          target: inferred.target,
+        },
+      }
     : resolved;
 }
 const targetCodes = new Set([
@@ -46,6 +64,8 @@ const targetCodes = new Set([
   "WORKFLOW_EXECUTION_NOT_ACTIVE",
   "WORKFLOW_CONTEXT_NOT_FOUND",
   "WORKFLOW_WORKTREE_UNAVAILABLE",
+  "RUN_LANE_NOT_SERVED",
+  "RUN_SEAT_NOT_CURRENT",
 ]);
 export function devFailure(response: CcFailedRequest) {
   return ccRequestFailure(

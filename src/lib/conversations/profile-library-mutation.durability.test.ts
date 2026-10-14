@@ -42,7 +42,7 @@ import {
 } from "@/lib/workflows/conversation/runtime-state";
 import type { ConversationBackendCreateInput } from "@/lib/agent-backends/conversation";
 import type { ConversationBackendTurnResult } from "@/lib/agent-backends/conversation";
-import type { ExecutePromptInput } from "@/lib/workflows/conversation/types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 
 const PROJECT_PATH = "/repo-profile-mutation";
 const PROJECT_NAME = "repo-profile-mutation";

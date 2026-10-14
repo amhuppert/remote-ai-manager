@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const execFileAsync = promisify(execFile);
 
@@ -102,39 +103,129 @@ export function buildCodexMcpServersConfig(
   return mcpServers;
 }
 
-export function parseCodexMcpListJson(stdout: string): NativeCodexMcpServer[] {
-  const parsed: unknown = JSON.parse(stdout);
-  if (!Array.isArray(parsed)) return [];
+/**
+ * Native servers Codex reported, and whether that report is complete. An
+ * incomplete discovery keeps every server it could reconstruct so a
+ * best-effort caller can still suppress those.
+ */
+export type NativeCodexMcpDiscovery =
+  | { kind: "complete"; servers: NativeCodexMcpServer[] }
+  | {
+      kind: "incomplete";
+      reason: string;
+      reconstructed: NativeCodexMcpServer[];
+    };
+
+/**
+ * `required`: the launch may reach only servers CC composed, so incomplete
+ * discovery refuses it. `best_effort`: an ordinary launch suppresses what it
+ * could reconstruct and proceeds.
+ */
+export type NativeMcpSuppressionRequirement = "required" | "best_effort";
+
+export type NativeMcpSuppression =
+  | { kind: "suppress"; servers: NativeCodexMcpServer[] }
+  | { kind: "refused"; reason: string };
+
+export function resolveNativeMcpSuppression(
+  discovery: NativeCodexMcpDiscovery,
+  requirement: NativeMcpSuppressionRequirement,
+): NativeMcpSuppression {
+  if (discovery.kind === "complete") {
+    return { kind: "suppress", servers: discovery.servers };
+  }
+  if (requirement === "required") {
+    return { kind: "refused", reason: discovery.reason };
+  }
+  return { kind: "suppress", servers: discovery.reconstructed };
+}
+
+/** Thrown where a refused required suppression must fail the operation. */
+export class NativeMcpSuppressionRefusedError extends Error {
+  constructor(reason: string) {
+    super(`Native Codex MCP servers could not be suppressed: ${reason}`);
+    this.name = "NativeMcpSuppressionRefusedError";
+  }
+}
+
+export function parseCodexMcpListJson(stdout: string): NativeCodexMcpDiscovery {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return {
+      kind: "incomplete",
+      reason: "codex mcp list returned invalid JSON",
+      reconstructed: [],
+    };
+  }
+  if (!Array.isArray(parsed)) {
+    return {
+      kind: "incomplete",
+      reason: "codex mcp list did not return an array",
+      reconstructed: [],
+    };
+  }
 
   const servers: NativeCodexMcpServer[] = [];
-  for (const entry of parsed) {
-    // A server whose transport we cannot reconstruct (malformed or an unknown
-    // transport type) is skipped: we would rather leave it active than emit a
-    // transport-less entry that breaks Codex's config loader for every turn.
+  const unreadable: string[] = [];
+  for (const [index, entry] of parsed.entries()) {
+    // A server whose transport cannot be reconstructed is never emitted: a
+    // transport-less entry breaks Codex's config loader for every turn.
     const result = nativeCodexMcpListEntrySchema.safeParse(entry);
-    if (!result.success) continue;
+    if (!result.success) {
+      unreadable.push(describeUnreadableEntry(entry, index));
+      continue;
+    }
     servers.push({
       name: result.data.name,
       configEntry: configEntryFromTransport(result.data.transport),
     });
   }
-  return servers;
+  if (unreadable.length > 0) {
+    return {
+      kind: "incomplete",
+      reason: `unreadable native MCP server entries: ${unreadable.join(", ")}`,
+      reconstructed: servers,
+    };
+  }
+  return { kind: "complete", servers };
 }
 
-export async function listNativeCodexMcpServers(
-  input: NativeCodexMcpListInput,
-): Promise<NativeCodexMcpServer[]> {
-  const codexBin = resolveCodexCliPath({ cwd: input.cwd });
-  const { stdout } = await execFileAsync(
-    process.execPath,
-    [codexBin, "mcp", "list", "--json"],
-    {
-      cwd: input.cwd,
-      env: input.env as NodeJS.ProcessEnv,
-      maxBuffer: 1024 * 1024,
-    },
-  );
+function describeUnreadableEntry(entry: unknown, index: number): string {
+  if (
+    entry !== null &&
+    typeof entry === "object" &&
+    "name" in entry &&
+    typeof entry.name === "string"
+  ) {
+    return entry.name;
+  }
+  return `#${index}`;
+}
 
+export async function discoverNativeCodexMcpServers(
+  input: NativeCodexMcpListInput,
+): Promise<NativeCodexMcpDiscovery> {
+  let stdout: string;
+  try {
+    const codexBin = resolveCodexCliPath({ cwd: input.cwd });
+    ({ stdout } = await execFileAsync(
+      process.execPath,
+      [codexBin, "mcp", "list", "--json"],
+      {
+        cwd: input.cwd,
+        env: input.env as NodeJS.ProcessEnv,
+        maxBuffer: 1024 * 1024,
+      },
+    ));
+  } catch (error) {
+    return {
+      kind: "incomplete",
+      reason: `codex mcp list failed: ${getErrorMessage(error)}`,
+      reconstructed: [],
+    };
+  }
   return parseCodexMcpListJson(stdout);
 }
 

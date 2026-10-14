@@ -46,13 +46,13 @@ import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { jsonError, notFound } from "@/lib/shared/route-resolution";
 import { getProjectConversation, getSession } from "@/lib/state-store";
-import {
-  type ConversationCheckpointCancel,
-  type ConversationCheckpointCheck,
-  type ConversationCheckpointReconcile,
-  type ConversationCheckpointRequest,
-  type ConversationCheckpointStart,
-} from "@/lib/workflows/conversation/manager";
+import type {
+  ConversationCheckpointCancel,
+  ConversationCheckpointCheck,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointRequest,
+  ConversationCheckpointStart,
+} from "@/lib/conversation-checkpoints/operation-contract";
 import {
   cancelConversationCheckpoint,
   checkConversationCheckpoint,
@@ -60,8 +60,8 @@ import {
   startConversationCheckpoint,
   skipConversationCheckpointHandoff,
 } from "@/lib/workflows/conversation/lifecycle";
-import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
-import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 
 import type { CheckpointRefusal, CheckpointRefusalCode } from "./admission";
 import { checkpointReceipt, type CheckpointReceipt } from "./receipt";

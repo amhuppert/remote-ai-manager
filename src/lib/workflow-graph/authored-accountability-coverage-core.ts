@@ -4,7 +4,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "./definition-schemas";
 import { projectResolvedDefinitionLoops } from "./execution-routes";
-import { projectMustRunContextIds } from "./route-projection";
+import { projectMustRunContextIds } from "@/lib/runs/route-projection";
 
 export interface AuthoredAccountabilityCoverageGroup {
   readonly bindingKey: string;

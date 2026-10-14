@@ -166,6 +166,14 @@ export type ConversationScopeRef =
   | { scope: "session"; sessionName: string }
   | { scope: "project" };
 
+/** A new fork and its source: the fork runs on whichever engine runs its source. */
+export interface ForkPlacement {
+  projectPath: string;
+  scope: ConversationScopeRef;
+  sourceConversationId: string;
+  conversationId: string;
+}
+
 /**
  * INTERNAL adapter boundary (A5): lift a session-keyed prop into the scope
  * union. The one sanctioned place a component chain converts a stored session

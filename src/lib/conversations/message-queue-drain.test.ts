@@ -8,6 +8,7 @@ import { conversationTargetStoreSessionName } from "@/lib/conversations/conversa
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   drainConversationQueue,
+  drainConversationQueueInto,
   queuedBatchToSubmitPrompt,
   type ConversationQueueDeps,
 } from "./message-queue-drain";
@@ -475,6 +476,62 @@ describe("drainConversationQueue", () => {
         deliveryAttemptId: "att-9",
       }),
     );
+  });
+});
+
+describe("drainConversationQueueInto progress", () => {
+  it("says what it did, so a runner that holds its turns can continue after a completed command", async () => {
+    const submitted: string[] = [];
+    const submit = async (turn: { promptText: string }) => {
+      submitted.push(turn.promptText);
+      return "accepted" as const;
+    };
+    expect(
+      await drainConversationQueueInto(DRAIN_CONTEXT, makeQueueDeps(), submit),
+    ).toBe("idle");
+    expect(
+      await drainConversationQueueInto(
+        DRAIN_CONTEXT,
+        makeQueueDeps({
+          claimNextTurnBatch: vi.fn(async () => ({
+            deliveryAttemptId: "att-cmd",
+            messageIds: ["c1"],
+            content: [{ type: "text" as const, text: "/commit" }],
+            command: { command: "commit" as const, hint: "focus on the API" },
+          })),
+        }),
+        submit,
+      ),
+    ).toBe("command");
+    expect(
+      await drainConversationQueueInto(
+        DRAIN_CONTEXT,
+        makeQueueDeps({
+          claimNextTurnBatch: vi.fn(async () => ({
+            deliveryAttemptId: "att-1",
+            messageIds: ["q1"],
+            content: [{ type: "text" as const, text: "Next" }],
+            command: null,
+          })),
+        }),
+        submit,
+      ),
+    ).toBe("turn");
+    expect(
+      await drainConversationQueueInto(
+        DRAIN_CONTEXT,
+        makeQueueDeps({
+          claimNextTurnBatch: vi.fn(async () => ({
+            deliveryAttemptId: "att-2",
+            messageIds: ["q2"],
+            content: [{ type: "text" as const, text: "Refused" }],
+            command: null,
+          })),
+        }),
+        async () => "refused" as const,
+      ),
+    ).toBe("returned");
+    expect(submitted).toEqual(["Next"]);
   });
 });
 

@@ -9,6 +9,7 @@ describe("merge initiation", () => {
       sessionName: "session",
       surface: "merge-command",
       readActiveExecution: async () => null,
+      readCurrentRuns: () => [],
       association: {
         resolve: () => ({
           kind: "linked",
@@ -61,6 +62,7 @@ it("links an unlaunched execution directly to its delivery continuation review",
     sessionName: "session",
     surface: "merge-command",
     readActiveExecution: async () => null,
+    readCurrentRuns: () => [],
     association: {
       resolve: () => ({
         kind: "refused",
@@ -97,5 +99,50 @@ it("links an unlaunched execution directly to its delivery continuation review",
       reviewUrl:
         "/specs/project/delivery?el=delivery&execution=unlaunched&mergeSession=session",
     },
+  });
+});
+
+describe("a session one of whose runs is not finished", () => {
+  const noDelivery = {
+    association: { resolve: () => ({ kind: "none" as const }) },
+    gate: {
+      async evaluate(): Promise<never> {
+        throw new Error("no delivery is associated");
+      },
+    },
+  };
+
+  it("refuses the merge, naming the run and how to clear it", async () => {
+    const result = await evaluateMergeInitiation({
+      projectPath: "/project",
+      sessionName: "session",
+      surface: "merge-route",
+      readActiveExecution: async () => null,
+      readCurrentRuns: (projectPath, sessionName) =>
+        projectPath === "/project" && sessionName === "session"
+          ? [{ runId: "run-1", sessionName: "session", progress: "paused" }]
+          : [],
+      ...noDelivery,
+    });
+
+    expect(result).toMatchObject({
+      admitted: false,
+      refusal: { code: "RUN_CURRENT", runId: "run-1", progress: "paused" },
+    });
+    if (result.admitted) return;
+    expect(result.refusal.message).toContain("run-1");
+  });
+
+  it("admits the merge once every run of the session has finished", async () => {
+    const result = await evaluateMergeInitiation({
+      projectPath: "/project",
+      sessionName: "session",
+      surface: "merge-route",
+      readActiveExecution: async () => null,
+      readCurrentRuns: () => [],
+      ...noDelivery,
+    });
+
+    expect(result).toEqual({ admitted: true });
   });
 });

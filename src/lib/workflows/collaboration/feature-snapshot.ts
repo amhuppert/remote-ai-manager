@@ -21,6 +21,7 @@
  */
 
 import { z } from "zod";
+import { resolvedCollaborationConfigSchema } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   collaborationCounterProposalOutputSchema,
   collaborationCrossReviewOutputSchema,
@@ -28,8 +29,7 @@ import {
   collaborationInitialDraftOutputSchema,
   collaborationProposedChangesOutputSchema,
   collaborationResolutionDecisionOutputSchema,
-  resolvedCollaborationConfigSchema,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 import { collaborationSessionContextSchema } from "./session-context";
 import { collaborationAgentsMapSchema } from "./types";
 

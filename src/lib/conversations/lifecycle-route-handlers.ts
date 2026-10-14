@@ -85,11 +85,13 @@ import {
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
+import { enrollInCore } from "@/lib/supervision/handles";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   classifyRoutePrincipal,
   invalidTokenResponse,
   type WorkflowMutationGuardDeps,
-} from "@/lib/workflow-graph/mutation-guard";
+} from "@/lib/agent-gateway/request-principal";
 
 const logger = createLogger("conversation-route-handlers");
 
@@ -114,6 +116,12 @@ export interface ConversationRouteDeps extends WorkflowMutationGuardDeps {
     sessionName: string,
     conversationId: string,
   ): Promise<void>;
+  /** Hands the conversation's turns to the shared conversation core. */
+  enrollInCore(input: {
+    conversationId: string;
+    projectPath: string;
+    sessionName: string;
+  }): void;
   renameConversation(
     projectPath: string,
     sessionName: string,
@@ -148,6 +156,8 @@ const defaultDeps: ConversationRouteDeps = {
   getSession: defaultGetSession,
   createConversation: defaultCreateConversation,
   deleteConversation: defaultDeleteConversation,
+  enrollInCore: ({ sessionName, ...input }) =>
+    enrollInCore({ ...input, scope: { scope: "session", sessionName } }),
   renameConversation: defaultRenameConversation,
   resolveConversationNamingContent: defaultResolveConversationNamingContent,
   resolveMessageNamingContent: defaultResolveMessageNamingContent,
@@ -254,6 +264,37 @@ export function createConversationRouteHandlers(
       const message =
         err instanceof Error ? err.message : "Failed to create conversation";
       return jsonError(message, 500);
+    }
+
+    // Enrolled before the id leaves this request, so no turn can reach the
+    // actor first.
+    if (parsed.value.engine === "core") {
+      try {
+        deps.enrollInCore({
+          conversationId: conversation.id,
+          projectPath,
+          sessionName,
+        });
+      } catch (err) {
+        logger.error("conversation_core.enrollment_failed", {
+          sessionName,
+          conversationId: conversation.id,
+          error: getErrorMessage(err),
+        });
+        await deps
+          .deleteConversation(projectPath, sessionName, conversation.id)
+          .catch((deleteError: unknown) =>
+            logger.error("conversation_core.enrollment_cleanup_failed", {
+              sessionName,
+              conversationId: conversation.id,
+              error: getErrorMessage(deleteError),
+            }),
+          );
+        return jsonError(
+          `Failed to create a core conversation: ${getErrorMessage(err)}`,
+          500,
+        );
+      }
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);

@@ -1,7 +1,7 @@
 import { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
-import { readRuntimeInstructions } from "../runtime-instructions";
+import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
-import type { ConversationAddress } from "../turn-spec";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import type { ActorFixtureDependencies } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
@@ -30,7 +30,7 @@ import { createMessageQueueService } from "@/lib/conversations/message-queue-ser
 import { subscriptionWakeHold } from "@/lib/conversations/message-queue-subscription-admission";
 import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import { loadActorInput } from "../actor-input-loader";
-import { hydrateCheckpointAuthority } from "../checkpoint-restart";
+import { hydrateCheckpointAuthority } from "@/lib/conversation-checkpoints/checkpoint-restart";
 import { createActorDependenciesFixture } from "./actor-deps-fixture";
 import { createLogger } from "@/lib/logging";
 
@@ -43,7 +43,7 @@ import {
   setPersistenceDeps,
   _resetForTesting as resetPersistence,
 } from "../persistence";
-import type { ConversationBinding } from "../turn-spec";
+import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 
 export interface LifecycleFixtureOptions {
   subscriptionWakeHold?(key: {

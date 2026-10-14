@@ -1,17 +1,17 @@
 import { stableStringify } from "@/lib/shared/stable-stringify";
 import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
 import { recordCapabilityConfigReceipt } from "@/lib/agent-capabilities/runtime-receipt";
-import { toPromptActorResult } from "./turn-result";
+import { toPromptActorResult } from "@/lib/conversation-core/turn/turn-result";
+import { prepareTaskPrompt } from "@/lib/conversation-core/turn/turn-context";
 import {
   prepareConversationTurnContext,
-  prepareTaskPrompt,
   type PreparedConversationTurnContext,
 } from "./turn-context";
 import {
   prepareRuntimeInstructions,
   prepareRuntimeRecoveryInstructions,
   type RuntimeRecoveryInstructions,
-} from "./runtime-instructions";
+} from "@/lib/conversation-core/turn/runtime-instructions";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationActorDependencies } from "./actor-dependencies";
@@ -27,17 +27,20 @@ import { randomUUID } from "node:crypto";
 import type {
   PrepareTurnInput,
   PrepareTurnOutput,
-  ExecutePromptInput,
-  PromptActorResult,
   RunTaskRunInput,
   FinalizeQueuedDeliveryInput,
 } from "./types";
-import { deriveTaskRunPermissions } from "./task-run-permissions";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
+import { deriveTaskRunPermissions } from "@/lib/conversation-core/turn/task-run-permissions";
 
 import { getErrorMessage } from "@/lib/shared/errors";
 import { publishEvent } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
+import { attributeTaskRunCost } from "@/lib/conversation-core/turn/task-run-cost";
 import {
   costSettlementFrame,
   recordConversationCostSettlement,
@@ -63,8 +66,10 @@ import type {
 } from "@/lib/prompt/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
-import { recordMcpConfigReceipt } from "@/lib/mcp/runtime-apply";
-import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
+import {
+  recordMcpConfigReceipt,
+  seedMcpRuntimeState,
+} from "@/lib/mcp/runtime-apply";
 import {
   conversationRuntimeKey,
   getConversationRuntime,
@@ -77,13 +82,13 @@ import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import {
   classifyFailureForBackend,
   resolveFailureClassifierForBackend,
-} from "./failure-classification";
+} from "@/lib/conversation-core/turn/failure-classification";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import {
   withRuntimeReplacementRetry,
   type RuntimeReplacementRetryDeps,
-} from "./with-runtime-replacement-retry";
+} from "@/lib/conversation-core/turn/with-runtime-replacement-retry";
 
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
@@ -95,14 +100,14 @@ import {
 import {
   runtimeConfigurationChanges,
   type DesiredRuntimeConfiguration,
-} from "./pre-turn/runtime-recreate";
+} from "@/lib/conversation-core/turn/runtime-recreate";
 import { isRuntimeCreatedWithoutResume } from "@/lib/memory/delivery-decision";
-import { resolveContinuationSeed } from "./pre-turn/continuation-seed";
+import { resolveContinuationSeed } from "@/lib/conversation-checkpoints/continuation-seed";
 import {
   prepareCheckpointSeed,
   type PreparedCheckpointSeed,
-} from "./pre-turn/checkpoint-seed";
-import { checkpointScopeKeyForStoreIdentity } from "./actor-input-loader";
+} from "@/lib/conversation-checkpoints/checkpoint-seed";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import {
   fingerprintAssembledInput,
   fingerprintSubmittedInput,
@@ -126,30 +131,30 @@ import {
   resolveAgentBackendTurnDefaults,
 } from "@/lib/agent-backends/conversation-policy";
 
-import type { ActorConfig } from "./pre-turn/resolve-model-effort";
+import type { ActorConfig } from "@/lib/conversation-core/contributions/resolve-model-effort";
 import {
   resolveTurnModelSelection,
   resolveBackendTimeoutMs,
   resolveBackendStallTimeoutMs,
-} from "./pre-turn/resolve-model-effort";
+} from "@/lib/conversation-core/contributions/resolve-model-effort";
 import {
   resolveTurnPromptText,
   composeUserTranscriptBlocks,
-} from "./pre-turn/review-feedback";
-import { persistTurnImages } from "./pre-turn/image-persistence";
+} from "@/lib/conversation-core/contributions/review-feedback";
+import { persistTurnImages } from "@/lib/conversation-core/contributions/image-persistence";
 
-import type { CapabilityTurnContext } from "./pre-turn/capability-cascade";
+import type { CapabilityTurnContext } from "@/lib/conversation-core/contributions/capability-cascade";
+import { resolveCapabilitySeedForNewRuntime } from "@/lib/conversation-core/contributions/capability-cascade";
 import {
   buildCapabilityApplyInput,
-  resolveCapabilitySeedForNewRuntime,
   seedRuntimeCapabilityState,
   applyCapabilityCascadeAtTurnStart,
-} from "./pre-turn/capability-cascade";
-import { recordSeenAlignmentVersion } from "./pre-turn/alignment-gate";
-import { createBackgroundTasksLostHandler } from "./pre-turn/background-tasks-lost";
+} from "./pre-turn/capability-apply";
+import { recordSeenAlignmentVersion } from "@/lib/conversation-core/contributions/alignment-gate";
+import { createBackgroundTasksLostHandler } from "@/lib/conversation-core/contributions/background-tasks-lost";
 
-import { wireTurnAbort } from "./pre-turn/abort-wiring";
-import { createQueuedDeliveryAccounting } from "./post-turn/queued-delivery-accounting";
+import { wireTurnAbort } from "@/lib/conversation-core/turn/abort-wiring";
+import { createQueuedDeliveryAccounting } from "@/lib/conversation-core/contributions/queued-delivery-accounting";
 import {
   buildFailedTurnResult,
   buildAbortedTurnResult,
@@ -886,29 +891,11 @@ async function executePromptForMachine(
     portableMcp: PortableMcpConfig,
     delivery: ConversationBackendRuntime["mcpConfigDelivery"],
   ) {
-    const hash = computeEffectiveConfigHash(portableMcp);
-    await deps.policy.state.mcp.update(
+    await seedMcpRuntimeState(
+      deps.policy.state.mcp,
       { projectPath: input.projectPath, target: input.target },
-      "prompt.seedMcpRuntime",
-      (state) => {
-        if (delivery === "input-accepted")
-          return {
-            ...state,
-            pendingConfigHash: hash,
-            lastApplyDisposition: "deferred_to_next_turn" as const,
-          };
-        const next = {
-          ...(state ?? {}),
-          lastAppliedConfigHash: hash,
-          lastApplyDisposition: "applied_now" as const,
-        };
-        delete next.lastApplyError;
-        if (next.pendingConfigHash === hash) {
-          delete next.pendingConfigHash;
-          delete next.pendingServerKeys;
-        }
-        return next;
-      },
+      portableMcp,
+      delivery,
     );
     deps.log.info("prompt.mcp_seeded", {
       ...scopeRef,
@@ -1973,23 +1960,33 @@ async function executePromptForMachine(
  * accounting; this frame only makes the transcript agree. Each run is its own
  * lineage: sharing the live session's would read as a restart of that lineage.
  */
+/** Records the task run's cost frame; returns the run's own cost (a resumed session's history excluded). */
 async function recordTaskRunCost(
   deps: ConversationActorDependencies,
   input: RunTaskRunInput,
   result: AgentCallResult,
   meta: TranscriptBroadcastMeta,
-): Promise<void> {
-  const costUsd = result.usage.costUsd;
-  if (typeof costUsd !== "number" || !(costUsd > 0)) return;
+): Promise<number | null> {
+  const sessionRef = result.backendRef ?? null;
+  const cost = attributeTaskRunCost({
+    usage: result.usage,
+    sessionRef,
+    runLineageId: `task_run:${input.executionAttemptId ?? randomUUID()}`,
+    previousCumulativeUsd:
+      sessionRef === null
+        ? null
+        : ((await deps.transcript.readLineageCumulativeCost?.(
+            input.target.conversationId,
+            sessionRef.ref,
+          )) ?? null),
+  });
+  if (cost === null) return null;
   await deps.transcript.safeAppendTranscriptEntryOnce(
     input.target.conversationId,
-    costSettlementFrame(input.target.conversationId, {
-      lineageId: `task_run:${input.executionAttemptId ?? randomUUID()}`,
-      cumulativeCostUsd: costUsd,
-      costUsdDelta: costUsd,
-    }),
+    costSettlementFrame(input.target.conversationId, cost.settlement),
     meta,
   );
+  return cost.costUsd;
 }
 
 async function runTaskRunTurnForMachine(
@@ -2256,7 +2253,10 @@ async function runTaskRunTurnForMachine(
     });
   }
 
-  await recordTaskRunCost(deps, input, result, broadcastMeta);
+  const charged = await recordTaskRunCost(deps, input, result, broadcastMeta);
+  // The conversation's totals add the run's own spend, not a resumed session's whole history.
+  if (charged !== null)
+    result = { ...result, usage: { ...result.usage, costUsd: charged } };
 
   const projected = toPromptActorResult(
     { kind: "call_result", result },

@@ -23,6 +23,12 @@ import type { PublishFn } from "@/lib/events/publication";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
+  CONVERSATION_IDENTITY_HEADER,
+  encodeConversationIdentity,
+} from "@/lib/agent-gateway/conversation-identity";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import {
+  createDevServerTargetResolver,
   DevServerTargetError,
   type ResolvedDevServerTarget,
   type DevServerTargetResolver,
@@ -398,6 +404,56 @@ describe("dev-server route handlers", () => {
       code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
       instruction: "Run `cctl workflow status`.",
     });
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it("refuses a run seat working in a lane, named by its agent identity, before invoking the service", async () => {
+    const service = makeService();
+    const targetResolver = createDevServerTargetResolver({
+      getSession: async () =>
+        sessionStateSchema.parse({
+          sessionName: "s1",
+          worktreePath: SESSION_WORKTREE,
+          branchName: "s1-branch",
+          targetBranch: "main",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lastActivityAt: "2026-01-01T00:00:00.000Z",
+        }),
+      getActiveGraphWorkflowExecution: async () => null,
+      directoryExists: async () => true,
+      seatWorkplace: async (conversationId) =>
+        conversationId === "lane-seat"
+          ? {
+              projectPath: "/repos/project",
+              sessionName: "s1",
+              contextId: "run-1.api",
+              workplace: {
+                kind: "current",
+                runId: "run-1",
+                role: "implementer",
+                worktreePath: LANE_WORKTREE,
+                branch: "csm/s1-api",
+                validationAccess: [],
+              },
+            }
+          : null,
+    });
+    const { handlers } = makeHandlers(service, { targetResolver });
+
+    const response = await handlers.GET(
+      new Request("http://cc.test/dev-servers", {
+        headers: {
+          [CONVERSATION_IDENTITY_HEADER]: encodeConversationIdentity({
+            sessionName: "s1",
+            conversationId: "lane-seat",
+          }),
+        },
+      }),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: "RUN_LANE_NOT_SERVED" });
     expect(service.list).not.toHaveBeenCalled();
   });
 

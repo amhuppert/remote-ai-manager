@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSessionHandlers } from "./use-session-handlers";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 import type { SessionState } from "@/lib/sessions/schemas";
 
 /**
@@ -178,5 +179,44 @@ describe("useSessionHandlers", () => {
       { wrapper },
     );
     expect(result.current.buildContext()).toBeNull();
+  });
+
+  it("tells the person why the session was not deleted", () => {
+    useToastStoreForTesting.setState({ toasts: [] });
+    const deleteMutation = {
+      mutate: (
+        _sessionName: string,
+        options?: { onError?: (error: Error) => void },
+      ) => options?.onError?.(new Error('Run run-1 is paused in session "s".')),
+    };
+    const { result } = renderHook(
+      () =>
+        useSessionHandlers({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          session: fakeSession,
+          router: { push: vi.fn(), replace: vi.fn() } as never,
+          answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
+          deleteMutation,
+          forkMutation: {
+            mutateAsync: async () => ({ conversationId: "new" }),
+          },
+          cancelDelete: () => {},
+          clearQuestions: () => {},
+          failPrompt: () => {},
+        }),
+      { wrapper },
+    );
+
+    act(() => result.current.handleDelete());
+
+    expect(
+      useToastStoreForTesting
+        .getState()
+        .toasts.some((toast) =>
+          toast.message.includes('Run run-1 is paused in session "s"'),
+        ),
+    ).toBe(true);
   });
 });

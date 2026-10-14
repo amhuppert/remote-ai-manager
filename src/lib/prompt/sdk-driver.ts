@@ -1,39 +1,48 @@
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
-import { z } from "zod";
-import { conversationTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
-import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 /**
- * Prompt execution facade — delegates to the conversation lifecycle module.
- *
- * Keeps the same export signatures (`executePromptStream`, `createPromptExecutor`)
- * so callers (prompt-route-handlers.ts) don't need changes.
- * The lifecycle module hides its state-machine implementation and returns a
- * stable turn projection.
+ * Prompt execution facade: `executePromptStream` hands a prompt to whichever
+ * engine runs its conversation — the conversation core when it owns the
+ * conversation, otherwise the conversation lifecycle module — and returns a
+ * stable turn projection either way.
  */
-
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
+import {
+  coreCollaborationRefusal,
+  sendCorePrompt,
+  type CoreCollaborationRequest,
+  type CoreConversationPromptDeps,
+  type CorePromptOutcome,
+  type CorePromptSend,
+  type PromptRefusal,
+} from "@/lib/conversation-core/prompt-route";
+import {
+  adoptCoreConversationBackend,
+  composedSupervision,
+  coreOwnsConversation,
+} from "@/lib/supervision/handles";
+import { commandAdmissionRefusal } from "@/lib/commands/route-admission";
+import type { Logger } from "@/lib/logging";
+import { clearConversationPendingPromptTextIfMatches } from "@/lib/state-store";
+import { z } from "zod";
+import { conversationTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
+import { queuedMessageBlocksOrdinaryAdmission } from "@/lib/conversations/message-queue-schemas";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
-import type {
-  ConversationBackendFactory,
-  WorkflowLaneIdentity,
-} from "@/lib/agent-backends/conversation";
+import type { WorkflowLaneIdentity } from "@/lib/agent-backends/conversation";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
-import { getErrorMessage } from "@/lib/shared/errors";
 import {
   DEFAULT_AGENT_BACKEND_ID,
   type AgentBackendId,
 } from "@/lib/shared/schemas";
-import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/collaboration/schemas";
 import type { CollaborationAgentTwoRequest } from "@/lib/workflows/collaboration/types";
 import type {
   ConversationBinding,
   ConversationTurnSubmission,
   TurnAdmission,
-} from "@/lib/workflows/conversation/turn-spec";
-import { toPromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-spec";
+import { toPromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
@@ -59,6 +68,10 @@ import {
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { readConfig } from "@/lib/config/loader";
 import { getConversationBackendFactory } from "@/lib/agent-backends/registry";
+import {
+  admitExplicitModelSelection,
+  ModelSelectionValidationError,
+} from "@/lib/agent-backends/model-selection-admission";
 import { randomUUID } from "node:crypto";
 
 const logger = createLogger("prompt");
@@ -68,6 +81,15 @@ const logger = createLogger("prompt");
 // ============================================================
 
 export interface PromptDeps {
+  /** Conversations the shared core runs take their prompts there; the rest stay with the actor. */
+  core?: {
+    owns(conversationId: string): boolean;
+    send(input: CorePromptSend): Promise<CorePromptOutcome>;
+    /** Why `/collab` cannot claim the conversation now, its backend adopted when it can; null when it may. */
+    collaborationRefusal(
+      input: CoreCollaborationRequest,
+    ): Promise<PromptRefusal | null>;
+  };
   getConversation: typeof getConversation;
   createConversation: typeof createConversation;
   setConversationBackend: typeof setConversationBackend;
@@ -120,11 +142,63 @@ const DEFAULT_NEGOTIATION_ROUNDS = 3;
 const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD: CollaborationAutonomousResolutionThreshold =
   "major";
 
+/**
+ * The core's prompt deps over the composed run supervision: one composition
+ * for the routes that address a conversation and this server-side entry.
+ */
+export function productionCorePromptDeps(
+  log: Pick<Logger, "info" | "warn">,
+): CoreConversationPromptDeps {
+  const core = () => {
+    const supervision = composedSupervision();
+    if (supervision === undefined)
+      throw new Error("Run supervision is not running");
+    return supervision.core;
+  };
+  return {
+    sendUserMessage: (message) => core().sendUserMessage(message),
+    admission: (conversationId, turn) => core().admission(conversationId, turn),
+    adoptBackend: adoptCoreConversationBackend,
+    clearPendingPromptText: clearConversationPendingPromptTextIfMatches,
+    dispatchCommand: defaultDispatchConversationCommand,
+    commandRefusal: commandAdmissionRefusal,
+    async admitCommandModel({ projectPath, backend, selection }) {
+      try {
+        return {
+          ok: true,
+          selection: await admitExplicitModelSelection({
+            projectPath,
+            backend,
+            selection,
+            factory: getConversationBackendFactory(backend),
+          }),
+        };
+      } catch (error) {
+        if (!(error instanceof ModelSelectionValidationError)) throw error;
+        return {
+          ok: false,
+          refusal: {
+            status: error.statusCode,
+            body: { error: error.message, code: error.code },
+          },
+        };
+      }
+    },
+    log,
+  };
+}
+
 async function getDefaultPromptDeps(): Promise<PromptDeps> {
   if (_defaultPromptDeps) return _defaultPromptDeps;
   const manager = await import("@/lib/workflows/conversation/lifecycle");
   const collabModule = await import("@/lib/workflows/collaboration/manager");
   _defaultPromptDeps = {
+    core: {
+      owns: coreOwnsConversation,
+      send: (input) => sendCorePrompt(productionCorePromptDeps(logger), input),
+      collaborationRefusal: (input) =>
+        coreCollaborationRefusal(productionCorePromptDeps(logger), input),
+    },
     getConversation,
     createConversation,
     setConversationBackend,
@@ -329,6 +403,25 @@ export async function executePromptStream(
   const isCollab = hasCollabPrefix(promptText);
   const parsedCommand = parseConversationCommand(promptText);
 
+  const route = {
+    projectPath,
+    session,
+    promptText,
+    emit,
+    modelSelection,
+    images,
+    options,
+    scopeRef,
+  };
+  if (
+    conversationId !== undefined &&
+    resolvedDeps.core?.owns(conversationId) === true
+  )
+    return routeToCore(resolvedDeps, resolvedDeps.core, {
+      ...route,
+      conversationId,
+    });
+
   // Command model admission must precede the transcript-owning dispatcher and
   // the conversation/backend writes needed to address it.
   let resolvedBackend: AgentBackendId;
@@ -428,6 +521,15 @@ export async function executePromptStream(
   if (conversationId === undefined) {
     throw new Error("Conversation resolution did not produce an id");
   }
+  // A conversation created here runs wherever its owner says, as one passed in does.
+  if (
+    conversationCreation !== undefined &&
+    resolvedDeps.core?.owns(conversationId) === true
+  )
+    return routeToCore(resolvedDeps, resolvedDeps.core, {
+      ...route,
+      conversationId,
+    });
 
   if (parsedCommand) {
     logger.info("prompt.command_detected", {
@@ -511,79 +613,18 @@ export async function executePromptStream(
     }
   }
 
-  if (isCollab) {
-    const brief = stripCollabPrefix(promptText).trim();
-    if (brief.length === 0) {
-      logger.warn("prompt.collab_brief_required", {
-        ...scopeRef,
-        conversationId,
-      });
-      throw new CollabBriefRequiredError();
-    }
-    if (!resolvedDeps.dispatchCollabStart) {
-      logger.error("prompt.collab_dispatcher_unavailable", {
-        ...scopeRef,
-        conversationId,
-      });
-      throw new CollabDispatcherUnavailableError();
-    }
-    logger.info("prompt.collab_dispatch", {
-      ...scopeRef,
+  if (isCollab)
+    return startCollaboration(resolvedDeps, {
+      projectPath,
+      session,
+      promptText,
+      emit,
       conversationId,
-      briefLength: brief.length,
-      imageCount: images?.length ?? 0,
+      modelSelection,
+      images,
+      options,
+      scopeRef,
     });
-    try {
-      const result = await resolvedDeps.dispatchCollabStart({
-        projectPath,
-        sessionName: session.sessionName,
-        conversationId,
-        brief,
-        ...(options?.collab?.negotiationRounds !== undefined
-          ? { negotiationRounds: options.collab.negotiationRounds }
-          : {}),
-        ...(options?.collab?.autonomousResolutionThreshold !== undefined
-          ? {
-              autonomousResolutionThreshold:
-                options.collab.autonomousResolutionThreshold,
-            }
-          : {}),
-        ...(modelSelection !== undefined ? { modelSelection } : {}),
-        ...(options?.collab?.agentTwo !== undefined
-          ? { agentTwo: options.collab.agentTwo }
-          : {}),
-        ...(images?.length ? { images } : {}),
-      });
-      await notifyPromptAccepted(options, scopeRef, conversationId);
-      emit("collab-started", {
-        workflowId: result.workflowId,
-        conversationId,
-      });
-      emit("done", {});
-      return {
-        conversationId,
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-      };
-    } catch (err) {
-      const errorMsg =
-        err instanceof Error ? err.message : "Collaboration dispatch failed";
-      logger.error("prompt.collab_dispatch_failed", {
-        ...scopeRef,
-        conversationId,
-        error: errorMsg,
-      });
-      emitErrorAndDone(emit, errorMsg);
-      return {
-        conversationId,
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-        error: errorMsg,
-      };
-    }
-  }
 
   // Validate an explicit selection via the backend factory before execution.
   const factory = resolvedDeps.getConversationBackendFactory(resolvedBackend);
@@ -683,6 +724,199 @@ export async function executePromptStream(
   return result;
 }
 
+/** `/collab`: the collaboration manager takes the conversation over and starts from the brief. */
+async function startCollaboration(
+  resolvedDeps: PromptDeps,
+  input: {
+    projectPath: string;
+    session: SessionState;
+    promptText: string;
+    emit: (event: string, data: unknown) => void;
+    conversationId: string;
+    modelSelection: BackendModelSelection | undefined;
+    images: ImagePayload[] | undefined;
+    options: PromptStreamOptions | undefined;
+    scopeRef: ConversationScopeRef;
+  },
+): Promise<PromptStreamResult> {
+  const {
+    projectPath,
+    session,
+    promptText,
+    emit,
+    conversationId,
+    modelSelection,
+    images,
+    options,
+    scopeRef,
+  } = input;
+  const brief = stripCollabPrefix(promptText).trim();
+  if (brief.length === 0) {
+    logger.warn("prompt.collab_brief_required", {
+      ...scopeRef,
+      conversationId,
+    });
+    throw new CollabBriefRequiredError();
+  }
+  if (!resolvedDeps.dispatchCollabStart) {
+    logger.error("prompt.collab_dispatcher_unavailable", {
+      ...scopeRef,
+      conversationId,
+    });
+    throw new CollabDispatcherUnavailableError();
+  }
+  logger.info("prompt.collab_dispatch", {
+    ...scopeRef,
+    conversationId,
+    briefLength: brief.length,
+    imageCount: images?.length ?? 0,
+  });
+  try {
+    const result = await resolvedDeps.dispatchCollabStart({
+      projectPath,
+      sessionName: session.sessionName,
+      conversationId,
+      brief,
+      ...(options?.collab?.negotiationRounds !== undefined
+        ? { negotiationRounds: options.collab.negotiationRounds }
+        : {}),
+      ...(options?.collab?.autonomousResolutionThreshold !== undefined
+        ? {
+            autonomousResolutionThreshold:
+              options.collab.autonomousResolutionThreshold,
+          }
+        : {}),
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
+      ...(options?.collab?.agentTwo !== undefined
+        ? { agentTwo: options.collab.agentTwo }
+        : {}),
+      ...(images?.length ? { images } : {}),
+    });
+    await notifyPromptAccepted(options, scopeRef, conversationId);
+    emit("collab-started", {
+      workflowId: result.workflowId,
+      conversationId,
+    });
+    emit("done", {});
+    return {
+      conversationId,
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    };
+  } catch (err) {
+    const errorMsg =
+      err instanceof Error ? err.message : "Collaboration dispatch failed";
+    logger.error("prompt.collab_dispatch_failed", {
+      ...scopeRef,
+      conversationId,
+      error: errorMsg,
+    });
+    emitErrorAndDone(emit, errorMsg);
+    return {
+      conversationId,
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+      error: errorMsg,
+    };
+  }
+}
+
+/**
+ * A prompt to a conversation the core runs: its turn or command there,
+ * streamed to the caller until it settles, or `/collab` once the core admits
+ * the collaboration's claim.
+ */
+async function routeToCore(
+  resolvedDeps: PromptDeps,
+  core: NonNullable<PromptDeps["core"]>,
+  input: {
+    projectPath: string;
+    session: SessionState;
+    conversationId: string;
+    promptText: string;
+    emit: (event: string, data: unknown) => void;
+    modelSelection: BackendModelSelection | undefined;
+    images: ImagePayload[] | undefined;
+    options: PromptStreamOptions | undefined;
+    scopeRef: ConversationScopeRef;
+  },
+): Promise<PromptStreamResult> {
+  const { projectPath, session, conversationId, promptText, emit, options } =
+    input;
+  const conversation = await resolvedDeps.getConversation(
+    projectPath,
+    session.sessionName,
+    conversationId,
+  );
+  if (!conversation)
+    throw new Error(`Conversation not found: ${conversationId}`);
+  const target = targetFromStoreSessionName(
+    resolvedDeps.getProjectDisplayName(projectPath),
+    session.sessionName,
+    conversationId,
+  );
+  const refusedWith = (error: string): PromptStreamResult => {
+    emitErrorAndDone(emit, error);
+    return {
+      conversationId,
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+      error,
+    };
+  };
+  if (hasCollabPrefix(promptText)) {
+    const held = await core.collaborationRefusal({
+      projectPath,
+      target,
+      conversation,
+      text: promptText.trim(),
+      ...(options?.backend !== undefined ? { backend: options.backend } : {}),
+    });
+    if (held !== null) return refusedWith(held.body.error);
+    return startCollaboration(resolvedDeps, input);
+  }
+  const outcome = await core.send({
+    projectPath,
+    target,
+    conversation,
+    message: {
+      text: promptText,
+      ...(input.images !== undefined ? { images: input.images } : {}),
+      ...(options?.documentFeedback !== undefined
+        ? { documentFeedback: options.documentFeedback }
+        : {}),
+      ...(options?.notepadFeedback !== undefined
+        ? { notepadFeedback: options.notepadFeedback }
+        : {}),
+      ...(input.modelSelection !== undefined
+        ? { modelSelection: input.modelSelection }
+        : {}),
+      ...(options?.backend !== undefined ? { backend: options.backend } : {}),
+      ...(options?.inputOrigin !== undefined
+        ? { inputOrigin: options.inputOrigin }
+        : {}),
+      ...(options?.autonomous === true ? { autonomous: true } : {}),
+    },
+    sink: { emit },
+  });
+  if (outcome.kind === "refused")
+    return refusedWith(outcome.refusal.body.error);
+  await notifyPromptAccepted(options, input.scopeRef, conversationId);
+  const settled = await outcome.settled;
+  emit("done", {});
+  return {
+    conversationId,
+    contextTokens: null,
+    contextWindowMax: null,
+    compacted: false,
+    aborted: settled.aborted,
+    error: settled.error,
+  };
+}
+
 // ============================================================
 // Error types for backend validation
 // ============================================================
@@ -698,105 +932,6 @@ export class BackendMismatchError extends Error {
     );
     this.name = "BackendMismatchError";
   }
-}
-
-export interface ModelSelectionValidationErrorInput {
-  code: string;
-  message: string;
-  modelId: string;
-  parameterId?: string;
-}
-
-export class ModelSelectionValidationError extends Error {
-  readonly statusCode = 400;
-  readonly code: string;
-  readonly modelId: string;
-  readonly parameterId?: string;
-
-  constructor(input: ModelSelectionValidationErrorInput) {
-    super(input.message);
-    this.name = "ModelSelectionValidationError";
-    this.code = input.code;
-    this.modelId = input.modelId;
-    this.parameterId = input.parameterId;
-  }
-}
-
-function modelSelectionErrorDetails(
-  error: unknown,
-  selection: BackendModelSelection,
-): ModelSelectionValidationErrorInput {
-  if (error instanceof ModelSelectionPolicyError) {
-    const issue = error.issues[0];
-    return {
-      code: issue?.code ?? "selection_invalid",
-      message: error.message,
-      modelId: issue?.modelId ?? selection.modelId,
-      ...(issue?.parameterId !== undefined
-        ? { parameterId: issue.parameterId }
-        : {}),
-    };
-  }
-
-  return {
-    code: "selection_invalid",
-    message: getErrorMessage(error),
-    modelId: selection.modelId,
-  };
-}
-
-async function admitExplicitModelSelection(input: {
-  projectPath: string;
-  backend: AgentBackendId;
-  selection: BackendModelSelection;
-  factory: ConversationBackendFactory;
-}): Promise<BackendModelSelection> {
-  const { projectPath, backend, selection, factory } = input;
-
-  if (factory.validateModelSelection) {
-    try {
-      factory.validateModelSelection(selection);
-    } catch (error) {
-      const details = modelSelectionErrorDetails(error, selection);
-      logger.warn("model_selection.rejected", {
-        backend,
-        modelId: details.modelId,
-        code: details.code,
-        ...(details.parameterId !== undefined
-          ? { parameterId: details.parameterId }
-          : {}),
-      });
-      throw new ModelSelectionValidationError(details);
-    }
-  }
-
-  let canonicalSelection = selection;
-  if (factory.validateProjectModelSelection) {
-    const validation = await factory.validateProjectModelSelection({
-      projectPath,
-      modelSelection: selection,
-    });
-    if (!validation.ok) {
-      logger.warn("model_selection.rejected", {
-        backend,
-        modelId: validation.modelId,
-        code: validation.code,
-        ...(validation.parameterId !== undefined
-          ? { parameterId: validation.parameterId }
-          : {}),
-      });
-      throw new ModelSelectionValidationError(validation);
-    }
-    canonicalSelection = validation.modelSelection;
-  }
-
-  logger.debug("model_selection.resolved", {
-    backend,
-    modelId: canonicalSelection.modelId,
-    parameterIds: Object.keys(canonicalSelection.parameters).sort(),
-    sourceLayer: "request",
-  });
-  return canonicalSelection;
 }
 
 /**

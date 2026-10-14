@@ -44,6 +44,12 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   resolvedCollaborationConfigSchema,
+  type ResolvedCollaborationConfig,
+  type WorkflowCollaborationOpenConflict,
+  type WorkflowCollaborationResult,
+  workflowCollaborationResultSchema,
+} from "@/lib/workflow-graph/collaboration-schemas";
+import {
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationCounterProposalOutput,
   type CollaborationCrossReviewOutput,
@@ -51,11 +57,7 @@ import {
   type CollaborationInitialDraftOutput,
   type CollaborationProposedChangesOutput,
   type CollaborationResolutionDecisionOutput,
-  type ResolvedCollaborationConfig,
-  type WorkflowCollaborationOpenConflict,
-  type WorkflowCollaborationResult,
-  workflowCollaborationResultSchema,
-} from "@/lib/workflow-graph/collaboration-schemas";
+} from "@/lib/workflows/collaboration/schemas";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import type { WorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import type { StatusBus } from "@/lib/events/status-bus";

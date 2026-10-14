@@ -23,8 +23,8 @@ import type {
   TranscriptEntriesResult,
 } from "@/lib/prompt/transcript";
 import type { TicketsRepo } from "@/lib/state-store/tickets-repo";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   EnsureConversationCompactionInput,

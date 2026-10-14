@@ -22,7 +22,7 @@ import {
   _resetForTesting as _resetStateDb,
 } from "../state-store/state-db";
 import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
-import { createConversationService } from "./service";
+import { createConversationService, type ConversationsDeps } from "./service";
 import {
   ContinuityForkError,
   type BackendContinuityAdapter,
@@ -110,6 +110,7 @@ function createTestServices(
     claudeFork?: FakeForkImpl;
     removeTranscript?(transcriptPath: string): Promise<void>;
     codexFork?: FakeForkImpl;
+    enrollForkWithSource?: ConversationsDeps["enrollForkWithSource"];
   } = {},
 ) {
   const configReader = createConfigReader(TEST_DIR);
@@ -143,6 +144,9 @@ function createTestServices(
     stopConversationActor: async () => {},
     configDir: TEST_DIR,
     removeTranscript: overrides.removeTranscript,
+    ...(overrides.enrollForkWithSource !== undefined
+      ? { enrollForkWithSource: overrides.enrollForkWithSource }
+      : {}),
     getContinuityAdapter: (backend) =>
       backend === "cursor"
         ? cursorContinuity.adapter
@@ -434,6 +438,26 @@ describe("getSessionConversations", () => {
       "test",
     );
     expect(convos).toEqual([]);
+  });
+});
+
+describe("setConversationBackend", () => {
+  it("refuses a managed conversation (a run's seat), whose backend its assignment fixed", async () => {
+    const { state, conversations } = createTestServices();
+    const seat = makeConvo({ role: "validator", promptCount: 0 });
+    await seedSession(state, { conversations: [seat] });
+
+    const refused = await conversations
+      .setConversationBackend("/proj", "test", seat.id, "codex")
+      .catch((error: unknown) => error);
+
+    expect(refused).toMatchObject({
+      code: "MANAGED_CONVERSATION",
+      statusCode: 403,
+    });
+    expect(
+      (await state.getConversation("/proj", "test", seat.id))?.agentBackend,
+    ).toBe(seat.agentBackend);
   });
 });
 
@@ -1084,6 +1108,43 @@ describe("forkConversation", () => {
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l) as TranscriptEntry);
   }
+
+  it("places a fork on its source's engine before the fork exists, so nothing reaches it elsewhere first", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const placed: Array<{ conversationId: string; rowExisted: boolean }> = [];
+    const { state, conversations } = createTestServices({
+      async enrollForkWithSource(input) {
+        expect(input).toMatchObject({
+          projectPath: "/proj",
+          scope: { scope: "session", sessionName: "test" },
+          sourceConversationId: sourceId,
+        });
+        const session = await state.getSession("/proj", "test");
+        placed.push({
+          conversationId: input.conversationId,
+          rowExisted:
+            session?.conversations.some((c) => c.id === input.conversationId) ??
+            false,
+        });
+      },
+    });
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi there", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 1,
+    });
+
+    expect(placed).toEqual([
+      { conversationId: result.conversationId, rowExisted: false },
+    ]);
+  });
 
   it("case 1: fork at assistant message — inclusive copy, anchor on assistant UUID, eager native fork", async () => {
     const sourceId = crypto.randomUUID();

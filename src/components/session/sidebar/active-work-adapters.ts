@@ -13,6 +13,9 @@ import type {
   ActiveGraphWorkflowExecution,
 } from "@/lib/active-conversations/schemas";
 import type { Notification } from "@/lib/notifications/schemas";
+import { runStatus } from "@/components/runs/present";
+import { runsPageHref } from "@/lib/runs/hrefs";
+import type { ActiveRun } from "@/lib/runs/schemas";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import type { SpecExecutionState, SpecGate } from "@/lib/specs/schemas";
 import type { ActiveWorkItem, AttentionItem } from "./active-work";
@@ -393,4 +396,54 @@ function specAskKey(
     waiverRequestIds.has(row.gateRequestId)
       ? `${row.specId}\0waiver\0${row.gate}\0${row.deepLinkId}`
       : `${row.specId}\0${row.gateRequestId}`;
+}
+
+/**
+ * Current runs, leading to their pages. One that needs the person asks for it:
+ * a review when a result waits for their approval, a look otherwise (a seat's
+ * question is its owner's, so it never counts).
+ */
+export function adaptRuns(runs: ActiveRun[]): ActiveWorkItem[] {
+  return runs.map((run) => {
+    const phase =
+      run.approvals > 0
+        ? "Approval required"
+        : run.attention > 0
+          ? "Action required"
+          : runStatus(run.status).label;
+    return {
+      id: `run:${run.runId}`,
+      kind: "run",
+      title: run.title,
+      projectName: run.projectName,
+      sessionName: run.sessionName,
+      phase,
+      href: runsPageHref(run.projectName, run.sessionName, run.runId),
+      startedAt: run.startedAt,
+      ...(run.kind === "workflow"
+        ? {
+            progress: {
+              completed: run.contexts.done,
+              total: run.contexts.total,
+            },
+          }
+        : {}),
+      ...(run.attention > 0 && run.askedAt !== null
+        ? { askedAt: run.askedAt }
+        : {}),
+      ...(run.status.kind === "paused" || run.status.kind === "stopping"
+        ? { held: true as const }
+        : {}),
+      ...(run.attention > 0
+        ? {
+            needsAction: {
+              primary: {
+                label: run.approvals > 0 ? "Review" : "Open",
+                kind: "review",
+              },
+            },
+          }
+        : {}),
+    };
+  });
 }

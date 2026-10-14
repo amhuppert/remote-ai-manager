@@ -30,6 +30,7 @@ import { resolveSessionConversationId } from "../validation-fix/actors";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { evaluateGraphWorkflowSessionDelivery } from "@/lib/workflow-graph/lifecycle-classifier";
+import { currentRunRefusal, type CurrentRun } from "@/lib/runs/session-guard";
 
 const logger = createLogger("smart-merge-actors");
 
@@ -588,6 +589,8 @@ export interface PublishActorDeps {
     GraphWorkflowExecution,
     "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
   > | null>;
+  /** The session's runs that have not finished; finishing the session waits for every one. */
+  currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
   reconcileTicketSessionLifecycle(input: {
     projectPath: string;
     sessionName: string;
@@ -713,6 +716,19 @@ export async function runPublish(
           remedy: deliveryDecision.remedy,
         });
         return { status: "failed", error: deliveryDecision.message };
+      }
+      const runRefusal = currentRunRefusal(
+        deps.currentRuns(input.projectPath, input.sessionName),
+        "merging this session",
+      );
+      if (runRefusal !== null) {
+        logger.warn("publishActor.run_current_refused", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          runId: runRefusal.runId,
+          runProgress: runRefusal.progress,
+        });
+        return { status: "failed", error: runRefusal.message };
       }
     }
 
@@ -908,6 +924,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
     const { reconcileTicketSessionLifecycle } =
       await import("@/lib/tickets/lifecycle");
     const { finalizeSessionMemory } = await import("@/lib/memory/session-end");
+    const { currentRuns } = await import("@/lib/supervision/handles");
 
     return runPublish(
       {
@@ -923,6 +940,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
           ),
         setSessionFinished,
         getActiveGraphWorkflowExecution,
+        currentRuns,
         reconcileTicketSessionLifecycle,
         finalizeSessionMemory,
         retargetOrphanedChildren,

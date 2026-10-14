@@ -554,6 +554,8 @@ export const changeConversationProfileRequestSchema = z.object({
  */
 export const createSessionConversationRequestSchema = z.object({
   profile: conversationProfileSelectionSchema.optional(),
+  /** Opt in to the shared conversation core instead of the conversation actor. */
+  engine: z.literal("core").optional(),
 });
 
 // ============================================================

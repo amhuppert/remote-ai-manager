@@ -16,7 +16,7 @@ import {
 import { getEligibleContextIds } from "@/lib/workflow-graph/lane-readiness";
 import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
-import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import type { ParallelWorktrees } from "@/lib/workspace/parallel-worktrees";
 import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
 import type { SessionGitLock } from "@/lib/shared/lock-retry";
 import type { SessionState } from "@/lib/sessions/schemas";

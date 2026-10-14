@@ -43,3 +43,48 @@ export function retireConsumedFiniteWaitSources(
       conversation_id: recipient?.conversationId ?? null,
     }).changes;
 }
+
+/**
+ * A run's follow ends once its final notice (success or cancellation) was
+ * delivered or dismissed: the run records nothing after it.
+ */
+export function retireFinishedRunFollows(
+  db: Db,
+  recipient?: SubscriptionRecipient,
+): number {
+  const final = `d.subscription_id=conversation_subscriptions.id AND d.state IN ('accepted','superseded')
+    AND json_extract(d.fact_json,'$.eventKind') IN ('run-boundary:succeeded','run-boundary:cancelled')`;
+  return db
+    .prepare(
+      `UPDATE conversation_subscriptions
+    SET expires_at=(SELECT MAX(COALESCE(d.accepted_at,d.finished_at,d.recorded_at)) FROM conversation_subscription_deliveries d WHERE ${final})
+    WHERE source_kind='run' AND expires_at IS NULL
+      AND (@project_path IS NULL OR (project_path=@project_path AND conversation_id=@conversation_id))
+      AND EXISTS (SELECT 1 FROM conversation_subscription_deliveries d WHERE ${final})`,
+    )
+    .run({
+      project_path: recipient?.projectPath ?? null,
+      conversation_id: recipient?.conversationId ?? null,
+    }).changes;
+}
+
+/**
+ * Returns every fact a wake batch claimed to the inbox as pending, so another
+ * wake or briefing can take it. Used wherever a batch ends without delivery.
+ */
+export function releaseBatchClaims(
+  db: Db,
+  recipient: SubscriptionRecipient,
+  batchId: string,
+): number {
+  return db
+    .prepare(
+      `UPDATE conversation_subscription_deliveries SET state='pending',attempt_id=NULL,queued_at=NULL,accepted_at=NULL,finished_at=NULL,last_error=NULL
+    WHERE project_path=@project_path AND conversation_id=@conversation_id AND attempt_id=@batch_id AND state IN ('queued','failed','uncertain')`,
+    )
+    .run({
+      project_path: recipient.projectPath,
+      conversation_id: recipient.conversationId,
+      batch_id: batchId,
+    }).changes;
+}

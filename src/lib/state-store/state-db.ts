@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { SUPERVISION_SCHEMA_DDL } from "./supervision-schema";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -184,8 +185,12 @@ const DB_FILE_NAME = "command-center.db";
  *
  * Version 28 admits explicit wait generations with a terminal baseline.
  * Migration 0065 fences older strict wait readers before storing that field.
+ *
+ * Version 29 admits the `run` source kind and follows that wake their
+ * recipient. Older subscription lists cannot parse a `run` follow, so migration
+ * `0068-run-subscription-source` fences them.
  */
-export const KNOWN_SCHEMA_VERSION = 28;
+export const KNOWN_SCHEMA_VERSION = 29;
 
 export const WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION = 27;
 
@@ -1838,10 +1843,12 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     id TEXT PRIMARY KEY,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation','run')),
     source_id TEXT NOT NULL,
     reason TEXT NOT NULL,
     mode TEXT NOT NULL CHECK (mode IN ('passive','active')),
+    -- Added by the ordered 0068 rebuild, not at open, so an older schema keeps its shape until migration.
+    wakes INTEGER NOT NULL DEFAULT 0 CHECK (wakes IN (0,1)),
     event_kinds_json TEXT,
     expires_at TEXT,
     status TEXT NOT NULL CHECK (status IN ('following','unfollowed')),
@@ -1859,7 +1866,7 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     subscription_id TEXT NOT NULL,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation','run')),
     source_id TEXT NOT NULL,
     occurrence_id TEXT NOT NULL,
     fact_json TEXT NOT NULL,
@@ -1901,6 +1908,7 @@ export function migrateConversationNoticeSourceSchema(db: Db): void {
     if (
       !row ||
       (row.sql.includes("'conversation'") &&
+        row.sql.includes("'run'") &&
         (table !== "conversation_subscription_deliveries" ||
           row.sql.includes("'superseded'")))
     )
@@ -1934,6 +1942,9 @@ export const CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL = `
 `;
 
 export const SUBSCRIPTION_WAIT_GENERATIONS_SCHEMA_VERSION = 28;
+
+/** Run boundaries as a subscription source, and follows whose facts wake their recipient. */
+export const RUN_SUBSCRIPTION_SOURCE_SCHEMA_VERSION = 29;
 
 /** Called only by the ordered startup migration. */
 export function migrateSubscriptionWaitGenerationsSchema(db: Db): void {
@@ -3112,6 +3123,8 @@ const SCHEMA_DDL = `
   ${GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL}
 
   ${GRAPH_PLAN_REVIEWS_SCHEMA_DDL}
+
+  ${SUPERVISION_SCHEMA_DDL}
 
   ${NOTEPADS_SCHEMA_DDL}
 

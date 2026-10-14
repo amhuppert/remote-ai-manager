@@ -2,6 +2,7 @@ import { conversationTargetStoreSessionName } from "@/lib/conversations/conversa
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
 import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
+import type { CoreConversationCheckpoints } from "@/lib/conversation-checkpoints/operation-contract";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/actor-input-loader";
 let machineFactory: NonNullable<
   Parameters<typeof createConversationManagerFixture>[0]
@@ -12,6 +13,15 @@ let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
   };
 let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
   async () => ({ found: true, requiresQueueReview: false });
+let coreOwned: (conversationId: string) => boolean = () => false;
+let coreStops: string[] = [];
+let coreRetires: string[] = [];
+let coreDrains: string[] = [];
+let coreQuestions: string[] = [];
+let coreDebugCommands: string[] = [];
+let coreTasks: string[] = [];
+let coreCheckpointOwner: CoreConversationCheckpoints | undefined;
+let rehydrator: ConversationManagerDependencies["rehydrate"] = async () => 0;
 import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-production";
 import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
 const managerFixture: ReturnType<typeof createConversationManagerFixture> =
@@ -24,6 +34,37 @@ const managerFixture: ReturnType<typeof createConversationManagerFixture> =
       admitProfileForTurn: (identity) => admitFixtureProfile(identity),
       loadActorInput: (...args) => actorInputLoader(...args),
       readAdmissionState: (...args) => admissionReader(...args),
+      isCoreOwnedConversation: (conversationId) => coreOwned(conversationId),
+      rehydrate: (host) => rehydrator(host),
+      stopCoreConversation(conversationId) {
+        coreStops.push(conversationId);
+        return { requested: true, settled: Promise.resolve() };
+      },
+      async retireCoreConversation(conversationId) {
+        coreRetires.push(conversationId);
+      },
+      async drainCoreConversation(conversationId) {
+        coreDrains.push(conversationId);
+      },
+      async runCoreTask(input) {
+        coreTasks.push(`${input.conversationId}:${input.turn.promptText}`);
+        return {
+          kind: "not_started",
+          reason: "configuration",
+          message: "core task ran",
+        };
+      },
+      async coreQuestionCommand(identity, command) {
+        coreQuestions.push(
+          `${identity.conversationId}:${command.kind}:${command.questionId}`,
+        );
+        return true;
+      },
+      async coreDebugCommand(identity, command) {
+        coreDebugCommands.push(`${identity.conversationId}:${command.kind}`);
+        return { kind: "applied" };
+      },
+      coreCheckpoints: () => coreCheckpointOwner,
       queue: {
         submitTurn: (...args) => currentQueueDependencies().submitTurn(...args),
         claimNextTurnBatch: (...args) =>
@@ -66,6 +107,7 @@ async function ensureConversationActor(
   return actor;
 }
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import { CHECKPOINT_CAPTURE_POLICY } from "@/lib/conversation-checkpoints/receipt";
 import { toConversationDurableSeed } from "./actor-input-loader";
 import { TurnAttempt } from "./turn-attempt";
 /**
@@ -80,12 +122,11 @@ import {
 } from "@/lib/conversations/profile-admission";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { conversationMachine } from "./machine";
+import type { PrepareTurnOutput, PrepareTurnInput } from "./types";
 import type {
-  PrepareTurnOutput,
-  PrepareTurnInput,
   PromptActorResult,
   ExecutePromptInput,
-} from "./types";
+} from "@/lib/conversation-core/turn/types";
 import { applySyncDerivedFields, deriveActiveTurnSource } from "./manager";
 import { type ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
 import {
@@ -423,6 +464,46 @@ describe("conversation manager", () => {
   });
 
   describe("executeConversationTurn", () => {
+    it("refuses a turn for a conversation the supervision core runs, without hosting an actor for it", async () => {
+      coreOwned = (conversationId) =>
+        conversationId === DEFAULT_INPUT.target.conversationId;
+      try {
+        const refused = await managerFixture.manager.submitConversationTurn({
+          binding: {
+            kind: "durable",
+            address: {
+              projectPath: DEFAULT_INPUT.projectPath,
+              target: {
+                scope: "session",
+                projectName: "test-project",
+                sessionName: conversationTargetStoreSessionName(
+                  DEFAULT_INPUT.target,
+                ),
+                conversationId: DEFAULT_INPUT.target.conversationId,
+              },
+            },
+          },
+          ...DEFAULT_INPUT,
+          turn: { promptText: "hello" },
+        });
+        expect(refused).toMatchObject({
+          kind: "refused",
+          code: "binding_mismatch",
+        });
+        expect(
+          getConversationRuntime(
+            conversationRuntimeKey(
+              DEFAULT_INPUT.projectPath,
+              conversationTargetStoreSessionName(DEFAULT_INPUT.target),
+              DEFAULT_INPUT.target.conversationId,
+            ),
+          ),
+        ).toBeUndefined();
+      } finally {
+        coreOwned = () => false;
+      }
+    });
+
     it("keeps the accepted emitter when a concurrent send is refused", async () => {
       let unblock!: () => void;
       const preparation = new Promise<void>((resolve) => {
@@ -612,6 +693,281 @@ describe("conversation manager", () => {
         ),
       );
       expect(runtime?.streamEmit).toBeUndefined();
+    });
+  });
+
+  describe("conversations the supervision core runs", () => {
+    const store = () => ({
+      projectPath: DEFAULT_INPUT.projectPath,
+      sessionName: conversationTargetStoreSessionName(DEFAULT_INPUT.target),
+      conversationId: DEFAULT_INPUT.target.conversationId,
+    });
+    const key = () =>
+      conversationRuntimeKey(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+      );
+
+    beforeEach(() => {
+      coreOwned = (conversationId) =>
+        conversationId === DEFAULT_INPUT.target.conversationId;
+      coreStops = [];
+      coreRetires = [];
+      coreDrains = [];
+      coreQuestions = [];
+      coreDebugCommands = [];
+      coreTasks = [];
+    });
+    afterEach(() => {
+      coreOwned = () => false;
+    });
+
+    it("hosts no actor for it on any path, startup restore included", async () => {
+      rehydrator = async (host) => {
+        host.start(DEFAULT_INPUT);
+        return 1;
+      };
+      try {
+        await expect(
+          managerFixture.manager.restorePersistedConversations(),
+        ).rejects.toThrow(/shared conversation core/);
+        expect(getConversationRuntime(key())).toBeUndefined();
+      } finally {
+        rehydrator = async () => 0;
+      }
+    });
+
+    it("hands a workflow's task turn to the core and returns its outcome, hosting no actor", async () => {
+      const execution = await managerFixture.manager.executeConversationTurn({
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: DEFAULT_INPUT.projectPath,
+            target: DEFAULT_INPUT.target,
+          },
+        },
+        turn: {
+          kind: "task_run",
+          promptText: "Write a commit message",
+          executionClass: "nongoverned-task",
+        },
+      });
+      expect(execution).toMatchObject({
+        kind: "settled",
+        turn: { outcome: { message: "core task ran" } },
+      });
+      expect(coreTasks).toEqual([
+        `${store().conversationId}:Write a commit message`,
+      ]);
+      expect(getConversationRuntime(key())).toBeUndefined();
+    });
+
+    it("records a question its agent asks, and its clearing, on the core's row, hosting no actor", async () => {
+      const asked = await managerFixture.manager.registerConversationQuestion(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+        { questionId: "q-1", questions: [] },
+      );
+      const cleared = await managerFixture.manager.clearConversationQuestion(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+        { questionId: "q-1" },
+      );
+      expect([asked, cleared]).toEqual([true, true]);
+      expect(coreQuestions).toEqual([
+        `${store().conversationId}:register_question:q-1`,
+        `${store().conversationId}:clear_question:q-1`,
+      ]);
+      expect(getConversationRuntime(key())).toBeUndefined();
+    });
+
+    it("hands a debug command to the core's debug mode, hosting no actor", async () => {
+      const outcome = await managerFixture.manager.executeConversationCommand(
+        {
+          projectPath: DEFAULT_INPUT.projectPath,
+          target: DEFAULT_INPUT.target,
+        },
+        { kind: "mark_reproduced" },
+      );
+      expect(outcome).toEqual({ kind: "applied" });
+      expect(coreDebugCommands).toEqual([
+        `${store().conversationId}:mark_reproduced`,
+      ]);
+      expect(getConversationRuntime(key())).toBeUndefined();
+    });
+
+    it("hands the conversation's queue to the core to drain, hosting no actor", async () => {
+      const claimNextTurnBatch = vi.fn(async () => null);
+      setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
+      await managerFixture.manager.ensureConversationActorAndDrain(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+      );
+
+      expect(getConversationRuntime(key())).toBeUndefined();
+      expect(claimNextTurnBatch).not.toHaveBeenCalled();
+      expect(coreDrains).toEqual([store().conversationId]);
+    });
+
+    it("hands every checkpoint operation to the core's checkpoint owner, hosting no actor", async () => {
+      const calls: string[] = [];
+      const refusal = {
+        code: "checkpoint_not_found" as const,
+        reason: "from the core",
+        operationId: null,
+        phase: null,
+      };
+      coreCheckpointOwner = {
+        async check(address, options) {
+          calls.push(
+            `check:${address.target.conversationId}:${String(options.recover)}`,
+          );
+          return {
+            handoff: {
+              available: false,
+              mode: null,
+              reason: "unavailable",
+              policy: CHECKPOINT_CAPTURE_POLICY,
+            },
+            eligible: false,
+            refusals: [refusal],
+            active: null,
+            hosted: true,
+          };
+        },
+        async start(input) {
+          calls.push(`start:${input.requestId}:${String(input.recover)}`);
+          return { kind: "refused", refusal };
+        },
+        async cancel(input) {
+          calls.push(`cancel:${input.operationId}`);
+          return { kind: "refused", refusal };
+        },
+        async skipHandoff(input) {
+          calls.push(`skip:${input.operationId}`);
+          return { kind: "refused", refusal };
+        },
+        async reconcile(input) {
+          calls.push(
+            `reconcile:${input.operationId}:${String(input.captureExecutionStopped)}`,
+          );
+          return { kind: "refused", refusal };
+        },
+        acceptsQueuedInput(conversationId) {
+          calls.push(`queue:${conversationId}`);
+          return true;
+        },
+      };
+      const address = {
+        projectPath: DEFAULT_INPUT.projectPath,
+        target: DEFAULT_INPUT.target,
+      };
+      const manager = managerFixture.manager;
+      try {
+        expect(
+          await manager.checkConversationCheckpoint(address, {
+            recover: "op-0",
+          }),
+        ).toMatchObject({ refusals: [refusal] });
+        expect(
+          await manager.startConversationCheckpoint({
+            address,
+            requestId: "op-1",
+            recover: "op-0",
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          await manager.cancelConversationCheckpoint({
+            address,
+            operationId: "op-1",
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          await manager.skipConversationCheckpointHandoff({
+            address,
+            operationId: "op-1",
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          await manager.reconcileConversationCheckpoint({
+            address,
+            operationId: "op-1",
+            captureExecutionStopped: true,
+          }),
+        ).toEqual({ kind: "refused", refusal });
+        expect(
+          manager.checkpointAcceptsQueuedInput(
+            store().projectPath,
+            store().sessionName,
+            store().conversationId,
+          ),
+        ).toBe(true);
+      } finally {
+        coreCheckpointOwner = undefined;
+      }
+
+      const id = store().conversationId;
+      expect(calls).toEqual([
+        `check:${id}:op-0`,
+        "start:op-1:op-0",
+        "cancel:op-1",
+        "skip:op-1",
+        "reconcile:op-1:true",
+        `queue:${id}`,
+      ]);
+      expect(getConversationRuntime(key())).toBeUndefined();
+    });
+
+    it("refuses a checkpoint on it while run supervision is not running", async () => {
+      const address = {
+        projectPath: DEFAULT_INPUT.projectPath,
+        target: DEFAULT_INPUT.target,
+      };
+      expect(
+        await managerFixture.manager.startConversationCheckpoint({
+          address,
+          requestId: "op-1",
+        }),
+      ).toMatchObject({
+        kind: "refused",
+        refusal: { code: "conversation_busy" },
+      });
+      expect(
+        await managerFixture.manager.checkConversationCheckpoint(address),
+      ).toMatchObject({ eligible: false });
+      expect(
+        managerFixture.manager.checkpointAcceptsQueuedInput(
+          store().projectPath,
+          store().sessionName,
+          store().conversationId,
+        ),
+      ).toBe(false);
+      expect(getConversationRuntime(key())).toBeUndefined();
+    });
+
+    it("sends a stop request to the core as a stop, and an actor teardown as a retirement", async () => {
+      const stop = managerFixture.manager.requestConversationStop(
+        {
+          projectPath: DEFAULT_INPUT.projectPath,
+          target: DEFAULT_INPUT.target,
+        },
+        "user",
+      );
+      expect(stop.requested).toBe(true);
+      await stop.settled;
+      await managerFixture.manager.stopConversationActor(
+        store().projectPath,
+        store().sessionName,
+        store().conversationId,
+        "session_deleted",
+      );
+
+      expect(coreStops).toEqual([store().conversationId]);
+      expect(coreRetires).toEqual([store().conversationId]);
     });
   });
 

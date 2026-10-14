@@ -1,21 +1,19 @@
 import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backend";
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { describe, it, expect } from "vitest";
 import {
   createProjectPromptExecutor,
-  ProjectCollaborationUnsupportedError,
   type ExecuteProjectPromptStreamDeps,
 } from "./prompt-entry";
-import {
-  BackendMismatchError,
-  ModelSelectionValidationError,
-} from "@/lib/prompt/sdk-driver";
+import { ProjectCollaborationUnsupportedError } from "./collaboration-refusal";
+import { BackendMismatchError } from "@/lib/prompt/sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 function makeConv(

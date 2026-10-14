@@ -100,7 +100,7 @@ import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { writeUpstreamInputFiles } from "./upstream-input-files";
 import { createGraphWorkflowAdvisoryResponseRunner } from "./advisory-response-runner";
-import { createParallelWorktrees } from "./parallel-worktrees";
+import { createParallelWorktrees } from "@/lib/workspace/parallel-worktrees";
 import { createSharedDocumentStore } from "./shared-document-store";
 import { createWorkflowDocumentMaterializer } from "./document-materialization";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
@@ -289,6 +289,8 @@ function createProductionGraphWorkflowRuntime(
         readWorktreeDirtyPaths(worktreePath),
       preflightService: createPreflightPrerequisiteService(),
       readGlobalConfig: readConfig,
+      launchesFrozen: async () =>
+        (await readConfig()).graphWorkflowLaunchesFrozen === true,
       abortConversation: ({ projectPath, sessionName, conversationId }) => {
         const stop = requestConversationStop(
           {

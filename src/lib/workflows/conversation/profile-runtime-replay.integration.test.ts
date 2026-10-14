@@ -47,7 +47,7 @@ import {
 } from "./runtime-state";
 import type { ConversationBackendCreateInput } from "@/lib/agent-backends/conversation";
 import type { ConversationBackendTurnResult } from "@/lib/agent-backends/conversation";
-import type { ExecutePromptInput } from "./types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 
 const PROJECT_PATH = "/repo-a";
 const PROJECT_NAME = "repo-a";

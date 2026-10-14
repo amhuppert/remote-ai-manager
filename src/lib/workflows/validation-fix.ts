@@ -18,13 +18,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createLogger } from "../logging";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
-import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/conversation/execute-fresh-task-run";
+import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   AgentTurnDispatch,
   ExecuteFreshTaskRunInput,
-} from "@/lib/workflows/conversation/execute-fresh-task-run";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/workflows/merge/fresh-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 
 const logger = createLogger("validation-fix");
 
@@ -222,6 +222,8 @@ export interface FixValidationErrorsParams {
    * prompt variant is built.
    */
   isRetry?: boolean;
+  /** Stops a fresh-run fix task when its caller is stopped. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -321,6 +323,7 @@ async function fixValidationErrorsImpl(
         worktreePath,
         prompt,
         systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
+        ...(params.signal !== undefined ? { signal: params.signal } : {}),
       });
       if (result.kind === "error") {
         logger.error("validation-fix.fresh_run_error", {

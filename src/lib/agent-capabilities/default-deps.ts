@@ -582,6 +582,8 @@ const defaultListAffectedConversations = createAffectedConversationLister({
     stateManager.getProjectAgentCapabilityOverrides(projectPath),
   readGlobalOverrides: () => defaultGlobalCapabilityOverrideStore.read(),
   listAllProjectConversations: () => stateManager.listAllProjectConversations(),
+  // Lists conversations whose core turn is running too, so their changes stage
+  // for the next turn; listing never calls the runtime.
   getRuntime,
   getProjectDisplayName,
 });

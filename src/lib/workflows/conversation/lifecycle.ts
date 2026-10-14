@@ -4,13 +4,15 @@ import {
   type ActiveConversationTurnDescription,
   type ConversationCommandOutcome,
   type IdleRuntimeRelease,
-  type ConversationTurnExecution,
-  type ConversationCheckpointCheck,
-  type ConversationCheckpointRequest,
-  type ConversationCheckpointStart,
-  type ConversationCheckpointReconcile,
-  type ConversationCheckpointCancel,
 } from "./manager";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import type {
+  ConversationCheckpointCheck,
+  ConversationCheckpointRequest,
+  ConversationCheckpointStart,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointCancel,
+} from "@/lib/conversation-checkpoints/operation-contract";
 import { createProductionConversationManagerDependencies } from "./production";
 import type {
   ConversationAddress,
@@ -18,15 +20,15 @@ import type {
   ConversationTurnSubmission,
   TurnAdmission,
   TurnCancelReason,
-} from "./turn-spec";
+} from "@/lib/conversation-core/turn/turn-spec";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
-import type { DesiredRuntimeConfiguration } from "./pre-turn/runtime-recreate";
+import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
 import {
   createWorkflowTaskRunExecutor,
   type ExecuteWorkflowTaskRunInput,
   type ExecuteWorkflowTaskRunDeps,
-} from "./execute-workflow-task-run";
-import type { TaskRunResult } from "./turn-result";
+} from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 
 type ConversationQuestionBatch = Parameters<
   ConversationManager["registerConversationQuestion"]
@@ -186,7 +188,9 @@ export function stopAllConversationActors(): Promise<void> {
 export function getConversationRuntimeConfiguration(
   conversationId: string,
 ):
-  | Readonly<import("./pre-turn/runtime-recreate").RecreateRuntimeSnapshot>
+  | Readonly<
+      import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot
+    >
   | undefined {
   return defaultManager().getConversationRuntimeConfiguration(conversationId);
 }

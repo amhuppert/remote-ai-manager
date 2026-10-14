@@ -17,11 +17,15 @@ import type {
   SDKResultSuccess,
   SDKResultError,
   SDKSystemMessage,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ConversationBackendEvent } from "../conversation";
-import { mapAssistantContentBlocks } from "./map-content-blocks";
+import {
+  mapAssistantContentBlocks,
+  mapToolResultBlocks,
+} from "./map-content-blocks";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -82,6 +86,7 @@ export function createClaudeMessageInterpreter(opts: {
 }): ClaudeMessageInterpreter {
   let seq = 0;
   let contentEmitted = false;
+  const toolNamesById = new Map<string, string>();
   let chain: Promise<void> = Promise.resolve();
 
   const emitEvent = (event: ConversationBackendEvent): void => {
@@ -132,6 +137,9 @@ export function createClaudeMessageInterpreter(opts: {
         const asstMsg = message as SDKAssistantMessage;
         const blocks = mapAssistantContentBlocks(asstMsg.message.content);
         for (const block of blocks) {
+          if (block.type === "tool_use" && block.id) {
+            toolNamesById.set(block.id, block.name);
+          }
           emitEvent({ type: "content", block });
         }
         if (blocks.length > 0) {
@@ -148,6 +156,13 @@ export function createClaudeMessageInterpreter(opts: {
       }
 
       case "user": {
+        const userMsg = message as SDKUserMessage;
+        for (const block of mapToolResultBlocks(
+          userMsg.message.content,
+          toolNamesById,
+        )) {
+          emitEvent({ type: "content", block });
+        }
         emitFrame({ timestamp, type: "tool_result", raw: message });
         break;
       }

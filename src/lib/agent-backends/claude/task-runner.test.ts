@@ -341,13 +341,15 @@ describe("ClaudeTaskRunner", () => {
       ref: "session-abc",
     });
     expect(result.text).toBe("Hello world");
-    // The SDK's total is this subprocess's whole run, which is exactly one
-    // task run, so it is the run's cost rather than a lineage counter.
+    // The SDK's total is the session's running total: a fresh session's is
+    // this run's cost, a resumed one's carries its earlier spend, which the
+    // caller measures the run against.
     expect(result.usage).toEqual({
       inputTokens: 100,
       cachedInputTokens: 50,
       outputTokens: 30,
       costUsd: 0.01,
+      cumulativeCostUsd: 0.01,
     });
     expect(result.error).toBeNull();
     expect(result.timedOut).toBe(false);
@@ -561,6 +563,58 @@ describe("ClaudeTaskRunner", () => {
     await runPromise;
 
     expect(capturedController?.signal.aborted).toBe(true);
+  });
+
+  it("reports an external cancellation as cancelled when the stream ends quietly", async () => {
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            resolve(),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    const external = new AbortController();
+    const runPromise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    external.abort();
+    const result = await runPromise;
+
+    expect(result.timedOut).toBe(true);
+    expect(result.error).toBe("Task cancelled");
+  });
+
+  it("reports an external cancellation as cancelled when the stream throws", async () => {
+    mockQuery.mockImplementation((opts: unknown) => {
+      const options = (
+        opts as { options: { abortController: AbortController } }
+      ).options;
+      return (async function* () {
+        await new Promise<void>((_resolve, reject) => {
+          options.abortController.signal.addEventListener("abort", () =>
+            reject(new Error("Claude Code process aborted by user")),
+          );
+        });
+      })() as ReturnType<typeof query>;
+    });
+
+    const external = new AbortController();
+    const runPromise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    external.abort();
+    const result = await runPromise;
+
+    expect(result.timedOut).toBe(true);
+    expect(result.error).toBe("Task cancelled");
   });
 
   it("tears down immediately when the external signal is already aborted", async () => {

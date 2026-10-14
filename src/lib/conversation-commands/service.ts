@@ -1,4 +1,5 @@
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { currentRuns } from "@/lib/supervision/handles";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { admitCommand } from "@/lib/commands/admission";
@@ -28,8 +29,8 @@ import {
   type MergeInitiation as SessionMergeAdmission,
 } from "@/lib/workflows/merge/initiation";
 import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
-import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import { appendNotice, type AppendNoticeInput } from "@/lib/prompt/transcript";
 import { AlignmentNotSupportedError } from "@/lib/session-alignment/service";
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
@@ -853,6 +854,7 @@ const productionDeps: ConversationCommandDeps = {
       surface: "merge-command",
       association: policy.mergeAssociation,
       gate: policy.deliveryGate,
+      readCurrentRuns: currentRuns,
     });
   },
   // Dynamic so the tickets/compaction graph stays off this module's static

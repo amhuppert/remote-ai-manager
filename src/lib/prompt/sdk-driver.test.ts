@@ -1,4 +1,9 @@
-import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import type {
+  CorePromptOutcome,
+  CorePromptSend,
+  PromptRefusal,
+} from "@/lib/conversation-core/prompt-route";
+import type { PromptStreamResult } from "@/lib/conversation-core/turn/turn-result";
 import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -10,8 +15,8 @@ import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection"
 import type {
   ConversationTurnSubmission,
   TurnAdmission,
-} from "@/lib/workflows/conversation/turn-spec";
-import type { SettledConversationTurn } from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-spec";
+import type { SettledConversationTurn } from "@/lib/conversation-core/turn/turn-result";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
@@ -38,10 +43,10 @@ vi.mock("@/lib/logging", () => ({
 import {
   createPromptExecutor,
   BackendMismatchError,
-  ModelSelectionValidationError,
   ConversationCommandDispatcherUnavailableError,
   type PromptDeps,
 } from "./sdk-driver";
+import { ModelSelectionValidationError } from "@/lib/agent-backends/model-selection-admission";
 import {
   TDD_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS,
@@ -1472,6 +1477,186 @@ describe("executePromptStream (facade)", () => {
 
     expect(validateProjectModelSelection).not.toHaveBeenCalled();
     expect(deps.sendConversationEvent).toHaveBeenCalled();
+  });
+});
+
+describe("a conversation the core runs, prompted from the server", () => {
+  const coreConversation = makeConversation({ id: "core-1" });
+
+  function coreHarness(
+    answer: CorePromptOutcome,
+    collaboration: PromptRefusal | null = null,
+  ) {
+    const sent: CorePromptSend[] = [];
+    const claims: string[] = [];
+    const dispatchCollabStart = vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-core" });
+    deps = createTestDeps({
+      getConversation: async () => coreConversation,
+      dispatchCollabStart,
+      core: {
+        owns: (conversationId) => conversationId === "core-1",
+        async send(input) {
+          sent.push(input);
+          input.sink.emit("content", { type: "text", text: "Working" });
+          return answer;
+        },
+        async collaborationRefusal(input) {
+          claims.push(input.text);
+          return collaboration;
+        },
+      },
+    });
+    return { sent, claims, dispatchCollabStart };
+  }
+
+  it("hands the turn to the core with its options, and ends with its settlement", async () => {
+    const core = coreHarness({
+      kind: "accepted",
+      settled: Promise.resolve({
+        error: "The provider went away",
+        aborted: false,
+      }),
+    });
+    const events: [string, unknown][] = [];
+    const onAccepted = vi.fn();
+
+    const result = await createPromptExecutor(deps).executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Implement the ticket",
+      (event, data) => events.push([event, data]),
+      "core-1",
+      { modelId: "opus", parameters: {} },
+      undefined,
+      {
+        backend: "claude",
+        autonomous: true,
+        inputOrigin: "generated",
+        onAccepted,
+      },
+    );
+
+    expect(core.sent[0]).toMatchObject({
+      projectPath: "/projects/repo",
+      target: { conversationId: "core-1", sessionName: "test-session" },
+      message: {
+        text: "Implement the ticket",
+        modelSelection: { modelId: "opus", parameters: {} },
+        backend: "claude",
+        autonomous: true,
+        inputOrigin: "generated",
+      },
+    });
+    // A server-side prompt has no draft of the person's to clear.
+    expect(core.sent[0]?.draft).toBeUndefined();
+    expect(onAccepted).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      ["content", { type: "text", text: "Working" }],
+      ["done", {}],
+    ]);
+    expect(result).toMatchObject({
+      conversationId: "core-1",
+      error: "The provider went away",
+      aborted: false,
+    });
+    expect(deps.submitConversationTurn).not.toHaveBeenCalled();
+  });
+
+  it("hands a conversation it creates to the core when the core runs it, with the message's feedback", async () => {
+    const core = coreHarness({
+      kind: "accepted",
+      settled: Promise.resolve({ error: null, aborted: false }),
+    });
+    const created = makeConversation({ id: "core-1" });
+    deps.createConversation = vi.fn().mockResolvedValue(created);
+    const documentFeedback = { items: [] };
+
+    const result = await createPromptExecutor(deps).executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Please revise",
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      { documentFeedback, inputOrigin: "generated" },
+    );
+
+    expect(deps.createConversation).toHaveBeenCalledOnce();
+    expect(core.sent[0]).toMatchObject({
+      conversation: { id: "core-1" },
+      message: { text: "Please revise", documentFeedback },
+    });
+    expect(deps.submitConversationTurn).not.toHaveBeenCalled();
+    expect(result.conversationId).toBe("core-1");
+  });
+
+  it("ends the stream with the core's refusal", async () => {
+    coreHarness({
+      kind: "refused",
+      refusal: {
+        status: 409,
+        body: { error: "Conversation is busy", code: "CONVERSATION_BUSY" },
+      },
+    });
+    const events: [string, unknown][] = [];
+
+    const result = await createPromptExecutor(deps).executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Implement the ticket",
+      (event, data) => events.push([event, data]),
+      "core-1",
+    );
+
+    expect(events.slice(-2)).toEqual([
+      ["error", { message: "Conversation is busy" }],
+      ["done", {}],
+    ]);
+    expect(result).toMatchObject({ error: "Conversation is busy" });
+  });
+
+  it("starts /collab once the core admits the claim, and not when it refuses it", async () => {
+    const admitted = coreHarness({
+      kind: "accepted",
+      settled: Promise.resolve({ error: null, aborted: false }),
+    });
+    await createPromptExecutor(deps).executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/collab build the migration plan",
+      vi.fn(),
+      "core-1",
+    );
+    expect(admitted.claims).toEqual(["/collab build the migration plan"]);
+    expect(admitted.dispatchCollabStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "core-1",
+        brief: "build the migration plan",
+      }),
+    );
+
+    const held = coreHarness(
+      {
+        kind: "accepted",
+        settled: Promise.resolve({ error: null, aborted: false }),
+      },
+      {
+        status: 409,
+        body: { error: "A turn is running", code: "CONVERSATION_BUSY" },
+      },
+    );
+    const result = await createPromptExecutor(deps).executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/collab build the migration plan",
+      vi.fn(),
+      "core-1",
+    );
+    expect(held.dispatchCollabStart).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ error: "A turn is running" });
   });
 });
 

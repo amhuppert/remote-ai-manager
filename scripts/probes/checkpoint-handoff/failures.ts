@@ -25,7 +25,7 @@ import {
   getConversation,
   getProjectConversation,
 } from "@/lib/state-store";
-import { checkpointScopeKeyForStoreIdentity } from "@/lib/workflows/conversation/actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import {
   cancelConversationCheckpoint,
   skipConversationCheckpointHandoff,
@@ -33,7 +33,7 @@ import {
   stopConversationActor,
   submitConversationTurn,
 } from "@/lib/workflows/conversation/lifecycle";
-import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import type { ProbeCallLedger } from "../checkpoint-continuation/budget";
 import {
   assertIsolated,

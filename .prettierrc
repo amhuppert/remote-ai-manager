@@ -139,7 +139,11 @@
         "src/components/BackendExecutionWarning.stories.tsx",
         "src/components/topbar/**/*.{ts,tsx}",
         "src/features/dev-servers/**/*.{ts,tsx}",
-        "src/features/project-detail/ProjectDevServersButton.tsx"
+        "src/features/project-detail/ProjectDevServersButton.tsx",
+        "src/features/runs/**/*.{ts,tsx}",
+        "src/components/runs/**/*.{ts,tsx}",
+        "src/features/session/conversation/OwnerRunCards.tsx",
+        "src/features/session/conversation/SessionRuns.tsx"
       ],
       "options": {
         "plugins": ["prettier-plugin-tailwindcss"],

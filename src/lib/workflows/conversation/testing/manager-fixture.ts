@@ -1,7 +1,7 @@
-import { readRuntimeInstructions } from "../runtime-instructions";
+import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import { createConversationActors } from "../actors";
-import { createWorkflowTaskRunExecutor } from "../execute-workflow-task-run";
+import { createWorkflowTaskRunExecutor } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import {
   createConversationManager,
   type ConversationManager,

@@ -84,6 +84,19 @@ describe("native dev commands", () => {
       },
     });
   });
+  it("names the calling conversation, so the server can tell a run seat where its work is", async () => {
+    const test = fixture(() => ({ servers: [server] }));
+    const result = await test.run(["list"], { CC_CONVERSATION: "seat-one" });
+
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(test.requests[0]?.init.headers).toMatchObject({
+      "x-cc-conversation-identity": JSON.stringify({
+        sessionName: "session-one",
+        conversationId: "seat-one",
+      }),
+    });
+  });
+
   it("starts the chosen server and waits for actual running status", async () => {
     let polls = 0;
     const test = fixture((_url, init) =>

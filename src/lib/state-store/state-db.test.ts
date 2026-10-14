@@ -1,3 +1,4 @@
+import { SUBSCRIPTIONS_DDL_BEFORE_RUN_SOURCE } from "./testing/prior-subscription-shape";
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import {
@@ -14,7 +15,6 @@ import path from "node:path";
 import os from "node:os";
 import {
   KNOWN_SCHEMA_VERSION,
-  CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL,
   CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL,
   migrateSubscriptionWaitGenerationsSchema,
   GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL,
@@ -1278,7 +1278,7 @@ describe("state-db breaking-cutover versions", () => {
       DROP TABLE conversation_subscriptions;
       DROP TABLE graph_workflow_result_deliveries;`);
       previous.exec(
-        CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replaceAll(
+        SUBSCRIPTIONS_DDL_BEFORE_RUN_SOURCE.replaceAll(
           ",'conversation'",
           "",
         ).replace(",'superseded'", ""),
@@ -1506,7 +1506,7 @@ describe("state-db breaking-cutover versions", () => {
     const dbPath = path.join(dir, "command-center.db");
     const previous = new Database(dbPath);
     previous.exec(
-      CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replace(",'superseded'", ""),
+      SUBSCRIPTIONS_DDL_BEFORE_RUN_SOURCE.replace(",'superseded'", ""),
     );
     previous.exec(`INSERT INTO conversation_subscriptions VALUES ('existing','/project','conversation','workflow','execution','Purpose','passive',NULL,NULL,'following','5','created','updated',NULL,'paused',NULL,NULL);
       INSERT INTO conversation_subscription_deliveries VALUES ('evidence','existing','/project','conversation','workflow','execution','5','{}','recorded','uncertain','attempt',2,'queued',NULL,'finished','Unknown');`);
@@ -1544,8 +1544,8 @@ describe("state-db breaking-cutover versions", () => {
     }
   });
 
-  it("this build fences explicit wait generations at schema version 28", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(28);
+  it("this build fences run subscription sources at schema version 29", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(29);
   });
 
   it("rebuilds prior subscription source constraints during ordered migration without losing paused evidence", async () => {
@@ -1553,7 +1553,7 @@ describe("state-db breaking-cutover versions", () => {
     const dbPath = path.join(dir, "command-center.db");
     const previous = new Database(dbPath);
     previous.exec(
-      CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL.replaceAll(",'conversation'", ""),
+      SUBSCRIPTIONS_DDL_BEFORE_RUN_SOURCE.replaceAll(",'conversation'", ""),
     );
     previous.exec(`INSERT INTO conversation_subscriptions VALUES ('existing','/project','conversation','spec','spec','Purpose','passive',NULL,NULL,'following','9','created','updated',NULL,'paused',NULL,NULL);
       INSERT INTO conversation_subscription_deliveries VALUES ('evidence','existing','/project','conversation','spec','spec','10','{}','recorded','uncertain','attempt',2,'queued',NULL,'finished','Unknown');`);

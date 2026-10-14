@@ -92,6 +92,14 @@ export class InputDeliveryUncertainError extends Error {
   }
 }
 
+/**
+ * An uncertain delivery, recognized by name: the adapter that throws it may
+ * load its own copy of this module.
+ */
+export function isInputDeliveryUncertain(error: unknown): boolean {
+  return error instanceof Error && error.name === "InputDeliveryUncertainError";
+}
+
 export function markPromptNotDelivered<T extends Error>(error: T): T {
   Reflect.set(error, PROMPT_NOT_DELIVERED_MARK, true);
   return error;

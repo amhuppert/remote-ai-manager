@@ -38,7 +38,7 @@ import {
 import {
   composeUserTranscriptBlocks,
   resolveTurnPromptText,
-} from "@/lib/workflows/conversation/pre-turn/review-feedback";
+} from "@/lib/conversation-core/contributions/review-feedback";
 import {
   buildNotepadFeedbackPayload,
   deliverNotepadFeedback,
@@ -207,6 +207,13 @@ describe("notepad comment dispatch (real store)", () => {
       getCollaborationManager: () => ({}) as unknown as CollaborationManager,
       setConversationPendingPromptText: async () => {},
       clearConversationPendingPromptTextIfMatches: async () => false,
+      coreConversations: {
+        owns: () => false,
+        admitCollaboration: async () => null,
+        prompt: async () => {
+          throw new Error("No conversation here runs on the shared core");
+        },
+      },
     };
     const handlers = createPromptRouteHandlers(promptDeps);
 

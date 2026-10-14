@@ -33,7 +33,7 @@ import {
 } from "@/components/workflow-graph/node-agent-edit";
 import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
-import CanvasControls from "@/components/workflow-graph/CanvasControls";
+import CanvasControls from "@/components/runs/CanvasControls";
 import ContextEdge from "@/components/workflow-graph/ContextEdge";
 import LaneBandLayer from "@/components/workflow-graph/LaneBandLayer";
 import LaneDropOverlay from "@/components/workflow-graph/LaneDropOverlay";
@@ -955,7 +955,7 @@ export default function WorkflowBuilderCanvas({
           gap={20}
           size={2}
         />
-        <CanvasControls />
+        <CanvasControls fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING }} />
       </ReactFlow>
       {callout}
       <CanvasContextMenu

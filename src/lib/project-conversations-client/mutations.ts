@@ -126,6 +126,8 @@ export function useCreateProjectConversation(
     agentBackend?: AgentBackendId;
     name?: string;
     profile?: AgentProfileRef;
+    /** A conversation the shared conversation core runs. */
+    engine?: "core";
   } | void
 > {
   const queryClient = useQueryClient();

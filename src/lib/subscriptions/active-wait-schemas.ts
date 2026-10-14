@@ -56,8 +56,11 @@ export const subscriptionWakeBatchSchema = z
   .object({
     id: z.string().min(1),
     recipient: subscriptionRecipientSchema,
-    waitIds: z.array(z.string().min(1)).min(1).max(6),
-    deliveryIds: z.array(z.string().min(1)).min(1).max(6),
+    /** One-time waits, each with the delivery of its outcome at the same position in deliveryIds. */
+    waitIds: z.array(z.string().min(1)).max(6),
+    deliveryIds: z.array(z.string().min(1)).max(6),
+    /** New facts of followed sources that wake their recipient. */
+    followDeliveryIds: z.array(z.string().min(1)).max(6).default([]),
     state: z.enum([
       "planned",
       "queued",

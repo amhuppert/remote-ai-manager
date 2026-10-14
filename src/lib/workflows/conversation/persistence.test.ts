@@ -18,11 +18,13 @@ import {
 import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
 import type {
   ConversationInput,
-  ExecutePromptInput,
   PrepareTurnInput,
   PrepareTurnOutput,
-  PromptActorResult,
 } from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import {
   createPersistenceFixture,
   type PersistenceFixture,

@@ -19,7 +19,7 @@ import type {
   ProvisionInput,
   ProvisionLaneInput,
   ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+} from "@/lib/workspace/parallel-worktrees";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";

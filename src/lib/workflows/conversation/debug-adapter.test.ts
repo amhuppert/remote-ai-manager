@@ -44,11 +44,13 @@ import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verif
 import type { StatusBusEnvelope } from "@/lib/events/status-bus";
 import type {
   ConversationInput,
-  ExecutePromptInput,
   PrepareTurnInput,
   PrepareTurnOutput,
-  PromptActorResult,
 } from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import type { SSEEvent } from "@/lib/api/sse-events";
 const activeActors: AnyActorRef[] = [];
 

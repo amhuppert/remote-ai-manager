@@ -1,4 +1,4 @@
-import { normalizeTurn } from "./turn-spec";
+import { normalizeTurn } from "@/lib/conversation-core/turn/turn-spec";
 import { conversationTotals } from "./actor-input-loader";
 /**
  * Conversation XState v5 state machine.
@@ -60,11 +60,13 @@ import type {
   ConversationInput,
   ConversationTurnActive,
   PrepareTurnInput,
-  ExecutePromptInput,
-  PromptActorResult,
   RunTaskRunInput,
   TaskRunActive,
 } from "./types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 import {
   prepareTurnActor,
   settleTurnActor,

@@ -2,7 +2,6 @@ import type { GlobalConfig } from "@/lib/config/schemas";
 import { resolveMemoryConfig } from "@/lib/config/schemas";
 import type { ConversationRole } from "@/lib/conversations/schemas";
 import { createLogger } from "@/lib/logging";
-import type { CollaborationConfigSource } from "@/lib/workflow-graph/collaboration-schemas";
 import type { ResolvedMemoryPolicyConfig } from "@/lib/workflow-graph/definition-schemas";
 import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
 
@@ -34,7 +33,8 @@ const logger = createLogger("memory.policy");
  */
 export type MemoryPolicyRole = "conversation" | "implementer" | "validator";
 
-export type MemoryPolicySource = CollaborationConfigSource;
+/** Which tier decided a policy half. */
+export type MemoryPolicySource = "per-node" | "workflow" | "global";
 
 /** One resolved policy: which role it is for and, per half, which tier decided it. */
 export interface MemoryPolicyResolution {

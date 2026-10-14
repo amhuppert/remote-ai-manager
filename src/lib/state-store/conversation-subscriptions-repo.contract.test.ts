@@ -20,6 +20,7 @@ const maximalSubscription = () =>
     source: { kind: "spec", id: "spec-max" },
     reason: "Reviewed this specification",
     mode: "active",
+    wakes: true,
     eventKinds: ["gate-approved", "revision-published"],
     expiresAt: "2027-01-01T00:00:00Z",
     status: "unfollowed",

@@ -212,18 +212,21 @@ export function useCreateConversationMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (variables?: { profile?: AgentProfileRef }) =>
+    mutationFn: (variables?: { profile?: AgentProfileRef; engine?: "core" }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
         "create-conversation",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            variables?.profile === undefined
-              ? {}
-              : { profile: variables.profile },
-          ),
+          body: JSON.stringify({
+            ...(variables?.profile !== undefined
+              ? { profile: variables.profile }
+              : {}),
+            ...(variables?.engine !== undefined
+              ? { engine: variables.engine }
+              : {}),
+          }),
         },
         publicConversationStateSchema,
       ),

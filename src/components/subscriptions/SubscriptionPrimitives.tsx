@@ -196,7 +196,11 @@ export function SubscriptionRows({
             </span>
             <span className="flex shrink-0 flex-col items-end gap-3">
               <span className="font-mono text-[0.65rem] uppercase tracking-wider text-text-tertiary">
-                {row.subscription.mode === "active" ? "Wake once" : "Passive"}
+                {row.subscription.mode === "active"
+                  ? "Wake once"
+                  : row.subscription.wakes
+                    ? "Wakes"
+                    : "Passive"}
               </span>
               {row.pendingCount > 0 ? (
                 <StatusChip tone="cyan">{row.pendingCount} pending</StatusChip>

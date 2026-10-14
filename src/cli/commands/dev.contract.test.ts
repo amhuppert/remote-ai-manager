@@ -377,6 +377,7 @@ describe("cctl dev workflow-lane isolation", () => {
           }),
         getActiveGraphWorkflowExecution: async () => workflowExecution,
         directoryExists: async (candidate) => candidate === laneWorktree,
+        seatWorkplace: async () => null,
       });
       const deps: DevServerRouteDeps = {
         resolveProjectPath: async () => projectPath,

@@ -104,6 +104,11 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "Reads one library record through the same project-scoped route tree as `agent list`; the qualified tier:id names the record, and nothing about it is session-bound.",
   },
+  run: {
+    support: "session-only",
+    reason:
+      "A supervised run places its contexts in a session worktree and belongs to the session conversation that launched it; the `context task` verbs declared beside it come from that run's seat conversations. No project-root run route exists.",
+  },
   charter: {
     support: "session-only",
     reason:

@@ -6,6 +6,7 @@ import {
 } from "@/lib/memory/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
+import { ownedPathSchema } from "@/lib/workspace/schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import {
   DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
@@ -118,71 +119,6 @@ export const graphWorkflowContextRoutingPolicySchema = z.object({
     .enum(["independent", "atLeastOne", "exactlyOne"])
     .default("independent"),
 });
-
-/**
- * One authored ownership entry: a normalized repo-relative POSIX path that
- * covers itself and everything beneath it (R1).
- *
- * The normalization rules mirror the specs `touchedPath` schema rather than
- * importing it. Ownership is a workflow-graph concept the spec compiler maps
- * `touchedPaths` ONTO, so the two are free to diverge — and this one already
- * does: it additionally denies the repository root, git metadata, and the
- * engine's own `.cc` namespace. The `.git` denial is unconditional because an
- * agent able to write it could commit, branch, or reset the lane out from under
- * the engine, which is precisely what the ownership envelope exists to make
- * impossible. `.cc` is reserved because the envelope injects a per-context
- * payload directory beneath it (`implementer-lane-write-envelope.ts`), so an
- * authored claim there would put two owners on one subtree. Both comparisons
- * fold case: a case-insensitive filesystem resolves `.GIT` to the same
- * directory, so a literal-only refusal would be bypassable on macOS.
- *
- * An entry is a LITERAL path, never a glob (spec non-goal) — a metacharacter is
- * read as an ordinary filename character here, and the write-policy adapter is
- * what refuses one, because that is the layer that knows what the backend can
- * actually enforce. Directory-grain entries cover the need a glob would.
- */
-export const ownedPathSchema = z
-  .string()
-  .min(1)
-  .superRefine((value, ctx) => {
-    const reject = (message: string): void => {
-      ctx.addIssue({ code: "custom", message });
-    };
-    if (value === "." || value === "./") {
-      reject(
-        `owned path "${value}" names the repository root; declare the directories the context owns instead`,
-      );
-      return;
-    }
-    const segments = value.split("/");
-    if (
-      value !== value.trim() ||
-      value.startsWith("/") ||
-      /^[A-Za-z]:/.test(value) ||
-      value.includes("\\") ||
-      value.endsWith("/") ||
-      segments.some(
-        (segment) =>
-          segment.length === 0 || segment === "." || segment === "..",
-      )
-    ) {
-      reject(
-        `owned path "${value}" must be a normalized repo-relative POSIX path without parent segments or trailing separators`,
-      );
-      return;
-    }
-    if (segments[0]?.toLowerCase() === ".git") {
-      reject(
-        `owned path "${value}" names repository metadata; .git is denied regardless of authored ownership`,
-      );
-      return;
-    }
-    if (segments[0]?.toLowerCase() === ".cc") {
-      reject(
-        `owned path "${value}" names the engine's .cc namespace; the write envelope injects a per-context payload directory there, so it is reserved from authored ownership`,
-      );
-    }
-  });
 
 const placementLaneShape = {
   /**

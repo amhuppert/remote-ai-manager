@@ -1,4 +1,4 @@
-import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import { commitMessageOutputSchema } from "./schemas";
 
 export interface GenerationContext {

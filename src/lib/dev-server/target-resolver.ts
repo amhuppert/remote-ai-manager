@@ -9,6 +9,8 @@ import {
   type ExecutionTarget,
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { supervisedSeatWorkplace } from "@/lib/supervision/handles";
+import type { SupervisedSeatWorkplace } from "@/lib/supervision/supervision";
 import type { DevServerTargetRef } from "./schemas";
 
 const logger = createLogger("dev-server-target-resolver");
@@ -18,7 +20,9 @@ export type DevServerTargetErrorCode =
   | "SESSION_NOT_FOUND"
   | "WORKFLOW_EXECUTION_NOT_ACTIVE"
   | "WORKFLOW_CONTEXT_NOT_FOUND"
-  | "WORKFLOW_WORKTREE_UNAVAILABLE";
+  | "WORKFLOW_WORKTREE_UNAVAILABLE"
+  | "RUN_LANE_NOT_SERVED"
+  | "RUN_SEAT_NOT_CURRENT";
 
 export class DevServerTargetError extends Error {
   constructor(
@@ -47,6 +51,8 @@ export interface DevServerTargetResolverInput {
   projectPath: string;
   sessionName: string;
   target: DevServerTargetRef;
+  /** The calling conversation, when an agent names itself. */
+  caller?: string | null;
 }
 
 export interface DevServerTargetResolver {
@@ -65,11 +71,17 @@ export interface DevServerTargetResolverDeps {
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
   directoryExists(candidate: string): Promise<boolean>;
+  /** Where a run seat works, or null for any other conversation. */
+  seatWorkplace(
+    conversationId: string,
+  ): Promise<SupervisedSeatWorkplace | null>;
 }
 
 const defaultDeps: DevServerTargetResolverDeps = {
   getSession,
   getActiveGraphWorkflowExecution,
+  seatWorkplace: async (conversationId) =>
+    supervisedSeatWorkplace(conversationId),
   async directoryExists(candidate) {
     try {
       return (await stat(candidate)).isDirectory();
@@ -78,6 +90,28 @@ const defaultDeps: DevServerTargetResolverDeps = {
     }
   },
 };
+
+/**
+ * The session's dev servers serve a run seat only while it is current and
+ * works in the session worktree. Lane dev servers would outlive the lane:
+ * nothing stops them when it is removed.
+ */
+function refuseUnservedSeat(seat: SupervisedSeatWorkplace): void {
+  const { workplace } = seat;
+  if (workplace.kind === "refused")
+    throw new DevServerTargetError(
+      "RUN_SEAT_NOT_CURRENT",
+      workplace.reason,
+      409,
+    );
+  if (workplace.branch !== null)
+    throw new DevServerTargetError(
+      "RUN_LANE_NOT_SERVED",
+      `Dev servers run the session worktree; your work for context "${seat.contextId}" is in its lane at ${workplace.worktreePath}, which no dev server serves.`,
+      409,
+      "Check the work in your lane with what your briefing allows, or ask your owner with `cctl ask` if it needs a running app.",
+    );
+}
 
 const executionTargetResolver = createExecutionTargetResolver();
 
@@ -210,6 +244,10 @@ export function createDevServerTargetResolver(
 
         let resolved: ResolvedDevServerTarget;
         if (target.kind === "session") {
+          const seat = input.caller
+            ? await deps.seatWorkplace(input.caller)
+            : null;
+          if (seat !== null) refuseUnservedSeat(seat);
           resolved = {
             kind: "session",
             worktreePath: path.resolve(session.worktreePath),

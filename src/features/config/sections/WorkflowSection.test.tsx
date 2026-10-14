@@ -59,6 +59,19 @@ function render(ui: React.ReactElement) {
 }
 
 describe("WorkflowSection", () => {
+  it("freezes graph workflow launches from Settings, for the drain before the old engine goes", () => {
+    const { controller, getState } = makeController();
+    render(<WorkflowSection controller={controller} />);
+    const toggle = screen
+      .getByText("Freeze graph workflow launches")
+      .closest("[data-field]")!
+      .querySelector('[role="switch"]')! as HTMLElement;
+
+    fireEvent.click(toggle);
+
+    expect(getState().graphWorkflowLaunchesFrozen).toBe(true);
+  });
+
   it("renders all eleven default sub-sections with DEFAULT badges when matching seed", () => {
     const { controller } = makeController();
     const { container } = render(<WorkflowSection controller={controller} />);

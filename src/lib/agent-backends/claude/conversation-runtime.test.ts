@@ -47,7 +47,10 @@ import {
 } from "@/lib/agent-backends/testing/fake-claude-sdk-port";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import { conversationProfileInstructionBlock } from "@/lib/conversations/conversation-profile";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import {
+  conversationStateSchema,
+  type MessageContentBlock,
+} from "@/lib/conversations/schemas";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { findBuiltinAgentProfile } from "@/lib/agent-profiles/builtins";
 import type {
@@ -2167,6 +2170,102 @@ describe("ClaudeConversationRuntime — compaction pass-through (sendTurn)", () 
 
     const result = await turnPromise;
     expect(result.compacted).toBe(true);
+
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — live content emission", () => {
+  it("emits each assistant block and each tool result exactly once, in stream order", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
+      conversationId: "conv-live-content",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const contentBlocks: MessageContentBlock[] = [];
+    const turnPromise = runtime.sendTurn({
+      promptText: "list files",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: (event: ConversationBackendEvent) => {
+        if (event.type === "content") contentBlocks.push(event.block);
+      },
+    });
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst-1",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu-1",
+            name: "Bash",
+            input: { command: "ls" },
+          },
+        ],
+      },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: "u-tool-1",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "tu-1", content: "a\nb" },
+        ],
+      },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst-2",
+      message: { content: [{ type: "text", text: "two files" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "two files",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+
+    expect(contentBlocks.map((block) => block.type)).toEqual([
+      "tool_use",
+      "tool_result",
+      "text",
+    ]);
+    expect(contentBlocks[1]).toMatchObject({
+      type: "tool_result",
+      tool_use_id: "tu-1",
+      content: "a\nb",
+    });
+    expect(result.contentBlocks?.map((block) => block.type)).toEqual([
+      "tool_use",
+      "tool_result",
+      "text",
+    ]);
 
     runtime.close();
   });

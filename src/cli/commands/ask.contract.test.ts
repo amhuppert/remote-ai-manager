@@ -81,6 +81,7 @@ function makeHost(
     async resolveLaneAskPermission() {
       return { allowed: false };
     },
+    seatAsk: { seatFor: () => null, open: () => "unused" },
     generateQuestionBatchId: () => "q_contract1",
     log: createCapturingLogger(),
   };

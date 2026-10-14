@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/Switch";
 import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import { NumericInput } from "@/components/workflow-config/FieldPrimitives";
 import { formatAgentProfileRef } from "@/lib/agent-profiles/schemas";
-import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
+import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/collaboration/schemas";
 import type { AgentAssignment } from "@/lib/workflow-graph/config-schemas";
 import { ConfigAgentRuntimeRows } from "./AgentRuntimeRows";
 import { isConfigLocked } from "./affordance";

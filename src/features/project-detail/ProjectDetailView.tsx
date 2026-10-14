@@ -1,5 +1,6 @@
 "use client";
 
+import { pushToast } from "@/stores/toast.store";
 import "./styles/project-detail.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -225,7 +226,14 @@ export default function ProjectDetailView({
   );
 
   const handleDeleteConfirm = useCallback(() => {
-    if (deleteTarget) deleteMutation.mutate(deleteTarget.sessionName);
+    if (deleteTarget) {
+      const { sessionName } = deleteTarget;
+      deleteMutation.mutate(sessionName, {
+        onError: (error) => {
+          pushToast(`Could not delete ${sessionName}: ${error.message}`);
+        },
+      });
+    }
     cancelDelete();
   }, [deleteTarget, deleteMutation, cancelDelete]);
 

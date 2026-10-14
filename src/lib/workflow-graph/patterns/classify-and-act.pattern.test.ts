@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { runEngineScenario } from "@/lib/workflow-graph/compat/engine-harness";
 import { lintGuardEnumCoverage } from "@/lib/workflow-graph/edge-guard-validation";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
-import { activeDependencySourceIds } from "@/lib/workflow-graph/route-projection";
+import { activeDependencySourceIds } from "@/lib/runs/route-projection";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";

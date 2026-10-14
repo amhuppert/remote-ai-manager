@@ -86,6 +86,11 @@ export function backendExecutionRefusalIn(
 
 export class BackendAdmissionError extends Error {
   readonly code: BackendAdmissionRefusal["code"];
+
+  /** By name: the code that throws it may run another bundle's copy of this class. */
+  static is(error: unknown): error is BackendAdmissionError {
+    return error instanceof Error && error.name === "BackendAdmissionError";
+  }
   constructor(readonly refusal: BackendAdmissionRefusal) {
     super(refusal.message);
     this.name = "BackendAdmissionError";

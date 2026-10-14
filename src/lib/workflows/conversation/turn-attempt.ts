@@ -5,16 +5,17 @@ import { QuerySlotAdmissionTimeoutError } from "@/lib/shared/query-semaphore";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { AdmittedConversationProfile } from "@/lib/conversations/profile-admission";
-import type { ConversationContext, PromptActorResult } from "./types";
+import type { ConversationContext } from "./types";
+import type { PromptActorResult } from "@/lib/conversation-core/turn/types";
 import type {
   SettledConversationTurn,
   TurnExecutionOutcome,
   TurnInterruption,
-} from "./turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 import type {
   ConversationExecutionContext,
   TurnCancelReason,
-} from "./turn-spec";
+} from "@/lib/conversation-core/turn/turn-spec";
 
 const logger = createLogger("conversation.turn-attempt");
 
@@ -130,21 +131,23 @@ export class TurnAttempt {
     };
   }
 
+  /**
+   * A restored actor prepares with startup code, so its errors are recognised
+   * by name rather than by this module's copy of their classes.
+   */
   recordFailure(error: unknown): void {
     if (this.outcome?.kind === "call_result") return;
     this.outcome = {
       kind: "not_started",
       reason: this.controller.signal.aborted
         ? "cancelled"
-        : error instanceof QuerySlotAdmissionTimeoutError
+        : QuerySlotAdmissionTimeoutError.is(error)
           ? "query_slot_timeout"
-          : error instanceof BackendAdmissionError
+          : BackendAdmissionError.is(error)
             ? "backend_admission"
             : "configuration",
       message: getErrorMessage(error),
-      ...(error instanceof BackendAdmissionError
-        ? { admission: error.refusal }
-        : {}),
+      ...(BackendAdmissionError.is(error) ? { admission: error.refusal } : {}),
       ...(this.cancellation ? { cancelReason: this.cancellation } : {}),
     };
   }

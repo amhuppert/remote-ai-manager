@@ -10,6 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { getSupervision } from "@/lib/supervision/production";
 import { NextResponse } from "next/server";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
@@ -71,8 +72,27 @@ export interface AskRegistrationDeps {
   log: Logger;
 }
 
+/** A supervised seat conversation's question channel: its Context's Requests. */
+export interface SeatAskPort {
+  /** Null when the conversation is not a supervised seat. */
+  seatFor(conversationId: string): {
+    canAsk: boolean;
+    /** The seat turn running now, or null between turns. */
+    attemptId: string | null;
+    /** A question this turn already opened. */
+    openQuestionId: string | null;
+  } | null;
+  open(input: {
+    conversationId: string;
+    attemptId: string;
+    questionText: string;
+    questions: AskQuestionItem[];
+  }): string;
+}
+
 export interface AskRouteDeps extends AskRegistrationDeps {
   auth: AgentAuth;
+  seatAsk: SeatAskPort;
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -147,6 +167,17 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
     const { projectPath, sessionName, conversationId, conversation } =
       resolved.value;
 
+    // A supervised seat asks its owner through its Context, which decides what
+    // the answer resumes; the conversation itself never parks on the question.
+    const seat = deps.seatAsk.seatFor(conversationId);
+    if (seat !== null) {
+      return registerSeatAsk(deps, request, {
+        conversationId,
+        sessionName,
+        seat,
+      });
+    }
+
     // Mode gate. A graph-workflow lane conversation (role "iteration" =
     // implementer, or "validator") may ask only when its context's resolved
     // askUserQuestions toggle is enabled — the gate reverse-looks-up the lane
@@ -205,6 +236,83 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
   }
 
   return { POST: post };
+}
+
+async function registerSeatAsk(
+  deps: AskRouteDeps,
+  request: Request,
+  input: {
+    conversationId: string;
+    sessionName: string;
+    seat: NonNullable<ReturnType<SeatAskPort["seatFor"]>>;
+  },
+): Promise<Response> {
+  const { conversationId, sessionName, seat } = input;
+  if (!seat.canAsk) {
+    deps.log.info("ask.denied_seat", { conversationId, sessionName });
+    return NextResponse.json({ error: AUTONOMOUS_DENIAL } satisfies ApiError, {
+      status: 403,
+    });
+  }
+  if (seat.attemptId === null) {
+    return NextResponse.json(
+      {
+        error: "no turn is running — ask requires an in-progress turn",
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+  if (seat.openQuestionId !== null) {
+    return NextResponse.json(
+      {
+        error: `question batch ${seat.openQuestionId} already pending`,
+        code: "question_batch_pending",
+        details: { questionBatchId: seat.openQuestionId },
+        instruction:
+          "You already asked — end your turn; the answer will arrive as your next user message.",
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Request body must be JSON" } satisfies ApiError,
+      { status: 400 },
+    );
+  }
+  const parsed = askQuestionsBodySchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: "Invalid questions payload",
+        issues: parsed.error.issues.map((i) => ({
+          path: i.path.join("."),
+          message: i.message,
+        })),
+      },
+      { status: 400 },
+    );
+  }
+  const questions: AskQuestionItem[] = parsed.data.questions.map((q, i) => ({
+    ...q,
+    id: q.id ?? String(i),
+  }));
+  const questionBatchId = deps.seatAsk.open({
+    conversationId,
+    attemptId: seat.attemptId,
+    questionText: questions.map((q) => q.question).join("\n"),
+    questions,
+  });
+  deps.log.info("ask.seat_registered", {
+    conversationId,
+    sessionName,
+    questionBatchId,
+    questionCount: questions.length,
+  });
+  return NextResponse.json({ ok: true, questionBatchId });
 }
 
 /** Turn / single-batch / payload gates and registration. Scope-invariant. */
@@ -327,7 +435,7 @@ async function registerAskBatchAfterRoleGate(
 
 export interface ProjectAskRouteDeps extends Omit<
   AskRouteDeps,
-  "getSession" | "resolveLaneAskPermission"
+  "getSession" | "resolveLaneAskPermission" | "seatAsk"
 > {
   getProjectConversation(
     projectPath: string,
@@ -395,6 +503,10 @@ const defaultHandlers = createAskQuestionHandlers({
   getSession,
   registerConversationQuestion,
   resolveLaneAskPermission: userInputGateService.resolveLaneAskPermission,
+  seatAsk: {
+    seatFor: (conversationId) => getSupervision().seatFor(conversationId),
+    open: (input) => getSupervision().requests.open(input),
+  },
   generateQuestionBatchId: () => `q_${randomUUID()}`,
   log,
 });

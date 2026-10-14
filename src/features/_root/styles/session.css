@@ -11,16 +11,6 @@
    cross-owned descendant rules below (DiffPanel/ConversationPanel chrome owned by
    the conversation/right-pane context). */
 
-/* Reserve room so the last message clears the minimized question banner that
-   overlays the bottom of the stage. */
-.conversation-docked-stage:has(.ask-question-overlay) .panel-body {
-  padding-bottom: 58px;
-}
-.conversation-docked-stage:has(.ask-question-overlay[data-compact="true"])
-  .panel-body {
-  padding-bottom: 66px;
-}
-
 /* Preserved keyframe — referenced by the migrated session-status dot utilities
    (`animate-[session-status-pulse_…]`) in SessionInfoStrip.tsx. */
 @keyframes session-status-pulse {

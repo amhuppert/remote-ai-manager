@@ -38,20 +38,18 @@ import {
 } from "@/lib/workflow-graph/advisory-delivery";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import {
-  composeImplementerLaneWriteEnvelope,
-  resolveImplementerContinuationWriteEnvelope,
-} from "@/lib/workflow-graph/implementer-lane-write-envelope";
+import { composeImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
+import { resolveImplementerContinuationWriteEnvelope } from "@/lib/workflow-graph/implementer-continuation-write-envelope";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationAdvisory,
 } from "@/lib/workflow-graph/schemas";
 import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/lifecycle";
-import type { ConversationTurnSpec } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationTurnSpec } from "@/lib/conversation-core/turn/turn-spec";
 import {
   toTaskRunResult,
   type TaskRunResult,
-} from "@/lib/workflows/conversation/turn-result";
+} from "@/lib/conversation-core/turn/turn-result";
 
 const logger = createLogger("graph-workflow-advisory-response");
 

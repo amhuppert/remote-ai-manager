@@ -14,10 +14,8 @@ import type {
 // reason as `edge-guard-validation.ts`: this file is reached from
 // `validation.ts`, which a `"use client"` builder component imports.
 import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
-import {
-  checkGuardCompatibility,
-  type EdgeGuardDeclaration,
-} from "./edge-guard-validation";
+import { checkGuardCompatibility } from "@/lib/runs/guard-compatibility";
+import type { EdgeGuardDeclaration } from "@/lib/runs/route-projection";
 
 /**
  * Loop groups: the accept-time contract and the seed-time resolver (D4 R9,

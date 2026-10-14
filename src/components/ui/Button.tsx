@@ -1,4 +1,5 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "./Spinner";
 
@@ -70,6 +71,26 @@ const sizeClass: Record<ButtonSize, string> = {
   touch: "min-h-[44px] min-w-[44px] px-[12px] py-[6px] text-[0.72rem]",
 };
 
+function buttonClassName({
+  variant,
+  size,
+  touch,
+  layoutClassName,
+}: {
+  variant: ButtonVariant;
+  size: ButtonSize;
+  touch: boolean;
+  layoutClassName: string | undefined;
+}): string {
+  return cn(
+    base,
+    variantClass[variant],
+    sizeClass[size],
+    touch && touchClass,
+    layoutClassName,
+  );
+}
+
 export function Button({
   variant = "default",
   size = "md",
@@ -85,16 +106,56 @@ export function Button({
       {...buttonProps}
       disabled={loading || disabled}
       aria-busy={loading || undefined}
-      className={cn(
-        base,
-        variantClass[variant],
-        sizeClass[size],
-        touch && touchClass,
-        layoutClassName,
-      )}
+      className={buttonClassName({ variant, size, touch, layoutClassName })}
     >
       {loading ? <Spinner size="sm" tone="inherit" /> : null}
       {children}
     </button>
+  );
+}
+
+// The reset's unlayered `a { color: inherit }` outranks layered utilities, so a
+// link's text colors are important, as the topbar's links are.
+const linkTextClass: Record<ButtonVariant, string> = {
+  default: "text-text-primary!",
+  primary: "text-text-inverse!",
+  danger: "text-red!",
+  success: "text-green!",
+  ghost: "text-text-secondary! hover:text-cyan!",
+};
+
+export type ButtonLinkProps = Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  "className" | "style" | "href"
+> &
+  Pick<ButtonProps, "variant" | "size" | "touch" | "layoutClassName"> & {
+    href: string;
+  };
+
+/**
+ * A destination that looks like a Button: a real link, so it opens in a new
+ * tab, prefetches and reads as a link. Navigation has no pending or disabled
+ * state of its own; an action that does work stays a `Button`.
+ */
+export function ButtonLink({
+  href,
+  variant = "default",
+  size = "md",
+  touch = false,
+  layoutClassName,
+  children,
+  ...anchorProps
+}: ButtonLinkProps) {
+  return (
+    <Link
+      {...anchorProps}
+      href={href}
+      className={cn(
+        buttonClassName({ variant, size, touch, layoutClassName }),
+        linkTextClass[variant],
+      )}
+    >
+      {children}
+    </Link>
   );
 }

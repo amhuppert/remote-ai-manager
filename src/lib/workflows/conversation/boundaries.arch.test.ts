@@ -13,12 +13,8 @@ const privateModules = new Set([
   "actor-host",
   "actor-implementations",
   "runtime-state",
-  "runtime-binding",
   "turn-attempt",
   "production",
-  "checkpoint-maintenance",
-  "checkpoint-restart",
-  "checkpoint-queue-repair",
 ]);
 
 function forbiddenImports(source: string, file: string): string[] {
@@ -121,11 +117,10 @@ describe("conversation lifecycle import boundaries", () => {
       'import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";',
       'export { createProvidedMachine } from "../workflows/conversation/actor-host.js";',
       'const implementation = import("@/lib/workflows/conversation/actor-implementations");',
-      'const state = require("@/lib/workflows/conversation/runtime-binding");',
+      'const attempt = require("@/lib/workflows/conversation/turn-attempt");',
       'type Event = import("@/lib/workflows/conversation/types").ConversationEvent;',
-      'import { runCheckpointMaintenance } from "@/lib/workflows/conversation/checkpoint-maintenance";',
-      'import { hydrateCheckpointAuthority } from "@/lib/workflows/conversation/checkpoint-restart";',
-      'import { repairQueuedAcceptanceFromCheckpoint } from "@/lib/workflows/conversation/checkpoint-queue-repair";',
+      'import { createConversationMachine } from "@/lib/workflows/conversation/machine";',
+      'import { loadProductionActorDependencies } from "@/lib/workflows/conversation/production";',
     ];
     for (const source of samples)
       expect(
@@ -156,7 +151,7 @@ describe("conversation lifecycle import boundaries", () => {
   it("allows semantic conversation APIs, feature results, descriptors and transcripts", () => {
     expect(
       forbiddenImports(
-        'import { executeConversationTurn } from "@/lib/workflows/conversation/lifecycle"; import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";',
+        'import { executeConversationTurn } from "@/lib/workflows/conversation/lifecycle"; import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";',
         "lib/workflow-graph/validator-runner.ts",
       ),
     ).toEqual([]);
@@ -191,7 +186,7 @@ describe("checkpoint actor event ownership", () => {
   it("refuses the projection event outside the manager, machine and event union", () => {
     for (const file of [
       "lib/conversations/consumer.ts",
-      "lib/workflows/conversation/checkpoint-maintenance.ts",
+      "lib/conversation-checkpoints/checkpoint-maintenance.ts",
       "lib/workflows/conversation/actor-host.ts",
     ])
       expect(forbiddenCheckpointEvents(send, file), file).toHaveLength(1);

@@ -1,3 +1,6 @@
+import { taskTurnRequestSchema } from "@/lib/conversation-core/turn/turn-spec";
+import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
+import type { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { conversationTranscriptFrame } from "@/lib/agent-backends/transcript";
 import {
@@ -9,16 +12,29 @@ import type { CheckpointCaptureRuntimeInput } from "./actor-implementations";
 import {
   omittedCaptureResult,
   pendingCheckpointCapture,
-} from "./checkpoint-capture";
+} from "@/lib/conversation-checkpoints/checkpoint-capture";
 import type {
   BackendModelSelection,
   CaptureAvailability,
 } from "@/lib/agent-backends/schemas";
-import type { CheckpointHandoffRequest } from "@/lib/conversation-checkpoints/schemas";
 import type { admitCheckpointForkSubmission } from "@/lib/conversation-checkpoints/fork-submission";
-import type { AskQuestionItem } from "@/lib/conversations/schemas";
-import type { readRuntimeInstructions } from "./runtime-instructions";
-import type { DesiredRuntimeConfiguration } from "./pre-turn/runtime-recreate";
+import type {
+  ConversationCheckpointCancel,
+  ConversationCheckpointCheck,
+  ConversationCheckpointReconcile,
+  ConversationCheckpointReconcileRequest,
+  ConversationCheckpointRequest,
+  ConversationCheckpointSkip,
+  ConversationCheckpointStart,
+  CoreConversationCheckpoints,
+} from "@/lib/conversation-checkpoints/operation-contract";
+import type {
+  PendingConversationQuestion,
+  QuestionCommand,
+} from "@/lib/conversation-core/turn/types";
+import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import type { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
+import type { DesiredRuntimeConfiguration } from "@/lib/conversation-core/turn/runtime-recreate";
 import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
 import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
 import {
@@ -30,11 +46,10 @@ import {
   type TurnAdmission,
   type TurnAdmissionRefusal,
   type TurnCancelReason,
-} from "./turn-spec";
-import type { SettledConversationTurn } from "./turn-result";
+} from "@/lib/conversation-core/turn/turn-spec";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
 import { TurnAttempt } from "./turn-attempt";
-import { conversationTurnSpecSchema } from "./turn-spec";
+import { conversationTurnSpecSchema } from "@/lib/conversation-core/turn/turn-spec";
 import {
   registerAbortController,
   unregisterAbortController,
@@ -59,9 +74,9 @@ import {
 import { createLogger } from "@/lib/logging";
 import {
   ConversationBindingNotFoundError,
-  checkpointScopeKeyForStoreIdentity,
   type EnsureActorInputData,
 } from "./actor-input-loader";
+import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 
 import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -83,7 +98,6 @@ import { checkpointErrorFields } from "@/lib/conversation-checkpoints/diagnostic
 import type { generateCheckpoint } from "@/lib/conversation-checkpoints/generation";
 import {
   CHECKPOINT_CAPTURE_POLICY,
-  type CheckpointReceipt,
   type CheckpointHandoffEligibility,
 } from "@/lib/conversation-checkpoints/receipt";
 import type { ConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/repo";
@@ -111,17 +125,17 @@ import {
   runCheckpointMaintenance,
   type CheckpointMaintenanceHost,
   restoredGateFor,
-} from "./checkpoint-maintenance";
+} from "@/lib/conversation-checkpoints/checkpoint-maintenance";
 import {
   checkpointKeyLogFields,
   hydrateCheckpointAuthority,
   type CheckpointAuthorityHydration,
   readCheckpointAuthority,
-} from "./checkpoint-restart";
-import { repairQueuedAcceptanceFromCheckpoint } from "./checkpoint-queue-repair";
+} from "@/lib/conversation-checkpoints/checkpoint-restart";
+import { repairQueuedAcceptanceFromCheckpoint } from "@/lib/conversation-checkpoints/checkpoint-queue-repair";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
-import type { ExecuteWorkflowTaskRunInput } from "./execute-workflow-task-run";
-import type { TaskRunResult } from "./turn-result";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationCheckpointMaintenance } from "./runtime-state";
 
 const logger = createLogger("conversation-manager");
@@ -134,19 +148,6 @@ export interface ActiveConversationTurnDescription {
   readonly autonomous: boolean;
   readonly originMessageId: string | null;
 }
-
-/** The outcome belongs to the admitted attempt; refusals contain no preceding turn result. */
-export type ConversationTurnExecution =
-  | TurnAdmissionRefusal
-  | { kind: "settled"; turn: SettledConversationTurn };
-
-interface ConversationQuestionBatch {
-  questionId: string;
-  questions: AskQuestionItem[];
-}
-type QuestionCommand =
-  | ({ kind: "register_question" } & ConversationQuestionBatch)
-  | { kind: "clear_question"; questionId: string };
 
 export interface ConversationAdmissionDeps {
   readState(identity: {
@@ -230,53 +231,6 @@ export interface ConversationCheckpointDependencies {
   generate: typeof generateCheckpoint;
   now(): string;
 }
-
-export interface ConversationCheckpointRequest {
-  handoff?: CheckpointHandoffRequest;
-  address: ConversationAddress;
-  /** Caller-generated UUID: the operation id, and the reuse key on retransmit. */
-  requestId: string;
-  /**
-   * Explicit recovery: the recovery-required operation this build supersedes.
-   * Absent for an ordinary checkpoint, which cannot supersede anything.
-   */
-  recover?: string | null;
-}
-
-export type ConversationCheckpointReconcile =
-  | { kind: "repaired"; operation: CheckpointOperation }
-  | {
-      kind: "blocked";
-      operation: CheckpointOperation;
-      refusal: CheckpointRefusal;
-    }
-  | { kind: "unchanged"; operation: CheckpointOperation }
-  | { kind: "refused"; refusal: CheckpointRefusal };
-
-export type ConversationCheckpointStart =
-  | {
-      kind: "admitted" | "reused";
-      operation: CheckpointOperation;
-      receipt: CheckpointReceipt;
-      /** Settles with the operation's durable outcome; never rejects. */
-      completion: Promise<CheckpointOperation>;
-    }
-  | { kind: "refused"; refusal: CheckpointRefusal };
-
-export interface ConversationCheckpointCheck {
-  handoff: CheckpointHandoffEligibility;
-  eligible: boolean;
-  /** Every failing predicate, primary first; empty when eligible. */
-  refusals: CheckpointRefusal[];
-  /** The operation holding the slot, when one does. */
-  active: CheckpointReceipt | null;
-  hosted: boolean;
-}
-
-export type ConversationCheckpointCancel =
-  | { kind: "cancelled"; operation: CheckpointOperation }
-  | { kind: "completed"; operation: CheckpointOperation }
-  | { kind: "refused"; refusal: CheckpointRefusal };
 
 /** The manager's owned reservation; `runtime.maintenance` aliases it once hosted. */
 interface ManagedCheckpointMaintenance extends ConversationCheckpointMaintenance {
@@ -373,6 +327,51 @@ import type { ConversationRuntimeState } from "./runtime-state";
 import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
 
 export interface ConversationManagerDependencies {
+  /**
+   * Whether the supervision core runs this conversation's turns. The actor
+   * must never host a turn for such a conversation, or two runtimes would
+   * write one transcript.
+   */
+  isCoreOwnedConversation?(conversationId: string): boolean;
+  /** Stops the turn the core runs for this conversation; settled once that turn ends. */
+  stopCoreConversation?(conversationId: string): {
+    requested: boolean;
+    settled: Promise<void>;
+  };
+  /** The conversation is going away: the core runs nothing more in it and closes its runtime. */
+  retireCoreConversation?(conversationId: string): Promise<void>;
+  /** The core takes the conversation's next queued message when it is idle. */
+  drainCoreConversation?(conversationId: string): Promise<void>;
+  /** A workflow's task turn on a core conversation, run in its turn order; resolves with the outcome. */
+  runCoreTask?(input: {
+    conversationId: string;
+    turn: z.output<typeof taskTurnRequestSchema>;
+    signal?: AbortSignal;
+  }): Promise<TurnExecutionOutcome>;
+  /** A question the agent of a core conversation asks, or its clearing, recorded on the row. */
+  /** A debug command on a core conversation, applied by the core's debug mode. */
+  coreDebugCommand?(
+    identity: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
+    command: DebugCommand,
+  ): Promise<ConversationCommandOutcome>;
+  coreQuestionCommand?(
+    identity: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
+    command: QuestionCommand,
+  ): Promise<boolean>;
+  /** The checkpoint owner of core conversations; undefined while run supervision is not running. */
+  coreCheckpoints?(): CoreConversationCheckpoints | undefined;
+  /** The running turn of a core conversation; null when none runs. */
+  describeCoreTurn?(
+    conversationId: string,
+  ): ActiveConversationTurnDescription | null;
   readSubscriptionWakeHold?(identity: {
     projectPath: string;
     sessionName: string;
@@ -436,10 +435,33 @@ export type IdleRuntimeRelease = "released" | "not_hosted" | "busy";
 export function createConversationManager(
   deps: ConversationManagerDependencies,
 ) {
-  const host = deps.createHost({
+  const createdHost = deps.createHost({
     drainQueue: drainAfterTurn,
-    executeDebugCommand: executeConversationCommand,
+    // The actor's own verification results reach it directly, never re-hosting an actor that is stopping.
+    executeDebugCommand: runConversationCommand,
   });
+  /**
+   * The one place an actor comes into being. The shared conversation core runs
+   * its conversations' turns, so no path here, startup restore included, may
+   * host an actor beside it.
+   */
+  function refuseCoreOwned(conversationId: string): void {
+    if (deps.isCoreOwnedConversation?.(conversationId) === true)
+      throw new Error(
+        `Conversation ${conversationId} runs on the shared conversation core; the conversation actor cannot host it`,
+      );
+  }
+  const host: typeof createdHost = {
+    ...createdHost,
+    create(input, snapshot) {
+      refuseCoreOwned(input.target.conversationId);
+      return createdHost.create(input, snapshot);
+    },
+    start(input) {
+      refuseCoreOwned(input.target.conversationId);
+      return createdHost.start(input);
+    },
+  };
   /**
    * Checkpoint reservations by runtime key. Set synchronously before a start
    * awaits anything, so a dormant host's startup drain and any concurrent
@@ -487,11 +509,40 @@ export function createConversationManager(
   }
   registerHostedCostSettlementApplier(applyCostSettlementToHostedActor);
 
+  /**
+   * Where a checkpoint operation on a conversation the core runs goes: its
+   * checkpoint owner, or a refusal while the core is not running. Null for a
+   * conversation the actor runs.
+   */
+  function coreCheckpointOwner(
+    conversationId: string,
+  ):
+    | { kind: "core"; owner: CoreConversationCheckpoints }
+    | { kind: "unavailable"; refusal: CheckpointRefusal }
+    | null {
+    if (deps.isCoreOwnedConversation?.(conversationId) !== true) return null;
+    const owner = deps.coreCheckpoints?.();
+    return owner === undefined
+      ? {
+          kind: "unavailable",
+          refusal: checkpointRefusal(
+            "conversation_busy",
+            "the shared conversation core is not running",
+          ),
+        }
+      : { kind: "core", owner };
+  }
+
   function checkpointAcceptsQueuedInput(
     projectPath: string,
     sessionName: string,
     conversationId: string,
   ): boolean {
+    const core = coreCheckpointOwner(conversationId);
+    if (core !== null)
+      return (
+        core.kind === "core" && core.owner.acceptsQueuedInput(conversationId)
+      );
     const key = conversationRuntimeKey(
       projectPath,
       sessionName,
@@ -508,6 +559,8 @@ export function createConversationManager(
     address: ConversationAddress,
   ): ActiveConversationTurnDescription | null {
     const identity = conversationStoreIdentity(address);
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true)
+      return deps.describeCoreTurn?.(identity.conversationId) ?? null;
     const runtime = deps.getRuntime(
       conversationRuntimeKey(
         identity.projectPath,
@@ -932,6 +985,9 @@ export function createConversationManager(
     binding: ConversationBinding,
   ): Promise<void> {
     const identity = conversationStoreIdentity(binding.address);
+    // The core runs it: there is no actor to host or repair.
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true)
+      return;
     const key = conversationRuntimeKey(
       identity.projectPath,
       identity.sessionName,
@@ -1127,6 +1183,14 @@ export function createConversationManager(
         message: "Turn admission cancelled",
       };
     const identity = conversationStoreIdentity(binding.address);
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true) {
+      return {
+        kind: "refused",
+        code: "binding_mismatch",
+        message:
+          "This conversation runs on the shared conversation core, which does not take this kind of turn; send it a prompt directly, or, for a run's seat, message the conversation that launched the run",
+      };
+    }
     if (
       binding.kind === "durable" &&
       input.turn.kind !== "task_run" &&
@@ -1559,6 +1623,27 @@ export function createConversationManager(
   async function executeConversationTurn(
     input: ConversationTurnSubmission,
   ): Promise<ConversationTurnExecution> {
+    const { conversationId } = conversationStoreIdentity(input.binding.address);
+    if (
+      input.turn.kind === "task_run" &&
+      deps.runCoreTask !== undefined &&
+      deps.isCoreOwnedConversation?.(conversationId) === true
+    ) {
+      const outcome = await deps.runCoreTask({
+        conversationId,
+        turn: taskTurnRequestSchema.parse(input.turn),
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      });
+      return {
+        kind: "settled",
+        turn: {
+          attemptId: `core:${conversationId}`,
+          outcome,
+          status: "awaiting",
+          pendingQuestion: null,
+        },
+      };
+    }
     const admission = await submitConversationTurn(input);
     if (admission.kind === "refused") return admission;
     return { kind: "settled", turn: await admission.turn.completed };
@@ -1582,6 +1667,10 @@ export function createConversationManager(
     sessionName: string,
     conversationId: string,
   ): Promise<void> {
+    if (deps.isCoreOwnedConversation?.(conversationId) === true) {
+      await deps.drainCoreConversation?.(conversationId);
+      return;
+    }
     const existing = getConversationActor(
       projectPath,
       sessionName,
@@ -1620,10 +1709,21 @@ export function createConversationManager(
     }
   }
 
-  function executeConversationCommand(
+  /** A debug command from a route (after it ensured the lifecycle): the core's debug mode, or the conversation's actor. */
+  async function executeConversationCommand(
     address: ConversationAddress,
     command: DebugCommand,
   ): Promise<ConversationCommandOutcome> {
+    const identity = conversationStoreIdentity(address);
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true) {
+      return (
+        (await deps.coreDebugCommand?.(identity, command)) ?? {
+          kind: "refused",
+          code: "not_found",
+          message: "The shared conversation core is not running",
+        }
+      );
+    }
     return runConversationCommand(address, command);
   }
 
@@ -1633,6 +1733,14 @@ export function createConversationManager(
     conversationId: string,
     command: QuestionCommand,
   ): Promise<boolean> {
+    if (deps.isCoreOwnedConversation?.(conversationId) === true) {
+      return (
+        (await deps.coreQuestionCommand?.(
+          { projectPath, sessionName, conversationId },
+          command,
+        )) ?? false
+      );
+    }
     const actor = getConversationActor(
       projectPath,
       sessionName,
@@ -1667,7 +1775,7 @@ export function createConversationManager(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    question: ConversationQuestionBatch,
+    question: PendingConversationQuestion,
   ): Promise<boolean> {
     return runQuestionCommand(projectPath, sessionName, conversationId, {
       kind: "register_question",
@@ -1713,6 +1821,14 @@ export function createConversationManager(
     reason: TurnCancelReason,
   ): { requested: boolean; settled: Promise<void> } {
     const identity = conversationStoreIdentity(address);
+    if (deps.isCoreOwnedConversation?.(identity.conversationId) === true) {
+      return (
+        deps.stopCoreConversation?.(identity.conversationId) ?? {
+          requested: false,
+          settled: Promise.resolve(),
+        }
+      );
+    }
     const key = conversationRuntimeKey(
       identity.projectPath,
       identity.sessionName,
@@ -1840,6 +1956,10 @@ export function createConversationManager(
     conversationId: string,
     reason: string,
   ): Promise<void> {
+    if (deps.isCoreOwnedConversation?.(conversationId) === true) {
+      await deps.retireCoreConversation?.(conversationId);
+      return;
+    }
     const key = conversationRuntimeKey(
       projectPath,
       sessionName,
@@ -2353,6 +2473,22 @@ export function createConversationManager(
     address: ConversationAddress,
     options: { recover?: string | null } = {},
   ): Promise<ConversationCheckpointCheck> {
+    const core = coreCheckpointOwner(address.target.conversationId);
+    if (core?.kind === "core")
+      return core.owner.check(address, { recover: options.recover ?? null });
+    if (core?.kind === "unavailable")
+      return {
+        handoff: {
+          available: false,
+          mode: null,
+          reason: "unavailable",
+          policy: CHECKPOINT_CAPTURE_POLICY,
+        },
+        eligible: false,
+        refusals: [core.refusal],
+        active: null,
+        hosted: false,
+      };
     const observation = await observeCheckpointAdmission(address, {
       requestId: null,
       recover: options.recover ?? null,
@@ -2448,6 +2584,10 @@ export function createConversationManager(
   async function startConversationCheckpoint(
     input: ConversationCheckpointRequest,
   ): Promise<ConversationCheckpointStart> {
+    const core = coreCheckpointOwner(input.address.target.conversationId);
+    if (core?.kind === "core") return core.owner.start(input);
+    if (core?.kind === "unavailable")
+      return { kind: "refused", refusal: core.refusal };
     const identity = conversationStoreIdentity(input.address);
     const key = conversationRuntimeKey(
       identity.projectPath,
@@ -3260,13 +3400,11 @@ export function createConversationManager(
   async function skipConversationCheckpointHandoff(input: {
     address: ConversationAddress;
     operationId: string;
-  }): Promise<
-    | {
-        kind: "stopping" | "handoff_already_settled";
-        operation: CheckpointOperation;
-      }
-    | { kind: "refused"; refusal: CheckpointRefusal }
-  > {
+  }): Promise<ConversationCheckpointSkip> {
+    const core = coreCheckpointOwner(input.address.target.conversationId);
+    if (core?.kind === "core") return core.owner.skipHandoff(input);
+    if (core?.kind === "unavailable")
+      return { kind: "refused", refusal: core.refusal };
     const identity = conversationStoreIdentity(input.address);
     const key = conversationRuntimeKey(
       identity.projectPath,
@@ -3324,6 +3462,10 @@ export function createConversationManager(
     address: ConversationAddress;
     operationId: string;
   }): Promise<ConversationCheckpointCancel> {
+    const core = coreCheckpointOwner(input.address.target.conversationId);
+    if (core?.kind === "core") return core.owner.cancel(input);
+    if (core?.kind === "unavailable")
+      return { kind: "refused", refusal: core.refusal };
     const identity = conversationStoreIdentity(input.address);
     const key = conversationRuntimeKey(
       identity.projectPath,
@@ -3446,12 +3588,13 @@ export function createConversationManager(
    * reconcile resumes from the durable phase, because nothing short of a
    * read that may fail the same way can say what the repair left behind.
    */
-  async function reconcileConversationCheckpoint(input: {
-    address: ConversationAddress;
-    operationId: string;
-    captureExecutionStopped?: boolean;
-    source?: "cli" | "ui" | "api";
-  }): Promise<ConversationCheckpointReconcile> {
+  async function reconcileConversationCheckpoint(
+    input: ConversationCheckpointReconcileRequest,
+  ): Promise<ConversationCheckpointReconcile> {
+    const core = coreCheckpointOwner(input.address.target.conversationId);
+    if (core?.kind === "core") return core.owner.reconcile(input);
+    if (core?.kind === "unavailable")
+      return { kind: "refused", refusal: core.refusal };
     const identity = conversationStoreIdentity(input.address);
     const key = conversationRuntimeKey(
       identity.projectPath,
@@ -4108,7 +4251,9 @@ export function createConversationManager(
   function getConversationRuntimeConfiguration(
     conversationId: string,
   ):
-    | Readonly<import("./pre-turn/runtime-recreate").RecreateRuntimeSnapshot>
+    | Readonly<
+        import("@/lib/conversation-core/turn/runtime-recreate").RecreateRuntimeSnapshot
+      >
     | undefined {
     for (const [key, actor] of host.entries()) {
       if (

@@ -26,11 +26,13 @@ import {
 import { runDebugCleanupVerification } from "./cleanup-verification";
 import type {
   ConversationInput,
-  ExecutePromptInput,
   PrepareTurnInput,
   PrepareTurnOutput,
-  PromptActorResult,
 } from "@/lib/workflows/conversation/types";
+import type {
+  ExecutePromptInput,
+  PromptActorResult,
+} from "@/lib/conversation-core/turn/types";
 
 // ============================================================
 // Result payload fixtures

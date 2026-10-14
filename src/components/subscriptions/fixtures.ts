@@ -13,6 +13,7 @@ export function subscriptionFixture(
       reason:
         "Keep the implementation aligned with the latest product decisions.",
       mode: "passive",
+      wakes: false,
       eventKinds: null,
       expiresAt: null,
       status: "following",

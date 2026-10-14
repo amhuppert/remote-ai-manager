@@ -14,6 +14,9 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { getConfiguredBackendModelCatalog } from "./catalog";
 import { getConversationBackendFactory } from "./registry";
 import { readConfig } from "@/lib/config/loader";
+import { createLogger } from "@/lib/logging";
+
+const logger = createLogger("agent-backends.model-selection");
 
 export interface ModelSelectionAdmissionDiagnostic {
   code: string;
@@ -177,4 +180,104 @@ export async function admitConfiguredModelSelection(
     projectPath: input.projectPath,
     modelSelection: catalogValidation.selection,
   });
+}
+
+export interface ModelSelectionValidationErrorInput {
+  code: string;
+  message: string;
+  modelId: string;
+  parameterId?: string;
+}
+
+export class ModelSelectionValidationError extends Error {
+  readonly statusCode = 400;
+  readonly code: string;
+  readonly modelId: string;
+  readonly parameterId?: string;
+
+  constructor(input: ModelSelectionValidationErrorInput) {
+    super(input.message);
+    this.name = "ModelSelectionValidationError";
+    this.code = input.code;
+    this.modelId = input.modelId;
+    this.parameterId = input.parameterId;
+  }
+}
+
+function modelSelectionErrorDetails(
+  error: unknown,
+  selection: BackendModelSelection,
+): ModelSelectionValidationErrorInput {
+  if (error instanceof ModelSelectionPolicyError) {
+    const issue = error.issues[0];
+    return {
+      code: issue?.code ?? "selection_invalid",
+      message: error.message,
+      modelId: issue?.modelId ?? selection.modelId,
+      ...(issue?.parameterId !== undefined
+        ? { parameterId: issue.parameterId }
+        : {}),
+    };
+  }
+
+  return {
+    code: "selection_invalid",
+    message: getErrorMessage(error),
+    modelId: selection.modelId,
+  };
+}
+
+/** Validates a model selection for the project and returns its canonical form. */
+export async function admitExplicitModelSelection(input: {
+  projectPath: string;
+  backend: AgentBackendId;
+  selection: BackendModelSelection;
+  factory: ConversationBackendFactory;
+}): Promise<BackendModelSelection> {
+  const { projectPath, backend, selection, factory } = input;
+
+  if (factory.validateModelSelection) {
+    try {
+      factory.validateModelSelection(selection);
+    } catch (error) {
+      const details = modelSelectionErrorDetails(error, selection);
+      logger.warn("model_selection.rejected", {
+        backend,
+        modelId: details.modelId,
+        code: details.code,
+        ...(details.parameterId !== undefined
+          ? { parameterId: details.parameterId }
+          : {}),
+      });
+      throw new ModelSelectionValidationError(details);
+    }
+  }
+
+  let canonicalSelection = selection;
+  if (factory.validateProjectModelSelection) {
+    const validation = await factory.validateProjectModelSelection({
+      projectPath,
+      modelSelection: selection,
+    });
+    if (!validation.ok) {
+      logger.warn("model_selection.rejected", {
+        backend,
+        modelId: validation.modelId,
+        code: validation.code,
+        ...(validation.parameterId !== undefined
+          ? { parameterId: validation.parameterId }
+          : {}),
+      });
+      throw new ModelSelectionValidationError(validation);
+    }
+    canonicalSelection = validation.modelSelection;
+  }
+
+  logger.debug("model_selection.resolved", {
+    backend,
+    modelId: canonicalSelection.modelId,
+    parameterIds: Object.keys(canonicalSelection.parameters).sort(),
+    sourceLayer: "request",
+  });
+  return canonicalSelection;
 }

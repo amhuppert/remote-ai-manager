@@ -29,6 +29,11 @@ export interface AgentProfileChoicePopoverProps {
   title: string;
   confirmLabel: string;
   onConfirm: (profile: AgentProfileRef) => void;
+  /** A second way to use the same choice, offered under the primary one. */
+  secondaryAction?: {
+    label: string;
+    onConfirm: (profile: AgentProfileRef) => void;
+  };
   disabled?: boolean;
 }
 
@@ -53,10 +58,15 @@ export default function AgentProfileChoicePopover({
   title,
   confirmLabel,
   onConfirm,
+  secondaryAction,
   disabled,
 }: AgentProfileChoicePopoverProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState(STANDARD_AGENT_PROFILE_VALUE);
+  // The picker only ever emits values it produced, so the fallback is the
+  // default rather than a guess at a malformed one.
+  const chosen = (): AgentProfileRef =>
+    parseAgentProfilePickerValue(value) ?? STANDARD_AGENT_PROFILE_REF;
 
   return (
     <Popover
@@ -88,17 +98,24 @@ export default function AgentProfileChoicePopover({
             size="sm"
             disabled={disabled}
             onClick={() => {
-              // The picker only ever emits values it produced, so the fallback
-              // is the default rather than a guess at a malformed one.
-              onConfirm(
-                parseAgentProfilePickerValue(value) ??
-                  STANDARD_AGENT_PROFILE_REF,
-              );
+              onConfirm(chosen());
               setOpen(false);
             }}
           >
             {confirmLabel}
           </Button>
+          {secondaryAction !== undefined && (
+            <Button
+              size="sm"
+              disabled={disabled}
+              onClick={() => {
+                secondaryAction.onConfirm(chosen());
+                setOpen(false);
+              }}
+            >
+              {secondaryAction.label}
+            </Button>
+          )}
         </div>
       </PopoverContent>
     </Popover>

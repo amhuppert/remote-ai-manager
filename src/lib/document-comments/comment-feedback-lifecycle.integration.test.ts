@@ -46,7 +46,7 @@ import { formatDocumentFeedbackPrompt } from "./format-feedback";
 import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
 import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
-import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
+import { buildUserTranscriptBlocks } from "@/lib/conversation-core/turn/build-user-transcript-blocks";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { CollaborationManager } from "@/lib/workflows/collaboration/manager";
@@ -611,6 +611,13 @@ describe("document comment + feedback lifecycle (real store)", () => {
             return true;
           },
         ),
+      coreConversations: {
+        owns: () => false,
+        admitCollaboration: async () => null,
+        prompt: async () => {
+          throw new Error("No conversation here runs on the shared core");
+        },
+      },
     };
     const handlers = createPromptRouteHandlers(promptDeps);
 

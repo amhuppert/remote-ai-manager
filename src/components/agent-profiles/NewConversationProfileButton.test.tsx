@@ -52,7 +52,10 @@ const LISTING: AgentProfileLibraryListing = {
   diagnostics: [],
 };
 
-function renderButton(onCreate = vi.fn()) {
+function renderButton(
+  onCreate = vi.fn(),
+  onCreateCore?: (profile: unknown) => void,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -62,6 +65,7 @@ function renderButton(onCreate = vi.fn()) {
       <NewConversationProfileButton
         projectName={PROJECT}
         onCreate={onCreate}
+        {...(onCreateCore !== undefined ? { onCreateCore } : {})}
         pending={false}
       />
     </QueryClientProvider>,
@@ -121,5 +125,43 @@ describe("NewConversationProfileButton", () => {
       tier: "project",
       id: "house-style",
     });
+  });
+
+  it("offers a core conversation under the picked profile when the surface supports one", async () => {
+    const user = userEvent.setup();
+    const onCreateCore = vi.fn();
+    const { onCreate } = renderButton(vi.fn(), onCreateCore);
+
+    await user.click(
+      screen.getByRole("button", { name: /choose an agent profile/i }),
+    );
+    await user.click(
+      await screen.findByRole("combobox", { name: /agent profile/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /House Style/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /create core conversation/i }),
+    );
+
+    expect(onCreateCore).toHaveBeenCalledWith({
+      tier: "project",
+      id: "house-style",
+    });
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it("offers no core conversation where the surface cannot create one", async () => {
+    const user = userEvent.setup();
+    renderButton();
+
+    await user.click(
+      screen.getByRole("button", { name: /choose an agent profile/i }),
+    );
+    await screen.findByRole("button", { name: /^create conversation$/i });
+    expect(
+      screen.queryByRole("button", { name: /create core conversation/i }),
+    ).toBeNull();
   });
 });

@@ -18,11 +18,14 @@ export type WakeDispatchDecision =
   | "accepted"
   | "failed"
   | "uncertain"
-  | "cancelled";
+  | "cancelled"
+  | "release";
 
 export function decideWakeDispatch(
   state: SubscriptionWakeBatch["state"],
   observation: WakeDispatchObservation,
+  /** True when the batch carries only follow facts, which may be presented twice. */
+  options: { followOnly: boolean } = { followOnly: false },
 ): WakeDispatchDecision {
   if (state === "accepted" || state === "cancelled") return "hold";
   if (observation.accepted) return "accepted";
@@ -41,7 +44,12 @@ export function decideWakeDispatch(
     case "cancelled":
       return "cancelled";
     case null:
-      return state === "planned" ? "enqueue" : "uncertain";
+      if (state === "planned") return "enqueue";
+      // Proven never queued and never accepted. A one-time wait keeps its
+      // explicit review; follow facts go back for another wake.
+      return state === "uncertain" && options.followOnly
+        ? "release"
+        : "uncertain";
   }
 }
 
@@ -53,6 +61,7 @@ export interface ActiveWaitDispatchService {
     recipient: SubscriptionRecipient,
   ): Promise<SubscriptionWakeBatch | null>;
   markBatchQueued(batchId: string): Promise<void>;
+  releaseUnsentBatch(batchId: string): Promise<void>;
   settleBatch(
     batchId: string,
     state: "accepted" | "failed" | "uncertain" | "cancelled",
@@ -80,8 +89,14 @@ export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
     try {
       const observation = await deps.observe(batch);
       if (stopped) return;
-      const decision = decideWakeDispatch(batch.state, observation);
+      const decision = decideWakeDispatch(batch.state, observation, {
+        followOnly: batch.waitIds.length === 0,
+      });
       if (decision === "hold") return;
+      if (decision === "release") {
+        await deps.service.releaseUnsentBatch(batch.id);
+        return;
+      }
       if (decision === "accepted") {
         // Repair a retained uncertain queue row only from positive acceptance evidence.
         await deps.confirmAccepted(batch);

@@ -93,6 +93,9 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // decide WHICH repository holds the conversation (project vs session) and
   // emits nothing — no URL, key, payload, label, or log field.
   ["lib/workflows/conversation/actor-input-loader.ts", "internal-adapter"],
+  // A conversation's checkpoint scope from its store key: the project variant
+  // carries `sessionName: null`, never the sentinel.
+  ["lib/conversation-checkpoints/scope-key.ts", "scope-derivation"],
   ["lib/workflows/conversation/persistence.ts", "internal-adapter"],
   ["lib/workflows/conversation/persistence-adapter.ts", "internal-adapter"],
   ["lib/workflows/conversation/rehydration.ts", "internal-adapter"],
@@ -158,6 +161,11 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // diagnostics are built from `conversationEventScopeFields`, so a project
   // conversation's settlement carries no `sessionName` field at all.
   ["lib/conversations/cost-settlement.ts", "scope-derivation"],
+  // The shared conversation core's row writer takes the session-keyed store
+  // name only to address the row write; the conversation-unread event it
+  // publishes is built from `conversationEventScopeFields`, so a project
+  // conversation's event carries no `sessionName` field at all.
+  ["lib/conversation-core/production-records.ts", "scope-derivation"],
   // Reaches the sentinel for one reason: the `onCostSettled` handler it wires
   // derives the scope variant for its own two warnings. The store key it also
   // carries stays on named carriers — `conversationRuntimeKey` and the

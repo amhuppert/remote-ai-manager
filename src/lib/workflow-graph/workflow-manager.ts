@@ -54,7 +54,6 @@ import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { settleLoops } from "./loop-settlement";
 
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import {
@@ -64,7 +63,7 @@ import {
   transitionContextMergeStatus,
   transitionContextStatus,
 } from "@/lib/workflow-graph/context-transitions";
-import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
+import { readWorktreeDirtyPaths, type DirtyPath } from "@/lib/git/worktree";
 import { defaultGitClient } from "@/lib/git/client";
 import {
   validateLaunchInputs,
@@ -478,6 +477,13 @@ export interface RecordDefinitionApprovalInput {
  * of the display message.
  */
 export class WorkflowDefinitionNotFoundError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowDefinitionNotFoundError {
+    return (
+      error instanceof Error && error.name === "WorkflowDefinitionNotFoundError"
+    );
+  }
+
   readonly definitionId: string;
   readonly tier: TemplateTier;
 
@@ -490,6 +496,14 @@ export class WorkflowDefinitionNotFoundError extends Error {
 }
 
 export class WorkflowDefinitionRevisionMismatchError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowDefinitionRevisionMismatchError {
+    return (
+      error instanceof Error &&
+      error.name === "WorkflowDefinitionRevisionMismatchError"
+    );
+  }
+
   readonly code = "definition_revision_mismatch" as const;
 
   constructor(
@@ -516,6 +530,13 @@ export class WorkflowDefinitionRevisionMismatchError extends Error {
  * the not-found error so the rejection class is unambiguous (R6.2).
  */
 export class WorkflowPrerequisitesUnmetError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is WorkflowPrerequisitesUnmetError {
+    return (
+      error instanceof Error && error.name === "WorkflowPrerequisitesUnmetError"
+    );
+  }
+
   readonly missing: MissingPrerequisite[];
 
   constructor(missing: MissingPrerequisite[], message: string) {
@@ -561,6 +582,14 @@ export type GraphWorkflowLifecycleAction =
   | "halt";
 
 export class GraphWorkflowTransitionConflictError extends Error {
+  /** By its name: see `lifecycleRefusalFromError`. */
+  static is(error: unknown): error is GraphWorkflowTransitionConflictError {
+    return (
+      error instanceof Error &&
+      error.name === "GraphWorkflowTransitionConflictError"
+    );
+  }
+
   readonly code = "workflow_transition_conflict" as const;
 
   constructor(
@@ -674,6 +703,8 @@ export interface GraphWorkflowManagerDeps {
    * prerequisite gate. Defaults to the real config loader.
    */
   readGlobalConfig?(): Promise<GlobalConfig>;
+  /** Whether new launches are frozen (the drain before the old engine's removal); none are when absent. */
+  launchesFrozen?(): Promise<boolean>;
   lintCommittedSourceLocators?(
     definition: Pick<WorkflowSemanticDefinition, "charter">,
     session: Pick<SessionState, "sessionName" | "branchName" | "worktreePath">,
@@ -1219,11 +1250,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   async function launch(
     input: GraphWorkflowLaunchInput,
   ): Promise<GraphWorkflowLaunchOutcome> {
-    // Guard order is behavior-preserving and load-bearing: active-execution
-    // first, then the dirty-worktree guard, both BEFORE the source is resolved.
+    // The drain before the old engine's removal: existing executions finish,
+    // are abandoned or aborted, and nothing new starts.
+    if ((await deps.launchesFrozen?.()) === true)
+      throw new WorkflowStartGuardError(
+        "launches_frozen",
+        "Graph workflow launches are frozen while the old engine drains. Launch a run instead, or turn the freeze off in Settings → Workflow.",
+      );
+    // Guard order is behavior-preserving and load-bearing: after the freeze,
+    // active-execution first, then the dirty-worktree guard, both BEFORE the
+    // source is resolved.
     // The dirty 409 must still win over a 404 when both apply (the HTTP handler
     // historically checked dirty before resolving the definition), and the
-    // active-execution guard precedes everything so an already-running workflow
+    // active-execution guard precedes the rest so an already-running workflow
     // reports the more specific message.
     const existing = await deps.executionRepository.getActive(
       input.projectPath,

@@ -1,5 +1,5 @@
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
-import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 /**
  * Debug-mode route handlers for a conversation.
  *
@@ -50,6 +50,7 @@ export const updateDebugMode = withTracing(async (request, { params }) => {
   }
 
   try {
+    // Hosts (and repairs) an actor conversation's actor; nothing to do for one the core runs.
     await ensureConversationLifecycle({
       kind: "durable",
       address: {

@@ -88,7 +88,9 @@ export function SubscriptionDetail({
         <dd className="m-0 text-text-secondary">
           {row.subscription.mode === "active"
             ? "Starts a turn at the next safe boundary."
-            : "Alongside your next message. Never starts a turn."}
+            : row.subscription.wakes
+              ? "Starts a turn at the next safe boundary for each new update."
+              : "Alongside your next message. Never starts a turn."}
         </dd>
         <dt className="text-text-tertiary">Selection</dt>
         <dd className="m-0 break-words text-text-secondary">

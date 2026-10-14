@@ -1,10 +1,6 @@
 import type { ConversationQueuedUserInput } from "@/lib/agent-backends/conversation";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  queueMessage,
-  buildQueueContent,
-  type QueueMessageDeps,
-} from "./queue";
+import { queueMessage, type QueueMessageDeps } from "./queue";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 
@@ -73,6 +69,7 @@ const deps: QueueMessageDeps = {
   readLiveReference: async () => null,
   readNotepadForInjection: readNotepadForInjectionMock,
   recordNotepadDeliveries: recordNotepadDeliveriesMock,
+  core: undefined,
   subscriptions: undefined,
   ownSubscriptionReceipt: async () => true,
 };
@@ -93,78 +90,6 @@ beforeEach(() => {
   getNextImageIndexMock.mockResolvedValue(1);
   getProjectDisplayNameMock.mockReturnValue("my-project");
 });
-
-// ===========================================================================
-// buildQueueContent (pure)
-// ===========================================================================
-
-describe("buildQueueContent", () => {
-  it("builds a single text block from text only", () => {
-    expect(buildQueueContent({ text: "hello world" })).toEqual([
-      { type: "text", text: "hello world" },
-    ]);
-  });
-
-  it("builds image blocks from images only (no text block)", () => {
-    const images: ImagePayload[] = [
-      makeImage({
-        attachmentId: "a",
-        mediaType: "image/png",
-        base64Data: "X1",
-      }),
-      makeImage({
-        attachmentId: "b",
-        mediaType: "image/jpeg",
-        base64Data: "X2",
-      }),
-    ];
-    expect(buildQueueContent({ images })).toEqual([
-      { type: "image", mediaType: "image/png", base64Data: "X1" },
-      { type: "image", mediaType: "image/jpeg", base64Data: "X2" },
-    ]);
-  });
-
-  it("builds text block(s) before image blocks for text+images", () => {
-    const images: ImagePayload[] = [
-      makeImage({
-        attachmentId: "a",
-        mediaType: "image/gif",
-        base64Data: "G1",
-      }),
-    ];
-    expect(buildQueueContent({ text: "caption", images })).toEqual([
-      { type: "text", text: "caption" },
-      { type: "image", mediaType: "image/gif", base64Data: "G1" },
-    ]);
-  });
-
-  it("omits an empty text block", () => {
-    expect(buildQueueContent({ text: "" })).toEqual([]);
-    expect(buildQueueContent({})).toEqual([]);
-  });
-
-  it("appends a document_feedback block after text/image blocks", () => {
-    const documentFeedback = {
-      items: [
-        {
-          docPath: "design.md",
-          path: "design.md",
-          headingLabel: "Intro",
-          line: 4,
-          quote: "the passage",
-          note: "reconsider",
-        },
-      ],
-    };
-    expect(buildQueueContent({ documentFeedback })).toEqual([
-      { type: "document_feedback", items: documentFeedback.items },
-    ]);
-  });
-});
-
-// ===========================================================================
-// queueMessage — next_turn (durable enqueue, no live delivery)
-// ===========================================================================
 
 describe("queueMessage next_turn", () => {
   it("durably enqueues without writing a transcript entry", async () => {
@@ -844,6 +769,163 @@ describe("queueMessage in_turn", () => {
 // ===========================================================================
 // D5: notepad references expand to full content on the delivery path only
 // ===========================================================================
+
+describe("queueMessage for a conversation the core runs", () => {
+  const coreRuntimeInput = vi.fn();
+  type CoreDeps = NonNullable<QueueMessageDeps["core"]>;
+  function coreDeps(overrides: Partial<CoreDeps> = {}): QueueMessageDeps {
+    return {
+      ...deps,
+      core: {
+        owns: async () => true,
+        acceptsLive: async () => true,
+        deliverLive: async () => "accepted",
+        ...overrides,
+      },
+    };
+  }
+
+  beforeEach(() => {
+    queueCapabilityForBackendMock.mockReturnValue({
+      acceptsWhileRunning: true,
+      deliveryTiming: "in_turn",
+    });
+    claimLiveDeliveryMock.mockResolvedValue(
+      makePendingEntry({
+        status: "delivering",
+        deliveryAttemptId: "att-9",
+        inputOrigin: "user",
+        content: [
+          { type: "text", text: "also this" },
+          { type: "image", mediaType: "image/png", base64Data: "AAAA" },
+        ],
+      }),
+    );
+    // The core's runtime is in the shared registry; the queue must not steer it itself.
+    getRuntimeMock.mockReturnValue({ queueUserInput: coreRuntimeInput });
+  });
+
+  it("hands the claimed row to the core's running turn, as the next-turn drain reads it", async () => {
+    const delivered: unknown[] = [];
+    const result = await queueMessage({
+      ...baseParams,
+      text: "also this",
+      images: [makeImage()],
+      backend: "codex",
+      deps: coreDeps({
+        async deliverLive(identity, request) {
+          delivered.push({ identity, request });
+          return "accepted";
+        },
+      }),
+    });
+
+    expect(delivered).toEqual([
+      {
+        identity: {
+          projectPath: baseParams.projectPath,
+          storeSessionName: baseParams.sessionName,
+          conversationId: baseParams.conversationId,
+        },
+        request: {
+          kind: "user_message",
+          text: "also this",
+          images: [
+            {
+              attachmentId: "queued-0",
+              mediaType: "image/png",
+              base64Data: "AAAA",
+            },
+          ],
+          inputOrigin: "user",
+          queuedDelivery: { messageIds: ["msg-1"], deliveryAttemptId: "att-9" },
+        },
+      },
+    ]);
+    expect(coreRuntimeInput).not.toHaveBeenCalled();
+    expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
+    expect(markDeliveredMock).not.toHaveBeenCalled();
+    expect(markPendingMock).not.toHaveBeenCalled();
+    expect(result.deliveryTiming).toBe("in_turn");
+  });
+
+  it("leaves the row pending, unclaimed, when the core's running turn cannot take it", async () => {
+    const deliverLive = vi.fn();
+    const result = await queueMessage({
+      ...baseParams,
+      text: "later",
+      backend: "claude",
+      deps: coreDeps({ acceptsLive: async () => false, deliverLive }),
+    });
+
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(deliverLive).not.toHaveBeenCalled();
+    expect(coreRuntimeInput).not.toHaveBeenCalled();
+    expect(result.deliveryTiming).toBe("next_turn");
+  });
+
+  it("reports an unsent delivery as next turn and an uncertain one as held for review", async () => {
+    const returned = await queueMessage({
+      ...baseParams,
+      text: "one",
+      backend: "codex",
+      deps: coreDeps({ deliverLive: async () => "not_sent" }),
+    });
+    expect(returned.deliveryTiming).toBe("next_turn");
+
+    const held = await queueMessage({
+      ...baseParams,
+      text: "two",
+      backend: "codex",
+      deps: coreDeps({ deliverLive: async () => "uncertain" }),
+    });
+    expect(held).toMatchObject({
+      deliveryTiming: "in_turn",
+      entry: { status: "uncertain" },
+    });
+  });
+
+  it("leaves a queued message for the next turn when the core cannot say whether its turn takes it", async () => {
+    const failing = async (): Promise<boolean> => {
+      throw new Error("database is locked");
+    };
+    for (const core of [
+      coreDeps({ owns: failing }),
+      coreDeps({ acceptsLive: failing }),
+    ]) {
+      const result = await queueMessage({
+        ...baseParams,
+        text: "saved",
+        backend: "codex",
+        deps: core,
+      });
+      expect(result.deliveryTiming).toBe("next_turn");
+    }
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(coreRuntimeInput).not.toHaveBeenCalled();
+  });
+
+  it("returns the claimed row to the queue when the core cannot be reached", async () => {
+    const result = await queueMessage({
+      ...baseParams,
+      text: "orphan",
+      backend: "codex",
+      deps: coreDeps({
+        deliverLive: async () => {
+          throw new Error("Run supervision is not running");
+        },
+      }),
+    });
+
+    expect(markPendingMock).toHaveBeenCalledWith({
+      ...baseParams,
+      ids: ["msg-1"],
+      deliveryAttemptId: "att-9",
+      error: "Run supervision is not running",
+    });
+    expect(result.deliveryTiming).toBe("next_turn");
+  });
+});
 
 describe("queueMessage notepad injection", () => {
   const NOTEPAD_REF =

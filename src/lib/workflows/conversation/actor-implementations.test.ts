@@ -1,4 +1,4 @@
-import { readRuntimeInstructions } from "./runtime-instructions";
+import { readRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import { projectTranscriptUsage } from "@/lib/agent-backends/transcript-projections";
 import { createCursorTaskRunner } from "@/lib/agent-backends/cursor/task-runner";
 import { createScriptedTransport } from "@/lib/agent-backends/cursor/testing/scripted-worker";
@@ -26,7 +26,8 @@ import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testin
 import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { PrepareTurnInput, ExecutePromptInput } from "./types";
+import type { PrepareTurnInput } from "./types";
+import type { ExecutePromptInput } from "@/lib/conversation-core/turn/types";
 
 import type {
   ConversationBackendCreateInput,
@@ -8285,8 +8286,8 @@ describe("runTaskRunTurnForMachine", () => {
         .mocked(mockDeps.safeAppendTranscriptEntryOnce)
         .mock.calls.map(([, entry]) => projectTranscriptUsage(entry))
         .filter((usage) => usage !== null);
-      // Its own lineage: sharing the live session's would read as a restart
-      // of that lineage and drop cost, and it must not be counted twice.
+      // A backend that reports no session total keeps the run on its own
+      // lineage, so its cost is neither dropped nor counted twice.
       expect(frames).toEqual([
         {
           lineageId: "task_run:attempt-7",
@@ -8296,6 +8297,45 @@ describe("runTaskRunTurnForMachine", () => {
       ]);
     },
   );
+
+  it("charges a task that resumed the conversation's session only what it added, on the session's lineage", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: { backend: "claude" as const, ref: "sess-1" },
+      text: "done",
+      usage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        costUsd: 0.193,
+        cumulativeCostUsd: 0.193,
+      },
+      error: null,
+      timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
+    }));
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+      readLineageCumulativeCost: vi.fn(
+        async (_conversationId: string, lineageId: string) =>
+          lineageId === "sess-1" ? 0.178 : null,
+      ),
+    });
+    conversationActors = createTestActorImplementations(mockDeps);
+
+    const result = await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ executionAttemptId: "attempt-8" }),
+    );
+
+    const frames = vi
+      .mocked(mockDeps.safeAppendTranscriptEntryOnce)
+      .mock.calls.map(([, entry]) => projectTranscriptUsage(entry))
+      .filter((usage) => usage !== null);
+    expect(frames).toEqual([
+      { lineageId: "sess-1", cumulativeCostUsd: 0.193, numTurns: null },
+    ]);
+    expect(result.costUsd).toBeCloseTo(0.015, 9);
+  });
 
   it("records no cost frame for a task run whose backend reported no cost", async () => {
     const runner = makeMockTaskRunner(async () => ({

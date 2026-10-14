@@ -215,10 +215,91 @@ describe("Topbar", () => {
       runs: [],
     });
     setActiveConversations([]);
+    api.json("GET", "/api/runs/active", []);
   });
 
   afterEach(() => {
     api.restore();
+  });
+
+  it("dates a run in Needs you by when it started asking, and leaves out a run that asks nothing", async () => {
+    const user = userEvent.setup();
+    setActiveConversations([
+      makeProjectConversation({
+        id: "project-question",
+        name: "Release notes",
+        projectName: "root-tools",
+        status: "waiting_for_input",
+        lastActivityAt: "2026-10-09T11:00:00.000Z",
+      }),
+    ]);
+    const run = {
+      kind: "workflow",
+      projectName: "command-center",
+      sessionName: "session-12",
+      contexts: { done: 2, total: 5 },
+      startedAt: "2026-10-08T10:00:00.000Z",
+    };
+    api.json("GET", "/api/runs/active", [
+      {
+        ...run,
+        runId: "run-quiet",
+        title: "Quiet run",
+        status: { kind: "running" },
+        attention: 0,
+        approvals: 0,
+        askedAt: null,
+      },
+      {
+        ...run,
+        runId: "run-asking",
+        title: "Asking run",
+        status: { kind: "needs_input" },
+        attention: 1,
+        approvals: 1,
+        askedAt: "2026-10-09T12:00:00.000Z",
+      },
+    ]);
+
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
+    await user.click(await findNeedsTrigger());
+
+    expect(
+      screen.getAllByRole("menuitem").map((row) => row.textContent),
+    ).toEqual([
+      expect.stringContaining("Asking run"),
+      expect.stringContaining("Release notes"),
+    ]);
+  });
+
+  it("lists a run whose result waits for the person's approval in Needs you, leading to the run", async () => {
+    const user = userEvent.setup();
+    api.json("GET", "/api/runs/active", [
+      {
+        runId: "run-1",
+        title: "Checkout v2 rollout",
+        kind: "workflow",
+        projectName: "command-center",
+        sessionName: "session-12",
+        status: { kind: "needs_input" },
+        attention: 1,
+        approvals: 1,
+        contexts: { done: 2, total: 5 },
+        startedAt: "2026-10-09T10:00:00.000Z",
+        askedAt: "2026-10-09T10:05:00.000Z",
+      },
+    ]);
+
+    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
+    await user.click(await findNeedsTrigger());
+
+    expect(
+      screen
+        .getByRole("menuitem", {
+          name: /Approval required.*Checkout v2 rollout/i,
+        })
+        .getAttribute("href"),
+    ).toBe("/projects/command-center/session-12/runs?run=run-1");
   });
 
   // =========================================================================

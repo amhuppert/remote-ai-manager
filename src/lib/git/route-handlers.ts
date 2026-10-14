@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import type { CurrentRun } from "@/lib/runs/session-guard";
+import { currentRuns as defaultCurrentRuns } from "@/lib/supervision/handles";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
@@ -86,6 +88,8 @@ export interface GitRouteDeps {
     GraphWorkflowExecution,
     "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
   > | null>;
+  /** The session's runs that have not finished; a merge waits for every one. */
+  currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
   computeDiff(worktreePath: string): Promise<SessionDiff>;
   getCommitLog(
     worktreePath: string,
@@ -175,6 +179,7 @@ function defaultDeps(): GitRouteDeps {
     resolveProjectPath: defaultResolveProjectPath,
     getSession: defaultGetSession,
     getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
+    currentRuns: defaultCurrentRuns,
     computeDiff: defaultComputeDiff,
     getCommitLog: defaultGetCommitLog,
     getCommitDiff: defaultGetCommitDiff,
@@ -512,6 +517,7 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       sessionName,
       surface: "merge-route",
       readActiveExecution: deps.getActiveGraphWorkflowExecution,
+      readCurrentRuns: deps.currentRuns,
       association: policy.mergeAssociation,
       gate: policy.deliveryGate,
     });
@@ -528,7 +534,9 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
                   status: refusal.status,
                   remedy: refusal.remedy,
                 }
-              : { reviewUrl: refusal.reviewUrl, blockers: refusal.blockers },
+              : refusal.code === "RUN_CURRENT"
+                ? { runId: refusal.runId, progress: refusal.progress }
+                : { reviewUrl: refusal.reviewUrl, blockers: refusal.blockers },
         } satisfies ApiError,
         { status: 409 },
       );

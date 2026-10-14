@@ -21,8 +21,11 @@ export interface ConversationTabsProps {
   activeTabId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  /** Omitting the profile creates under the Standard Agent default (R7). */
-  onNewChat: (profile?: AgentProfileRef) => void;
+  /**
+   * Omitting the profile creates under the Standard Agent default (R7);
+   * `"core"` creates a conversation the shared conversation core runs.
+   */
+  onNewChat: (profile?: AgentProfileRef, engine?: "core") => void;
   projectName: string;
   /** True while the create-conversation mutation is pending — the `+ New chat`
    * affordance disables and shows in-progress state. */
@@ -150,6 +153,7 @@ export default function ConversationTabs({
         projectName={projectName}
         pending={creating === true}
         onCreate={onNewChat}
+        onCreateCore={(profile) => onNewChat(profile, "core")}
       />
     </div>
   );

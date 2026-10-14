@@ -34,6 +34,7 @@ import {
   installValidationShutdownHooks,
   type ProductionValidationResolverDeps,
 } from "./singleton";
+import type { SupervisedSeatWorkplace } from "@/lib/supervision/supervision";
 
 const T = "2026-08-05T10:00:00.000Z";
 
@@ -113,10 +114,13 @@ function activeLaneExecution(
 function resolverDeps(opts: {
   session?: SessionState | null;
   execution?: GraphWorkflowExecution | null;
+  seats?: Record<string, SupervisedSeatWorkplace>;
 }): ProductionValidationResolverDeps {
   return {
     getSession: async () => opts.session ?? null,
     getActiveGraphWorkflowExecution: async () => opts.execution ?? null,
+    seatWorkplace: async (conversationId) =>
+      opts.seats?.[conversationId] ?? null,
     readRepoValidation: async () =>
       repoValidationConfigSchema.parse({
         commands: {
@@ -139,7 +143,129 @@ afterEach(() => {
   _resetValidationServiceForTesting();
 });
 
+function laneSeat(
+  overrides: Partial<SupervisedSeatWorkplace> = {},
+): SupervisedSeatWorkplace {
+  return {
+    projectPath: "/repo",
+    sessionName: "session-1",
+    contextId: "run-1.api",
+    workplace: {
+      kind: "current",
+      runId: "run-1",
+      role: "implementer",
+      worktreePath: "/repo/.worktrees/session-1.api",
+      branch: "csm/session-1-api",
+      validationAccess: ["typecheck"],
+    },
+    ...overrides,
+  };
+}
+
 describe("createProductionValidationCallerResolver", () => {
+  it("resolves a run seat to its own lane worktree and frozen access, never the session's", async () => {
+    const resolver = createProductionValidationCallerResolver(
+      resolverDeps({ session: session(), seats: { "conv-seat": laneSeat() } }),
+    );
+
+    await expect(
+      resolver.resolveCaller({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        conversationId: "conv-seat",
+      }),
+    ).resolves.toEqual({
+      kind: "run_seat",
+      worktreePath: "/repo/.worktrees/session-1.api",
+      sessionName: "session-1",
+      branchName: "csm/session-1-api",
+      targetBranch: "csm/session-1",
+      contextId: "run-1.api",
+      role: "implementer",
+      allowedCommands: ["typecheck"],
+    });
+  });
+
+  it("resolves a session-placed run seat to the session worktree, diffed against the session's target", async () => {
+    const resolver = createProductionValidationCallerResolver(
+      resolverDeps({
+        session: session(),
+        seats: {
+          "conv-reviewer": laneSeat({
+            workplace: {
+              kind: "current",
+              runId: "run-1",
+              role: "reviewer",
+              worktreePath: "/repo/.worktrees/session-1",
+              branch: null,
+              validationAccess: [],
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(
+      resolver.resolveCaller({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        conversationId: "conv-reviewer",
+      }),
+    ).resolves.toMatchObject({
+      kind: "run_seat",
+      worktreePath: "/repo/.worktrees/session-1",
+      branchName: "csm/session-1",
+      targetBranch: "main",
+      role: "reviewer",
+      allowedCommands: [],
+    });
+  });
+
+  it("refuses a run seat it cannot place rather than validating the session worktree", async () => {
+    const resolver = createProductionValidationCallerResolver(
+      resolverDeps({
+        session: session(),
+        seats: {
+          replaced: laneSeat({
+            workplace: {
+              kind: "refused",
+              reason:
+                "This conversation is not a current seat of context run-1.api",
+            },
+          }),
+          elsewhere: laneSeat({ sessionName: "session-2" }),
+          claiming: laneSeat(),
+          current: laneSeat(),
+        },
+      }),
+    );
+    const call = (conversationId: string, sessionName: string | null) =>
+      resolver.resolveCaller({
+        projectPath: "/repo",
+        sessionName,
+        conversationId,
+        ...(conversationId === "claiming"
+          ? {
+              claimedWorkflow: {
+                executionId: "exec-1",
+                contextId: "run-1.api",
+              },
+            }
+          : {}),
+      });
+
+    await expect(call("replaced", "session-1")).resolves.toEqual({
+      kind: "ambiguous",
+      reason: "This conversation is not a current seat of context run-1.api",
+    });
+    for (const refused of [
+      call("elsewhere", "session-1"),
+      call("current", null),
+      call("claiming", "session-1"),
+    ])
+      await expect(refused).resolves.toMatchObject({ kind: "ambiguous" });
+  });
+
   it("resolves a lane conversation to its lane worktree before any context has committed", async () => {
     const resolver = createProductionValidationCallerResolver(
       resolverDeps({ session: session(), execution: activeLaneExecution() }),
@@ -575,6 +701,7 @@ function createPersistedPolicyService(
       },
     },
     resolver: createProductionValidationCallerResolver({
+      seatWorkplace: async () => null,
       getSession: (projectPath, sessionName) =>
         reloadedStore.getSession(projectPath, sessionName),
       getActiveGraphWorkflowExecution: (projectPath, sessionName) =>

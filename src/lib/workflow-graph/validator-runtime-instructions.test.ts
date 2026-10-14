@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareRuntimeInstructions } from "@/lib/workflows/conversation/runtime-instructions";
+import { prepareRuntimeInstructions } from "@/lib/conversation-core/turn/runtime-instructions";
 import {
   createActorDependenciesFixture,
   groupActorFixtureDependencies,

@@ -451,6 +451,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0065-subscription-wait-generations",
       "0066-repair-imported-notice-history",
       "0067-retire-consumed-finite-wait-sources",
+      "0068-run-subscription-source",
     ]);
   });
 

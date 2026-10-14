@@ -2,8 +2,9 @@
 /**
  * The HTTP half of workflow mutation authority (D7 R9.1/R9.4).
  *
- * {@link ./request-principal} decides WHO is calling and WHETHER they may act;
- * this turns those answers into the one refusal vocabulary every mutation route
+ * The agent gateway's request principal decides WHO is calling and
+ * {@link ./request-principal} WHETHER they may act; this turns those answers
+ * into the one refusal vocabulary every mutation route
  * speaks. It lives apart from any single route module because three of them —
  * the lifecycle verbs, live edit, and charter amendment — must answer from the
  * SAME policy: a caller refused by one must not be admitted by another simply
@@ -42,37 +43,16 @@ import {
 } from "./principal-fence";
 import {
   authorizeExecutionMutation,
-  classifyWorkflowRequestPrincipal,
   type ExecutionMutationAuthority,
-  type WorkflowRequestPrincipal,
 } from "./request-principal";
+import {
+  classifyRoutePrincipal,
+  invalidTokenResponse,
+  type WorkflowMutationGuardDeps,
+  type WorkflowRequestPrincipal,
+} from "@/lib/agent-gateway/request-principal";
 
 const logger = createLogger("graph-workflow");
-
-/**
- * What a route must supply to be guarded. All optional so a production route
- * inherits the registered verifiers and a test injects its own; the defaults
- * are resolved per call rather than at module scope, because building a
- * verifier reads the config directory and doing that during the build's module
- * evaluation reads the BUILD machine's config rather than the server's.
- */
-export interface WorkflowMutationGuardDeps {
-  auth?: {
-    validateOptionalToken(request: Request): Promise<OptionalTokenValidation>;
-  };
-  readConversationIdentity?(
-    request: Request,
-  ): Promise<ConversationIdentityReading>;
-  readLaneIdentity?(request: Request): Promise<LaneIdentityReading>;
-}
-
-/** The 401 for a presented instance token that is not the expected one. */
-export function invalidTokenResponse(): Response {
-  return NextResponse.json(
-    { error: "Invalid Command Center API token" },
-    { status: 401 },
-  );
-}
 
 /**
  * The refusal for an agent that could not prove which conversation it is.
@@ -132,27 +112,8 @@ export function nonOriginPrincipalResponse(input: {
   );
 }
 
-export function classifyRoutePrincipal(
-  request: Request,
-  session: SessionState,
-  deps: WorkflowMutationGuardDeps,
-) {
-  return classifyWorkflowRequestPrincipal(
-    request,
-    {
-      sessionName: session.sessionName,
-      conversationIds: session.conversations.map(
-        (conversation) => conversation.id,
-      ),
-    },
-    {
-      validateOptionalToken: (req) => validateTransport(req, deps),
-      readConversationIdentity: (req) => verifyConversation(req, deps),
-      readLaneIdentity: (req) => verifyLane(req, deps),
-    },
-  );
-}
-
+// Private to the human-only guard below; the route principal's own copies live
+// with `classifyRoutePrincipal` in the agent gateway.
 function validateTransport(
   request: Request,
   deps: WorkflowMutationGuardDeps,

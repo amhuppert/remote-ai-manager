@@ -1,4 +1,4 @@
-import { ManagedConversationRuntime } from "@/lib/workflows/conversation/runtime-binding";
+import { ManagedConversationRuntime } from "@/lib/conversation-core/turn/runtime-binding";
 import { describe, expect, it } from "vitest";
 import type {
   CaptureHandoffInput,

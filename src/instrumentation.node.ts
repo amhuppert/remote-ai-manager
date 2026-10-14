@@ -75,6 +75,15 @@ export interface StartupDeps {
   /** Starts active wait reconciliation after source recovery and actor rehydration. */
   startActiveSubscriptionWakes?(): Promise<void>;
   /**
+   * Settles seat turns the last process left running, restores every active
+   * Run paused, and reconciles owners with open intents. Optional so a test
+   * that is not about Runs need not supply it.
+   */
+  bootSupervision?(): Promise<{
+    restoredRuns: number;
+    reconciledOwners: number;
+  }>;
+  /**
    * Deletes `refs/cc-merges/` refs no job row still holds. Optional so a test
    * that is not about parked refs need not supply it.
    */
@@ -153,6 +162,10 @@ const defaultStartupDeps: StartupDeps = {
       repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
       now: () => new Date().toISOString(),
     }),
+  bootSupervision: async () => {
+    const { bootSupervision } = await import("./lib/supervision/production");
+    return bootSupervision();
+  },
   recoverInterruptedSubscriptionDeliveries: async () => {
     const { recoverInterruptedSubscriptionDeliveries } =
       await import("./lib/subscriptions/service-factory");
@@ -175,6 +188,15 @@ const defaultStartupDeps: StartupDeps = {
       const { stopActiveSubscriptionWakes } =
         await import("./lib/subscriptions/active-wait-production");
       await stopActiveSubscriptionWakes();
+      try {
+        const { shutdownSupervision } =
+          await import("./lib/supervision/production");
+        await shutdownSupervision();
+      } catch (error) {
+        logger.error("shutdown.run_supervision_failed", {
+          error: getErrorMessage(error),
+        });
+      }
       await stopAllConversationActors();
     });
   },
@@ -377,6 +399,19 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.conversation_rehydration_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // Runs restore after seat conversations rehydrate: a restored Run is paused,
+    // so nothing it owns starts until someone resumes it.
+    try {
+      const booted = await deps.bootSupervision?.();
+      if (booted !== undefined && booted.restoredRuns > 0) {
+        logger.info("startup.runs_restored_paused", { ...booted });
+      }
+    } catch (err) {
+      logger.error("startup.run_supervision_boot_failed", {
         error: getErrorMessage(err),
       });
     }

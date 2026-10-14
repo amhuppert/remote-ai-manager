@@ -158,6 +158,9 @@ async function setup() {
           return null;
         },
         markBatchQueued: (id) => repo.markBatchQueued(id, at),
+        async releaseUnsentBatch(id) {
+          await repo.releaseUnsent(id, at);
+        },
         settleBatch: (id, state, error) =>
           repo.settleBatch(id, state, at, error ?? null),
       },

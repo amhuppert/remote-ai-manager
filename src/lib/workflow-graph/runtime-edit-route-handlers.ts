@@ -18,11 +18,8 @@ import type {
   LiveEditApplyRequest,
   LiveEditFailure,
 } from "./live-edit-apply";
-import {
-  guardExecutionMutation,
-  runPinnedMutation,
-  type WorkflowMutationGuardDeps,
-} from "./mutation-guard";
+import { guardExecutionMutation, runPinnedMutation } from "./mutation-guard";
+import { type WorkflowMutationGuardDeps } from "@/lib/agent-gateway/request-principal";
 import { applyProductionGraphWorkflowLiveEdits } from "./production";
 
 type RouteContext = {
