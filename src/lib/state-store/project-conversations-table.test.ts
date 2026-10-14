@@ -32,7 +32,7 @@ describe("project_conversations table DDL", () => {
     expect(cols).toContain("open");
     expect(cols).toContain("archived");
     expect(cols).toContain("status");
-    expect(cols).toContain("machine_snapshot");
+    expect(cols).not.toContain("machine_snapshot");
     expect(cols).toContain("unread");
     expect(cols).not.toContain("session_name");
   });

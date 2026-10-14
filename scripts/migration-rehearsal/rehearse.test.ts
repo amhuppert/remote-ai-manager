@@ -102,7 +102,7 @@ describe("rehearseMigrations", () => {
 
     const result = await rehearseMigrations(
       { from: source, to: scratch },
-      deps(),
+      deps({ migrations: [] }),
     );
 
     expect(result).toMatchObject({
@@ -127,16 +127,17 @@ describe("rehearseMigrations", () => {
       deps({ migrations: [...productionMigrations, PROBE] }),
     );
 
+    const pending = [
+      ...productionMigrations.map((migration) => migration.name),
+      PROBE.name,
+    ];
     expect(result).toMatchObject({
       ok: true,
       report: {
-        pendingBefore: [PROBE.name],
-        applied: [PROBE.name],
-        schemaChanges: {
-          added: ["table rehearsal_probe"],
-          removed: [],
-          changed: [],
-        },
+        pendingBefore: pending,
+        applied: pending,
+        schemaChanges: { added: ["table rehearsal_probe"] },
+        after: { integrityProblems: [], foreignKeyViolations: 0 },
       },
     });
   });

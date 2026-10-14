@@ -327,9 +327,9 @@ export function planRun(facts: RunFacts, observed: ObservedContexts): RunPlan {
   /**
    * Unpublished lanes `c` waits for. A lane context waits for the lanes whose
    * code it needs through its taken routes. A publication changes the session
-   * worktree, so a session context waits for every lane that may still publish
-   * and does not wait for it: a skipped route can drop the dependency that
-   * ordered it after a lane. The compiler refuses a writer any lane waits for.
+   * worktree, so a session context, reader or writer, waits for every lane
+   * that may still publish and does not wait for it: a skipped route can drop
+   * the dependency that ordered it after a lane.
    */
   const awaitedPublications = (c: RunDefinitionContext): string[] => {
     if (c.lane !== undefined) return codeFromLanes(c);

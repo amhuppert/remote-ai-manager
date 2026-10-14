@@ -481,8 +481,8 @@ const PROJECT_SCOPE_INVOCATIONS: {
     argv: [
       "subscription",
       "wait",
-      "workflow",
-      "execution-one",
+      "validation",
+      "run-one",
       "--reason",
       "Continue after completion",
     ],
@@ -787,21 +787,6 @@ const PROJECT_SCOPE_INVOCATIONS: {
     },
   },
   {
-    name: "spec abandon",
-    argv: ["spec", "abandon", "feat", "--reason", "x"],
-    body: { spec: { slug: "feat", status: "abandoned" } },
-  },
-  {
-    name: "workflow list",
-    argv: ["workflow", "list"],
-    body: { workflows: [] },
-  },
-  {
-    name: "workflow templates",
-    argv: ["workflow", "templates"],
-    body: { templates: [] },
-  },
-  {
     name: "validate list",
     argv: ["validate", "list"],
     body: {
@@ -856,14 +841,9 @@ describe("route enumeration", () => {
     ).toBeNull();
   });
 
-  it("matches a known concrete route and a catch-all route", () => {
+  it("matches a known concrete route", () => {
     expect(
       findRoute("/api/projects/cc/conversations/conv-1/ask"),
-    ).not.toBeNull();
-    expect(
-      findRoute(
-        "/api/projects/cc/sessions/s1/graph-workflow/shared-documents/a/b.md",
-      ),
     ).not.toBeNull();
   });
 
@@ -961,66 +941,6 @@ describe("session commands reach real session route modules", () => {
         contextIds: ["run-1.notes"],
         progress: { kind: "running" },
         ownerConversationId: "conv-1",
-      },
-    },
-    {
-      name: "workflow run",
-      argv: [
-        "workflow",
-        "run",
-        "--file",
-        "/tmp/plan.json",
-        "--session",
-        "sess",
-      ],
-      body: {
-        receipt: {
-          executionId: "exec-7",
-          status: "running",
-          origin: { kind: "one_off", planName: "One off" },
-          originConversationId: "conv-1",
-          deepLink: "/projects/cc/sessions/sess/workflow?execution=exec-7",
-          startedAt: "2026-08-14T12:00:00.000Z",
-        },
-      },
-    },
-    {
-      name: "workflow wait",
-      argv: [
-        "workflow",
-        "wait",
-        "exec-7",
-        "--session",
-        "sess",
-        "--timeout",
-        "1ms",
-      ],
-      body: { result: null },
-    },
-    {
-      name: "workflow status by id",
-      argv: ["workflow", "status", "exec-7", "--session", "sess"],
-      body: { execution: null },
-    },
-    {
-      name: "workflow abandon",
-      argv: [
-        "workflow",
-        "abandon",
-        "exec-7",
-        "--reason",
-        "superseded",
-        "--session",
-        "sess",
-      ],
-      body: {
-        abandoned: true,
-        execution: {
-          executionId: "exec-7",
-          status: "halted",
-          origin: { kind: "one_off", planName: "One off" },
-          archived: true,
-        },
       },
     },
   ] as const;

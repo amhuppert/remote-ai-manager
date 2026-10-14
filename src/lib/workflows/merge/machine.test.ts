@@ -366,7 +366,7 @@ describe("mergeMachine", () => {
   });
 
   describe("happy path without conflicts", () => {
-    it("transitions: classifyingWorktree → mergingMain → validating → preparing → publishing → completed", async () => {
+    it("transitions: classifyingWorktree → mergingMain → validating → preparing → publishingCandidate → completed", async () => {
       const states: string[] = [];
       const machine = createTestMachine();
       const actor = createActor(machine, { input: defaultInput });
@@ -383,7 +383,7 @@ describe("mergeMachine", () => {
       expect(states).toContain("mergingMain");
       expect(states).toContain("validating");
       expect(states).toContain("preparing");
-      expect(states).toContain("publishing");
+      expect(states).toContain("publishingCandidate");
       expect(states).toContain("completed");
     });
   });
@@ -1498,7 +1498,7 @@ describe("mergeMachine", () => {
       expect(states).toContain("fixingValidation");
       expect(states).toContain("revalidating");
       expect(states).toContain("preparing");
-      expect(states).toContain("publishing");
+      expect(states).toContain("publishingCandidate");
     });
   });
 
@@ -1818,7 +1818,7 @@ describe("mergeMachine", () => {
       expect(states).not.toContain("committingUncommitted");
       expect(states).not.toContain("mergingMain");
       expect(states).not.toContain("preparing");
-      expect(states).not.toContain("publishing");
+      expect(states).not.toContain("publishingCandidate");
     });
 
     it("halts in failed state when worktree HEAD is detached", async () => {
@@ -1919,7 +1919,7 @@ describe("mergeMachine", () => {
 
       expect(states).toContain("verifyingBranch");
       expect(states).toContain("preparing");
-      expect(states).toContain("publishing");
+      expect(states).toContain("publishingCandidate");
     });
 
     it("includes analyzing-conflicts phase when autoResolve is false", async () => {

@@ -341,8 +341,6 @@ describe("shared spec contracts", () => {
     "spec-changed",
     "spec-revision-changed",
     "spec-approval-changed",
-    "spec-execution-changed",
-    "spec-evidence-changed",
     "spec-attention-changed",
     "spec-review-commented",
     "spec-review-changes-requested",

@@ -93,7 +93,6 @@ async function approveAndSignOff(specId: string, revisionId: string) {
     subjects: [
       { subjectKind: "requirement", elementId: "requirement-1" },
       { subjectKind: "decision", elementId: "decision-1" },
-      { subjectKind: "plan", elementId: null },
     ],
     approver: "alex",
     expectedReviewHash: await reviewHash(revisionId),
@@ -155,21 +154,6 @@ async function createPopulatedSpec() {
         tracedRequirementElementIds: ["requirement-1"],
       },
     },
-    {
-      elementId: "task-1",
-      kind: "task" as const,
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task" as const,
-        title: "Implement lifecycle",
-        instructions: "Implement the lifecycle.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: ["decision-1"],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
-      },
-    },
   ]) {
     if (element.kind === "decision") {
       await specs.advanceDraftAuthoringStage({
@@ -177,14 +161,6 @@ async function createPopulatedSpec() {
         revisionId: created.draft.id,
         expectedStage: "requirements",
         targetStage: "design",
-      });
-    }
-    if (element.kind === "task") {
-      await specs.advanceDraftAuthoringStage({
-        specId: created.spec.id,
-        revisionId: created.draft.id,
-        expectedStage: "design",
-        targetStage: "plan",
       });
     }
     await authoring.upsertDraftElement({

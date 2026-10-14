@@ -22,18 +22,6 @@ const grant = (
 });
 
 describe("workspace conflict relation", () => {
-  it("never blocks interactive turns on supervised work or reviews, only on Git operations", () => {
-    for (const other of [
-      grant("interactive_write"),
-      grant("scoped_write", ["src/a"]),
-      grant("full_write"),
-      grant("stable_read"),
-    ]) {
-      expect(grantsConflict(grant("interactive_write"), other)).toBe(false);
-    }
-    expect(grantsConflict(grant("interactive_write"), grant("git"))).toBe(true);
-  });
-
   it("lets scoped writers overlap only when their scopes are disjoint", () => {
     expect(
       grantsConflict(
@@ -70,8 +58,14 @@ describe("workspace conflict relation", () => {
     );
   });
 
-  it("serializes Git operations against every write and stable read, and nothing across worktrees", () => {
-    expect(grantsConflict(grant("git"), grant("stable_read"))).toBe(true);
+  it("serializes Git operations against every supervised use and each other, and nothing across worktrees", () => {
+    for (const other of [
+      grant("scoped_write", ["src/a"]),
+      grant("full_write"),
+      grant("stable_read"),
+      grant("git"),
+    ])
+      expect(grantsConflict(grant("git"), other)).toBe(true);
     expect(grantsConflict(grant("git"), grant("observe"))).toBe(false);
     expect(
       grantsConflict(
@@ -173,14 +167,12 @@ describe("workspace admission", () => {
     const admission = createWorkspaceAdmission();
     const writer = admission.tryAcquire(grant("scoped_write", ["src/api"]));
     expect(writer).not.toBeNull();
-    expect(admission.tryAcquire(grant("interactive_write"))).not.toBeNull();
+    const reader = admission.tryAcquire(grant("stable_read", ["docs"]));
+    expect(reader).not.toBeNull();
 
     const publication = admission.acquire(grant("git"));
     // A later compatible writer must not overtake the waiting publication.
     expect(admission.tryAcquire(grant("scoped_write", ["src/ui"]))).toBeNull();
-    expect(admission.blockers(grant("git")).map((g) => g.kind)).toEqual(
-      expect.arrayContaining(["scoped_write", "interactive_write"]),
-    );
 
     let granted = false;
     void publication.then(() => {
@@ -195,9 +187,41 @@ describe("workspace admission", () => {
     expect(granted).toBe(true);
   });
 
+  it("names as a waiting request's blockers the conflicting grants held and only the conflicting waiters ahead of it", () => {
+    const admission = createWorkspaceAdmission();
+    admission.tryAcquire({
+      ...grant("scoped_write", ["src/api"]),
+      holder: "seat-a",
+    });
+    admission.tryAcquire({
+      ...grant("scoped_write", ["docs"]),
+      holder: "seat-b",
+    });
+    const first = { ...grant("git"), holder: "publish-1" };
+    const second = { ...grant("full_write"), holder: "seat-c" };
+    void admission.acquire(first).catch(() => {});
+    void admission.acquire(second).catch(() => {});
+
+    expect(admission.blockers(first).map((g) => g.holder)).toEqual([
+      "seat-a",
+      "seat-b",
+    ]);
+    expect(admission.blockers(second).map((g) => g.holder)).toEqual([
+      "seat-a",
+      "seat-b",
+      "publish-1",
+    ]);
+    // A request not yet waiting would queue behind every conflicting waiter.
+    expect(
+      admission
+        .blockers({ ...grant("stable_read", ["src/ui"]), holder: "review" })
+        .map((g) => g.holder),
+    ).toEqual(["publish-1", "seat-c"]);
+  });
+
   it("stops listening for its caller's stop once a waiting request is granted", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire(grant("interactive_write"));
+    const turn = admission.tryAcquire(grant("full_write"));
     if (turn === null) throw new Error("no grant");
     const controller = new AbortController();
     const waiting = admission.acquire(grant("git"), controller.signal);
@@ -209,7 +233,9 @@ describe("workspace admission", () => {
 
   it("refuses a request whose caller has already stopped, instead of queueing it behind a holder", async () => {
     const admission = createWorkspaceAdmission();
-    expect(admission.tryAcquire(grant("interactive_write"))).not.toBeNull();
+    expect(
+      admission.tryAcquire(grant("scoped_write", ["docs"])),
+    ).not.toBeNull();
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -233,33 +259,5 @@ describe("workspace admission change signal", () => {
     admission.release(held);
     await waiting;
     expect(woke).toBe(true);
-  });
-
-  it("starts an interactive turn beside a Git operation that is only waiting, so a person never waits behind supervised work", async () => {
-    const admission = createWorkspaceAdmission();
-    const worktree = "/repo/.worktrees/session";
-    const seat = admission.tryAcquire({
-      worktree,
-      kind: "full_write",
-      holder: "seat",
-    });
-    const publication = admission.acquire({
-      worktree,
-      kind: "git",
-      holder: "publish",
-    });
-    expect(
-      admission.tryAcquire({
-        worktree,
-        kind: "interactive_write",
-        holder: "owner-turn",
-      }),
-    ).not.toBeNull();
-    if (seat !== null) admission.release(seat);
-    // The publication still waits for the owner's turn it now conflicts with.
-    let admitted = false;
-    void publication.then(() => (admitted = true));
-    await Promise.resolve();
-    expect(admitted).toBe(false);
   });
 });

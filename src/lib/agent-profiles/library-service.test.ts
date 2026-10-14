@@ -575,7 +575,7 @@ describe("agent profile library — deletion preview (R15.1)", () => {
   it("re-asks on every call rather than answering from the previous scan", async () => {
     await library.previewDeletion(PROJECT_PATH, refOf("global", "reviewer"));
     referenceAnswer = {
-      runTemplates: [],
+      runTemplates: [HOLDER],
     };
     const second = await library.previewDeletion(
       PROJECT_PATH,

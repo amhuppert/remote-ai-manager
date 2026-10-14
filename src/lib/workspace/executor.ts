@@ -17,6 +17,7 @@ import {
   laneJobId,
   workspaceOperationSchema,
   type LaneTarget,
+  type PublicationWait,
   type WorkspaceBindingRecord,
   type WorkspaceBindingRequest,
   type WorkspaceOperation,
@@ -49,6 +50,8 @@ export interface WorkspaceExecutorDeps {
   }): Promise<CheckRunResult>;
   touchRequester(owner: OwnerRef): void;
   now(): string;
+  /** Overrides `RETRY_MS`; only tests shorten it. */
+  retryMs?: number;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -62,6 +65,11 @@ export interface WorkspaceExecutorDeps {
 export interface WorkspaceExecutor extends Executor {
   /** Stops an admitted operation's model work; its effects settle before it reports. */
   interrupt(cause: string): void;
+  /**
+   * What a publication waits for now: running, or queued behind another
+   * lane's publication into its session. Null when it is not waiting.
+   */
+  waitingOn(cause: string): PublicationWait | null;
   releaseBinding(bindingId: string): void;
   /**
    * Boot: an operation interrupted mid-run runs again, except a landing or
@@ -77,8 +85,8 @@ function scopePaths(scope: WorkspaceScope): string[] | undefined {
   return scope.mode === "owned" ? scope.paths : undefined;
 }
 
-/** How long publication lets a CC commit or merge job keep the session before trying its lock again. */
-const LOCK_RETRY_MS = 500;
+/** How long publication lets a CC job or a Git lock keep the session before looking again. */
+const RETRY_MS = 500;
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -112,18 +120,83 @@ interface Held {
   grants: Grant[];
 }
 
+/** What a running operation waits for, as it stands: a grant wait keeps its request so its holders read current. */
+type Wait =
+  | { kind: "grants"; request: GrantRequest }
+  | Extract<PublicationWait, { kind: "session_lock" | "git_lock" }>;
+
+/** Publication's final step: its outcome, or a Git lock in the session's way. */
+type FinalStep<T> = { done: T } | { gitLocked: string };
+
+function sameWait(a: Wait, b: Wait): boolean {
+  if (a.kind === "grants" || b.kind === "grants") return a.kind === b.kind;
+  if (a.kind === "session_lock" && b.kind === "session_lock")
+    return a.job?.jobId === b.job?.jobId;
+  return a.kind === "git_lock" && b.kind === "git_lock" && a.lock === b.lock;
+}
+
 export function createWorkspaceExecutor(
   deps: WorkspaceExecutorDeps,
 ): WorkspaceExecutor {
   const runningBindings = new Set<string>();
   /**
-   * Session worktrees a publication is running into. Publications into one
-   * session run one at a time, so each merges the result of the one before
-   * instead of finding the head it checked has moved.
+   * Session worktrees a publication is running into, with that publication.
+   * Publications into one session run one at a time, so each merges the
+   * result of the one before instead of finding the head it checked has moved.
    */
-  const publishingInto = new Set<string>();
+  const publishingInto = new Map<string, { cause: string; laneId: string }>();
   const inFlight = new Set<Promise<void>>();
   const controllers = new Map<string, AbortController>();
+  /** Why each waiting operation waits, by cause, and since when (ms); in memory only. */
+  const waits = new Map<
+    string,
+    { wait: Wait; since: number; laneId: string }
+  >();
+
+  /** The holders a wait names: the causes holding conflicting grants, the job, or the lock file. */
+  function holdersOf(wait: Wait): string[] {
+    switch (wait.kind) {
+      case "grants":
+        return deps.admission
+          .blockers(wait.request)
+          .map((grant) => grant.holder);
+      case "session_lock":
+        return wait.job === null
+          ? []
+          : [`${wait.job.jobType} job ${wait.job.jobId}`];
+      case "git_lock":
+        return [wait.lock];
+    }
+  }
+
+  /** Records what an operation waits for; a new reason ends the wait before it. */
+  function waitFor(cause: string, laneId: string, wait: Wait): void {
+    const current = waits.get(cause);
+    if (current !== undefined && sameWait(current.wait, wait)) {
+      current.wait = wait;
+      return;
+    }
+    waitEnded(cause);
+    waits.set(cause, { wait, since: Date.now(), laneId });
+    deps.log.info("workspace.publication_waiting", {
+      cause,
+      laneId,
+      reason: wait.kind,
+      holders: holdersOf(wait),
+    });
+  }
+
+  function waitEnded(cause: string): void {
+    const current = waits.get(cause);
+    if (current === undefined) return;
+    waits.delete(cause);
+    deps.log.info("workspace.publication_wait_ended", {
+      cause,
+      laneId: current.laneId,
+      reason: current.wait.kind,
+      durationMs: Date.now() - current.since,
+    });
+  }
 
   function settle(record: WorkspaceOperationRecord, outcome: unknown): void {
     deps.transaction(() =>
@@ -163,8 +236,8 @@ export function createWorkspaceExecutor(
 
   /**
    * The grant an operation is admitted under; a bind and a provision need
-   * none. A publication is admitted holding the session worktree and takes
-   * its other grants as it goes.
+   * none. A publication is admitted holding the lane worktree and takes the
+   * session's grant for its final step.
    */
   function grantFor(
     record: WorkspaceOperationRecord,
@@ -172,7 +245,7 @@ export function createWorkspaceExecutor(
   ): GrantRequest | null {
     if (operation.kind === "bind" || operation.kind === "provision")
       return null;
-    // Admitted holding the lane; it takes the session only briefly, twice.
+    // Admitted holding the lane; it takes the session only for its final step.
     if (operation.kind === "publish")
       return {
         worktree: operation.lane.worktreePath,
@@ -324,11 +397,12 @@ export function createWorkspaceExecutor(
   }
 
   /**
-   * Design §6.5. Admitted holding the lane: capture the session head under a
-   * short hold on the session, integrate it into the lane with the session
-   * free, then take the session and the session's Git lock together, never
-   * waiting for one while holding the other, for the final checks and the
-   * publication, which the lane Git port makes as one step.
+   * Design §6.5, amended 2026-10-14 §2.2. Admitted holding the lane: read the
+   * session head (a ref read touches no worktree, so it takes no grant),
+   * integrate it into the lane with the session free, then take the session
+   * and the session's Git lock together, never waiting for one while holding
+   * the other, for the final checks and the publication, which the lane Git
+   * port makes as one step.
    */
   async function publish(
     record: WorkspaceOperationRecord,
@@ -350,17 +424,11 @@ export function createWorkspaceExecutor(
         kind: "publication_failed",
         detail: `The lane holds changes no context landed: ${stray.join(", ")}. Commit or remove them in ${lane.worktreePath}, then ask for a new attempt.`,
       };
-    const capture = await take(
-      { worktree: lane.sessionWorktreePath, kind: "git", holder: record.cause },
-      signal,
-      held,
-    );
-    if (capture === null) return STOPPED;
-    // Each wait for the session is an admission point: a pause or fault that
-    // landed while it waited stops it here, before it reads or moves anything.
+    // A stop, pause or fault that landed while it inspected the lane stops it
+    // here, before it reads or moves anything.
+    if (signal.aborted) return STOPPED;
     if (!stillAdmitted(record)) return UNADMITTED;
     const head = await deps.lanes.head(lane.projectPath, lane.sessionBranch);
-    letGo(capture, held);
     // Kept with the running operation, so a restart can name what a found publication incorporated.
     deps.transaction(() =>
       deps.repo.updateOperation(record.cause, {
@@ -383,8 +451,10 @@ export function createWorkspaceExecutor(
       record.cause,
       signal,
       held,
-      async () => {
-        if (!stillAdmitted(record)) return UNADMITTED;
+      async (): Promise<FinalStep<unknown>> => {
+        // Each wait for the session is an admission point: a pause or fault
+        // that landed while it waited stops it here, before it moves anything.
+        if (!stillAdmitted(record)) return { done: UNADMITTED };
         const published = await deps.lanes.publish({
           projectPath: lane.projectPath,
           sessionName: lane.sessionName,
@@ -398,23 +468,30 @@ export function createWorkspaceExecutor(
         switch (published.kind) {
           case "published":
             return {
-              kind: "published",
-              commit: published.commit,
-              incorporated: head,
+              done: {
+                kind: "published",
+                commit: published.commit,
+                incorporated: head,
+              },
             };
           case "unchanged":
-            return { kind: "published", commit: head, incorporated: head };
-          case "stale":
-            return { kind: "publication_stale", head: published.head };
-          case "blocked":
-            return { kind: "publish_blocked", detail: published.detail };
-          case "failed":
-            return { kind: "publication_failed", detail: published.detail };
-          case "refresh_failed":
             return {
-              kind: "publication_uncertain",
-              detail: `Branch ${lane.sessionBranch} now holds the publication ${published.commit}, but the session worktree could not be brought to it: ${published.detail}. Bring ${lane.sessionWorktreePath} to ${published.commit} once nothing in it needs keeping, then ask for a new attempt.`,
+              done: { kind: "published", commit: head, incorporated: head },
             };
+          case "stale":
+            return {
+              done: { kind: "publication_stale", head: published.head },
+            };
+          case "blocked":
+            return {
+              done: { kind: "publish_blocked", detail: published.detail },
+            };
+          case "failed":
+            return {
+              done: { kind: "publication_failed", detail: published.detail },
+            };
+          case "git_locked":
+            return { gitLocked: published.lock };
         }
       },
     );
@@ -423,38 +500,63 @@ export function createWorkspaceExecutor(
 
   /**
    * Runs `step` holding the session worktree's Git grant and the session's Git
-   * lock together, never waiting for one while holding the other. Null when
-   * stopped before it could start.
+   * lock together, never waiting for one while holding the other. When the
+   * step finds a Git lock in its way, it watches that lock file, holding
+   * nothing and running no Git, and runs the step again once the file is gone.
+   * Records what it waits for. Null when stopped before the step could finish.
    */
   async function underSession<T>(
     lane: LaneTarget,
     holder: string,
     signal: AbortSignal,
     held: Held,
-    step: () => Promise<T>,
+    step: () => Promise<FinalStep<T>>,
   ): Promise<T | null> {
-    for (;;) {
-      const session = await take(
-        { worktree: lane.sessionWorktreePath, kind: "git", holder },
-        signal,
-        held,
-      );
-      if (session === null) return null;
-      const unlock = deps.lanes.trySessionLock(
-        lane.projectPath,
-        lane.sessionName,
-      );
-      if (unlock !== null) {
+    const retryMs = deps.retryMs ?? RETRY_MS;
+    try {
+      for (;;) {
+        const request: GrantRequest = {
+          worktree: lane.sessionWorktreePath,
+          kind: "git",
+          holder,
+        };
+        if (deps.admission.blockers(request).length > 0)
+          waitFor(holder, lane.laneId, { kind: "grants", request });
+        const session = await take(request, signal, held);
+        if (session === null) return null;
+        const lock = deps.lanes.trySessionLock(
+          lane.projectPath,
+          lane.sessionName,
+        );
+        if (lock.kind === "busy") {
+          // A CC job holds the session: let its turns use the worktree meanwhile.
+          letGo(session, held);
+          waitFor(holder, lane.laneId, { kind: "session_lock", job: lock.job });
+          await pause(retryMs, signal);
+          if (signal.aborted) return null;
+          continue;
+        }
+        waitEnded(holder);
+        let result: FinalStep<T>;
         try {
-          return await step();
+          result = await step();
         } finally {
-          unlock();
+          lock.release();
           letGo(session, held);
         }
+        if ("done" in result) return result.done;
+        waitFor(holder, lane.laneId, {
+          kind: "git_lock",
+          lock: result.gitLocked,
+        });
+        while (deps.lanes.lockHeld(result.gitLocked)) {
+          await pause(retryMs, signal);
+          if (signal.aborted) return null;
+        }
+        waitEnded(holder);
       }
-      // A CC commit or merge job holds the session: let its turns use the worktree meanwhile.
-      letGo(session, held);
-      await pause(LOCK_RETRY_MS, signal);
+    } finally {
+      waitEnded(holder);
     }
   }
 
@@ -616,7 +718,10 @@ export function createWorkspaceExecutor(
     if (operation.kind === "bind" && !bindAdmissible(operation)) return false;
     if (operation.kind === "publish") {
       if (publishingInto.has(operation.lane.sessionWorktreePath)) return false;
-      publishingInto.add(operation.lane.sessionWorktreePath);
+      publishingInto.set(operation.lane.sessionWorktreePath, {
+        cause: record.cause,
+        laneId: operation.lane.laneId,
+      });
     }
     runningBindings.add(record.bindingId);
     const run = execute(record, operation).finally(() => inFlight.delete(run));
@@ -649,29 +754,11 @@ export function createWorkspaceExecutor(
         typeof progress.incorporated === "string"
           ? progress.incorporated
           : null;
-      // The marker proves the branch moved; the publication is done once the worktree holds it too.
-      const refresh =
-        incorporated === null
-          ? "diverged"
-          : await underSession(
-              lane,
-              record.cause,
-              new AbortController().signal,
-              { grants: [] },
-              () =>
-                deps.lanes.completePublication({
-                  targetWorktreePath: lane.sessionWorktreePath,
-                  from: incorporated,
-                  to: commit,
-                }),
-            );
-      if (
-        incorporated === null ||
-        (refresh !== "complete" && refresh !== "refreshed")
-      )
+      // Git moves the branch only after writing the index and files: the marker on it means done.
+      if (incorporated === null)
         return {
           kind: "publication_uncertain",
-          detail: `Branch ${lane.sessionBranch} holds the publication ${commit}, but after a restart the session worktree could not safely be brought to it: it holds neither the publication nor exactly the tree it replaced, or files the publication would overwrite. Bring ${lane.sessionWorktreePath} to ${commit}, keeping whatever in it is new, then ask for a new attempt.`,
+          detail: `Branch ${lane.sessionBranch} holds the publication ${commit}, but which session head it was checked against was not recorded. Check what ${commit} brought into the session, then ask for a new attempt if the lane still needs publishing.`,
         };
       return { kind: "published", commit, incorporated };
     }
@@ -760,6 +847,25 @@ export function createWorkspaceExecutor(
     },
     interrupt(cause) {
       controllers.get(cause)?.abort();
+    },
+    waitingOn(cause) {
+      const current = waits.get(cause);
+      if (current !== undefined) {
+        if (current.wait.kind !== "grants") return current.wait;
+        const holders = holdersOf(current.wait);
+        return holders.length === 0 ? null : { kind: "grants", holders };
+      }
+      // A queued publication whose session another lane's publication holds.
+      const record = deps.repo.getOperation(cause);
+      if (record?.state !== "queued") return null;
+      const operation = workspaceOperationSchema.safeParse(record.request);
+      if (!operation.success || operation.data.kind !== "publish") return null;
+      const publishing = publishingInto.get(
+        operation.data.lane.sessionWorktreePath,
+      );
+      return publishing === undefined || publishing.cause === cause
+        ? null
+        : { kind: "publication", laneId: publishing.laneId };
     },
     releaseBinding(bindingId) {
       deps.transaction(() => {

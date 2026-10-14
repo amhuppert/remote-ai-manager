@@ -259,7 +259,6 @@ describe("ProjectDetailView", () => {
     expect(
       screen.getByRole("button", { name: /New session/ }),
     ).toBeInTheDocument();
-    expect(screen.getByTitle("Open the Workflow Builder")).toBeInTheDocument();
   });
 
   it("shows the current create-session shortcut on the New session button", async () => {

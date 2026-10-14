@@ -62,11 +62,6 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "A push notification identifies the conversation that raised it; the project conversation notifications route serves project scope.",
   },
-  spec: {
-    support: "project-supported",
-    reason:
-      "Spec authoring endpoints are project-scoped already — the session identity was incidental coupling, and a PLC agent authors specs today.",
-  },
   ticket: {
     support: "project-supported",
     reason:
@@ -76,25 +71,6 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     support: "project-supported",
     reason:
       "Every validate verb addresses the invoking conversation and has matching session/project route adapters; project conversations validate the canonical project root without inventing a session worktree.",
-  },
-  // The `agent` group splits: the RUN verbs execute in a session worktree,
-  // while the profile-library READS are project-scoped. The group default stays
-  // session-only so a new run-shaped verb fails loudly; the library verbs opt
-  // back in explicitly.
-  agent: {
-    support: "session-only",
-    reason:
-      "Group default. Agent runs are recorded against a session and execute in its worktree; no project-root agent-run route exists. Revisit if project-scoped sub-agents are approved.",
-  },
-  "agent list": {
-    support: "project-supported",
-    reason:
-      "The agent profile library is project-scoped: one project route tree reaches all three tiers, and no session, worktree, or run is involved. A planning agent at project scope must be able to discover the profiles it staffs assignments with.",
-  },
-  "agent get": {
-    support: "project-supported",
-    reason:
-      "Reads one library record through the same project-scoped route tree as `agent list`; the qualified tier:id names the record, and nothing about it is session-bound.",
   },
   run: {
     support: "session-only",

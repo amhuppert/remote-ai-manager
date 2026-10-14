@@ -301,7 +301,7 @@ describe("maximal persistence contracts", () => {
             preset: "exploratory",
             overrides: {
               requirements: "gate",
-              delivery: "notify",
+              design: "notify",
             },
           },
           abandonedAt: APPROVED_AT,

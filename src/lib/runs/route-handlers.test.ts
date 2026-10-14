@@ -1420,9 +1420,8 @@ describe("run routes", () => {
   });
 
   it("runs a lane, retries a publication the session's changes blocked, and then runs the work that needs it", async () => {
-    const session = "/repo/.worktrees/session";
     h.laneGit.state.heads.set("csm/session", "h0");
-    h.laneGit.state.dirt.set(session, ["notes.md"]);
+    h.laneGit.state.inTheWay = ["notes.md"];
     await routes.launchWorkflow(
       request(
         {
@@ -1477,7 +1476,7 @@ describe("run routes", () => {
       }),
     ]);
 
-    h.laneGit.state.dirt.set(session, []);
+    h.laneGit.state.inTheWay = [];
     const retried = await routes.control(
       request({ action: "retry", lane: "api" }, identity("owner-1")),
       params({ runId: "run-1" }),
@@ -1491,6 +1490,63 @@ describe("run routes", () => {
     ]);
     expect(h.laneGit.state.removed).toEqual([
       expect.stringContaining("session."),
+    ]);
+  });
+
+  it("shows what a publishing lane waits for, and nothing once it published", async () => {
+    h.laneGit.state.heads.set("csm/session", "h0");
+    h.laneGit.state.lockBusy = Number.MAX_SAFE_INTEGER;
+    h.laneGit.state.lockJob = { jobId: "job-7", jobType: "commit" };
+    await routes.launchWorkflow(
+      request(
+        {
+          title: "Lane",
+          contexts: [{ key: "api", brief: "Build the API", lane: "api" }],
+          lanes: [{ key: "api", checks: [] }],
+        },
+        identity("owner-1"),
+      ),
+      params(),
+    );
+    // Parsed, so the view a waiting lane shows is a valid run view.
+    const show = async () =>
+      runViewSchema.parse(
+        await json(
+          await routes.show(
+            request(null, identity("owner-1"), "GET"),
+            params({ runId: "run-1" }),
+          ),
+        ),
+      );
+    let waiting = await show();
+    for (
+      let tries = 0;
+      tries < 400 && waiting.lanes[0]?.waitingOn == null;
+      tries++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      waiting = await show();
+    }
+    expect(waiting.lanes).toEqual([
+      expect.objectContaining({
+        key: "api",
+        state: "publishing",
+        attempt: 1,
+        waitingOn: {
+          kind: "session_lock",
+          job: { jobId: "job-7", jobType: "commit" },
+        },
+      }),
+    ]);
+
+    h.laneGit.state.lockBusy = 0;
+    await quiesce(supervision);
+    expect((await show()).lanes).toEqual([
+      expect.objectContaining({
+        key: "api",
+        state: "published",
+        waitingOn: null,
+      }),
     ]);
   });
 
@@ -1554,9 +1610,9 @@ describe("run routes", () => {
   });
 
   it("refuses an amendment's unregistered checks only where it can still change them: started work and a provisioned lane keep theirs", async () => {
-    const session = "/repo/.worktrees/session";
     h.laneGit.state.heads.set("csm/session", "h0");
-    h.laneGit.state.dirt.set(session, ["notes.md"]);
+    // Uncommitted work in the lane's way holds the publication, so "integrate" never starts.
+    h.laneGit.state.inTheWay = ["notes.md"];
     const definition = (integrateChecks: string[]) => ({
       title: "Lane then integrate",
       contexts: [

@@ -15,7 +15,7 @@ describe("LimitsSection", () => {
     ).toBeVisible();
     expect(screen.queryByText(/Claude timeout/)).not.toBeInTheDocument();
     expect(screen.getByText(/Max turns/)).toBeVisible();
-    expect(screen.getByText(/Pre-merge timeout/)).toBeVisible();
+    expect(screen.queryByText(/Pre-merge timeout/)).not.toBeInTheDocument();
     expect(screen.getByText("Validation capacity")).toBeVisible();
     expect(screen.getByText("Validation timeout")).toBeVisible();
     expect(

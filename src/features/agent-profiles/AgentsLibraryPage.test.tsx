@@ -448,7 +448,7 @@ describe("AgentsLibraryPage", () => {
     });
     await within(confirmation).findByRole("alert");
     expect(confirmation).toHaveTextContent(
-      /Could not check which workflows reference this profile/,
+      /Could not check which run templates reference this profile/,
     );
 
     const confirm = within(confirmation).getByRole("button", {

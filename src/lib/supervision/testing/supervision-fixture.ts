@@ -190,8 +190,6 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
     custodyFence: null as CustodyRefusedEnd | null,
     /** Custody beginning and ending, as `conversation:held`. */
     custodyChanges: [] as string[],
-    /** How long the server has been up, which bounds the restart fence. */
-    uptimeMs: 60_000,
     /** How many evidence captures fail before they succeed again. */
     evidenceFailures: 0,
     /** What conversations' rows hold; none unless a test composes the real rule. */
@@ -296,7 +294,6 @@ export function createSupervisionHarness(fixture: PersistenceFixture) {
         custodyFence: () => harness.custodyFence,
         custodyChanged: (place, held) =>
           harness.custodyChanges.push(`${place.conversationId}:${held}`),
-        uptimeMs: () => harness.uptimeMs,
         userTurns: {
           async run(input) {
             harness.userMessages.push(input.request.text);

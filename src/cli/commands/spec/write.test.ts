@@ -10,8 +10,6 @@ const CREATED_AT = "2026-07-18T00:00:00.000Z";
 const SPEC_FILE = "/tmp/spec-element.json";
 const DRAFT_FILE = "/tmp/spec-draft-element.json";
 const BATCH_FILE = "/tmp/spec-elements.json";
-const INPUTS_FILE = "/tmp/spec-start-inputs.json";
-const TASK_FILE = "/tmp/spec-discovered-task.json";
 
 const spec = {
   id: "spec-1",
@@ -225,7 +223,6 @@ function taskElementBody() {
       },
     },
     approvals: [],
-    evidenceState: [],
     referenceState: null,
   };
 }
@@ -259,11 +256,9 @@ function makeHost(
       | "draft-batch"
       | "draft-batch-dangling"
       | "rename"
-      | "capture-scope-amendment"
-      | "abandon-spec"
       | "answer-question";
     approved?: boolean;
-    /** Drives the execution_start dial the CLI resolves locally. */
+    /** The gate policy preset the fake server reports for the spec. */
     preset?: SpecGatePreset;
     /** The approval ask was already open, so no second request was created. */
     alreadyRequested?: boolean;
@@ -296,11 +291,6 @@ function makeHost(
     blockingCounts?: readonly number[];
     /** No draft to lint — the shape a server answers a spec with no revision. */
     lintUnavailable?: boolean;
-    /**
-     * The start-execution answer, for the delivery-plan shapes: a launch that
-     * ran an approved candidate, and a park that launched nothing.
-     */
-    startBody?: { body: unknown; status?: number };
   } = {},
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
@@ -504,19 +494,6 @@ function makeHost(
           409,
         );
       }
-      if (options.refusal === "abandon-spec" && action === "abandon-spec") {
-        return response(
-          {
-            code: "human_act_required",
-            unmetConditions: [
-              "abandon-spec is a human-only Spec Studio action.",
-            ],
-            instruction:
-              "Perform this action from the authenticated browser session.",
-          },
-          403,
-        );
-      }
       if (options.refusal === "rename" && action === "rename") {
         return response(
           {
@@ -542,22 +519,6 @@ function makeHost(
               "Perform this action from the authenticated browser session.",
           },
           403,
-        );
-      }
-      if (
-        options.refusal === "capture-scope-amendment" &&
-        action === "capture-scope-amendment"
-      ) {
-        return response(
-          {
-            code: "gate_blocked",
-            unmetConditions: [
-              "Delivery plan attempt attempt-1 is draft and has launched no execution, so there is no run to capture against.",
-            ],
-            instruction:
-              "Nothing was captured. Add the discovered work to the plan itself with `cctl workflow replace definition-1 --file <plan.json>`.",
-          },
-          409,
         );
       }
       if (options.refusal === "draft-batch" && action === "draft-batch") {
@@ -826,13 +787,13 @@ function makeHost(
             });
           }
           return response({
-            // The revision sits at the plan stage while the gate it still owes
-            // is requirements — the shape ticket #42 reported, so any rendering
-            // that reads the stage names the wrong gate. Asking for review
-            // leaves the revision an editable draft.
+            // The revision sits at the design stage while the gate it still
+            // owes is requirements — the shape ticket #42 reported, so any
+            // rendering that reads the stage names the wrong gate. Asking for
+            // review leaves the revision an editable draft.
             revision: {
               ...revision(),
-              authoringStage: "plan",
+              authoringStage: "design",
             },
             diff: { classifications: [], changeList: [], planStale: false },
             absorbedSignOff: false,
@@ -1073,26 +1034,13 @@ function makeHost(
                 : "delivered",
           });
         }
-        case "start-execution":
-          if (options.startBody !== undefined) {
-            return response(
-              options.startBody.body,
-              options.startBody.status ?? 200,
-            );
-          }
-          return response({
-            workflowDefinition: {
-              id: "candidate-1",
-              revision: 4,
-            },
-          });
         case "open-amendment":
           return response({
             revision: {
               ...revision(),
               id: "revision-amendment",
               number: options.skippedWithdrawn === true ? 3 : 2,
-              authoringStage: "plan",
+              authoringStage: "design",
               basedOnRevisionId: "revision-approved",
             },
             skippedWithdrawnRevisions:
@@ -1103,70 +1051,18 @@ function makeHost(
                       id: "revision-withdrawn",
                       number: 2,
                       state: "withdrawn",
-                      authoringStage: "plan",
+                      authoringStage: "design",
                       basedOnRevisionId: "revision-approved",
                     },
                   ]
                 : [],
           });
-        case "abandon-spec":
-          return response({
-            ...spec,
-            abandonedAt: CREATED_AT,
-            abandonedReason: "Superseded",
-          });
-        case "abandon-execution":
-          return response({
-            id: "execution-1",
-            spec_id: spec.id,
-            revision_id: "revision-approved",
-            scope_json: "{}",
-            state: "abandoned",
-            execution_start_dial: "gate",
-            workflow_definition_id: "workflow-1",
-            workflow_definition_revision: 1,
-            workflow_execution_id: "workflow-execution-1",
-            session_name: "feature-session",
-            delivered_at: null,
-            abandoned_reason: "Superseded",
-            cleanup_phase: null,
-            linked_workflow_execution_id: "workflow-execution-1",
-            cleanup_last_error: null,
-            cleanup_last_error_at: null,
-            created_at: CREATED_AT,
-            updated_at: CREATED_AT,
-          });
-        case "capture-scope-amendment": {
-          const body: unknown = JSON.parse(init.body ?? "{}");
-          const blocking =
-            typeof body === "object" &&
-            body !== null &&
-            "blockingReason" in body;
-          return response({
-            discovery: {
-              id: "discovery-1",
-              workflowExecutionId: "workflow-execution-1",
-              attemptId: "attempt-1",
-              title: "Handle the discovered migration",
-            },
-            restartRequired: blocking,
-            replacement: blocking
-              ? {
-                  abandonedExecutionId: "execution-1",
-                  abandonedWorkflowExecutionId: "workflow-execution-1",
-                  replacementAttemptId: "attempt-2",
-                }
-              : null,
-          });
-        }
         default:
           return response({ ok: true });
       }
     },
     async readTextFile(filePath) {
-      return (
-        options.files?.[filePath] ?? (filePath === INPUTS_FILE ? "{}" : null)
-      );
+      return options.files?.[filePath] ?? null;
     },
     async readFileBytes() {
       return null;
@@ -1233,15 +1129,6 @@ const BATCH_DOCUMENT_FILE_CONTENT = JSON.stringify({
 const REMOVALS_ONLY_FILE_CONTENT = JSON.stringify({
   removals: BATCH_REMOVALS,
 });
-const DISCOVERED_TASK_FILE_CONTENT = JSON.stringify({
-  title: "Handle the discovered migration",
-  instructions: "Write the follow-up migration.",
-  tracedRequirementElementIds: ["requirement-id-1"],
-  tracedDecisionElementIds: [],
-  coveredCriterionElementIds: ["criterion-id-1"],
-  dependsOnTaskElementIds: [],
-});
-
 describe("cctl spec write verbs", () => {
   it("reports the deterministic lint delta without making enrichment decide write success", async () => {
     for (const unavailable of [false, true]) {
@@ -1289,7 +1176,7 @@ describe("cctl spec write verbs", () => {
       );
       expect(result.exitCode, result.stdout).toBe(0);
       expect(inlineDataOf(result)).toMatchObject({
-        revision: { state: "draft", authoringStage: "plan" },
+        revision: { state: "draft", authoringStage: "design" },
         approvalRequests: [request],
         pendingBlock: { actsNext: "human" },
         approvalLedger: {
@@ -1331,10 +1218,6 @@ describe("cctl spec write verbs", () => {
       refusal: "rename",
       args: ["rename", "native-sdd", "--to", "renamed-spec"],
     },
-    {
-      refusal: "abandon-spec",
-      args: ["abandon", "native-sdd", "--reason", "Superseded"],
-    },
   ] as const)(
     "preserves the authenticated human-only $refusal instruction",
     async ({ refusal, args }) => {
@@ -1352,23 +1235,6 @@ describe("cctl spec write verbs", () => {
       expect(JSON.parse(result.stdout).instruction.length).toBeGreaterThan(0);
     },
   );
-
-  it("preserves prelaunch capture refusal and the direct graph-authoring remedy", async () => {
-    const result = await runCcWithHost(
-      ["spec", "capture", "native-sdd", "--file", TASK_FILE, "--json"],
-      baseEnv,
-      makeHost({
-        files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
-        refusal: "capture-scope-amendment",
-      }),
-    );
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      effect: "not_applied",
-      error: { details: { serverCode: "gate_blocked" } },
-      instruction: expect.stringContaining("cctl workflow replace"),
-    });
-  });
 
   it("keeps authored refusal fields from forging protocol guidance lines", async () => {
     const result = await runCcWithHost(
@@ -1689,7 +1555,11 @@ describe("cctl spec write verbs", () => {
       "conversation-1",
     );
     expect(inlineDataOf(result)).toMatchObject({
-      revision: { id: "revision-amendment", number: 2, authoringStage: "plan" },
+      revision: {
+        id: "revision-amendment",
+        number: 2,
+        authoringStage: "design",
+      },
     });
   });
 
@@ -2221,24 +2091,6 @@ describe("cctl spec write verbs", () => {
     ]);
   });
 
-  it("resolves an execution's pinned revision from the edit-context read alone", async () => {
-    const host = makeHost({ approved: true });
-    const result = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--file", INPUTS_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
-      "/api/specs/demo/native-sdd/edit-context",
-      "/api/specs/demo/native-sdd/actions/start-execution",
-    ]);
-    expect(
-      JSON.parse(actionRequests(host)[0]?.init.body ?? "{}").revisionId,
-    ).toBe("revision-approved");
-  });
-
   it("resolves every handle spec remove names before submitting one batch", async () => {
     const host = makeHost();
 
@@ -2359,9 +2211,9 @@ describe("cctl spec write verbs", () => {
     const approvalRequests: SpecProposeApprovalRequest[] = [
       { gate: "requirements", outcome: "not-filed", attentionId: null },
       {
-        gate: "plan",
+        gate: "design",
         outcome: "delivery-uncertain",
-        attentionId: "attention-plan",
+        attentionId: "attention-design",
       },
     ];
     const text = await runCcWithHost(
@@ -2380,7 +2232,7 @@ describe("cctl spec write verbs", () => {
     expect(structured.exitCode).toBe(0);
     expect(inlineDataOf(structured)).toMatchObject({ approvalRequests });
     expect(text.stdout).toContain(
-      "request notification repair owed: requirements, plan",
+      "request notification repair owed: requirements, design",
     );
   });
 
@@ -2490,51 +2342,6 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("names the workflow execution an abandon retired and the attempt exit", async () => {
-    const host = makeHost();
-    const result = await runCcWithHost(
-      [
-        "spec",
-        "abandon",
-        "native-sdd",
-        "--execution",
-        "workflow-execution-1",
-        "--reason",
-        "Superseded",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    // The flag is forwarded verbatim: the id an agent holds is the workflow
-    // execution id, and the server resolves it through the binding.
-    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      reason: "Superseded",
-    });
-
-    // I-13: the working exit off an abandoned run is a fresh attempt.
-
-    const structured = await runCcWithHost(
-      [
-        "spec",
-        "abandon",
-        "native-sdd",
-        "--execution",
-        "workflow-execution-1",
-        "--reason",
-        "Superseded",
-        "--json",
-      ],
-      baseEnv,
-      makeHost(),
-    );
-    expect(JSON.parse(structured.stdout).recovery.references).toContainEqual({
-      kind: "workflow-execution",
-      id: "workflow-execution-1",
-    });
-  });
-
   it("posts a rename action with the new slug and optional name", async () => {
     const host = makeHost();
     const result = await runCcWithHost(
@@ -2557,402 +2364,6 @@ describe("cctl spec write verbs", () => {
     expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
       slug: "native-sdd-v2",
       name: "Native SDD v2",
-    });
-  });
-
-  it("16.9 records a discovery and states the two post-launch paths", async () => {
-    const host = makeHost({
-      files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
-    });
-    const result = await runCcWithHost(
-      ["spec", "capture", "native-sdd", "--file", TASK_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    const request = actionRequests(host)[0];
-    expect(new URL(request?.url ?? "").pathname).toBe(
-      "/api/specs/demo/native-sdd/actions/capture-scope-amendment",
-    );
-    expect(request?.init.headers["x-cc-conversation-id"]).toBe(
-      "conversation-1",
-    );
-    // No executionId and no blockingReason key at all — the live attempt names
-    // the run, and blockingReason's mere presence abandons it.
-    expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
-      discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
-    });
-
-    // The two post-launch paths are presented side by side.
-  });
-
-  it("16.9 passes --blocking-reason through and reports both ids", async () => {
-    const host = makeHost({
-      files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
-    });
-    const result = await runCcWithHost(
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--file",
-        TASK_FILE,
-        "--blocking-reason",
-        "Discovered work blocks the run",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
-      blockingReason: "Discovered work blocks the run",
-    });
-
-    // The instruction used to name `replacement.abandonedExecutionId`, the
-    // internal spec execution row id, which no verb accepts. Boundary-matched
-    // because `execution-1` is also the tail of the workflow execution id this
-    // receipt is required to print.
-  });
-
-  it("forwards an explicit --execution as the workflow execution id", async () => {
-    const host = makeHost({
-      files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
-    });
-    const result = await runCcWithHost(
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--execution",
-        "workflow-execution-1",
-        "--file",
-        TASK_FILE,
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
-    });
-  });
-
-  it("names the workflow execution id in every capture receipt token", async () => {
-    const nonBlocking = await runCcWithHost(
-      ["spec", "capture", "native-sdd", "--file", TASK_FILE, "--json"],
-      baseEnv,
-      makeHost({ files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT } }),
-    );
-    expect(JSON.parse(nonBlocking.stdout).recovery.references).toContainEqual({
-      kind: "workflow-execution",
-      id: "workflow-execution-1",
-    });
-
-    const blocking = await runCcWithHost(
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--file",
-        TASK_FILE,
-        "--blocking-reason",
-        "Discovered work blocks the run",
-        "--json",
-      ],
-      baseEnv,
-      makeHost({ files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT } }),
-    );
-    expect(JSON.parse(blocking.stdout).recovery.references).toContainEqual({
-      kind: "workflow-execution",
-      id: "workflow-execution-1",
-    });
-  });
-
-  it("rejects a discovered task that violates the capture schema before network", async () => {
-    const host = makeHost({
-      files: {
-        [TASK_FILE]: JSON.stringify({ title: "Missing instructions" }),
-      },
-    });
-    const result = await runCcWithHost(
-      ["spec", "capture", "native-sdd", "--file", TASK_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
-  });
-});
-
-describe("cctl spec start against a delivery plan", () => {
-  it("forwards an inputs JSON object unchanged and reports every launch identity", async () => {
-    const parameters = {
-      required: "ticket-66",
-      mode: "careful",
-      brief: "Preserve this text exactly.\nIncluding its newline.",
-    };
-    const host = makeHost({
-      approved: true,
-      files: { [INPUTS_FILE]: JSON.stringify(parameters) },
-      startBody: {
-        body: {
-          workflowDefinition: {
-            id: "candidate-1",
-            revision: 4,
-          },
-        },
-      },
-    });
-
-    const result = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--file", INPUTS_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    const started = host.requests.find((request) =>
-      request.url.includes("/actions/start-execution"),
-    );
-    expect(JSON.parse(String(started?.init.body))).toEqual({
-      revisionId: "revision-approved",
-      sessionName: "feature-session",
-      parameters,
-    });
-    expect(inlineDataOf(result)).toMatchObject({});
-    expect(JSON.parse(result.stdout).recovery.references).toContainEqual({
-      kind: "workflow-execution",
-      id: "workflow-execution-1",
-    });
-    expect(JSON.parse(result.stdout).recovery.references).not.toContainEqual({
-      kind: "workflow-execution",
-      id: "execution-1",
-    });
-  });
-
-  it("forwards an explicit empty parameter object", async () => {
-    const host = makeHost({ approved: true });
-
-    const result = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--file", INPUTS_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    const started = host.requests.find((request) =>
-      request.url.includes("/actions/start-execution"),
-    );
-    expect(JSON.parse(String(started?.init.body))).toEqual({
-      revisionId: "revision-approved",
-      sessionName: "feature-session",
-      parameters: {},
-    });
-  });
-
-  it("rejects a non-object execution parameter payload before requests", async () => {
-    const host = makeHost({
-      files: { [INPUTS_FILE]: '["not", "an", "object"]' },
-    });
-    const result = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--file", INPUTS_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-    expect(result.exitCode).toBe(2);
-    expect(JSON.parse(result.stdout).error.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: expect.stringContaining("expected record"),
-        }),
-      ]),
-    );
-    expect(host.requests).toHaveLength(0);
-  });
-});
-
-describe("cctl spec plan abandon", () => {
-  function abandonHost(respond: () => Response): CliHost & {
-    requests: RecordedRequest[];
-  } {
-    const requests: RecordedRequest[] = [];
-    return {
-      requests,
-      async fetch(url, init) {
-        requests.push({ url, init });
-        return respond();
-      },
-      readTextFile: async () => null,
-      readFileBytes: async () => null,
-      sleep: async () => {},
-      platform: "darwin",
-      homedir: "/Users/test",
-    };
-  }
-
-  it("retires the prelaunch attempt through the plan-abandon action", async () => {
-    const host = abandonHost(
-      () =>
-        new Response(JSON.stringify({ attemptId: "attempt-9" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    );
-
-    const result = await runCcWithHost(
-      [
-        "spec",
-        "plan",
-        "abandon",
-        "native-sdd",
-        "--reason",
-        "the spec amended past this attempt's pin",
-        "--json",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr).toBe(0);
-    const posted = host.requests[0];
-    expect(new URL(posted?.url ?? "").pathname).toBe(
-      "/api/specs/demo/native-sdd/actions/plan-abandon",
-    );
-    expect(JSON.parse(String(posted?.init.body))).toEqual({
-      reason: "the spec amended past this attempt's pin",
-    });
-    expect(inlineDataOf(result)).toMatchObject({ attemptId: "attempt-9" });
-  });
-});
-
-describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
-  function planView(
-    status: "draft" | "approved",
-    draftRevision: number,
-  ): unknown {
-    return {
-      attempt: {
-        id: "attempt-1",
-        specSlug: "native-sdd",
-        status,
-        draftRevision,
-        pinnedRevisionId: "revision-approved",
-        deltaBasisExecutionId: null,
-        proposedSnapshotId: status === "approved" ? "snapshot-1" : null,
-        candidateId: status === "approved" ? "candidate-1" : null,
-        candidateHash: status === "approved" ? "sha256:candidate" : null,
-        launchedExecutionId: null,
-        workflowDefinitionId: "wf-1",
-        createdAt: CREATED_AT,
-        updatedAt: CREATED_AT,
-      },
-      approval: null,
-      prelaunch: null,
-      claims: [],
-      reviewStatus: { state: "unreviewed" },
-      document: { schemaVersion: 4, binding: { dispositions: [] } },
-      workflowDefinition: {
-        id: "wf-1",
-        revision: 2,
-        definitionHash: `sha256:${"d".repeat(64)}`,
-        builderHref: "/workflows/wf-1",
-      },
-      health: { total: 0, blocking: 0, counts: [], findings: [] },
-      ledger: {
-        selected: 3,
-        claimed: 2,
-        unclaimed: 1,
-        dispositions: [
-          { kind: "in_scope", count: 3 },
-          { kind: "deferred", count: 1 },
-        ],
-        charter: { state: "authored", invariantCount: 4, sourceCount: 6 },
-      },
-      dispositionCounts: [],
-      unresolved: [
-        {
-          criterionElementId: "criterion-1",
-          handle: "R1.1",
-          disposition: "in_scope",
-          resolution: "Claim it from a stable authored accountability context.",
-        },
-      ],
-      snapshots: [],
-      nextAct: {
-        actor: "agent",
-        command: "cctl spec plan propose native-sdd",
-        reason: "The draft carries no blocking findings.",
-      },
-      previousHealth: null,
-      invalidatedApproval: null,
-      executionStartAdmission: null,
-    };
-  }
-
-  function planHost(
-    view: unknown,
-    files: Record<string, string> = {},
-  ): CliHost & { requests: RecordedRequest[] } {
-    const requests: RecordedRequest[] = [];
-    return {
-      requests,
-      async fetch(url, init) {
-        requests.push({ url, init });
-        return new Response(JSON.stringify(view), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      },
-      readTextFile: async (filePath) => files[filePath] ?? null,
-      readFileBytes: async () => null,
-      sleep: async () => {},
-      platform: "darwin",
-      homedir: "/Users/test",
-    };
-  }
-
-  it("names the token on the plan open receipt, in text and JSON", async () => {
-    const host = planHost(planView("draft", 1));
-    const text = await runCcWithHost(
-      ["spec", "plan", "open", "native-sdd"],
-      baseEnv,
-      host,
-    );
-    const structured = await runCcWithHost(
-      ["spec", "plan", "open", "native-sdd", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-
-    expect(inlineDataOf(structured)).toMatchObject({
-      plan: { attempt: { draftRevision: 1 } },
-    });
-  });
-
-  it("names the token on the plan reopen receipt, in text and JSON", async () => {
-    const host = planHost(planView("draft", 5));
-    const text = await runCcWithHost(
-      ["spec", "plan", "reopen", "native-sdd", "--reason", "retune"],
-      baseEnv,
-      host,
-    );
-    const structured = await runCcWithHost(
-      ["spec", "plan", "reopen", "native-sdd", "--reason", "retune", "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-
-    expect(inlineDataOf(structured)).toMatchObject({
-      plan: { attempt: { draftRevision: 5 } },
     });
   });
 });

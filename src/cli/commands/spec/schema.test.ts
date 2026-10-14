@@ -14,8 +14,6 @@ import {
   sectionRoleSchema,
   specAssumptionDispositionSchema,
   specElementKindSchema,
-  taskElementPayloadSchema,
-  touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
 import {
@@ -24,6 +22,11 @@ import {
   runCcWithHost,
 } from "../../testing/domain-runtime";
 import type { CliEnv, CliHost } from "../../transport";
+
+/** Legacy task elements are read-only, so they publish no write document. */
+const AUTHORABLE_KINDS = specElementKindSchema.options.filter(
+  (kind) => kind !== "task",
+);
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:4999",
@@ -125,16 +128,15 @@ describe("cctl spec schema", () => {
     expect(envelope.documents[0]).not.toHaveProperty("example");
   });
 
-  it("publishes active authoring, capture, and delivery-plan inputs", async () => {
+  it("publishes the active authoring inputs", async () => {
     const documents = await readDocuments();
 
     expect(documents.map((document) => document.id)).toEqual([
-      ...specElementKindSchema.options,
+      ...AUTHORABLE_KINDS,
       "element-batch",
       "element-batch-removals",
       "create-element",
       "import-bundle",
-      "discovered-task",
       "guidance",
       "read-envelopes",
     ]);
@@ -201,7 +203,6 @@ describe("cctl spec schema", () => {
     );
 
     const notes = bundle?.notes.join(" ") ?? "";
-    expect(notes).toContain('"delivered": false');
     expect(notes).toContain("ref");
     expect(notes).toContain(IMPORTED_VALIDATION_STRATEGY_NOTE);
     expect(notes).toContain("new specs");
@@ -333,7 +334,7 @@ describe("cctl spec schema", () => {
   it("publishes the draft and create element documents as distinct shapes", async () => {
     const documents = await readDocuments();
 
-    for (const kind of specElementKindSchema.options) {
+    for (const kind of AUTHORABLE_KINDS) {
       const draft = documents.find(({ id }) => id === kind);
       expect(
         draft?.usedBy,
@@ -411,7 +412,7 @@ describe("cctl spec schema", () => {
   it("states that element versions restart at 1 in a new revision", async () => {
     const documents = await readDocuments();
 
-    for (const id of [...specElementKindSchema.options, "element-batch"]) {
+    for (const id of [...AUTHORABLE_KINDS, "element-batch"]) {
       const notes = (
         documents.find((document) => document.id === id)?.notes ?? []
       )
@@ -465,11 +466,7 @@ describe("cctl spec schema", () => {
   it("states that an element's parent is fixed at creation", async () => {
     const documents = await readDocuments();
 
-    for (const id of [
-      ...specElementKindSchema.options,
-      "element-batch",
-      "create-element",
-    ]) {
+    for (const id of [...AUTHORABLE_KINDS, "element-batch", "create-element"]) {
       const notes = (
         documents.find((document) => document.id === id)?.notes ?? []
       ).join(" ");
@@ -641,94 +638,16 @@ describe("cctl spec schema", () => {
     );
   });
 
-  /**
-   * `touchedPathSchema`'s normalization is a `.superRefine()`, which
-   * `z.toJSONSchema` drops: an author reading the published task document sees
-   * a bare string array and writes `src/cli/` or an absolute path, which the
-   * server then refuses. The published node has to carry the rule in prose,
-   * and the worked example has to show the shape the rule accepts.
-   */
-  it("publishes the touched-path normalization rule the server enforces", async () => {
-    const documents = await readDocuments();
-    const task = documents.find(({ id }) => id === "task");
-    const touchedPathsNode = z
-      .object({
-        properties: z.object({
-          payload: z.object({
-            properties: z.object({
-              touchedPaths: z.object({
-                items: z.record(z.string(), z.unknown()),
-              }),
-            }),
-          }),
-        }),
-      })
-      .loose()
-      .parse(task?.jsonSchema).properties.payload.properties.touchedPaths.items;
-
-    expect(touchedPathsNode).toMatchObject({
-      type: "string",
-      description:
-        "normalized repo-relative POSIX paths; directories without a trailing slash",
-    });
-    // The example is the only shape an author copies, so it must be the
-    // directory form the refinement accepts — a trailing slash is refused.
-    const touchedPaths = z
-      .object({ payload: z.object({ touchedPaths: z.array(z.string()) }) })
-      .loose()
-      .parse(task?.example).payload.touchedPaths;
-    expect(touchedPaths).toEqual(["src/cli/commands/spec"]);
-    for (const path of touchedPaths) {
-      expect(touchedPathSchema.safeParse(path).success).toBe(true);
-      expect(touchedPathSchema.safeParse(`${path}/`).success).toBe(false);
-    }
-  });
-
-  /**
-   * The same trap as the touched path above, with a worse failure: an
-   * executionLane becomes a branch name and a worktree path segment, so a
-   * published bare string invites `src/lib` and the refusal only arrives at
-   * compile time, after the plan is approved.
-   */
-  it("publishes the execution-lane grammar the server enforces", async () => {
-    const documents = await readDocuments();
-    const task = documents.find(({ id }) => id === "task");
-    const executionLaneNode = z
-      .object({
-        properties: z.object({
-          payload: z.object({
-            properties: z.object({
-              executionLane: z.record(z.string(), z.unknown()),
-            }),
-          }),
-        }),
-      })
-      .loose()
-      .parse(task?.jsonSchema).properties.payload.properties.executionLane;
-
-    expect(executionLaneNode).toMatchObject({
-      type: "string",
-      description: expect.stringContaining("/^[A-Za-z0-9_.-]+$/"),
-    });
-  });
-
   it("ships a worked example that the server's own input schema accepts", async () => {
     const documents = await readDocuments();
 
-    for (const kind of specElementKindSchema.options) {
+    for (const kind of AUTHORABLE_KINDS) {
       const document = documents.find(({ id }) => id === kind);
       const parsed = draftElementDocumentSchema.safeParse(document?.example);
       expect(
         parsed.success ? null : { kind, issues: parsed.error.issues },
       ).toBeNull();
     }
-    expect(
-      taskElementPayloadSchema
-        .omit({ kind: true })
-        .safeParse(
-          documents.find(({ id }) => id === "discovered-task")?.example,
-        ).success,
-    ).toBe(true);
   });
 
   it("omits the removed plan-edit schema document", async () => {
@@ -750,17 +669,6 @@ describe("cctl spec schema", () => {
     expect(stageOf("requirement")).toBe("requirements");
     expect(stageOf("criterion")).toBe("requirements");
     expect(stageOf("decision")).toBe("design");
-    expect(stageOf("task")).toBe("plan");
-    // A task element is spec content, and the note has to say so: an author
-    // who reads it as the delivery plan writes ordering and lanes here and
-    // then wonders why nothing runs. Nothing compiles a task element, so the
-    // note points at graph authoring as the surface that does.
-    const taskNotes = documents
-      .find((document) => document.id === "task")
-      ?.notes.join(" ");
-    expect(taskNotes).toMatch(/workflow replace/i);
-    expect(taskNotes).toMatch(/no task element compiles into it/i);
-    expect(taskNotes).not.toMatch(/legacy compiler|legacy-only/i);
     // A section's stage depends on its role, so the per-role answer is what a
     // caller can act on; a single stage would be a lie for design_narrative.
     expect(stageOf("section")).toBe("requirements");
@@ -775,7 +683,7 @@ describe("cctl spec schema", () => {
   it("documents the position ordering contract on every element write document", async () => {
     const documents = await readDocuments();
 
-    for (const kind of specElementKindSchema.options) {
+    for (const kind of AUTHORABLE_KINDS) {
       const notes = (documents.find(({ id }) => id === kind)?.notes ?? [])
         .join(" ")
         .toLowerCase();
@@ -791,7 +699,7 @@ describe("cctl spec schema", () => {
   it("documents the reintroduction marker on every element write document", async () => {
     const documents = await readDocuments();
 
-    for (const id of [...specElementKindSchema.options, "element-batch"]) {
+    for (const id of [...AUTHORABLE_KINDS, "element-batch"]) {
       const document = documents.find((candidate) => candidate.id === id);
       const notes = (document?.notes ?? []).join(" ");
       expect(notes).toContain("reintroduceHistorical");
@@ -814,7 +722,7 @@ describe("cctl spec schema", () => {
     const index = await runCcWithHost(["spec", "schema"], env, offlineHost());
     expect(index.exitCode).toBe(0);
     expect(index.stdout).not.toContain('"jsonSchema"');
-    for (const id of specElementKindSchema.options)
+    for (const id of AUTHORABLE_KINDS)
       expect(index.stdout).toContain(`"id": "${id}"`);
   });
 

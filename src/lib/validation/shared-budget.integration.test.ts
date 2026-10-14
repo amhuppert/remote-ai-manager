@@ -209,9 +209,7 @@ describe("ValidationService shared global budget", () => {
         disabled.kind === "not_started" &&
         disabled.result.kind === "skipped_by_policy"
       ) {
-        expect(disabled.result.message).toContain(
-          "handled by the script validator",
-        );
+        expect(disabled.result.message).toContain("may not run it");
       }
       expect(runner.spawns).toHaveLength(0);
       expect(createValidationRunsRepo(fixture.db).findStaleActive()).toEqual(

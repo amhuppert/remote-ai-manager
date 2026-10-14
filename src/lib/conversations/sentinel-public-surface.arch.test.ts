@@ -88,18 +88,10 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/state-store/conversation-core-repo.ts", "internal-adapter"],
   ["lib/state-store/accessors.ts", "internal-adapter"],
   ["lib/state-store/setters.ts", "internal-adapter"],
-  ["lib/prompt/sdk-driver.ts", "internal-adapter"],
   ["lib/conversations/message-queue-drain.ts", "internal-adapter"],
-  // The session-keyed actor materialization seam: it reads the store key to
-  // decide WHICH repository holds the conversation (project vs session) and
-  // emits nothing — no URL, key, payload, label, or log field.
-  ["lib/workflows/conversation/actor-input-loader.ts", "internal-adapter"],
   // A conversation's checkpoint scope from its store key: the project variant
   // carries `sessionName: null`, never the sentinel.
   ["lib/conversation-checkpoints/scope-key.ts", "scope-derivation"],
-  ["lib/workflows/conversation/persistence.ts", "internal-adapter"],
-  ["lib/workflows/conversation/persistence-adapter.ts", "internal-adapter"],
-  ["lib/workflows/conversation/rehydration.ts", "internal-adapter"],
   ["lib/project-conversations/route-handlers.ts", "internal-adapter"],
   ["lib/project-conversations/prompt-entry.ts", "internal-adapter"],
   ["lib/context-artifacts/service.ts", "internal-adapter"],
@@ -128,11 +120,7 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // sentinel. The conversation lock is keyed by the session-keyed storage name
   // and therefore receives it, but the parameter is named `storeSessionName` and
   // its `conversation-lock.*` events carry `scopeRefFromStoreSessionName(...)`
-  // instead — the same shape as the scope-derivation modules below. Turn
-  // resource acquisition (lock + query-slot label) is asserted in
-  // `actor-implementations.test.ts`, since this test reads imports, not
-  // diagnostics.
-  ["lib/conversations/mark-unread.ts", "scope-derivation"],
+  // instead — the same shape as the scope-derivation modules below.
   // The background-activity channel is keyed by the session-keyed store name
   // its wiring layer already holds, and derives the SSE scope variant from it:
   // a project conversation's activity event has no `sessionName` field at all.
@@ -172,11 +160,6 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // publishes is built from `conversationEventScopeFields`, so a project
   // conversation's event carries no `sessionName` field at all.
   ["lib/conversation-core/production-records.ts", "scope-derivation"],
-  // Reaches the sentinel for one reason: the `onCostSettled` handler it wires
-  // derives the scope variant for its own two warnings. The store key it also
-  // carries stays on named carriers — `conversationRuntimeKey` and the
-  // transcript meta's `storeSessionName` — rather than any emitted field.
-  ["lib/workflows/conversation/actor-implementations.ts", "scope-derivation"],
 
   ["lib/shared/route-resolution.ts", "refusal-guard"],
   // Rejects the sentinel as a session NAME. Classified a refusal guard rather

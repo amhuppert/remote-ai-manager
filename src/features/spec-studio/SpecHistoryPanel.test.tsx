@@ -43,10 +43,8 @@ describe("buildSpecHistory", () => {
     const events = buildSpecHistory(historyDetail);
 
     expect(events.map((event) => event.label)).toEqual([
-      "R1.1 waived",
       "Requirements admitted by notify policy",
       "R1 approved",
-      "Execution started",
       "Revision 1 signed off",
       "Revision 1 created",
       "Spec created",
@@ -185,7 +183,6 @@ describe("buildSpecHistory", () => {
       "Policy admissions",
       "Attention records",
       "Gate changes",
-      "Executions",
     ]);
     expect(
       within(filters).getByRole("radio", { name: "Gate changes" }),
@@ -205,7 +202,7 @@ describe("buildSpecHistory", () => {
       within(filters).getByRole("radio", { name: "Policy admissions" }),
     );
     expect(screen.getByText(/admitted by notify policy/i)).toBeVisible();
-    expect(screen.queryByText(/Execution started/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Revision 1 signed off")).not.toBeInTheDocument();
   });
 
   /**
@@ -552,12 +549,12 @@ describe("buildSpecHistory", () => {
     );
     expect(feed).not.toHaveClass("grid", "gap-sm");
 
-    const executionRow = screen
-      .getByRole("heading", { name: "Execution started" })
+    const revisionRow = screen
+      .getByRole("heading", { name: "Revision 1 created" })
       .closest("article");
-    expect(executionRow).not.toBeNull();
-    expect(executionRow).not.toHaveClass("rounded-lg", "border", "p-md");
-    expect(executionRow).toHaveClass("border-b", "py-sm");
+    expect(revisionRow).not.toBeNull();
+    expect(revisionRow).not.toHaveClass("rounded-lg", "border", "p-md");
+    expect(revisionRow).toHaveClass("border-b", "py-sm");
   });
 
   it("keeps immutable sign-off detail readable on its green status tint", () => {
@@ -568,11 +565,9 @@ describe("buildSpecHistory", () => {
       />,
     );
 
-    expect(
-      screen.getByText(
-        "The approved revision is immutable and can anchor execution scope.",
-      ),
-    ).toHaveClass("text-text-primary");
+    expect(screen.getByText("The approved revision is immutable.")).toHaveClass(
+      "text-text-primary",
+    );
   });
 
   it("provides the prototype's post-hoc review loop on policy admissions", async () => {

@@ -38,14 +38,7 @@ describe("SpecDetailViews navigation", () => {
       within(navigation)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual([
-      "Overview",
-      "Requirements",
-      "Design",
-      "Delivery",
-      "Gate policy",
-      "History",
-    ]);
+    ).toEqual(["Overview", "Requirements", "Design", "Gate policy", "History"]);
     expect(
       screen.queryByRole("navigation", { name: "Spec inspection" }),
     ).not.toBeInTheDocument();

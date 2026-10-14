@@ -115,8 +115,8 @@ describe("cctl session-env inventory (R2.4)", () => {
   it("has no stale inventory entries for commands that no longer read the session environment", async () => {
     const { commands } = await sessionEnvReaders();
 
-    // Keys may be leaf paths ("spec start"); the file scan only resolves groups,
-    // so staleness is judged on the owning group.
+    // Keys may be leaf paths ("run template launch"); the file scan only
+    // resolves groups, so staleness is judged on the owning group.
     const stale = Object.keys(CLI_SESSION_ENV_INVENTORY)
       .filter((command) => !commands.has(command.split(" ")[0] ?? command))
       .sort();
@@ -154,11 +154,15 @@ describe("cctl session-env inventory (R2.4)", () => {
   });
 
   it("resolves a leaf entry over its group so a session-only verb is not swallowed", () => {
-    expect(classifyCliCommand("spec start")?.support).toBe("session-only");
-    expect(classifyCliCommand("spec draft")?.support).toBe("project-supported");
+    expect(classifyCliCommand("run template launch")?.support).toBe(
+      "session-only",
+    );
+    expect(classifyCliCommand("run template list")?.support).toBe(
+      "project-supported",
+    );
     // A nested read carries no entry of its own — it does not differ from its
     // group — so its classification has to come from the group at any depth.
-    expect(classifyCliCommand("spec section get")?.support).toBe(
+    expect(classifyCliCommand("conversation checkpoint get")?.support).toBe(
       "project-supported",
     );
     expect(classifyCliCommand("nonexistent")).toBeNull();

@@ -1,4 +1,7 @@
+import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
+
+import { installFetchFixture } from "@/test/fetch-fixture";
 
 import type {
   Spec,
@@ -18,6 +21,7 @@ import {
   type ApprovalSubject,
 } from "./approval-applicability";
 import { lint } from "./lint";
+import { specQueries } from "./queries";
 import { revisionReviewHash } from "./review-hash";
 import { toDiffCitations, toDiffRows } from "./revision-diff-projections";
 import {
@@ -240,6 +244,20 @@ function fingerprintIn(
   return serializeSubjectFingerprint(fingerprint);
 }
 
+/**
+ * The seeded draft at the last authoring stage, without the legacy task: a
+ * plan-stage draft is read-only and consults no gate.
+ */
+const designDraft: SpecRevision = { ...revision, authoringStage: "design" };
+const designElements = snapshot.elements.filter(
+  ({ element }) => element.kind !== "task",
+);
+const designDraftSnapshot: SpecRevisionSnapshot = {
+  revision: designDraft,
+  elements: designElements,
+  assumptionCitations: [],
+};
+
 const R1 = { subjectKind: "requirement", elementId: "requirement-1" } as const;
 const D1 = { subjectKind: "decision", elementId: "decision-1" } as const;
 const PLAN = { subjectKind: "plan", elementId: null } as const;
@@ -287,8 +305,6 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
     ...overrides,
   };
 }
-
-describe("operational spec status", () => {});
 
 describe("spec read route handlers", () => {
   it("returns a bounded nested current-revision outline with stable handles and domain status", async () => {
@@ -372,7 +388,7 @@ describe("spec read route handlers", () => {
         authoringStage: "plan",
         basedOnRevisionId: null,
       },
-      phase: { primary: "draft", authoringStage: "plan" },
+      phase: { primary: "draft" },
       counts: {
         requirements: 1,
         criteria: 1,
@@ -396,7 +412,6 @@ describe("spec read route handlers", () => {
               elementId: "criterion-1",
               elementVersion: 1,
               validationKinds: ["test_run"],
-              status: {},
               summary: "The old slug returns the current spec",
             },
           ],
@@ -417,7 +432,6 @@ describe("spec read route handlers", () => {
           elementId: "task-1",
           elementVersion: 1,
           summary: "Build read routes",
-          status: { status: "pending" },
         },
       ],
       disclosure: {
@@ -902,9 +916,16 @@ describe("spec read route handlers", () => {
       new Request("http://cc.test/api/specs/demo/current-slug"),
       routeContext({ name: "demo", slug: spec.slug }),
     );
+    const statusResponse = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
 
     expect(response.status).toBe(200);
-    const detail = specDetailViewSchema.parse(await response.json());
+    expect(statusResponse.status).toBe(200);
+    const detailBody: unknown = await response.json();
+    const statusBody: unknown = await statusResponse.json();
+    const detail = specDetailViewSchema.parse(detailBody);
     expect(detail.revisions).toContainEqual(approvedPlan);
     expect(detail.currentApprovedRevision?.revision.authoringStage).toBe(
       "plan",
@@ -914,6 +935,33 @@ describe("spec read route handlers", () => {
         (element) => element.element.kind === "task",
       )?.version.payload,
     ).toMatchObject({ kind: "task", title: "Build read routes" });
+    expect(specStatusViewSchema.parse(statusBody).taskPlan).toEqual([
+      expect.objectContaining({ handle: "T1", title: "Build read routes" }),
+    ]);
+
+    // Spec Studio loads the same responses through its query layer.
+    const api = installFetchFixture();
+    try {
+      api.json("GET", `/api/specs/demo/${spec.slug}`, detailBody);
+      api.json("GET", `/api/specs/demo/${spec.slug}/status`, statusBody);
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const studioDetail = await client.fetchQuery(
+        specQueries.detail("demo", spec.slug),
+      );
+      const studioStatus = await client.fetchQuery(
+        specQueries.status("demo", spec.slug),
+      );
+      expect(studioDetail.status.taskPlan).toEqual([
+        expect.objectContaining({ handle: "T1" }),
+      ]);
+      expect(studioStatus.taskPlan).toEqual([
+        expect.objectContaining({ handle: "T1" }),
+      ]);
+    } finally {
+      api.restore();
+    }
   });
 
   /**
@@ -2150,7 +2198,7 @@ describe("spec read route handlers", () => {
       approver: "alex",
       validity: "valid",
       granted_at: "2026-07-18T02:00:00.000Z",
-      subject_fingerprint_json: fingerprintIn(snapshot, R1),
+      subject_fingerprint_json: fingerprintIn(designDraftSnapshot, R1),
     },
     {
       id: "approval-decision",
@@ -2161,18 +2209,7 @@ describe("spec read route handlers", () => {
       approver: "alex",
       validity: "valid",
       granted_at: "2026-07-18T02:00:00.000Z",
-      subject_fingerprint_json: fingerprintIn(snapshot, D1),
-    },
-    {
-      id: "approval-plan",
-      spec_id: spec.id,
-      subject_kind: "plan",
-      element_id: null,
-      revision_id: revision.id,
-      approver: "alex",
-      validity: "valid",
-      granted_at: "2026-07-18T02:00:00.000Z",
-      subject_fingerprint_json: fingerprintIn(snapshot, PLAN),
+      subject_fingerprint_json: fingerprintIn(designDraftSnapshot, D1),
     },
   ];
 
@@ -2185,6 +2222,9 @@ describe("spec read route handlers", () => {
   it("names the outstanding revision sign-off once every consulted subject is approved", async () => {
     const handlers = createSpecRouteHandlers(
       createDeps({
+        listRevisions: async () => [designDraft],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === designDraft.id ? designDraftSnapshot : null,
         findApprovalsBySpecId: () => everySubjectApproved,
         // A clean draft: lint cannot be what holds the sign-off.
         lintDraft: async () => [],
@@ -2208,7 +2248,7 @@ describe("spec read route handlers", () => {
             status.applicableGates.includes(gate.gate),
         )
         .map((gate) => gate.gate),
-    ).toEqual(["requirements", "design", "plan"]);
+    ).toEqual(["requirements", "design"]);
     expect(status.revisionSignOff).toMatchObject({
       revisionId: revision.id,
       revisionNumber: revision.number,
@@ -2229,6 +2269,9 @@ describe("spec read route handlers", () => {
   it("keeps the sign-off blocked on a propose-blocking lint finding once every subject is approved", async () => {
     const handlers = createSpecRouteHandlers(
       createDeps({
+        listRevisions: async () => [designDraft],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === designDraft.id ? designDraftSnapshot : null,
         findApprovalsBySpecId: () => everySubjectApproved,
         lintDraft: async () => [
           {
@@ -2268,7 +2311,7 @@ describe("spec read route handlers", () => {
       approvedAt: revision.createdAt,
     };
     const amendment: SpecRevision = {
-      ...revision,
+      ...designDraft,
       id: "revision-2",
       number: 2,
       basedOnRevisionId: approvedRevision.id,
@@ -2290,7 +2333,7 @@ describe("spec read route handlers", () => {
         // nothing the requirements gate governs.
         getRevisionSnapshot: async (revisionId) => ({
           revision: revisionId === amendment.id ? amendment : approvedRevision,
-          elements: snapshot.elements,
+          elements: designElements,
           assumptionCitations: [],
         }),
         findGateAdmissionsBySpecId: () => [priorAdmission],
@@ -2311,7 +2354,7 @@ describe("spec read route handlers", () => {
       reason: "unchanged_since_governance_base",
       governanceBaseRevisionId: approvedRevision.id,
     });
-    expect(status.applicableGates).toEqual(["plan"]);
+    expect(status.applicableGates).toEqual(["design"]);
     // Requirement 24.13: the earlier admission is provenance, never current
     // satisfaction, so it stays out of `currentAdmissions` and out of `state`.
     expect(requirements?.currentAdmissions).toEqual([]);
@@ -2370,63 +2413,9 @@ describe("spec read route handlers", () => {
   });
 
   /**
-   * A criterion id a task covers but the current revision does not carry is
-   * the visible signature of an amendment that forked past its own content
-   * (ticket #42). Rendering it beside real handles and dropping it from both
-   * sides of the coverage ratio is what made that incident invisible: the plan
-   * reads as fully covered while a criterion it claims is not in the spec.
-   */
-  it("names the covered criterion ids the current revision does not carry", async () => {
-    const forkedTaskSnapshot: SpecRevisionSnapshot = {
-      revision,
-      elements: snapshot.elements.map((row) =>
-        row.element.id === "task-1" && row.version.payload.kind === "task"
-          ? {
-              ...row,
-              version: {
-                ...row.version,
-                payload: {
-                  ...row.version.payload,
-                  coveredCriterionElementIds: [
-                    "criterion-orphaned-2",
-                    "criterion-1",
-                    "criterion-orphaned-1",
-                  ],
-                },
-              },
-            }
-          : row,
-      ),
-      assumptionCitations: [],
-    };
-    const handlers = createSpecRouteHandlers(
-      createDeps({ getRevisionSnapshot: async () => forkedTaskSnapshot }),
-    );
-
-    const response = await handlers.getSpecStatusGET(
-      new Request("http://cc.test/api/specs/demo/current-slug/status"),
-      routeContext({ name: "demo", slug: spec.slug }),
-    );
-
-    const status = specStatusViewSchema.parse(await response.json());
-    expect(status.taskPlan).toEqual([
-      expect.objectContaining({
-        handle: "T1",
-        // Only the ids this revision actually resolves are reported as
-        // coverage, and none of them is an invented handle.
-        criterionCoverage: ["R1.1"],
-        unresolvedCriterionElementIds: [
-          "criterion-orphaned-1",
-          "criterion-orphaned-2",
-        ],
-      }),
-    ]);
-  });
-
-  /**
-   * A dependency on a task the amendment dropped has the same fork signature
-   * as an orphaned criterion, and a raw id sitting in the handle-typed field
-   * reads as ordering the compiler can honour.
+   * A dependency on a task the amendment dropped is the visible signature of
+   * an amendment that forked past its own content (ticket #42), and a raw id
+   * sitting in the handle-typed field reads as a dependency that resolves.
    */
   it("names the depended-on task ids the current revision does not carry", async () => {
     const forkedTaskSnapshot: SpecRevisionSnapshot = {
@@ -2474,13 +2463,13 @@ describe("spec read route handlers", () => {
 
   it("keeps a gate pending on the current revision while naming its earlier admission", async () => {
     const approvedRevision: SpecRevision = {
-      ...revision,
+      ...designDraft,
       state: "approved",
       contentHash: "revision-1-hash",
       approvedAt: revision.createdAt,
     };
     const amendment: SpecRevision = {
-      ...revision,
+      ...designDraft,
       id: "revision-2",
       number: 2,
       basedOnRevisionId: approvedRevision.id,
@@ -2495,7 +2484,7 @@ describe("spec read route handlers", () => {
       actor_json: JSON.stringify({ kind: "human" }),
       created_at: "2026-07-18T02:00:00.000Z",
     };
-    const [requirementRow, ...otherRows] = snapshot.elements;
+    const [requirementRow, ...otherRows] = designElements;
     if (requirementRow === undefined) {
       throw new Error("the fixture snapshot carries no elements");
     }
@@ -2508,7 +2497,7 @@ describe("spec read route handlers", () => {
           revisionId === amendment.id
             ? {
                 revision: amendment,
-                elements: snapshot.elements,
+                elements: designElements,
                 assumptionCitations: [],
               }
             : {
@@ -2572,7 +2561,12 @@ describe("spec read route handlers", () => {
       created_at: "2026-07-18T02:00:00.000Z",
     };
     const handlers = createSpecRouteHandlers(
-      createDeps({ findGateAdmissionsBySpecId: () => [admission] }),
+      createDeps({
+        listRevisions: async () => [designDraft],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === designDraft.id ? designDraftSnapshot : null,
+        findGateAdmissionsBySpecId: () => [admission],
+      }),
     );
 
     const response = await handlers.getSpecStatusGET(

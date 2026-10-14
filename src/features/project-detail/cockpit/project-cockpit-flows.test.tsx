@@ -882,7 +882,7 @@ describe("project page: command palette", () => {
   it("keeps slash-command routing at the project adapter boundary", () => {
     expect(
       resolveProjectComposerSubmit({
-        draft: "/workflow-builder",
+        draft: "/capabilities",
         pendingImages: [],
         tokens: [],
         backend: "claude",
@@ -891,7 +891,7 @@ describe("project page: command palette", () => {
           parameters: { effort: "high" },
         },
       }),
-    ).toEqual({ kind: "command", id: "workflow-builder" });
+    ).toEqual({ kind: "command", id: "capabilities" });
   });
 });
 

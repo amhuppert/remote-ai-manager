@@ -79,11 +79,11 @@ export const listHandler: Read<typeof devSpecs.list> = {
     async run({ app }) {
       const resolved = await resolveDevTarget(app);
       if (!resolved.ok) return resolved;
-      const { context, target } = resolved.value;
+      const { context } = resolved.value;
       const response = await cliRequest(app.host, {
         ...context,
         method: "GET",
-        path: devServerRequestPath(context, target),
+        path: devServerRequestPath(context),
       });
       if (response.kind !== "ok") return devFailure(response);
       const parsed = devServersStatusResponseSchema.safeParse(response.body);
@@ -106,8 +106,8 @@ export const ensureHandler: Write<typeof devSpecs.ensure> = {
     async run({ app, ctx }) {
       const resolved = await resolveDevTarget(app);
       if (!resolved.ok) return { effect: "not_applied", result: resolved };
-      const { context, target } = resolved.value;
-      const listPath = devServerRequestPath(context, target);
+      const { context } = resolved.value;
+      const listPath = devServerRequestPath(context);
       let name = ctx.args["server-name"];
       if (name === undefined) {
         const response = await cliRequest(app.host, {
@@ -153,7 +153,6 @@ export const ensureHandler: Write<typeof devSpecs.ensure> = {
         method: "POST",
         path: devServerRequestPath(
           context,
-          target,
           `/${encodePathSegment(name)}/start`,
         ),
       });
@@ -254,7 +253,7 @@ export const stopHandler: Write<typeof devSpecs.stop> = {
     async run({ app, ctx }) {
       const resolved = await resolveDevTarget(app);
       if (!resolved.ok) return { effect: "not_applied", result: resolved };
-      const { context, target } = resolved.value;
+      const { context } = resolved.value;
       const name = ctx.args["server-name"];
       const recovery = recoveryFacts([
         sessionReference(context.session),
@@ -263,11 +262,7 @@ export const stopHandler: Write<typeof devSpecs.stop> = {
       const response = await cliRequest(app.host, {
         ...context,
         method: "POST",
-        path: devServerRequestPath(
-          context,
-          target,
-          `/${encodePathSegment(name)}/stop`,
-        ),
+        path: devServerRequestPath(context, `/${encodePathSegment(name)}/stop`),
       });
       if (response.kind !== "ok")
         return {

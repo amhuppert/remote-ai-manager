@@ -19,7 +19,7 @@ const activeWait = {
     projectPath: "/repos/project-one",
     conversationId: "conversation-one",
   },
-  source: { kind: "workflow", id: "run-one" },
+  source: { kind: "validation", id: "run-one" },
   reason: "Continue after this run",
   expiresAt: "2026-10-01T01:00:00Z",
   state: "waiting",
@@ -171,7 +171,7 @@ describe("conversation subscription commands", () => {
     const result = await test.run([
       "subscription",
       "subscribe",
-      "workflow",
+      "validation",
       "run-one",
       "--reason",
       "Continue",
@@ -184,7 +184,7 @@ describe("conversation subscription commands", () => {
     expect(JSON.parse(test.requests[0]?.init.body ?? "{}")).toMatchObject({
       mode: "active",
       expiresIn: 120,
-      source: { kind: "workflow", id: "run-one" },
+      source: { kind: "validation", id: "run-one" },
     });
   });
 
@@ -377,7 +377,7 @@ describe("conversation subscription commands", () => {
     expect(row.getCommand).toContain("inbox get");
     expect(row.fact).toBeUndefined();
   });
-  it.each(["workflow", "validation", "git_job"])(
+  it.each(["validation", "git_job"])(
     "registers a nonblocking terminal wait for %s in project scope",
     async (kind) => {
       const test = fixture({ wait: activeWait });
@@ -413,11 +413,11 @@ describe("conversation subscription commands", () => {
     const test = fixture({});
     for (const argv of [
       ["subscription", "wait", "notepad", "notes", "--reason", "Changed"],
-      ["subscription", "wait", "workflow", "run-one"],
+      ["subscription", "wait", "validation", "run-one"],
       [
         "subscription",
         "wait",
-        "workflow",
+        "validation",
         "run-one",
         "--reason",
         "Done",
@@ -427,7 +427,7 @@ describe("conversation subscription commands", () => {
       [
         "subscription",
         "wait",
-        "workflow",
+        "validation",
         "run-one",
         "--reason",
         "Done",
@@ -508,7 +508,7 @@ describe("conversation subscription commands", () => {
     const result = await test.run([
       "subscription",
       "wait",
-      "workflow",
+      "validation",
       "run-one",
       "--reason",
       "Continue",
@@ -525,7 +525,7 @@ describe("conversation subscription commands", () => {
       deliveryIds: ["delivery-one"],
       state: "uncertain",
       queueMessageId: "message-one",
-      message: "Workflow finished",
+      message: "Validation finished",
       causationBatchIds: [],
       createdAt: activeWait.createdAt,
       updatedAt: activeWait.updatedAt,

@@ -232,6 +232,10 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
+/**
+ * Tasks exist only in legacy plan revisions, which no authoring path can write,
+ * so the task is seeded through the repository below the guarded boundary.
+ */
 async function createApprovedTaskSpec() {
   const created = await authoring.createSpec({
     projectPath: PROJECT_PATH,
@@ -252,54 +256,44 @@ async function createApprovedTaskSpec() {
     },
     actor: AGENT,
   });
-  await specs.updateGatePolicy({
-    specId: created.spec.id,
-    gatePolicy: { preset: "exploratory" },
-    updatedAt: "2026-07-18T17:00:00.500Z",
-  });
-  for (const element of [
-    {
-      elementId: "criterion-1",
-      kind: "criterion" as const,
-      parentElementId: "requirement-1",
-      position: 1,
-      payload: {
-        kind: "criterion" as const,
-        text: "A ticket is created.",
-        validationStrategy: { kinds: ["test_run" as const] },
-      },
-    },
-    {
-      elementId: "task-1",
-      kind: "task" as const,
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "task" as const,
-        title: "Build materialized work",
-        instructions: "Implement the approved task.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
-      },
-    },
-  ]) {
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = ? WHERE id = ?",
-    ).run(element.kind === "task" ? "plan" : "requirements", created.draft.id);
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      ...element,
-      baseElementVersion: null,
-      actor: AGENT,
-    });
-  }
-  await authoring.proposeRevision({
+  await authoring.upsertDraftElement({
     specId: created.spec.id,
     revisionId: created.draft.id,
+    elementId: "criterion-1",
+    kind: "criterion",
+    parentElementId: "requirement-1",
+    payload: {
+      kind: "criterion",
+      text: "A ticket is created.",
+      validationStrategy: { kinds: ["test_run"] },
+    },
+    baseElementVersion: null,
     actor: AGENT,
+  });
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(created.draft.id);
+  await specs.createDraftElement({
+    id: "task-1",
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    kind: "task",
+    parentElementId: null,
+    payload: {
+      kind: "task",
+      title: "Build materialized work",
+      instructions: "Implement the approved task.",
+      tracedRequirementElementIds: ["requirement-1"],
+      tracedDecisionElementIds: [],
+      coveredCriterionElementIds: ["criterion-1"],
+      dependsOnTaskElementIds: [],
+    },
+    createdAt: "2026-07-18T17:00:30.000Z",
+    updatedAt: "2026-07-18T17:00:30.000Z",
+  });
+  await specs.approveRevision({
+    revisionId: created.draft.id,
+    approvedAt: "2026-07-18T17:00:31.000Z",
   });
   return created;
 }

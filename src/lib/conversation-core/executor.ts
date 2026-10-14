@@ -151,13 +151,6 @@ function unstartedReport(
 /** How long custody may hold a runtime (design C5b §6); a handover starts a new custody. */
 export const CUSTODY_BOUND_MS = 120 * 60_000;
 
-/**
- * After a restart, how long a worktree a crashed custody held stays closed to
- * turns and publications: background work survives its CLI's parent for
- * about this long (design C5b §9.1, probe 2).
- */
-export const CUSTODY_RESTART_FENCE_MS = 5_000;
-
 /** Why nothing starts in a conversation whose kept runtime's processes could not be confirmed stopped. */
 const runtimeUncollected = (failure: string): string =>
   `The agent's processes from earlier background work could not be confirmed stopped (${failure}); nothing more runs in this conversation until they are, and restarting the server collects them`;
@@ -351,14 +344,8 @@ export interface ConversationCoreDeps {
   transaction<T>(fn: () => T): T;
   repo: ConversationCoreRepo;
   permits: ControlPermits;
+  /** Seat turns' workspace grants; interactive turns and custody take none. */
   admission: WorkspaceAdmission;
-  /**
-   * The worktree an interactive conversation's turns write in. An interactive
-   * turn holds it for interactive writes, which conflict only with Git and
-   * publication operations there: those wait for the turn, and the turn waits
-   * for them. Without it, interactive turns take no grant.
-   */
-  interactiveWorktree?(place: InteractiveConversation): Promise<string | null>;
   createSeatConversation(input: {
     projectPath: string;
     sessionName: string;
@@ -396,8 +383,6 @@ export interface ConversationCoreDeps {
     /** The tasks the runtime reported cut short, which the loss names; empty when none were reported. */
     tasks: LostTask[];
   }): Promise<void>;
-  /** How long this server has been running, which bounds the restart fence. */
-  uptimeMs(): number;
   /**
    * Why no custody may open for the conversation now (design C5b §5): its
    * session is being merged, finished or gone, or the conversation, its
@@ -582,12 +567,11 @@ interface RefusedCustody {
 interface Custody {
   conversationId: string;
   attemptId: string;
-  /** `custody:<the turn attempt that left it>`; its grant's holder. */
+  /** `custody:<the turn attempt that left it>`. */
   cause: string;
   place: InteractiveConversation;
   /** The handing turn's source, which custody's provider turns run under. */
   source: TurnSource;
-  grant: Grant | null;
   runtime: RetainedRuntime;
   bound: ReturnType<typeof setTimeout>;
   /** Set once custody is ending: why its runtime could not be collected, or null. */
@@ -849,17 +833,6 @@ export function createConversationCore(
     resolve?.(outcome);
   }
 
-  /** The interactive-write grant an interactive conversation's turn holds on its worktree, if it has one. */
-  async function interactiveGrant(
-    place: InteractiveConversation,
-    holder: string,
-  ): Promise<GrantRequest | null> {
-    const worktree = await deps.interactiveWorktree?.(place);
-    return worktree === undefined || worktree === null
-      ? null
-      : { worktree, kind: "interactive_write", holder };
-  }
-
   /** The turn a mailbox item asks for: a seat's work order, a person's message or a workflow's task. */
   function turnOf(item: MailboxItemRecord):
     | { kind: "seat"; request: SeatTurnRequest; grant: GrantRequest | null }
@@ -1116,18 +1089,17 @@ export function createConversationCore(
 
   /**
    * Opens custody of a turn's runtime at the turn's end (design C5b §3.3):
-   * its own admitted attempt, inheriting the turn's source, and its own
-   * interactive grant on the turn's worktree, taken while the turn still
-   * holds its own, so the worktree is never unheld in between. Refused
-   * (`session_closed`) once a merge delivers or has finished the session:
-   * read here, at the insert, so no custody starts after the merge's check.
+   * its own admitted attempt, inheriting the turn's source. Custody holds the
+   * runtime, not a workspace grant, so its background work delays no other
+   * operation's admission. Refused (`session_closed`) once a merge delivers
+   * or has finished the session: read here, at the insert, so no custody
+   * starts after the merge's check.
    */
   function openCustody(
     item: MailboxItemRecord,
     turnAttemptId: string,
     place: InteractiveConversation,
     source: TurnSource,
-    turnGrant: Grant | null,
     turnSignal: AbortSignal,
     runtime: RetainedRuntime,
   ):
@@ -1173,22 +1145,6 @@ export function createConversationCore(
       return { kind: "closed", owed };
     }
     const cause = custodyCause(turnAttemptId);
-    // Interactive grants never conflict with each other, so this never waits.
-    const grant =
-      turnGrant === null
-        ? null
-        : deps.admission.tryAcquire({
-            worktree: turnGrant.worktree,
-            kind: "interactive_write",
-            holder: cause,
-          });
-    if (turnGrant !== null && grant === null) {
-      deps.log.error("conversation_core.custody_grant_refused", {
-        conversationId,
-        worktree: turnGrant.worktree,
-      });
-      return { kind: "refused", reason: "grant_refused" };
-    }
     const attemptId = randomUUID();
     try {
       // Admitted before the turn settles: a crash from here leaves custody for boot to see.
@@ -1204,7 +1160,6 @@ export function createConversationCore(
         }),
       );
     } catch (error) {
-      if (grant !== null) deps.admission.release(grant);
       deps.log.error("conversation_core.custody_open_failed", {
         conversationId,
         error: getErrorMessage(error),
@@ -1217,7 +1172,6 @@ export function createConversationCore(
       cause,
       place,
       source,
-      grant,
       runtime,
       bound: setTimeout(
         () => void endCustody(custody, "timed_out"),
@@ -1242,9 +1196,10 @@ export function createConversationCore(
 
   /**
    * Every end of custody but a handover: the runtime is closed and collected,
-   * the loss of what it cut short recorded, custody settled, its grant
-   * released (kept when the runtime could not be collected) and the busy set
-   * left, in that order. Resolves with why the runtime could not be collected.
+   * the loss of what it cut short recorded, custody settled and the busy set
+   * left, in that order. A runtime that could not be collected keeps the
+   * conversation closed to new work until a later close collects it.
+   * Resolves with why the runtime could not be collected.
    */
   function endCustody(
     custody: Custody,
@@ -1312,12 +1267,8 @@ export function createConversationCore(
         deps.log.error("conversation_core.runtime_uncollected", {
           conversationId,
           cause: custody.cause,
-          grantHeld: custody.grant !== null,
           error: uncollected,
         });
-        if (custody.grant !== null) quarantined.set(custody.cause, uncollected);
-      } else if (custody.grant !== null) {
-        deps.admission.release(custody.grant);
       }
       const stillShown = custody.runtime.segmentActive();
       if (custodies.get(conversationId) === custody) {
@@ -1586,10 +1537,9 @@ export function createConversationCore(
     }
   }
 
-  /** At a turn's admission custody hands its runtime over: settled, the turn its owner, its grant released. */
+  /** At a turn's admission custody hands its runtime over: settled, and the turn its owner. */
   function handOver(custody: Custody, turnAttemptId: string): void {
     clearTimeout(custody.bound);
-    if (custody.grant !== null) deps.admission.release(custody.grant);
     custodies.delete(custody.conversationId);
     tellCustody(custody.place, false);
     custody.runtime.released("handed_over");
@@ -1598,44 +1548,6 @@ export function createConversationCore(
       attemptId: custody.attemptId,
       turnAttemptId,
     });
-  }
-
-  /**
-   * After a crash, a worktree a custody held stays closed to turns and
-   * publications until the window in which its background work could still
-   * write has passed since the server started. Whether the fence was taken.
-   */
-  async function fenceRecoveredWorktree(
-    place: InteractiveConversation,
-    attemptId: string,
-  ): Promise<boolean> {
-    const remaining = CUSTODY_RESTART_FENCE_MS - deps.uptimeMs();
-    if (remaining <= 0) return false;
-    let worktree: string | null | undefined;
-    try {
-      worktree = await deps.interactiveWorktree?.(place);
-    } catch (error) {
-      deps.log.error("conversation_core.custody_restart_fence_failed", {
-        conversationId: place.conversationId,
-        attemptId,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
-    if (worktree === undefined || worktree === null) return false;
-    const fence = deps.admission.tryAcquire({
-      worktree,
-      kind: "git",
-      holder: `restart-fence:${attemptId}`,
-    });
-    if (fence === null) return false;
-    deps.log.info("conversation_core.custody_restart_fence", {
-      conversationId: place.conversationId,
-      attemptId,
-      remainingMs: remaining,
-    });
-    setTimeout(() => deps.admission.release(fence), remaining).unref?.();
-    return true;
   }
 
   /** One turn lifetime: every exit after `open` records exactly one terminal. */
@@ -1747,10 +1659,8 @@ export function createConversationCore(
       );
     }
     try {
-      const grantRequest =
-        turn.kind === "seat"
-          ? turn.grant
-          : await interactiveGrant(turn.place, item.cause);
+      // Interactive turns take no grant: they are cooperative writers in their worktree.
+      const grantRequest = turn.kind === "seat" ? turn.grant : null;
       let acquired = await acquire(item, grantRequest, controller.signal);
       if (acquired.kind === "admitted" && turn.kind === "user") {
         let refused: string | null;
@@ -1855,7 +1765,6 @@ export function createConversationCore(
                   attemptId,
                   turn.place,
                   turn.request.autonomous === true ? "workflow" : "user",
-                  acquired.grant,
                   controller.signal,
                   runtime,
                 );
@@ -2238,17 +2147,11 @@ export function createConversationCore(
     async recover() {
       // A custody the crash left admitted lost its runtime with the process: its loss is
       // recorded before it settles, so a crash in between records it again.
-      const custodyLost = new Map<
-        string,
-        { conversationId: string; fenced: boolean }
-      >();
+      const custodyLost = new Map<string, string>();
       for (const attempt of deps.repo.attemptsInState("admitted")) {
         if (!isCustodyCause(attempt.cause)) continue;
         const place = deps.repo.getInteractive(attempt.conversationId);
-        let fenced = false;
         if (place !== null) {
-          // The window in which its work could still write holds whether or not the loss can be recorded.
-          fenced = await fenceRecoveredWorktree(place, attempt.attemptId);
           try {
             // The process that knew which tasks ran is gone: the loss names none.
             await deps.custodyLoss({
@@ -2267,10 +2170,7 @@ export function createConversationCore(
             continue;
           }
         }
-        custodyLost.set(attempt.attemptId, {
-          conversationId: attempt.conversationId,
-          fenced,
-        });
+        custodyLost.set(attempt.attemptId, attempt.conversationId);
       }
       const { interrupted, claimed, unsent } = deps.transaction(() => {
         const conversations = new Set<string>();
@@ -2321,11 +2221,10 @@ export function createConversationCore(
           unsent,
         };
       });
-      for (const [attemptId, { conversationId, fenced }] of custodyLost)
+      for (const [attemptId, conversationId] of custodyLost)
         deps.log.info("conversation_core.custody_recovered", {
           conversationId,
           attemptId,
-          fenced,
         });
       // A turn that was still waiting to start left its conversation claimed (running).
       for (const conversationId of claimed) {

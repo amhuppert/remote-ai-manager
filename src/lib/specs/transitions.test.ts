@@ -13,6 +13,7 @@ import type { ActorProvenance, SpecGatePolicy } from "./schemas";
 import {
   HUMAN_ACT_REQUIRED_RATIONALE,
   LATER_STAGE_RATIONALE,
+  PLAN_IN_EVERGREEN_RATIONALE,
 } from "./refusal-rationale";
 import {
   admitDraftWrite,
@@ -51,15 +52,6 @@ const decisionPayload = {
   reason: "One authority prevents bypasses.",
   tracedRequirementElementIds: ["requirement-1"],
 };
-const taskPayload = {
-  kind: "task" as const,
-  title: "Implement predicates",
-  instructions: "Implement the pure transition predicates.",
-  tracedRequirementElementIds: ["requirement-1"],
-  tracedDecisionElementIds: ["decision-1"],
-  coveredCriterionElementIds: ["criterion-1"],
-  dependsOnTaskElementIds: [],
-};
 
 function lintElement(
   id: string,
@@ -67,8 +59,7 @@ function lintElement(
   payload:
     | typeof requirementPayload
     | typeof criterionPayload
-    | typeof decisionPayload
-    | typeof taskPayload,
+    | typeof decisionPayload,
   parentElementId?: string,
 ): LintRevisionElement {
   return {
@@ -84,7 +75,6 @@ const lintElements = (): LintRevisionElement[] => [
   lintElement("requirement-1", "R1", requirementPayload),
   lintElement("criterion-1", "R1.1", criterionPayload, "requirement-1"),
   lintElement("decision-1", "D1", decisionPayload),
-  lintElement("task-1", "T1", taskPayload),
 ];
 
 function diffElement(
@@ -92,8 +82,7 @@ function diffElement(
   payload:
     | typeof requirementPayload
     | typeof criterionPayload
-    | typeof decisionPayload
-    | typeof taskPayload,
+    | typeof decisionPayload,
   parentElementId: string | null = null,
 ): DiffRevisionElement {
   return {
@@ -108,7 +97,6 @@ const revisionRows = (): DiffRevisionElement[] => [
   diffElement("requirement-1", requirementPayload),
   diffElement("criterion-1", criterionPayload, "requirement-1"),
   diffElement("decision-1", decisionPayload),
-  diffElement("task-1", taskPayload),
 ];
 
 const contractPolicy: SpecGatePolicy = { preset: "contract-bearing" };
@@ -160,7 +148,6 @@ function reviewSnapshot(): SignOffReviewSnapshot {
         { subjectKind: "decision", elementId: "decision-1" },
         "revision-1",
       ),
-      approvalRecord({ subjectKind: "plan", elementId: null }, "revision-1"),
     ],
   };
 }
@@ -196,7 +183,7 @@ function proposeReview(review: SignOffReviewSnapshot = reviewSnapshot()): {
 function signOffContext(
   overrides: Partial<Parameters<typeof signOffRevision>[0]> = {},
 ): Parameters<typeof signOffRevision>[0] {
-  const authoringStage = overrides.authoringStage ?? "plan";
+  const authoringStage = overrides.authoringStage ?? "design";
   const review = overrides.review ?? reviewSnapshot();
   return {
     actor: human,
@@ -222,7 +209,6 @@ describe("transition predicates", () => {
       ["requirements", "section", "context"],
       ["design", "decision", undefined],
       ["design", "section", "design_narrative"],
-      ["plan", "task", undefined],
     ] as const)(
       "admits %s-stage writes of %s",
       (stage, elementKind, sectionRole) => {
@@ -255,6 +241,33 @@ describe("transition predicates", () => {
             "Return to the requirements stage before authoring requirement content.",
         },
       });
+    });
+
+    it("refuses every write to a legacy plan revision and a task at any stage", () => {
+      const dials = {
+        requirements: "gate",
+        design: "gate",
+        plan: "gate",
+      } as const;
+
+      expect(
+        admitDraftWrite("plan", "requirement", undefined, dials),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "stage_blocked",
+          unmetConditions: ["Legacy plan revisions are read-only."],
+        },
+      });
+      for (const stage of ["requirements", "design"] as const) {
+        expect(admitDraftWrite(stage, "task", undefined, dials)).toMatchObject({
+          ok: false,
+          refusal: {
+            code: "stage_blocked",
+            rationale: PLAN_IN_EVERGREEN_RATIONALE,
+          },
+        });
+      }
     });
 
     // Staged authoring is designed friction, so both branches say what the
@@ -377,11 +390,11 @@ describe("transition predicates", () => {
     it("returns the lint panel findings when blocking lint refuses a draft", () => {
       const decision = propose({
         revisionState: "draft",
-        authoringStage: "plan",
+        authoringStage: "requirements",
         policy: contractPolicy,
         draft: {
           specHandle: "native-sdd",
-          authoringStage: "plan",
+          authoringStage: "requirements",
           elements: [],
         },
         records: {},
@@ -421,9 +434,9 @@ describe("transition predicates", () => {
 
       const decision = propose({
         revisionState: "draft",
-        authoringStage: "plan",
+        authoringStage: "design",
         policy: contractPolicy,
-        draft: { specHandle: "native-sdd", authoringStage: "plan", elements },
+        draft: { specHandle: "native-sdd", authoringStage: "design", elements },
         records: {},
         ...proposeReview(),
       });
@@ -455,11 +468,11 @@ describe("transition predicates", () => {
         expect(
           propose({
             revisionState,
-            authoringStage: "plan",
+            authoringStage: "design",
             policy: contractPolicy,
             draft: {
               specHandle: "native-sdd",
-              authoringStage: "plan",
+              authoringStage: "design",
               elements: lintElements(),
             },
             records: {},
@@ -485,11 +498,11 @@ describe("transition predicates", () => {
       expect(
         propose({
           revisionState: "draft",
-          authoringStage: "plan",
+          authoringStage: "design",
           policy: contractPolicy,
           draft: {
             specHandle: "native-sdd",
-            authoringStage: "plan",
+            authoringStage: "design",
             elements: lintElements(),
           },
           records: {},
@@ -507,18 +520,18 @@ describe("transition predicates", () => {
         name: "an overridden fast-path policy that retains a Combined Gate",
         policy: {
           preset: "fast-path",
-          overrides: { plan: "notify" },
+          overrides: { requirements: "notify" },
         } satisfies SpecGatePolicy,
       },
     ])("allows $name to reach human combined review", ({ policy }) => {
       expect(
         propose({
           revisionState: "draft",
-          authoringStage: "plan",
+          authoringStage: "design",
           policy,
           draft: {
             specHandle: "native-sdd",
-            authoringStage: "plan",
+            authoringStage: "design",
             elements: lintElements(),
           },
           records: {},
@@ -534,7 +547,7 @@ describe("transition predicates", () => {
       expect(
         propose({
           revisionState: "draft",
-          authoringStage: "plan",
+          authoringStage: "design",
           policy: {
             preset: "fast-path",
             overrides: {
@@ -545,7 +558,7 @@ describe("transition predicates", () => {
           },
           draft: {
             specHandle: "native-sdd",
-            authoringStage: "plan",
+            authoringStage: "design",
             elements: lintElements(),
           },
           records: {},
@@ -655,7 +668,7 @@ describe("transition predicates", () => {
           signOffContext({
             draft: {
               specHandle: "native-sdd",
-              authoringStage: "plan",
+              authoringStage: "design",
               elements,
             },
           }),
@@ -704,7 +717,7 @@ describe("transition predicates", () => {
           signOffContext({
             draft: {
               specHandle: "native-sdd",
-              authoringStage: "plan",
+              authoringStage: "design",
               elements,
             },
             records: {
@@ -735,7 +748,6 @@ describe("transition predicates", () => {
     it.each([
       ["requirements", "requirement"],
       ["design", "decision"],
-      ["plan", "plan"],
     ] as const)(
       "refuses missing %s approvals configured as Gate",
       (authoringStage, subjectKind) => {
@@ -788,27 +800,6 @@ describe("transition predicates", () => {
           code: "gate_blocked",
           unmetConditions: [
             "Requirement R1 needs a valid approval for revision-2.",
-          ],
-        },
-      });
-    });
-
-    it("requires plan approval only for a plan-stage revision", () => {
-      const review = reviewSnapshot();
-      review.approvals = review.approvals.filter(
-        (approval) => approval.subjectKind !== "plan",
-      );
-
-      expect(
-        signOffRevision(signOffContext({ authoringStage: "design", review })),
-      ).toEqual({ ok: true });
-      expect(
-        signOffRevision(signOffContext({ authoringStage: "plan", review })),
-      ).toMatchObject({
-        ok: false,
-        refusal: {
-          unmetConditions: [
-            "Execution plan needs a valid approval for revision-2.",
           ],
         },
       });
@@ -978,7 +969,7 @@ describe("transition predicates", () => {
             review,
             draft: {
               specHandle: "native-sdd",
-              authoringStage: "plan",
+              authoringStage: "design",
               elements: [
                 lintElement("requirement-2", "R2", requirementPayload),
                 lintElement(
@@ -989,10 +980,6 @@ describe("transition predicates", () => {
                 ),
                 lintElement("decision-1", "D1", {
                   ...decisionPayload,
-                  ...tracesReplacement,
-                }),
-                lintElement("task-1", "T1", {
-                  ...taskPayload,
                   ...tracesReplacement,
                 }),
               ],
@@ -1033,10 +1020,6 @@ describe("transition predicates", () => {
     });
   });
 
-  describe("startExecution", () => {});
-
-  describe("grantWaiver", () => {});
-
   describe("changePolicy", () => {
     it("is human-only", () => {
       expect(
@@ -1065,28 +1048,7 @@ describe("transition predicates", () => {
         refusal: { code: "human_act_required" },
       });
     });
-
-    it("refuses a delivery Off value rather than storing a misleading override", () => {
-      expect(
-        changePolicy({
-          actor: human,
-          currentPolicy: contractPolicy,
-          proposedPolicy: {
-            preset: "contract-bearing",
-            overrides: {},
-          },
-          hardConfirmed: true,
-        }),
-      ).toMatchObject({
-        ok: false,
-        refusal: { code: "gate_blocked" },
-      });
-    });
   });
-
-  describe("evaluateDeliveryGate", () => {});
-
-  describe("floor unreachability", () => {});
 
   /**
    * An imported revision is born past its authoring gates on import basis, so

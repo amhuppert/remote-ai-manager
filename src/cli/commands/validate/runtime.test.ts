@@ -277,9 +277,8 @@ describe("native validation commands", () => {
     });
     expect(fixture.requests).toHaveLength(1);
   });
-  it("rejects full scope with paths and half a workflow identity before submit", async () => {
+  it("rejects full scope with paths before submit", async () => {
     const fixture = createCcRuntimeFixture({
-      env: { CC_WORKFLOW_EXECUTION_ID: "execution-one" },
       respond: () => jsonReply({}),
     });
     expect(
@@ -295,7 +294,6 @@ describe("native validation commands", () => {
         ])
       ).exitCode,
     ).toBe(2);
-    expect((await fixture.run(["validate", "run", "test"])).exitCode).toBe(2);
     expect(fixture.requests).toHaveLength(0);
   });
   it("lists scope costs and active capacity from project-conversation context", async () => {

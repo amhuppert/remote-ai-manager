@@ -57,5 +57,3 @@ describe("revisionAdmittedByImport", () => {
     ).toBe(false);
   });
 });
-
-describe("delivery chip presentation", () => {});

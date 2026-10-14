@@ -424,7 +424,6 @@ export default function Topbar({
             <span className="leading-none max-768:hidden">Tickets</span>
           </Link>
           <DevServersNavLink active={pathname === "/dev-servers"} />
-
           <Link
             href="/config"
             className={cn(
@@ -487,7 +486,6 @@ export default function Topbar({
                 <Link href={specsHref}>Specs</Link>
               </DropdownMenuItem>
               <DevServersMenuItem />
-              <DropdownMenuItem asChild touch></DropdownMenuItem>
               <DropdownMenuItem asChild touch>
                 <Link href="/config">System Configuration</Link>
               </DropdownMenuItem>

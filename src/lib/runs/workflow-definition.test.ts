@@ -1225,7 +1225,7 @@ describe("lanes (W4)", () => {
     ).toEqual(["contexts.2.dependsOn.0"]);
   });
 
-  it("refuses a session writer that a lane could publish beside, since its uncommitted results would block that publication", () => {
+  it("refuses a session writer a lane could publish beside, and accepts writers before or after the lane", () => {
     const refused = issues({
       title: "Session writer beside a lane",
       contexts: [
@@ -1234,7 +1234,12 @@ describe("lanes (W4)", () => {
       ],
     });
     expect(refused.map((e) => e.path)).toEqual(["contexts.0"]);
-    expect(refused[0]?.message).toMatch(/never committed/);
+    expect(refused[0]?.message).toMatch(
+      /"docs" writes in the session worktree/,
+    );
+    expect(refused[0]?.message).toMatch(
+      /lane "api" could publish while it runs/,
+    );
     expect(() =>
       launched({
         title: "Session writer after the lane",
@@ -1246,6 +1251,21 @@ describe("lanes (W4)", () => {
             brief: "Audit",
             scope: readOnly,
             dependsOn: ["docs"],
+          },
+        ],
+      }),
+    ).not.toThrow();
+    // A writer's uncommitted results block a later publication only where they collide with the lane's files.
+    expect(() =>
+      launched({
+        title: "Session writer before the lane",
+        contexts: [
+          { key: "schema", brief: "Schema", outputSchema: { type: "object" } },
+          {
+            key: "api",
+            brief: "API",
+            lane: "api",
+            dependsOn: [{ key: "schema", outputOnly: true }],
           },
         ],
       }),

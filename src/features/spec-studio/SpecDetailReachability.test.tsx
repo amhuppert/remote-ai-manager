@@ -13,7 +13,7 @@ describe("Spec Studio surface reachability", () => {
   ] as const)(
     "sends an open %s draft's primary action to the %s review",
     (stage, view) => {
-      expect(detailStatePresentation("draft", [], stage)).toMatchObject({
+      expect(detailStatePresentation("draft", stage)).toMatchObject({
         action: "Review changes",
         view,
       });

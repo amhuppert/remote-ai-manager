@@ -16,17 +16,11 @@ import {
   ccRequestFailure,
   type CcFailedRequest,
 } from "../../framework/request";
-import {
-  devServerRequestPath,
-  inferDevCommandTarget,
-  type DevCommandTarget,
-  type DevInstance,
-} from "../dev/routing";
+import { devServerRequestPath, type DevInstance } from "../dev/routing";
 export { devServerRequestPath };
 /** The session addressed, and who calls: a run seat in a lane is told its work is not what the session serves. */
 export type DevTarget = {
   context: SessionContext & { principalIdentity: CliPrincipalIdentity };
-  target: DevCommandTarget;
 };
 export function invalidDev(what: string) {
   return {
@@ -42,8 +36,6 @@ export function devUsage(message: string) {
 export async function resolveDevTarget(
   app: CcApplication,
 ): Promise<CcContextResult<DevTarget>> {
-  const inferred = inferDevCommandTarget(app.globals, app.env);
-  if (!inferred.ok) return devUsage(inferred.message);
   const resolved = await resolveCcSession(app);
   return resolved.ok
     ? {
@@ -53,7 +45,6 @@ export async function resolveDevTarget(
             ...resolved.value,
             principalIdentity: resolveCcPrincipal(app),
           },
-          target: inferred.target,
         },
       }
     : resolved;
@@ -61,9 +52,6 @@ export async function resolveDevTarget(
 const targetCodes = new Set([
   "NO_DEV_SERVERS_CONFIGURED",
   "INVALID_DEV_SERVER_TARGET",
-  "WORKFLOW_EXECUTION_NOT_ACTIVE",
-  "WORKFLOW_CONTEXT_NOT_FOUND",
-  "WORKFLOW_WORKTREE_UNAVAILABLE",
   "RUN_LANE_NOT_SERVED",
   "RUN_SEAT_NOT_CURRENT",
 ]);
@@ -84,11 +72,11 @@ export async function resolveRunningInstance(
 > {
   const resolved = await resolveDevTarget(app);
   if (!resolved.ok) return resolved;
-  const { context, target } = resolved.value;
+  const { context } = resolved.value;
   const response = await cliRequest(app.host, {
     ...context,
     method: "GET",
-    path: devServerRequestPath(context, target),
+    path: devServerRequestPath(context),
     unstamped: true,
   });
   if (response.kind !== "ok") {

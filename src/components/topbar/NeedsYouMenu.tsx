@@ -122,13 +122,7 @@ export function buildNeedsYouItems(
 
 function needsYouSummary(items: NeedsYouItem[]): string | null {
   const firstAction = items.find((item) => item.source === "active-work");
-  if (firstAction !== undefined) return firstAction.label.toLowerCase();
-
-  const approvals = items.filter(
-    (item) => item.label === "Approval required",
-  ).length;
-  if (approvals === 0) return null;
-  return `${approvals} approval${approvals === 1 ? "" : "s"}`;
+  return firstAction === undefined ? null : firstAction.label.toLowerCase();
 }
 
 function attentionRowAccessibleLabel(

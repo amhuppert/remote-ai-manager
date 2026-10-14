@@ -94,10 +94,6 @@ describe("advisory inbox hint", () => {
   });
 
   it.each([
-    {
-      name: "workflow lane",
-      env: { CC_WORKFLOW_EXECUTION_ID: "execution-one" },
-    },
     { name: "collaboration runtime", env: { CC_CONVERSATION: "caller-one" } },
     { name: "ambiguous scope", env: { CC_CONVERSATION_SCOPE: "" } },
     {

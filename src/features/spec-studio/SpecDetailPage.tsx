@@ -307,7 +307,6 @@ export function SpecDetailContent({
   const railGroups = snapshot === null ? [] : buildRailGroups(detail);
   const statePresentation = detailStatePresentation(
     detail.status.phase.primary,
-    detail.status.pendingApprovals,
     detail.status.phase.authoringStage ??
       detail.currentRevision?.revision.authoringStage ??
       detail.currentApprovedRevision?.revision.authoringStage,
@@ -318,16 +317,11 @@ export function SpecDetailContent({
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const gateHref = `${detailHref}?view=gate-policy`;
-  const reviewHref = `${detailHref}?view=${authoringReviewView(detail)}`;
   const primaryActionHref =
     statePresentation.href ??
     (statePresentation.view === null
       ? null
       : `${detailHref}?view=${statePresentation.view}`);
-  // A draft opened while an execution runs projects as `executing` with a
-  // `draft` authoring facet, so the state-driven primary action points at
-  // delivery and would otherwise leave review of the draft with no entry point.
-  const showSecondaryReviewLink = false;
   const specReferenceAttrs: SpecMentionAttrs = {
     projectName,
     slug: detail.spec.slug,
@@ -396,15 +390,6 @@ export function SpecDetailContent({
                   >
                     Export
                   </a>
-                  {showSecondaryReviewLink && (
-                    <Link
-                      href={reviewHref}
-                      title="Review the open draft"
-                      className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                    >
-                      Review draft
-                    </Link>
-                  )}
                   {primaryActionHref !== null &&
                     statePresentation.action !== null && (
                       <Link
@@ -553,6 +538,9 @@ const bannerTextClass = {
   red: "text-red",
 } as const;
 
+const bannerApprovalsLinkClass =
+  "text-[0.68rem] text-text-secondary no-underline underline-offset-2 hover:text-text-primary hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+
 /** The view that hosts review of the current authoring revision. */
 function authoringReviewView(
   detail: SpecDetailView,
@@ -564,10 +552,8 @@ function authoringReviewView(
 }
 
 /**
- * The pending-approvals summary is a control, not a statistic: a pending
- * delivery approval names itself and links straight to the approval control
- * (`?el=delivery`, the retrying deep-link contract); other pending gates link
- * to the surface that hosts their decision (F15).
+ * The pending-approvals summary is a control, not a statistic: pending
+ * approvals link to the surface that hosts their decision (F15).
  */
 function BannerApprovalsSummary({
   detail,
@@ -576,21 +562,16 @@ function BannerApprovalsSummary({
   detail: SpecDetailView;
   detailHref: string;
 }): React.JSX.Element {
+  const count = detail.status.pendingApprovals.length;
+  if (count === 0) return <>0 pending approvals</>;
+  const plural = count === 1 ? "" : "s";
   return (
-    <a
-      href={
-        detailHref +
-        "?view=" +
-        (detail.status.pendingApprovals.some(
-          ({ gate }) => gate === "requirements",
-        )
-          ? "requirements"
-          : "design")
-      }
-      className="text-amber"
+    <Link
+      href={`${detailHref}?view=${authoringReviewView(detail)}`}
+      className={bannerApprovalsLinkClass}
     >
-      {detail.status.pendingApprovals.length} pending approvals
-    </a>
+      {count} pending approval{plural} — review
+    </Link>
   );
 }
 
@@ -816,7 +797,6 @@ function formatDate(timestamp: string): string {
 
 export function detailStatePresentation(
   phase: SpecPhasePrimary,
-  pendingApprovals: SpecDetailView["status"]["pendingApprovals"],
   authoringStage?: SpecAuthoringStage,
   frozenRevisionImported?: boolean,
 ): DetailStatePresentation {
@@ -828,13 +808,16 @@ export function detailStatePresentation(
       action: null,
       view: null,
     };
+  // The draft is reviewable while the author keeps editing it, so the human
+  // act it asks for is review, hosted by its authoring stage's view.
   if (phase === "draft")
     return {
       tone: "amber",
-      banner: pendingApprovals.length ? "Review needed" : "Draft in progress",
-      description: "Review the current requirements and design.",
-      action: "Open review",
-      view: authoringStage === "requirements" ? "requirements" : "design",
+      banner: "Draft contract",
+      description:
+        "Review and approve while the draft is open; sign-off freezes it.",
+      action: "Review changes",
+      view: authoringStage === "design" ? "design" : "requirements",
     };
   return {
     tone: "green",

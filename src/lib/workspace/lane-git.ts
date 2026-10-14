@@ -69,8 +69,6 @@ export interface LaneGit {
     commit: string;
     message: string;
   }): Promise<{ kind: "merged" } | { kind: "conflicts"; files: string[] }>;
-  /** Tracked changes, staged or not, and non-ignored untracked files in a worktree. */
-  dirtyPaths(worktreePath: string): Promise<string[]>;
   /**
    * Changes in a worktree's files against its HEAD, and non-ignored untracked
    * files, without reading its index: a landing interrupted before resyncing
@@ -82,14 +80,24 @@ export interface LaneGit {
     worktreePath: string;
     paths: string[] | null;
   }): Promise<void>;
-  /** The session's Git lock CC's own commit and merge jobs take, if it is free now. */
-  trySessionLock(projectPath: string, sessionName: string): (() => void) | null;
+  /**
+   * The session's Git lock CC's own commit, merge, rebase and conflict jobs
+   * take: held now, or busy, naming the job that holds it when one can be named.
+   */
+  trySessionLock(projectPath: string, sessionName: string): SessionLockAttempt;
   /**
    * Publishes the lane branch's tree onto `targetBranch` as one commit whose
-   * parent is `expectedHead`, and refreshes the target worktree. Run holding
-   * the target worktree and the session's Git lock: it refuses unless that
-   * worktree still checks out `targetBranch` at `expectedHead`, holds no merge
-   * and no changes, and the lane contains `expectedHead`.
+   * parent is `expectedHead`, fast-forwarding the target worktree to it with
+   * Git's own checks, which keep every uncommitted change the lane does not
+   * touch. Run holding the target worktree and the session's Git lock: it
+   * refuses unless that worktree still checks out `targetBranch` at
+   * `expectedHead` with no merge in progress, and the lane contains
+   * `expectedHead`. Refused without changing the branch, index or worktree
+   * when uncommitted changes, untracked or ignored files are in the way of
+   * the lane's files (`blocked`). `git_locked` while another Git process holds
+   * the session worktree's index lock or the session branch's ref lock (or
+   * left one behind); a ref lock refuses only after the merge wrote the
+   * lane's files and index, which a new attempt accepts as they are.
    */
   publish(input: {
     projectPath: string;
@@ -106,20 +114,11 @@ export interface LaneGit {
     | { kind: "stale"; head: string }
     | { kind: "blocked"; detail: string }
     | { kind: "failed"; detail: string }
-    /** The branch moved to `commit`, but the worktree could not be refreshed. */
-    | { kind: "refresh_failed"; commit: string; detail: string }
+    /** Another Git process holds `lock`, or left it behind: wait for it to go, then try again. */
+    | { kind: "git_locked"; lock: string }
   >;
-  /**
-   * After a crash between moving the target branch to `to` and refreshing its
-   * worktree: `complete` when the worktree already holds `to`; `refreshed`
-   * when it still held exactly `from` and was brought to `to`; `diverged`
-   * when it holds anything else, which is left untouched.
-   */
-  completePublication(input: {
-    targetWorktreePath: string;
-    from: string;
-    to: string;
-  }): Promise<"complete" | "refreshed" | "diverged">;
+  /** Whether a lock file `publish` reported is still there. */
+  lockHeld(lock: string): boolean;
   /**
    * Removes the lane worktree and its branch once they hold exactly the
    * publication `published` made of them; keeps a lane holding anything more.
@@ -141,6 +140,16 @@ export function publicationMarker(cause: string): string {
   return `CC-Publication: ${cause}`;
 }
 
+/** A CC job holding a session's Git lock. */
+export interface SessionJob {
+  jobId: string;
+  jobType: string;
+}
+
+export type SessionLockAttempt =
+  | { kind: "held"; release(): void }
+  | { kind: "busy"; job: SessionJob | null };
+
 export interface LaneGitDeps {
   git: GitClient;
   exists(filePath: string): boolean;
@@ -149,6 +158,13 @@ export interface LaneGitDeps {
   /** The single-flight lock CC's own commit and merge jobs take on a session. */
   acquireSessionLock(projectPath: string, sessionName: string): () => void;
   isSessionBusy(projectPath: string, sessionName: string): boolean;
+  /** The CC job running in a session, which holds its Git lock while it runs; null when none is. */
+  sessionJob(projectPath: string, sessionName: string): SessionJob | null;
+  /**
+   * The hooks directory publication's merge runs; `/dev/null` (none) unless a
+   * test interleaves a commit with the merge through a hook.
+   */
+  mergeHooksPath?: string;
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -156,18 +172,45 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 /** Written into a lane's Git directory once its setup finished, so a retry can tell a ready lane from a half-made one. */
 const LANE_READY = "cc-lane-ready";
 
-/** Tracked changes and untracked files that are not ignored, from `git status --porcelain -z`. */
-export function parseStatusPaths(output: string): string[] {
-  const entries = output.split("\0");
-  const paths: string[] = [];
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    if (entry === undefined || entry.length < 4) continue;
-    paths.push(entry.slice(3));
-    // A rename or copy is followed by its original path.
-    if (entry[0] === "R" || entry[0] === "C") index++;
+/** What a failed Git command printed: its stderr, or its message when it printed nothing. */
+function gitFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const stderr =
+    "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
+  return stderr.trim() || error.message;
+}
+
+/** Git refusing a checkout because files are in the way, as `git merge` words it. */
+const IN_THE_WAY =
+  /would be (overwritten|removed|lost) by merge|would lose untracked files|not uptodate/;
+
+/**
+ * The lock file Git could not create because it exists. The path runs to the
+ * last `': File exists` on its line, so a path holding an apostrophe is whole.
+ */
+const LOCK_EXISTS = /Unable to create '(.+)': File exists/;
+
+/**
+ * Git's refusal as one line: each heading with the paths listed under it,
+ * without its advice (which suggests the stash every worktree shares).
+ */
+function describeInTheWay(stderr: string): string {
+  const sections: Array<{ heading: string; paths: string[] }> = [];
+  for (const line of stderr.split("\n")) {
+    if (line.startsWith("\t")) {
+      sections.at(-1)?.paths.push(line.trim());
+      continue;
+    }
+    const text = line.replace(/^error: /, "").trim();
+    if (text === "" || text === "Aborting" || text.startsWith("Please "))
+      continue;
+    sections.push({ heading: text, paths: [] });
   }
-  return paths;
+  return sections
+    .map(({ heading, paths }) =>
+      paths.length === 0 ? heading : `${heading} ${paths.join(", ")}`,
+    )
+    .join("; ");
 }
 
 export function createLaneGit(deps: LaneGitDeps): LaneGit {
@@ -176,45 +219,110 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
   const operations = createWorktreeOperations(deps.git);
   const landing = createOwnedLandingOperations(deps.git);
 
-  async function dirtyPaths(worktreePath: string): Promise<string[]> {
-    return parseStatusPaths(
-      await git(worktreePath, [
-        "status",
-        "--porcelain",
-        "-z",
-        "--untracked-files=all",
-      ]),
-    );
-  }
-
   /** Working files that differ from HEAD, untracked ones not ignored included, judged without the shared index. */
   const unlandedPaths = (worktreePath: string): Promise<string[]> =>
     landing.worktreeChangesFromHead(worktreePath);
 
+  const branchHead = async (
+    projectPath: string,
+    branch: string,
+  ): Promise<string> =>
+    (
+      await git(projectPath, [
+        "rev-parse",
+        "--verify",
+        `refs/heads/${branch}^{commit}`,
+      ])
+    ).trim();
+
   /**
-   * Files on disk at paths Git starts tracking between `from` and `to`, which
-   * moving the worktree would overwrite. Status never shows them when ignored.
+   * The locks whose holder a publication waits out: the target worktree's
+   * index lock and its branch's ref lock (which lives in the common Git
+   * directory). Any other lock Git cannot take fails the publication.
    */
-  async function replacedUntracked(
+  async function sessionLocks(
     worktreePath: string,
-    from: string,
-    to: string,
+    branch: string,
   ): Promise<string[]> {
-    const added = await git(worktreePath, [
-      "diff",
-      "--name-only",
-      "-z",
-      "--no-renames",
-      "--diff-filter=A",
-      from,
-      to,
-    ]);
-    return added
-      .split("\0")
-      .filter(
-        (file) => file.length > 0 && deps.exists(path.join(worktreePath, file)),
-      )
-      .sort();
+    const gitPath = async (name: string) =>
+      path.resolve(
+        worktreePath,
+        (await git(worktreePath, ["rev-parse", "--git-path", name])).trim(),
+      );
+    return [
+      await gitPath("index.lock"),
+      await gitPath(`refs/heads/${branch}.lock`),
+    ];
+  }
+
+  /**
+   * Fast-forwards the target worktree's branch to the prepared commit, and
+   * classifies the result by where the branch ends up, not by Git's exit
+   * status. Hooks are off; the explicit options override repository and
+   * branch merge settings (`mergeOptions=--squash` would otherwise exit 0
+   * without moving the branch); `--no-autostash` keeps Git off the stash
+   * every worktree shares; `--no-overwrite-ignore` refuses ignored files in
+   * the way. Git writes the index and files before it moves the branch with
+   * the old head as the expected value, so a commit landing in between
+   * fails the move rather than reverting the lane.
+   */
+  async function fastForward(input: {
+    projectPath: string;
+    targetBranch: string;
+    targetWorktreePath: string;
+    expectedHead: string;
+    prepared: string;
+  }): Promise<
+    | { kind: "published"; commit: string }
+    | { kind: "stale"; head: string }
+    | { kind: "blocked"; detail: string }
+    | { kind: "failed"; detail: string }
+    | { kind: "git_locked"; lock: string }
+  > {
+    let failure: string | null = null;
+    try {
+      await git(input.targetWorktreePath, [
+        "-c",
+        `core.hooksPath=${deps.mergeHooksPath ?? "/dev/null"}`,
+        "merge",
+        "-q",
+        "--ff-only",
+        "--no-squash",
+        "--no-overwrite-ignore",
+        "--no-autostash",
+        "--no-verify-signatures",
+        input.prepared,
+      ]);
+    } catch (error) {
+      failure = gitFailure(error);
+    }
+    const head = await branchHead(input.projectPath, input.targetBranch);
+    if (head === input.prepared)
+      return { kind: "published", commit: input.prepared };
+    if (failure === null)
+      return {
+        kind: "failed",
+        detail: `Git reported the merge of the publication ${input.prepared} done, but branch ${input.targetBranch} is at ${head}. Check the session's Git configuration and hooks, then ask for a new attempt.`,
+      };
+    // The branch moved under the merge: a new attempt integrates the new head.
+    if (head !== input.expectedHead) return { kind: "stale", head };
+    const lock = LOCK_EXISTS.exec(failure)?.[1];
+    if (
+      lock !== undefined &&
+      (
+        await sessionLocks(input.targetWorktreePath, input.targetBranch)
+      ).includes(lock)
+    )
+      return { kind: "git_locked", lock };
+    if (IN_THE_WAY.test(failure))
+      return {
+        kind: "blocked",
+        detail: `Uncommitted work in the session worktree is in the way of the lane's files, so nothing was published or changed. ${describeInTheWay(failure)}. Commit, move or remove it, then ask for a new attempt.`,
+      };
+    return {
+      kind: "failed",
+      detail: `Publishing into the session worktree failed: ${failure}`,
+    };
   }
 
   async function mergeInProgress(worktreePath: string): Promise<boolean> {
@@ -358,9 +466,9 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
       }
     },
 
-    dirtyPaths,
-
     unlandedPaths,
+
+    lockHeld: (lock) => deps.exists(lock),
 
     async resyncIndex({ worktreePath, paths }) {
       await git(worktreePath, [
@@ -374,12 +482,19 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
     },
 
     trySessionLock(projectPath, sessionName) {
+      const busy = (): SessionLockAttempt => ({
+        kind: "busy",
+        job: deps.sessionJob(projectPath, sessionName),
+      });
       // Asked first: a refused acquisition is logged, and publication retries while a job runs.
-      if (deps.isSessionBusy(projectPath, sessionName)) return null;
+      if (deps.isSessionBusy(projectPath, sessionName)) return busy();
       try {
-        return deps.acquireSessionLock(projectPath, sessionName);
+        return {
+          kind: "held",
+          release: deps.acquireSessionLock(projectPath, sessionName),
+        };
       } catch {
-        return null;
+        return busy();
       }
     },
 
@@ -396,32 +511,14 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
           kind: "blocked",
           detail: `The session worktree has ${checkedOut === "" ? "a detached HEAD" : checkedOut.replace(/^refs\/heads\//, "branch ")} checked out, not branch ${input.targetBranch}. Check out ${input.targetBranch} again, then ask for a new attempt.`,
         };
-      const head = (
-        await git(input.projectPath, [
-          "rev-parse",
-          "--verify",
-          `refs/heads/${input.targetBranch}^{commit}`,
-        ])
-      ).trim();
+      const head = await branchHead(input.projectPath, input.targetBranch);
       if (head !== input.expectedHead) return { kind: "stale", head };
       if (await mergeInProgress(input.targetWorktreePath))
         return {
           kind: "blocked",
           detail: `The session worktree has a merge in progress. Finish or abort it, then ask for a new attempt.`,
         };
-      const dirty = await dirtyPaths(input.targetWorktreePath);
-      if (dirty.length > 0)
-        return {
-          kind: "blocked",
-          detail: `The session worktree has changes publication would overwrite or leave behind: ${dirty.join(", ")}. Commit or remove them, then ask for a new attempt.`,
-        };
-      const laneHead = (
-        await git(input.projectPath, [
-          "rev-parse",
-          "--verify",
-          `refs/heads/${input.laneBranch}^{commit}`,
-        ])
-      ).trim();
+      const laneHead = await branchHead(input.projectPath, input.laneBranch);
       try {
         await git(input.projectPath, [
           "merge-base",
@@ -435,16 +532,6 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
           detail: `The lane does not contain the session head ${input.expectedHead} its checks ran against; it would publish a merge nothing checked.`,
         };
       }
-      const replaced = await replacedUntracked(
-        input.targetWorktreePath,
-        input.expectedHead,
-        laneHead,
-      );
-      if (replaced.length > 0)
-        return {
-          kind: "blocked",
-          detail: `The session worktree holds files the lane starts tracking, which publication would overwrite: ${replaced.join(", ")}. Move them aside, then ask for a new attempt.`,
-        };
       const prepared = await operations.prepareSquashMerge({
         projectPath: input.projectPath,
         featureBranch: input.laneBranch,
@@ -460,58 +547,20 @@ export function createLaneGit(deps: LaneGitDeps): LaneGit {
           kind: "failed",
           detail: `The lane does not apply to ${input.expectedHead}: ${prepared.conflictFiles.join(", ")}`,
         };
-      const published = await operations.publishPreparedMerge({
-        projectPath: input.projectPath,
-        targetBranch: input.targetBranch,
-        preparedSha: prepared.preparedSha,
-        expectedTargetSha: prepared.expectedTargetSha,
-        parkedRef: prepared.parkedRef,
-        cleanTargetWorktreePath: input.targetWorktreePath,
-      });
-      if (published.kind === "cas-lost")
-        return { kind: "stale", head: published.actualTargetSha };
-      if (published.kind === "publish-failed")
-        return { kind: "failed", detail: published.error };
-      if (published.refreshWarning !== undefined)
-        return {
-          kind: "refresh_failed",
-          commit: published.mergeHash,
-          detail: published.refreshWarning,
-        };
-      return { kind: "published", commit: published.mergeHash };
-    },
-
-    async completePublication({ targetWorktreePath, from, to }) {
-      const head = (
-        await git(targetWorktreePath, ["rev-parse", "HEAD"])
-      ).trim();
-      if (head !== to) return "diverged";
-      const holds = async (commit: string): Promise<boolean> => {
-        try {
-          await git(targetWorktreePath, ["diff", "--quiet", commit]);
-          await git(targetWorktreePath, [
-            "diff",
-            "--quiet",
-            "--cached",
-            commit,
-          ]);
-        } catch {
-          return false;
-        }
-        const untracked = await git(targetWorktreePath, [
-          "ls-files",
-          "--others",
-          "--exclude-standard",
-        ]);
-        return untracked.trim().length === 0;
-      };
-      if (await holds(to)) return "complete";
-      if (!(await holds(from))) return "diverged";
-      if ((await replacedUntracked(targetWorktreePath, from, to)).length > 0)
-        return "diverged";
-      // Exactly the old tree: the refresh the publication owed and never made.
-      await git(targetWorktreePath, ["reset", "-q", "--hard", to]);
-      return "refreshed";
+      try {
+        return await fastForward({
+          projectPath: input.projectPath,
+          targetBranch: input.targetBranch,
+          targetWorktreePath: input.targetWorktreePath,
+          expectedHead: input.expectedHead,
+          prepared: prepared.preparedSha,
+        });
+      } finally {
+        // Each attempt prepares its own commit; a published one is on the branch.
+        await operations
+          .deleteParkedMergeRef(input.projectPath, prepared.parkedRef)
+          .catch(() => false);
+      }
     },
 
     async remove({ projectPath, worktreePath, branch, published }) {

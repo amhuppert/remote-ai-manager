@@ -984,8 +984,8 @@ describe("retired delivered import claim", () => {
       const result = await importBundle(bundle({ delivered }));
       expect(result.ok).toBe(false);
       expect(result.ok ? null : result.refusal.code).toBe("validation");
-      expect(result.ok ? "" : result.refusal.instruction).toContain(
-        "delivered",
+      expect(result.ok ? [] : result.refusal.unmetConditions).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^delivered: /)]),
       );
       expect(rowCounts(harness.fixture)).toEqual(before);
     },

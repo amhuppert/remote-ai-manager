@@ -42,11 +42,16 @@ export const DraftRemovable: Story = {
           id: "revision-2",
           number: 2,
           state: "draft",
+          authoringStage: "design",
           basedOnRevisionId: snapshot.revision.id,
           proposedAt: null,
           approvedAt: null,
         },
-        elements: snapshot.elements,
+        // Legacy plan-stage drafts are read-only; an editable draft carries no
+        // task element.
+        elements: snapshot.elements.filter(
+          ({ element }) => element.kind !== "task",
+        ),
         assumptionCitations: snapshot.assumptionCitations.map((citation) => ({
           ...citation,
           revisionId: "revision-2",

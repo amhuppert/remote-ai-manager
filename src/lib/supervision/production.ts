@@ -70,7 +70,7 @@ import { requestSubscriptionWakePass } from "@/lib/subscriptions/active-wait-pro
 import { composeSupervision, type Supervision } from "./supervision";
 import { publishEvent } from "@/lib/events/publication";
 import { createRunChangePublisher } from "@/lib/runs/events";
-import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
+import { getFinalizingSessionMergeJob, getJob } from "@/lib/jobs/queue";
 import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
 import { createProjectConversationsRepo } from "@/lib/state-store/project-conversations-repo";
@@ -336,6 +336,12 @@ function composeProductionSupervision(): Supervision {
     worktrees: createParallelWorktrees(),
     acquireSessionLock,
     isSessionBusy,
+    sessionJob(projectPath, sessionName) {
+      const job = getJob(projectPath, sessionName);
+      return job?.status === "running"
+        ? { jobId: job.jobId, jobType: job.jobType }
+        : null;
+    },
   });
   const composed = composeSupervision({
     db: getStateDb(),
@@ -376,7 +382,6 @@ function composeProductionSupervision(): Supervision {
         tasks,
       });
     },
-    uptimeMs: () => process.uptime() * 1000,
     custodyFence: (place) =>
       custodyFence(place, {
         session: (projectPath, sessionName) =>
@@ -445,14 +450,6 @@ function composeProductionSupervision(): Supervision {
     },
     slots: { acquire: (label, signal) => acquireQuerySlot(label, { signal }) },
     evidence: createWorkspaceEvidence(),
-    async interactiveWorktree(place) {
-      const scope = scopeRefFromStoreSessionName(place.sessionName);
-      if (scope.scope === "project") return place.projectPath;
-      return (
-        (await getSession(place.projectPath, scope.sessionName))
-          ?.worktreePath ?? null
-      );
-    },
     lanes: laneGit,
     integrator: createSmartMergeIntegrator({
       machine: mergeMachine.provide({ actors: createLaneConflictActors() }),

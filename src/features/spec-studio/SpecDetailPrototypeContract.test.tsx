@@ -301,12 +301,11 @@ describe("Spec detail prototype structure", () => {
     expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
   });
 
-  it("keeps every linked-context lane visible and directs assumption disposition to the attention workspace", () => {
+  it("keeps the linked-tickets lane visible and directs assumption disposition to the attention workspace", () => {
     renderPrototypeDetail();
 
     const narrative = screen.getByRole("region", { name: "Spec narrative" });
     expect(within(narrative).getByText("Tickets")).toBeVisible();
-    expect(within(narrative).getByText("Conversations")).toBeVisible();
 
     const questions = screen.getByRole("region", {
       name: "Questions & assumptions",

@@ -56,6 +56,8 @@ let failingCheck: string | null;
 /** Holds every lane check until released, to land a pause while one runs. */
 let checkGate: Promise<void> | null;
 let fake: ReturnType<typeof fakeGit>;
+/** What the executor logged, as `event` plus fields. */
+let logged: Array<{ event: string; fields: Record<string, unknown> }>;
 
 const evidence: ContentEvidence = {
   async capture() {
@@ -92,7 +94,12 @@ function newExecutor(
     runCheck,
     touchRequester,
     now: () => now,
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    retryMs: 5,
+    log: {
+      info: (event, fields) => logged.push({ event, fields: fields ?? {} }),
+      warn: () => {},
+      error: () => {},
+    },
   });
 }
 
@@ -156,7 +163,28 @@ beforeEach(() => {
   failingCheck = null;
   checkGate = null;
   fake = fakeGit();
+  logged = [];
 });
+
+/** A seat's grant on the session worktree, which publication's final step waits for. */
+function seatInSession(
+  admission: WorkspaceAdmission,
+  holder = "run-2.docs:work:1",
+) {
+  const grant = admission.tryAcquire({
+    worktree: session,
+    kind: "full_write",
+    holder,
+  });
+  if (grant === null) throw new Error("no grant");
+  return grant;
+}
+
+async function until(check: () => boolean): Promise<void> {
+  for (let tries = 0; tries < 600 && !check(); tries++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  if (!check()) throw new Error("it never happened");
+}
 afterEach(async () => {
   await new Promise((resolve) => setImmediate(resolve));
   fixture.close();
@@ -349,13 +377,13 @@ describe("lane publication", () => {
     expect(fake.state.removed).toEqual([]);
   });
 
-  it("refuses to publish over session changes, and onto a session head it did not check", async () => {
-    fake.state.dirt.set(session, ["notes.md"]);
+  it("refuses to publish over uncommitted session work in the way of the lane's files, and onto a session head it did not check", async () => {
+    fake.state.inTheWay = ["notes.md"];
     expect(await settled(newExecutor(), publish())).toEqual({
       kind: "publish_blocked",
       detail: expect.stringContaining("notes.md"),
     });
-    fake.state.dirt.set(session, []);
+    fake.state.inTheWay = [];
     fake.state.beforePublish = () => fake.state.heads.set("csm/session", "h9");
     expect(await settled(newExecutor(), publish())).toEqual({
       kind: "publication_stale",
@@ -481,23 +509,23 @@ describe("lane publication", () => {
     expect(fake.state.merges).toEqual([]);
   });
 
-  it("never holds the session while waiting for its Git lock, and publishes once the lock is free", async () => {
-    fake.state.lockBusy = 2;
+  it("never holds the session while waiting for its Git lock, names the job holding it, and publishes once the lock is free", async () => {
+    fake.state.lockBusy = Number.MAX_SAFE_INTEGER;
+    fake.state.lockJob = { jobId: "job-7", jobType: "commit" };
     const admission = createWorkspaceAdmission();
     const executor = newExecutor(admission);
     const request = publish();
     await executor.submit(request);
-    // While the lock reads as taken, nothing is published and an interactive turn in the session is not kept waiting.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // While the lock reads as taken, nothing is published and a seat in the session is not kept waiting.
+    await until(() => executor.waitingOn(request.cause) !== null);
+    expect(executor.waitingOn(request.cause)).toEqual({
+      kind: "session_lock",
+      job: { jobId: "job-7", jobType: "commit" },
+    });
     expect(executor.outcome(request.cause).kind).toBe("running");
     expect(fake.state.heads.get("csm/session")).toBe("h0");
-    const turn = admission.tryAcquire({
-      worktree: session,
-      kind: "interactive_write",
-      holder: "owner-turn",
-    });
-    expect(turn).not.toBeNull();
-    if (turn !== null) admission.release(turn);
+    admission.release(seatInSession(admission));
+    fake.state.lockBusy = 0;
     for (
       let tries = 0;
       tries < 200 && executor.outcome(request.cause).kind !== "settled";
@@ -508,19 +536,79 @@ describe("lane publication", () => {
       kind: "settled",
       outcome: { kind: "published" },
     });
+    expect(executor.waitingOn(request.cause)).toBeNull();
   });
 
-  it("reports a publication whose branch moved but whose worktree could not be refreshed as uncertain", async () => {
-    fake.state.publishOutcome = {
-      kind: "refresh_failed",
-      commit: "c9",
-      detail: "unable to unlink src/a.ts",
-    };
-    expect(await settled(newExecutor(), publish())).toEqual({
-      kind: "publication_uncertain",
-      detail: expect.stringContaining("c9"),
+  it("watches a Git lock in the session's way, holding nothing and not running the step, and publishes once it is gone", async () => {
+    const lock = "/repo/.git/worktrees/session/index.lock";
+    fake.state.heldLock = lock;
+    const admission = createWorkspaceAdmission();
+    const executor = newExecutor(admission);
+    const request = publish();
+    await executor.submit(request);
+    await until(() => executor.waitingOn(request.cause) !== null);
+    expect(executor.waitingOn(request.cause)).toEqual({
+      kind: "git_lock",
+      lock,
     });
-    expect(fake.state.removed).toEqual([]);
+    // Many polls go by: the step does not run again, and the session is free for a seat.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(fake.state.publishCalls).toBe(1);
+    admission.release(seatInSession(admission));
+
+    let finish: () => void = () => {};
+    fake.state.publishGate = new Promise((resolve) => (finish = resolve));
+    fake.state.heldLock = null;
+    await until(() => fake.state.publishCalls === 2);
+    // The wait ended when the lock went, before the step ran again.
+    expect(executor.waitingOn(request.cause)).toBeNull();
+    expect(logged.map((entry) => entry.event)).toEqual([
+      "workspace.publication_waiting",
+      "workspace.publication_wait_ended",
+    ]);
+    finish();
+    await until(() => executor.outcome(request.cause).kind === "settled");
+    expect(executor.outcome(request.cause)).toMatchObject({
+      outcome: { kind: "published", incorporated: "h0" },
+    });
+    expect(fake.state.publishCalls).toBe(2);
+  });
+
+  it("says a publication queued behind another lane's publication into the same session waits for that lane", async () => {
+    const uiWorktree = "/repo/.worktrees/session.1-ui";
+    const ui: LaneTarget = {
+      ...lane,
+      laneId: "1-ui",
+      worktreePath: uiWorktree,
+      branch: "csm/session-1-ui",
+    };
+    fake.state.heads.set(ui.branch, "h0");
+    fake.adopt(uiWorktree, ui.branch);
+    fake.state.lockBusy = Number.MAX_SAFE_INTEGER;
+    const executor = newExecutor();
+    const first = publish();
+    const second = intent(run, {
+      kind: "publish",
+      bindingId: `lane:${uiWorktree}`,
+      lane: ui,
+      checks: [],
+    });
+    await executor.submit(first);
+    await until(() => executor.waitingOn(first.cause) !== null);
+    await executor.submit(second);
+
+    expect(executor.outcome(second.cause)).toEqual({ kind: "queued" });
+    expect(executor.waitingOn(second.cause)).toEqual({
+      kind: "publication",
+      laneId: "1-api",
+    });
+
+    fake.state.lockBusy = 0;
+    await until(() => executor.outcome(second.cause).kind === "settled");
+    expect(executor.outcome(second.cause)).toMatchObject({
+      outcome: { kind: "published" },
+    });
+    expect(executor.waitingOn(second.cause)).toBeNull();
   });
 
   it("refuses publication into a session worktree that checks out another branch", async () => {
@@ -556,25 +644,46 @@ describe("lane publication", () => {
     expect(fake.state.merges).toEqual([]);
   });
 
-  it("waits for an interactive turn in the session worktree before touching the session branch", async () => {
+  it("reads the session head without holding the session, and waits for a seat there before touching the session branch, naming it", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({
-      worktree: session,
-      kind: "interactive_write",
-      holder: "owner-turn",
-    });
-    if (turn === null) throw new Error("no grant");
+    const seat = seatInSession(admission);
     const executor = newExecutor(admission);
     const request = publish();
     await executor.submit(request);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(executor.outcome(request.cause).kind).not.toBe("settled");
-    expect(fake.state.merges).toEqual([]);
-    admission.release(turn);
+    await until(() => executor.waitingOn(request.cause) !== null);
+    expect(executor.waitingOn(request.cause)).toEqual({
+      kind: "grants",
+      holders: ["run-2.docs:work:1"],
+    });
+    // Integrated with the session head it read while the seat worked.
+    expect(fake.state.merges).toEqual(["h0"]);
+    expect(fake.state.heads.get("csm/session")).toBe("h0");
+    expect(logged).toEqual([
+      {
+        event: "workspace.publication_waiting",
+        fields: expect.objectContaining({
+          cause: request.cause,
+          laneId: "1-api",
+          reason: "grants",
+          holders: ["run-2.docs:work:1"],
+        }),
+      },
+    ]);
+
+    admission.release(seat);
     await executor.drain();
     expect(executor.outcome(request.cause)).toEqual({
       kind: "settled",
       outcome: { kind: "published", commit: "c2", incorporated: "h0" },
+    });
+    expect(executor.waitingOn(request.cause)).toBeNull();
+    expect(logged.at(-1)).toEqual({
+      event: "workspace.publication_wait_ended",
+      fields: expect.objectContaining({
+        cause: request.cause,
+        reason: "grants",
+        durationMs: expect.any(Number),
+      }),
     });
   });
 
@@ -597,12 +706,7 @@ describe("lane publication", () => {
 
   it("tells its run when a pause sent it back to the queue, so a run resumed meanwhile submits it again", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({
-      worktree: session,
-      kind: "interactive_write",
-      holder: "owner-turn",
-    });
-    if (turn === null) throw new Error("no grant");
+    const turn = seatInSession(admission);
     const request = publish();
     // As the Run does on a touch: submit its pending step again under its current permit.
     const executor: WorkspaceExecutor = newExecutor(admission, () => {
@@ -622,49 +726,39 @@ describe("lane publication", () => {
     await executor.drain();
     await executor.drain();
 
-    expect(executor.outcome(request.cause)).toEqual({
+    expect(executor.outcome(request.cause)).toMatchObject({
       kind: "settled",
-      outcome: { kind: "published", commit: "c2", incorporated: "h0" },
+      outcome: { kind: "published", incorporated: "h0" },
     });
   });
 
   it("does not publish through a pause it spent waiting for the session: it goes back to the queue, and runs again once resumed", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({
-      worktree: session,
-      kind: "interactive_write",
-      holder: "owner-turn",
-    });
-    if (turn === null) throw new Error("no grant");
+    const turn = seatInSession(admission);
     const executor = newExecutor(admission);
     const request = publish();
     await executor.submit(request);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await until(() => executor.waitingOn(request.cause) !== null);
 
     permits.close("run:run-1", now);
     admission.release(turn);
     await executor.drain();
     expect(executor.outcome(request.cause)).toEqual({ kind: "queued" });
-    expect(fake.state.merges).toEqual([]);
+    expect(executor.waitingOn(request.cause)).toBeNull();
     expect(fake.state.heads.get("csm/session")).toBe("h0");
 
     permits.reopen("run:run-1", now);
     await executor.submit({ ...request, permit: permits.current("run:run-1") });
     await executor.drain();
-    expect(executor.outcome(request.cause)).toEqual({
+    expect(executor.outcome(request.cause)).toMatchObject({
       kind: "settled",
-      outcome: { kind: "published", commit: "c2", incorporated: "h0" },
+      outcome: { kind: "published", incorporated: "h0" },
     });
   });
 
   it("stops without waiting for the session when cancelled while it inspects the lane", async () => {
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({
-      worktree: session,
-      kind: "interactive_write",
-      holder: "owner-turn",
-    });
-    if (turn === null) throw new Error("no grant");
+    seatInSession(admission, "owner-seat");
     let inspected = () => {};
     fake.state.inspectGate = new Promise((resolve) => (inspected = resolve));
     const executor = newExecutor(admission);
@@ -684,7 +778,7 @@ describe("lane publication", () => {
     });
     expect(fake.state.merges).toEqual([]);
     expect(admission.held().map((grant) => grant.holder)).toEqual([
-      "owner-turn",
+      "owner-seat",
     ]);
   });
 
@@ -722,7 +816,7 @@ describe("lane publication", () => {
     expect(restarted.outcome(notYet.cause).kind).toBe("queued");
   });
 
-  it("after a restart, finishes a found publication only while it holds the session and its Git lock", async () => {
+  it("after a restart, settles a publication its marker shows on the session branch without waiting for the session", async () => {
     const repo = createWorkspaceRepo(fixture.db);
     const request = publish();
     repo.insertOperationIfAbsent({
@@ -741,55 +835,18 @@ describe("lane publication", () => {
       "c5",
       `Publish lane api\n\nCC-Publication: ${request.cause}`,
     );
-    fake.state.refresh = "refreshed";
+    // Git moved the branch only after writing the index and files: the marker alone says it is done.
     const admission = createWorkspaceAdmission();
-    const turn = admission.tryAcquire({
-      worktree: session,
-      kind: "interactive_write",
-      holder: "owner-turn",
-    });
-    if (turn === null) throw new Error("no grant");
-
-    const recovered = newExecutor(admission).recover();
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(fake.state.completed).toEqual([]);
-    admission.release(turn);
+    seatInSession(admission);
     fake.state.lockBusy = 1;
-    await recovered;
-    expect(fake.state.completed).toEqual([session]);
-    expect(fake.state.lockBusy).toBe(0);
-  });
+    fake.state.inTheWay = ["notes.md"];
 
-  it("after a restart, does not call a found publication done while the session worktree differs from it", async () => {
-    const repo = createWorkspaceRepo(fixture.db);
-    const request = publish();
-    repo.insertOperationIfAbsent({
-      cause: request.cause,
-      bindingId: `lane:${laneWorktree}`,
-      requester: run,
-      request: request.request,
-      permit: request.permit,
-      state: "running",
-      outcome: { incorporated: "h0" },
-      createdAt: now,
-      updatedAt: now,
-    });
-    fake.state.heads.set("csm/session", "c5");
-    fake.state.messages.set(
-      "c5",
-      `Publish lane api\n\nCC-Publication: ${request.cause}`,
-    );
-    fake.state.refresh = "diverged";
-
-    const restarted = newExecutor();
+    const restarted = newExecutor(admission);
     await restarted.recover();
     expect(restarted.outcome(request.cause)).toEqual({
       kind: "settled",
-      outcome: {
-        kind: "publication_uncertain",
-        detail: expect.stringContaining("c5"),
-      },
+      outcome: { kind: "published", commit: "c5", incorporated: "h0" },
     });
-    expect(fake.state.removed).toEqual([]);
+    expect(fake.state.lockBusy).toBe(1);
   });
 });

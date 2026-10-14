@@ -72,11 +72,11 @@ function maximalLink(): SpecLinkRow {
   return specLinkRowSchema.parse({
     id: "link-maximal",
     spec_id: SPEC_ID,
-    object_kind: "workflow_execution",
+    object_kind: "conversation",
     object_ref_json: stableStringify({
-      projectPath: "/repos/links-contract",
+      projectName: "links-contract",
       sessionName: "native-sdd-links",
-      workflowExecutionId: "workflow-execution-links-maximal",
+      conversationId: "conversation-links-maximal",
     }),
     direction: "inbound",
     category: "graduated_from",

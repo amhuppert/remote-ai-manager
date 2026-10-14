@@ -1290,6 +1290,23 @@ describe("lanes", () => {
     ).toEqual(["docs"]);
   });
 
+  it("starts a session writer a lane's work depends on at once, alongside the lane, as it does a reader", () => {
+    const layout: Defined[] = [
+      { key: "schema", outputSchema: { type: "object" } },
+      {
+        key: "api",
+        lane: "a",
+        dependsOn: ["schema"],
+        outputOnly: ["schema"],
+      },
+    ];
+    const first = planRun(workflow(layout, []), observed({}));
+    expect(first.starts.map((start) => start.key)).toEqual(["schema"]);
+    expect(first.keys.get("schema")).not.toMatchObject({
+      publications: expect.anything(),
+    });
+  });
+
   it("starts a session reader a lane waits for at once, and one after the lane only once it published, even when a skipped route removed its link", () => {
     const layout: Defined[] = [
       { key: "plan", readOnly: true, outputSchema: { type: "object" } },
@@ -1385,7 +1402,7 @@ describe("lanes", () => {
           attempt: 1,
           outcome: {
             kind: "publish_blocked",
-            detail: "The session has uncommitted changes",
+            detail: "Uncommitted work is in the way of the lane's files",
           },
         },
       },
@@ -1400,7 +1417,7 @@ describe("lanes", () => {
     ]);
     expect(deriveRunProgress(blocked, observed(done("api")))).toEqual({
       kind: "needs_owner",
-      reasons: [expect.stringContaining("The session has uncommitted changes")],
+      reasons: [expect.stringContaining("in the way of the lane's files")],
     });
 
     const retried = workflow([{ key: "api", lane: "api" }], [["api", 0]], [], {

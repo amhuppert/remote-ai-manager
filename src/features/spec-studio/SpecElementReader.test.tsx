@@ -27,11 +27,14 @@ function renderReader(
 }
 
 /**
- * The fixture's current revision reopened as an editable draft — the only
- * state in which an element may be taken out, since approved content is
- * immutable.
+ * The fixture's current revision reopened as an editable design-stage draft —
+ * the only state in which an element may be taken out, since approved content
+ * is immutable and a legacy plan-stage draft is read-only. A design-stage
+ * draft carries no tasks.
  */
-function draftDetailFixture(): SpecDetailView {
+function draftDetailFixture(
+  authoringStage: "design" | "plan" = "design",
+): SpecDetailView {
   const detail = specElementReaderDetailFixture();
   const snapshot = detail.currentRevision;
   if (snapshot === null) throw new Error("Reader fixture requires a revision");
@@ -41,14 +44,20 @@ function draftDetailFixture(): SpecDetailView {
       id: "revision-2",
       number: 2,
       state: "draft",
+      authoringStage,
       basedOnRevisionId: snapshot.revision.id,
       proposedAt: null,
       approvedAt: null,
     },
-    elements: snapshot.elements.map((entry) => ({
-      ...entry,
-      version: { ...entry.version, revisionId: "revision-2" },
-    })),
+    elements: snapshot.elements
+      .filter(
+        (entry) =>
+          authoringStage === "plan" || entry.version.payload.kind !== "task",
+      )
+      .map((entry) => ({
+        ...entry,
+        version: { ...entry.version, revisionId: "revision-2" },
+      })),
     assumptionCitations: snapshot.assumptionCitations.map((citation) => ({
       ...citation,
       revisionId: "revision-2",
@@ -178,7 +187,6 @@ describe("SpecElementReader", () => {
     });
     expect(document.getElementById("R1")).toBe(requirement);
     expect(requirement).toHaveAttribute("tabindex", "-1");
-    expect(within(requirement).getByText("Proof partial")).toBeInTheDocument();
     expect(within(requirement).getByText("Approved")).toBeInTheDocument();
     expect(
       within(requirement).getByRole("heading", {
@@ -194,34 +202,6 @@ describe("SpecElementReader", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Every execution pins scope."),
-    ).not.toBeInTheDocument();
-  });
-
-  /**
-   * An imported spec's requirement is settled without this system ever proving
-   * it. The reader has to say so in its own words: the green Proven chip is the
-   * one presentation it may never borrow (R9.4).
-   */
-  it("reads an externally-delivered requirement as delivered externally, never as proven", () => {
-    const detail = specElementReaderDetailFixture();
-    detail.elementStatuses = {
-      ...detail.elementStatuses,
-      requirements: detail.elementStatuses.requirements.map((entry) => ({
-        ...entry,
-        status: { ...entry.status, proof: "delivered_externally" as const },
-      })),
-    };
-
-    renderReader(detail, "requirements");
-
-    const requirement = screen.getByRole("article", {
-      name: "R1 requirement",
-    });
-    const chip = within(requirement).getByText("Delivered externally");
-    expect(chip).toHaveAttribute("data-tone", "neutral");
-    expect(within(requirement).queryByText("Proven")).not.toBeInTheDocument();
-    expect(
-      within(requirement).queryByText("Proof partial"),
     ).not.toBeInTheDocument();
   });
 
@@ -271,7 +251,6 @@ describe("SpecElementReader", () => {
     const task = screen.getByRole("article", {
       name: /T2 Validate immutable scope/i,
     });
-    expect(within(task).getByText("Running")).toBeInTheDocument();
     expect(within(task).getByText("Dependencies")).toBeInTheDocument();
     expect(within(task).getByText("T1")).toBeInTheDocument();
     expect(within(task).getByText("Requirement links")).toBeInTheDocument();
@@ -308,6 +287,14 @@ describe("SpecElementReader draft removal", () => {
 
     // Approved content is immutable, so the action must not render at all —
     // an enabled control that always refuses is worse than no control.
+    expect(
+      screen.queryByRole("button", { name: /remove/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no removal on a legacy plan-stage draft", () => {
+    renderReader(draftDetailFixture("plan"), "requirements");
+
     expect(
       screen.queryByRole("button", { name: /remove/i }),
     ).not.toBeInTheDocument();
@@ -351,21 +338,32 @@ describe("SpecElementReader draft removal", () => {
       json: {
         code: "dangling_reference",
         unmetConditions: [
-          "task-1.coveredCriterionElementIds[0] covers criterion criterion-1, which is not in this revision.",
+          "criterion-1.parentElementId is contained by requirement requirement-1, which is not in this revision.",
+          "decision-1.tracedRequirementElementIds[0] traces to requirement requirement-1, which is not in this revision.",
         ],
         instruction:
-          "Nothing was written. Rewrite or remove task-1 in the same write: drop the entry, repoint it at an element this revision carries, or remove the source alongside its target.",
+          'Nothing was written. Rewrite or remove decision-1 in the same write: drop the entry, repoint it at an element this revision carries, or remove the source alongside its target. criterion-1 cannot be repointed, because containment is fixed at creation: bring requirement-1 back into this revision in the same write — with "reintroduceHistorical": true when the identity is historical — or remove criterion-1 instead.',
         details: {
           references: [
             {
               code: "missing_target",
-              sourceElementId: "task-1",
-              field: "coveredCriterionElementIds",
+              sourceElementId: "criterion-1",
+              field: "parentElementId",
               index: 0,
-              targetId: "criterion-1",
-              expectedKind: "criterion",
+              targetId: "requirement-1",
+              expectedKind: "requirement",
               actualKind: null,
-              relation: "covers",
+              relation: "is contained by",
+            },
+            {
+              code: "missing_target",
+              sourceElementId: "decision-1",
+              field: "tracedRequirementElementIds",
+              index: 0,
+              targetId: "requirement-1",
+              expectedKind: "requirement",
+              actualKind: null,
+              relation: "traces to",
             },
           ],
         },
@@ -373,22 +371,23 @@ describe("SpecElementReader draft removal", () => {
     });
     renderReader(draftDetailFixture(), "requirements");
 
-    const criterion = screen.getByRole("listitem", { name: "R1.1 criterion" });
+    const requirement = screen.getByRole("article", { name: "R1 requirement" });
     await user.click(
-      within(criterion).getByRole("button", { name: "Remove R1.1" }),
+      within(requirement).getByRole("button", { name: "Remove R1" }),
     );
     await user.click(
-      within(criterion).getByRole("button", { name: "Confirm remove R1.1" }),
+      within(requirement).getByRole("button", { name: "Confirm remove R1" }),
     );
 
     const refusal = await screen.findByRole("alert");
     // Ids address storage; the reviewer reads handles, so both ends of the
     // dangling reference are named the way the document names them.
-    expect(refusal).toHaveTextContent("T1 covers R1.1");
+    expect(refusal).toHaveTextContent("R1.1 is contained by R1");
+    expect(refusal).toHaveTextContent("D1 traces to R1");
     expect(refusal).toHaveTextContent(/nothing was removed/i);
     // Still there: the refusal is whole-or-nothing.
     expect(
-      screen.getByRole("listitem", { name: "R1.1 criterion" }),
+      screen.getByRole("article", { name: "R1 requirement" }),
     ).toBeInTheDocument();
   });
 

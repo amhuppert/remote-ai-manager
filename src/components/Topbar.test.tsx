@@ -684,12 +684,7 @@ describe("Topbar", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "More destinations" }));
-    for (const name of [
-      /Quick ticket/,
-      "Specs",
-      "Workflow Templates",
-      "System Configuration",
-    ]) {
+    for (const name of [/Quick ticket/, "Specs", "System Configuration"]) {
       expect(screen.getByRole("menuitem", { name })).toHaveClass(
         "max-768:min-h-[44px]",
       );
@@ -853,30 +848,6 @@ describe("Topbar", () => {
     expect(screen.getAllByRole("menuitem")[0]?.getAttribute("href")).toBe(
       "/conversations?c=session-question",
     );
-  });
-
-  it("counts gated conversations as needing attention and calls out approvals distinctly", async () => {
-    setActiveConversations([
-      makeSessionConversation({
-        id: "session-gated",
-        projectName: "root-tools",
-        sessionName: "feature-a",
-        status: "awaiting",
-      }),
-      makeSessionConversation({
-        id: "session-question",
-        projectName: "root-tools",
-        sessionName: "feature-b",
-        status: "waiting_for_input",
-      }),
-    ]);
-
-    renderWithQuery(<Topbar breadcrumbs={[]} page="projects" />);
-
-    const trigger = await findNeedsTrigger();
-    expect(within(trigger).getByText("2")).toBeInTheDocument();
-    expect(screen.getByText("need you")).toBeInTheDocument();
-    expect(screen.getByText("· 1 approval")).toBeInTheDocument();
   });
 
   it("opens one Needs You menu containing conversation and durable spec decisions", async () => {

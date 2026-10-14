@@ -46,7 +46,6 @@ const DRAFT_REVISION_ID = "revision-draft";
 const REQUIREMENT_ELEMENT_ID = "element-requirement-1";
 const TASK_ELEMENT_ID = "element-task-1";
 const CRITERION_ELEMENT_ID = "element-criterion-1";
-const DRAFT_TASK_ELEMENT_ID = "element-task-2";
 const NOW = "2026-07-19T09:00:00.000Z";
 
 const requirementPayload: Extract<SpecElementPayload, { kind: "requirement" }> =
@@ -189,14 +188,10 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
     expect(admissions.map((admission) => admission.basis)).toEqual(
       admissions.map(() => "notify_policy"),
     );
-    expect(admissions.map((admission) => admission.gate).sort()).toEqual([
-      "plan",
+    expect(admissions.map((admission) => admission.gate)).toEqual([
       "requirements",
     ]);
-    expect(rows.map((row) => row.gate).sort()).toEqual([
-      "plan",
-      "requirements",
-    ]);
+    expect(rows.map((row) => row.gate)).toEqual(["requirements"]);
     expect(new Set(rows.map((row) => row.gateRequestId))).toEqual(
       new Set(admissions.map((admission) => admission.id)),
     );
@@ -210,13 +205,13 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
       expectedReviewHash: await reviewHash(DRAFT_REVISION_ID),
       actor: { kind: "human" },
     });
-    expect(specRows()).toHaveLength(2);
+    expect(specRows()).toHaveLength(1);
   });
 });
 
 /**
- * An open draft carrying a lint-clean plan — a requirement, its criterion, and
- * a task covering it — so a human can sign it off without further authoring.
+ * An open requirements-stage draft carrying a lint-clean requirement and its
+ * criterion, so a human can sign it off without further authoring.
  */
 function seedDraftRequirement(db: Db): void {
   const citationHash = computeSpecRevisionCitationHash(2, []);
@@ -225,8 +220,8 @@ function seedDraftRequirement(db: Db): void {
     `INSERT INTO spec_revisions (
        id, spec_id, number, state, based_on_revision_id, content_hash,
        citation_contract_version, citation_hash, proposed_at, approved_at,
-       created_at
-     ) VALUES (?, ?, 2, 'draft', NULL, NULL, 2, ?, NULL, NULL, ?)`,
+       created_at, authoring_stage
+     ) VALUES (?, ?, 2, 'draft', NULL, NULL, 2, ?, NULL, NULL, ?, 'requirements')`,
   ).run(DRAFT_REVISION_ID, SPEC_ID, citationHash, NOW);
   const elements: {
     id: string;
@@ -248,16 +243,6 @@ function seedDraftRequirement(db: Db): void {
         kind: "criterion",
         text: "A granted approval survives a restart.",
         validationStrategy: { kinds: ["test_run"] },
-      },
-    },
-    {
-      id: DRAFT_TASK_ELEMENT_ID,
-      number: 2,
-      parentElementId: null,
-      payload: {
-        ...taskPayload,
-        tracedRequirementElementIds: [REQUIREMENT_ELEMENT_ID],
-        coveredCriterionElementIds: [CRITERION_ELEMENT_ID],
       },
     },
   ];
@@ -332,8 +317,6 @@ function seed(db: Db): void {
     NOW,
     NOW,
   );
-  // The delivery requests below name T1, so the approved revision the run pins
-  // has to actually contain it.
   db.prepare(
     `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
      VALUES (?, ?, 'task', 1, NULL, ?)`,

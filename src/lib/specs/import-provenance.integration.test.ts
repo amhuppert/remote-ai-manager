@@ -129,16 +129,20 @@ describe("import provenance through authoring views", () => {
     );
     expect(detail.approvals).toEqual([]);
     expect(detail.gateAdmissions).toHaveLength(2);
+    // Both admissions share the import's single clock read, so their
+    // chronological order is not defined between them.
     expect(
       detail.gateAdmissions.map(({ gate, basis, approvalId }) => ({
         gate,
         basis,
         approvalId,
       })),
-    ).toEqual([
-      { gate: "requirements", basis: "import", approvalId: null },
-      { gate: "design", basis: "import", approvalId: null },
-    ]);
+    ).toEqual(
+      expect.arrayContaining([
+        { gate: "requirements", basis: "import", approvalId: null },
+        { gate: "design", basis: "import", approvalId: null },
+      ]),
+    );
   });
 
   it("reports source and counts from the durable import event", async () => {

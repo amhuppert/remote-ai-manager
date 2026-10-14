@@ -48,7 +48,6 @@ const inventory = [
     "Native spec-driven development",
     {
       primary: "draft",
-      authoringFacet: "draft",
       authoringStage: "design",
     },
     {

@@ -354,16 +354,6 @@ describe("ConversationSidebar", () => {
     );
   });
 
-  it("surfaces an active spec execution from the feed in the Active work rail", () => {
-    renderSidebarWithActiveData({
-      ...activeConversations,
-    });
-
-    const section = screen.getByRole("region", { name: "Active work" });
-    expect(within(section).getByText("Native SDD")).not.toBeNull();
-    expect(within(section).getByText(/Definition review/)).not.toBeNull();
-  });
-
   it("lists a current run in the Active work rail, asking for the person when it needs them", () => {
     renderSidebarWithActiveData(activeConversations, {}, undefined, [
       {

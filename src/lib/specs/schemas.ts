@@ -1588,7 +1588,7 @@ export const importBundleDecisionSchema = z
  * imported revision is born at the design stage, so it may carry intent and
  * design content in the same bundle.
  */
-const importBundleContentSchema = z
+export const importBundleContentSchema = z
   .object({
     slug: specSlugSchema,
     name: z.string().min(1),
@@ -1632,6 +1632,11 @@ const importBundleContentSchema = z
     dryRun: z.boolean().default(false),
   })
   .strict();
+/**
+ * Parses an import request. The guard that names the retired `delivered` field
+ * makes this schema opaque to JSON Schema generation, so the published bundle
+ * document describes `importBundleContentSchema` instead.
+ */
 export const importBundleSchema = z
   .unknown()
   .transform((input, context) => {

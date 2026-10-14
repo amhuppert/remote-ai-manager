@@ -445,7 +445,6 @@ describe("spec write route handlers", () => {
       "approve-remaining-and-sign-off",
       "bulk-approve",
       "grant-gate-approval",
-      "grant-waiver",
       "change-policy",
       "dispose-assumption",
       "answer-question",

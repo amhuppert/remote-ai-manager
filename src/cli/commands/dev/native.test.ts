@@ -61,15 +61,12 @@ function fixture(
   };
 }
 describe("native dev commands", () => {
-  it("keeps workflow target identity and derives URL from the returned port", async () => {
+  it("addresses the session's dev servers and derives URL from the returned port", async () => {
     const test = fixture(() => ({ servers: [server] }));
-    const result = await test.run(["list"], {
-      CC_WORKFLOW_EXECUTION_ID: "execution-one",
-      CC_WORKFLOW_CONTEXT_ID: "context-one",
-    });
+    const result = await test.run(["list"]);
     expect(result.exitCode, result.stdout).toBe(0);
     expect(test.requests[0]?.url).toBe(
-      "http://cc.test/api/projects/cc/sessions/session-one/dev-servers?executionId=execution-one&contextId=context-one",
+      "http://cc.test/api/projects/cc/sessions/session-one/dev-servers",
     );
     expect(JSON.parse(result.stdout)).toMatchObject({
       payload: {

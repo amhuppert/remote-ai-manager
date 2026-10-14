@@ -96,8 +96,6 @@ export interface SupervisionPorts {
     CustodyRecordPort;
   /** Records the runtime loss of work a custody cut short, for the conversation's next turn. */
   custodyLoss: ConversationCoreDeps["custodyLoss"];
-  /** How long this server has been running. */
-  uptimeMs(): number;
   /** Why no custody may open for a conversation now (its session is merging or finished, or it is archived). */
   custodyFence?: ConversationCoreDeps["custodyFence"];
   /** Custody of a conversation's runtime began or ended, for the clients that show it. */
@@ -118,8 +116,6 @@ export interface SupervisionPorts {
   lanes: LaneGit;
   /** Brings a lane up to date with the session head before it publishes. */
   integrator: LaneIntegrator;
-  /** The worktree an interactive conversation's turns write in, held for interactive writes while a turn runs. */
-  interactiveWorktree?: ConversationCoreDeps["interactiveWorktree"];
   runCheck: WorkspaceExecutorDeps["runCheck"];
   followOwner: RunHostDeps["followOwner"];
   boundariesRecorded: RunHostDeps["boundariesRecorded"];
@@ -259,7 +255,6 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
     taskTurns: ports.taskTurns,
     records: ports.records,
     custodyLoss: ports.custodyLoss,
-    uptimeMs: ports.uptimeMs,
     ...(ports.custodyFence !== undefined
       ? { custodyFence: ports.custodyFence }
       : {}),
@@ -269,9 +264,6 @@ export function composeSupervision(ports: SupervisionPorts): Supervision {
     slots: ports.slots,
     questions: requests,
     touchRequester,
-    ...(ports.interactiveWorktree !== undefined
-      ? { interactiveWorktree: ports.interactiveWorktree }
-      : {}),
     now: ports.now,
     log: ports.logger("conversation-core"),
   });

@@ -121,8 +121,7 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
       /`cctl spec status`/,
       /`stage_blocked`/,
       /requirements[\s\S]{0,180}design/,
-      /Design is the final evergreen stage/,
-      /`cctl spec plan open <slug>`/,
+      /Design is the final authoring stage/,
     ],
     forbidden: [/plan adds tasks/i, /opens directly at plan stage/i],
   },
@@ -158,95 +157,8 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     ],
   },
   {
-    id: "version-4 delivery bindings hold dispositions and claims derive from graph coverage",
-    required: [
-      /`schemaVersion: 4`/,
-      /`acceptanceCriteria\[\]\.covers`/,
-      /`cctl spec plan open <slug>` seeds the binding's dispositions/,
-      /derives claims from graph coverage/,
-      /managed workflow definition/i,
-      /`cctl workflow replace <definitionId>`/,
-      /`references\/native-spec-delivery\.md`/,
-      /`binding`/,
-      /stable source/i,
-      /dynamic context/i,
-      /`revision`/,
-      /`definitionHash`/,
-      /`bindingHash`/,
-      /`candidateHash`/,
-    ],
-    forbidden: [
-      /`schemaVersion: 2`/,
-      /\{ launch, binding \}/,
-      // Deleted in #109 (decision D-F): no agent write of the binding remains.
-      /spec plan edit/,
-      // The retired authoring path (#80 design 3.6): a managed draft is
-      // authored as an ordinary plan.json, and naming `workflow edit` here is
-      // how it became a second path in the first place.
-      /`cctl workflow get\/edit/,
-      /compiler/i,
-      /materializer/i,
-      /context pack/i,
-      /proofPlan/i,
-      /production `wiring`/i,
-      /`dependsOnTaskElementIds`/,
-      /`laneGroup`/,
-      /`touchedPaths`/,
-    ],
-  },
-  {
-    id: "`spec start` launches exactly the candidate approved on a DeliveryPlanAttempt",
-    required: [
-      /approved DeliveryPlanAttempt/,
-      /`candidateId` and `candidateHash`/,
-      /`cctl spec start <slug> --file \.cc\/temp\/inputs\.json`/,
-      /one-off start/i,
-      /shared graph start/i,
-      /ordinary `cctl workflow live edit`/,
-      /replacement attempt/i,
-    ],
-    forbidden: [
-      /`cctl spec start <slug> --file <scope\.json>`/,
-      /`definition_review`/,
-      /`cctl workflow start <definitionId>`/,
-      /--seed-from last/,
-      /workflow live amend/i,
-    ],
-  },
-  {
-    id: "the managed-workflow migration ends with destructive legacy retirement",
-    required: [
-      /destructive cutover/i,
-      /legacy-retirement boundary/i,
-      /parallel reader, compatibility branch, or alternate plan dialect/i,
-    ],
-  },
-  {
     id: "gate policy changes are a human-only Spec Studio act",
     required: [/gate policy/i, /`human_act_required`/, /Spec Studio/],
-  },
-  {
-    id: "delivery review records human acceptance separately from machine proof",
-    required: [
-      /Proof verdicts are recorded only by the delivery gate from machine\s+evidence/,
-      /Spec Studio → Delivery/,
-      /Mark satisfied/,
-      /Waive evidence/,
-      /all criteria/,
-      /Continue delivery/,
-      /Finish in this session/,
-      /another workflow/,
-      /replacement workflow/,
-      /Record external delivery/,
-      /before validation and conflict resolution/,
-    ],
-    forbidden: [
-      /Controls → Merge gate → Waive/,
-      // The old copy promised a Spec Studio proof-verdict surface that no
-      // longer exists.
-      /record proof verdicts on the user's behalf/,
-      /waivers, proof verdicts/,
-    ],
   },
 ];
 

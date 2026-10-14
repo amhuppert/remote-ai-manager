@@ -30,8 +30,8 @@ A selected check runs over the workspace's changes against its target branch, ot
 `"lane": "<key>"` puts a context in an isolated lane: its own worktree and branch. Lane keys are 1–32 lowercase letters, digits, `-` or `_`, starting with a letter or digit and not ending with `-`. Several contexts can share a lane; declare its publication checks with `"lanes": [{"key": "<key>", "checks": ["<check>"]}]`.
 
 - A lane starts from the session branch's committed head once every lane whose code its contexts need has published. Each accepted result in the lane is committed on its branch.
-- When all its contexts are done or skipped, the lane is merged with the current session head. Agents resolve conflicts and fix failing publication checks in the lane, then the lane publishes into the session branch, and the session worktree moves to it.
-- Work outside the lane sees the lane's code only after it publishes. A lane context that depends on a context in another lane waits for that lane to publish, unless the dependency is `outputOnly`.
+- When all its contexts are done or skipped, the lane is merged with the current session head. Agents resolve conflicts and fix failing publication checks in the lane, then the lane publishes into the session branch, and the session worktree moves to it, keeping the uncommitted changes the lane does not touch.
+- Work outside the lane that needs its code starts only once the lane has published. The lane's files can reach the session worktree a little earlier (an owner commit landing during the publication's merge carries them, and a merge Git could not finish leaves them staged), but only the publication lets that work start. A lane context that depends on a context in another lane waits for that lane to publish, unless the dependency is `outputOnly`.
 - A lane cannot see a session context's code, which is never committed. When a lane context needs only a session context's result, write the dependency as `{"key": "<key>", "outputOnly": true}`; otherwise place the dependency in a lane too.
 - `outputOnly` lifts only a lane context's wait for code. A session context stays ordered against each lane's publication whatever its dependencies say ([below](#session-contexts-around-a-publication)), so give a session context a plain dependency on lane work.
 - Lanes that would wait for each other's code are refused; mark a dependency `outputOnly`, or move the contexts into one lane.
@@ -41,10 +41,10 @@ Use a lane for risky, long or self-contained work that should land as one checke
 
 ## Session contexts around a publication
 
-A publication changes the session worktree, and any uncommitted change there blocks it. So every session context must be ordered against each lane's publication:
+A publication changes files in the session worktree, under any session context running then. So every session context, writer or reader, must be ordered against each lane's publication:
 
-- a session **writer** depends on the lane's work, so it runs after the publication;
-- a session **reader** either depends on the lane's work, or the lane's work depends on it (`outputOnly`), so it finishes before the lane publishes.
+- it depends on the lane's work, so it runs after the publication; or
+- the lane's work depends on it (`outputOnly`), so it finishes before the lane publishes.
 
 In this workflow the read-only survey runs first, the lane works on its result, and the release notes are written after the lane publishes:
 
@@ -80,11 +80,20 @@ In this workflow the read-only survey runs first, the lane works on its result, 
 }
 ```
 
-Your own uncommitted changes in the session worktree block a publication too. Commit or remove them before a lane finishes.
+A publication keeps the uncommitted changes in the session worktree, yours and those session contexts left, unless they are in the way of the lane's files: a change to a file the lane changes, deletes or renames, or an untracked or ignored file where the lane adds one. Then it stops, names those files and changes nothing. One exception: a file you deleted without staging the deletion comes back if the lane changes it. Leave the files a lane changes alone until it publishes.
 
 ## When a lane stops
 
-A lane that cannot be provisioned or published halts the run. Lane contexts that do not need it go on; session contexts wait for every unpublished lane, except one whose work waits for them. `cctl run show <run-id>` prints each lane's state, worktree, branch, attempt and the reason it stopped. Fix the cause, then ask for a new attempt:
+A lane that cannot be provisioned or published halts the run. Lane contexts that do not need it go on; session contexts wait for every unpublished lane, except one whose work waits for them. `cctl run show <run-id>` prints each lane's state, worktree, branch, attempt and the reason it stopped.
+
+A lane still publishing may be waiting, and `run show` names what for. A waiting lane needs no new attempt; it goes on once the wait ends:
+
+- another lane's publication into the same session, since publications into one session run one at a time;
+- a seat holding the session worktree. A seat whose processes could not be confirmed stopped keeps it until the server restarts;
+- a CC job holding the session; cancelling the job lets the publication go on;
+- a Git lock: the session worktree's index lock or the session branch's ref lock. Another Git process is running there, or one left the lock behind; delete a lock left behind once no Git process runs in the session.
+
+For a lane that stopped, fix the cause, then ask for a new attempt:
 
 ```
 cctl run retry <run-id> --lane <key>
@@ -92,7 +101,7 @@ cctl run retry <run-id> --lane <key>
 
 | Reason | Fix |
 |---|---|
-| the session worktree has changes publication would overwrite or leave behind | commit or remove them |
+| uncommitted work in the session worktree is in the way of the lane's files | commit, move or remove the files it names; lane files you never touched were left by an interrupted publication, so restore them to HEAD |
 | the session branch moved after the lane was checked | nothing; the new attempt merges the new head |
 | the merge conflicted, or a publication check failed and the agents could not fix it | fix the cause the detail names |
 | provisioning failed | fix the cause the detail names |

@@ -463,6 +463,10 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
       return { claimedTurnGeneration: input.expectedPromptCount + 1 };
     },
     stopRegistry,
+    claimConversation: async (_input, work) => ({
+      kind: "ran",
+      value: await work(),
+    }),
     releaseOriginatingRuntime: async (input) => {
       releaseCalls.push(input);
       order.push("releaseOriginatingRuntime");

@@ -587,12 +587,68 @@ describe("run commands", () => {
               lanes: [
                 {
                   key: "api",
+                  laneId: "1-api",
                   worktreePath: "/repo/.worktrees/session.1-api",
                   branch: "csm/session-1-api",
                   state: "blocked",
                   attempt: 1,
-                  detail: "The session worktree has changes: notes.md",
+                  detail:
+                    "Uncommitted work in the session worktree is in the way of the lane's files: notes.md",
                   commit: null,
+                  waitingOn: null,
+                },
+                {
+                  key: "ui",
+                  laneId: "1-ui",
+                  worktreePath: "/repo/.worktrees/session.1-ui",
+                  branch: "csm/session-1-ui",
+                  state: "publishing",
+                  attempt: 1,
+                  detail: null,
+                  commit: null,
+                  waitingOn: {
+                    kind: "session_lock",
+                    job: { jobId: "job-7", jobType: "commit" },
+                  },
+                },
+                {
+                  key: "docs",
+                  laneId: "1-docs",
+                  worktreePath: "/repo/.worktrees/session.1-docs",
+                  branch: "csm/session-1-docs",
+                  state: "publishing",
+                  attempt: 2,
+                  detail: null,
+                  commit: null,
+                  waitingOn: {
+                    kind: "grants",
+                    holders: ["run-2.audit:work:1"],
+                  },
+                },
+                {
+                  key: "web",
+                  laneId: "1-web",
+                  worktreePath: "/repo/.worktrees/session.1-web",
+                  branch: "csm/session-1-web",
+                  state: "publishing",
+                  attempt: 1,
+                  detail: null,
+                  commit: null,
+                  waitingOn: { kind: "publication", laneId: "1-ui" },
+                },
+                {
+                  key: "cli",
+                  laneId: "1-cli",
+                  worktreePath: "/repo/.worktrees/session.1-cli",
+                  branch: "csm/session-1-cli",
+                  state: "publishing",
+                  attempt: 1,
+                  detail: null,
+                  commit: null,
+                  waitingOn: {
+                    kind: "git_lock",
+                    lock: "/repo/.git/worktrees/session/index.lock",
+                  },
                 },
               ],
             }),
@@ -603,8 +659,32 @@ describe("run commands", () => {
       "- integrate [run-1.integrate]: not started, waits for lane api to publish",
     );
     expect(shown.stdout).toContain(
-      "lane api [csm/session-1-api at /repo/.worktrees/session.1-api]: blocked (attempt 1): The session worktree has changes: notes.md",
+      "lane api [csm/session-1-api at /repo/.worktrees/session.1-api]: blocked (attempt 1): Uncommitted work in the session worktree is in the way of the lane's files: notes.md",
     );
+    expect(shown.stdout).toContain(
+      "lane ui [csm/session-1-ui at /repo/.worktrees/session.1-ui]: publishing (attempt 1), waiting for commit job job-7 to release the session",
+    );
+    expect(shown.stdout).toContain(
+      "lane docs [csm/session-1-docs at /repo/.worktrees/session.1-docs]: publishing (attempt 2), waiting for run-2.audit:work:1 to release the session worktree",
+    );
+    expect(shown.stdout).toContain(
+      "lane web [csm/session-1-web at /repo/.worktrees/session.1-web]: publishing (attempt 1), waiting for lane ui to finish publishing",
+    );
+    expect(shown.stdout).toContain(
+      "lane cli [csm/session-1-cli at /repo/.worktrees/session.1-cli]: publishing (attempt 1), waiting for Git's lock /repo/.git/worktrees/session/index.lock to go",
+    );
+    const json = await fixture.run(["run", "show", "run-1"]);
+    expect(
+      JSON.parse(json.stdout).payload.data.lanes.map(
+        (lane: { waitingOn: unknown }) => lane.waitingOn,
+      ),
+    ).toEqual([
+      null,
+      { kind: "session_lock", job: { jobId: "job-7", jobType: "commit" } },
+      { kind: "grants", holders: ["run-2.audit:work:1"] },
+      { kind: "publication", laneId: "1-ui" },
+      { kind: "git_lock", lock: "/repo/.git/worktrees/session/index.lock" },
+    ]);
 
     expect(
       (await fixture.run(["run", "retry", "run-1", "--lane", "api"])).exitCode,

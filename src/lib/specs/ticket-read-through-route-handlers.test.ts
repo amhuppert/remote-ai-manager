@@ -44,7 +44,7 @@ describe("ticket read-through route", () => {
       specs: [
         expect.objectContaining({
           specId: "spec-1",
-          phase: { primary: "executing" },
+          phase: { primary: "approved" },
         }),
       ],
     });

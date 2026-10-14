@@ -28,4 +28,4 @@ Conversation turns and queue recovery run on the core. Persisted graph-role conv
 | Agent-profile deletion references | `agent-profiles/library-service.ts` port, `run-templates/profile-references.ts` implementation |
 | Registered validation | `validation/` |
 
-Native specs stop at approved requirements and design. They do not own execution plans, delivery gates or merge admission. Run planning and delivery are independent of spec authoring.
+Native specs stop at approved requirements and design. They do not own execution plans, delivery gates or merge admission. Run planning and delivery do not depend on a spec.

@@ -923,7 +923,7 @@ describe("lanes", () => {
     await settle(workspace, "publish", {
       kind: "publish_blocked",
       detail:
-        "The session worktree has changes publication would overwrite or leave behind: notes.md.",
+        "Uncommitted work in the session worktree is in the way of the lane's files, so nothing was published or changed. Your local changes to the following files would be overwritten by merge: notes.md. Commit, move or remove it, then ask for a new attempt.",
     });
     expect(runs.observe("run-1")?.record.progress).toEqual({
       kind: "needs_owner",

@@ -36,7 +36,6 @@ export const CURSOR_PARITY_AREAS = [
   "mcp",
   "tasks",
   "assistance",
-  "workflows",
   "collaboration",
   "observability",
   "policy",
@@ -54,7 +53,6 @@ export const CURSOR_PARITY_OWNERS = [
   "command-center#115",
   "command-center#116",
   "command-center#117",
-  "command-center#118",
   "command-center#119",
   "command-center#120",
   "command-center#121",
@@ -135,14 +133,7 @@ export const CURSOR_AUDIT_BASELINE_GAPS: Readonly<Record<string, string>> = {
   "comparison-mcp-filtering": "MCP per-tool filtering",
   "comparison-mcp-authority": "MCP authoritative config guarantee",
   "comparison-cost": "Cost accounting",
-  "feature-workflow-assignments":
-    "Graph workflow implementer, validator, advisory and repair assignments",
-  "feature-auxiliary-runners":
-    "Planner, validator, output capture, advisory response and plan repair execution",
-  "feature-owned-workflow-writes": "Ownership-confined workflow work",
-  "feature-spec-delivery": "Native spec managed delivery",
   "feature-collaboration": "Collaboration Mode and /collab",
-  "feature-agent-run-cli": "cctl agent run with Cursor",
   "feature-ticket-command": "/ticket from conversation context",
   "feature-quick-ticket-enrichment": "Quick Ticket enrichment",
   "feature-commit-merge-message": "/commit and /merge generated message",
@@ -496,7 +487,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
       test(
         "src/lib/agent-backends/cursor/conversation-runtime-capture.test.ts",
       ),
-      test("src/lib/conversation-core/checkpoint-delivery.integration.test.ts"),
       test("src/lib/conversation-core/checkpoint-delivery.integration.test.ts"),
       report("docs/reports/2026-09-29-cursor-continuity.md"),
     ],
@@ -1135,6 +1125,26 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     ],
   },
   {
+    id: "filesystem-confinement",
+    area: "policy",
+    claim:
+      "A filesystem write policy supplied to Cursor is translated into explicit instructions and is declared instruction-only on both facets; an unrepresentable policy is refused at the adapter boundary rather than silently dropped.",
+    mechanism: "instruction-only",
+    limitation:
+      "There is no mechanical confinement: a Cursor agent can write outside its allowed paths, and the declaration exists so no consumer mistakes the instruction for an enforced envelope.",
+    owner: "command-center#117",
+    verdict: "unresolved",
+    blocker:
+      "SandboxOptions exposes only an enabled flag, with no path allowlist and no coverage of shell, direct file tools, MCP or subagents, so an exact write envelope cannot be expressed.",
+    liveFlow: true,
+    facts: ["conversation.fsWriteRestriction", "tasks.fsWriteRestriction"],
+    auditGaps: ["comparison-fs-write", "defect-5-fs-policy-refusal"],
+    evidence: [
+      test("src/lib/agent-backends/cursor/task-runner.test.ts"),
+      live("instructions.acceptance.test.ts", "instructions-durable-resume"),
+    ],
+  },
+  {
     id: "native-memory-neutralization",
     area: "policy",
     claim:
@@ -1288,7 +1298,6 @@ const AREA_TITLES: Readonly<Record<CursorParityArea, string>> = {
   mcp: "MCP",
   tasks: "One-shot tasks",
   assistance: "Agent-assisted product features",
-  workflows: "Graph workflows and spec delivery",
   collaboration: "Collaboration Mode",
   observability: "Cost and context",
   policy: "Execution policy and disclosure",

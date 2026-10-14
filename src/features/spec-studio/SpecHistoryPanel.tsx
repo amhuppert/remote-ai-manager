@@ -474,7 +474,7 @@ export function buildSpecHistory(
           : `${revisionLabel} signed off`,
         detail: admittedByImport
           ? "Admitted on the imported source's word — no human signed this revision off."
-          : "The approved revision is immutable and can anchor execution scope.",
+          : "The approved revision is immutable.",
         occurredAt: revision.approvedAt,
         href: null,
         priority: 30,

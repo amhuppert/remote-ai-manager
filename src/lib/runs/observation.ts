@@ -1,4 +1,5 @@
 import { laneStateOf, type RunLaneState, type RunView } from "./schemas";
+import { laneStepCause } from "./host";
 import { passContextId } from "./schedule";
 import { laneSkipped, loopOf } from "./topology";
 import type { Supervision } from "@/lib/supervision/supervision";
@@ -91,11 +92,27 @@ export function describeRun(
         lane.key,
         (key) => plan.keys.get(key)?.kind === "skipped",
       );
+      const state = laneStateOf(record.facts, lane.key);
+      const view = laneView(state, skipped);
+      const publication = state?.publication ?? null;
       return {
         key: lane.key,
+        laneId: lane.laneId,
         worktreePath: lane.worktreePath,
         branch: lane.branch,
-        ...laneView(laneStateOf(record.facts, lane.key), skipped),
+        ...view,
+        // Workspace knows, in memory, what a running publication waits for.
+        waitingOn:
+          view.state === "publishing" && publication !== null
+            ? supervision.workspace.waitingOn(
+                laneStepCause(
+                  record.runId,
+                  "publish",
+                  lane.key,
+                  publication.attempt,
+                ),
+              )
+            : null,
       };
     }),
     loops: loops.map((loop) => {

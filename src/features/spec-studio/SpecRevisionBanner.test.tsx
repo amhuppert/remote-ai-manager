@@ -33,7 +33,6 @@ function renderBanner(detail: SpecDetailView): HTMLElement {
       detail={detail}
       presentation={detailStatePresentation(
         detail.status.phase.primary,
-        detail.status.pendingApprovals,
         detail.status.phase.authoringStage,
       )}
       detailHref={detailHref}

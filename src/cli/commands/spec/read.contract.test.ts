@@ -380,8 +380,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
       expect(result.stderr).not.toContain("same build as this CLI");
     });
   });
-
-  describe("cctl spec export", () => {});
 });
 
 /**

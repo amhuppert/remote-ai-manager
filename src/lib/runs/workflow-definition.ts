@@ -550,10 +550,12 @@ type WaitNode =
  * once all its contexts finished; a context waits for what it depends on to
  * finish, and for the lane of a dependency it needs code from to publish. A
  * cycle among these never starts, so it is refused with the dependency that
- * closes it. Separately, a publication changes the session worktree, so every
- * session context is ordered against each lane's publication. A reader may come
- * before it or after it. A writer leaves results the session never commits,
- * which block any later publication, so it must come after every publication.
+ * closes it. Separately, a publication changes the session worktree, which a
+ * session context's work is judged on (a read-only or full-scope one's on the
+ * whole tree), so every session context is ordered against each lane's
+ * publication: it comes before it (the lane's work depends on it) or after it.
+ * A finished writer's uncommitted results stay in the session worktree, and
+ * publication keeps them unless they are in the way of the lane's files.
  */
 function checkWaits(
   contexts: readonly WorkflowContextRequest[],
@@ -641,7 +643,7 @@ function checkWaits(
     if (context.lane !== undefined) return;
     const self: WaitNode = `context:${context.key}`;
     const reader = scopeOf(context).mode === "readOnly";
-    const before = reader ? after(self) : new Set<WaitNode>();
+    const before = after(self);
     const blocked = lanes.find(
       (lane) =>
         !(afterPublication.get(lane)?.has(self) ?? false) &&
@@ -652,7 +654,7 @@ function checkWaits(
       path: ["contexts", index],
       message: reader
         ? `"${context.key}" is read-only and reads the whole session worktree, and lane "${blocked}" could publish while it runs, which changes that worktree under it. Make "${context.key}" depend on the work in lane "${blocked}", make that work depend on "${context.key}" (outputOnly), or place "${context.key}" in a lane.`
-        : `"${context.key}" writes in the session worktree, whose results are never committed, and lane "${blocked}" could publish while they are there, which publication refuses. Make "${context.key}" depend on the work in lane "${blocked}", or place it in a lane.`,
+        : `"${context.key}" writes in the session worktree, and lane "${blocked}" could publish while it runs, which changes the files its work is judged on. Make "${context.key}" depend on the work in lane "${blocked}", make that work depend on "${context.key}" (outputOnly), or place "${context.key}" in a lane.`,
     });
   });
   return issues;

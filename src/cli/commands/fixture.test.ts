@@ -10,12 +10,6 @@ const baseEnv: CliEnv = {
   CC_CONVERSATION_ID: "managing-conv",
 };
 
-const workflowEnv: CliEnv = {
-  ...baseEnv,
-  CC_WORKFLOW_EXECUTION_ID: "execution-1",
-  CC_WORKFLOW_CONTEXT_ID: "context-1",
-};
-
 const DEV_SERVERS_URL =
   "http://127.0.0.1:3000/api/projects/cc/sessions/my-session/dev-servers";
 const TARGET = "http://localhost:3001";
@@ -311,130 +305,38 @@ describe("cctl fixture session create", () => {
 });
 
 describe("fixture target resolution", () => {
-  it("uses the verified workflow-context dev server and reports only its datastore paths", async () => {
-    const siblingTarget = TARGET;
-    const laneTarget = "http://localhost:3002";
-    const siblingWorktree = "/repo/.worktrees/session";
-    const laneWorktree = "/repo/.worktrees/lane";
-    const host = makeHost(
-      ({ url, init }) => {
-        const parsed = new URL(url);
-        if (
-          parsed.pathname ===
-            "/api/projects/cc/sessions/my-session/dev-servers" &&
-          init.method === "GET"
-        ) {
-          expect(parsed.searchParams.get("executionId")).toBe("execution-1");
-          expect(parsed.searchParams.get("contextId")).toBe("context-1");
-          return jsonResponse({
-            servers: [devServer({ port: 3002, worktreePath: laneWorktree })],
-          });
-        }
-        if (
-          url === `${laneTarget}/api/projects/scratch/sessions` &&
-          init.method === "POST"
-        ) {
-          return jsonResponse(createdSession(), 201);
-        }
-        if (
-          url === `${siblingTarget}/api/projects/scratch/sessions` &&
-          init.method === "POST"
-        ) {
-          return jsonResponse(createdSession(), 201);
-        }
-        return null;
-      },
-      devServer({ worktreePath: siblingWorktree }),
-    );
-
-    const result = await runCcWithHost(
-      ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
-      workflowEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const envelope = JSON.parse(result.stdout);
-    expect(envelope.payload.data.target).toBe(laneTarget);
-    expect(envelope.payload.data.worktreePath).toBe(laneWorktree);
-    expect(envelope.payload.data.dbPath).toBe(
-      `${laneWorktree}/.config/command-center.db`,
-    );
-    expect(envelope.payload.data.dbPath).not.toBe(
-      `${siblingWorktree}/.config/command-center.db`,
-    );
-    const fixtureWrites = host.requests.filter(
-      ({ init }) => init.method === "POST",
-    );
-    expect(fixtureWrites.map(({ url }) => url)).toEqual([
-      `${laneTarget}/api/projects/scratch/sessions`,
-    ]);
-  });
-
-  it.each([
-    [
-      "context id",
-      { CC_WORKFLOW_EXECUTION_ID: "execution-1" },
-      "CC_WORKFLOW_CONTEXT_ID",
-    ],
-    [
-      "execution id",
-      { CC_WORKFLOW_CONTEXT_ID: "context-1" },
-      "CC_WORKFLOW_EXECUTION_ID",
-    ],
-  ])(
-    "rejects a missing %s before reading or writing either worktree",
-    async (_label, workflowIdentity, missingName) => {
-      const host = makeHost(() => null);
-
-      const result = await runCcWithHost(
-        ["fixture", "session", "create", "scratch"],
-        { ...baseEnv, ...workflowIdentity },
-        host,
-      );
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain(missingName);
-      expect(host.requests).toHaveLength(0);
-    },
-  );
-
-  it("fails closed when the server rejects stale workflow identity", async () => {
-    const host = makeHost(({ url, init }) => {
-      const parsed = new URL(url);
-      if (
-        parsed.pathname ===
-          "/api/projects/cc/sessions/my-session/dev-servers" &&
-        parsed.searchParams.has("executionId")
-      ) {
+  it("fails closed when the server refuses to serve the caller's run lane", async () => {
+    const host = makeHost(() => null);
+    host.fetch = async (url, init) => {
+      host.requests.push({ url, init });
+      if (url === DEV_SERVERS_URL) {
         return jsonResponse(
           {
-            error: "workflow execution is not active",
-            code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
-            instruction: "Run `cctl workflow status`.",
+            error: "Dev servers run the session worktree",
+            code: "RUN_LANE_NOT_SERVED",
+            instruction: "Check the work in your lane.",
           },
           409,
         );
       }
-      if (init.method === "POST") {
-        return jsonResponse(createdSession(), 201);
-      }
-      return null;
-    });
+      return init.method === "POST"
+        ? jsonResponse(createdSession(), 201)
+        : jsonResponse({ error: "unrouted" }, 404);
+    };
 
     const result = await runCcWithHost(
       ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
-      workflowEnv,
+      baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
       error: {
-        message: "workflow execution is not active",
-        details: { serverCode: "WORKFLOW_EXECUTION_NOT_ACTIVE" },
+        message: "Dev servers run the session worktree",
+        details: { serverCode: "RUN_LANE_NOT_SERVED" },
       },
-      instruction: "Run `cctl workflow status`.",
+      instruction: "Check the work in your lane.",
     });
     expect(host.requests.filter(({ init }) => init.method === "POST")).toEqual(
       [],

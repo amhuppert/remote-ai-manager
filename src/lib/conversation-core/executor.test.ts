@@ -161,7 +161,6 @@ let rowWrites: Array<CustodyRow | null>;
 /** Runtime losses recorded for custody, as `attempt:end`. */
 let losses: string[];
 let lossFailures: number;
-let uptime: number;
 
 function records(): ConversationCoreDeps["records"] {
   return {
@@ -255,7 +254,6 @@ function newCore(
       }
       losses.push(`${attemptId}:${end}${collected ? "" : ":unconfirmed"}`);
     },
-    uptimeMs: () => uptime,
     now: () => now,
     permitPollMs: 5,
     log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -329,7 +327,6 @@ beforeEach(() => {
   rowWrites = [];
   losses = [];
   lossFailures = 0;
-  uptime = 60_000;
   queuedRequests = [];
   notStarted = [];
   taskCalls = [];
@@ -481,10 +478,10 @@ describe("conversation core for seats", () => {
       expect(freeSlots).toBe(2);
     });
 
-    it("waits for a Git operation on its worktree, then holds the worktree for interactive writes while it runs", async () => {
+    it("starts while a Git operation holds its worktree, and holds no workspace grant while it runs", async () => {
       interactiveConversation();
       const worktree = "/repo/.worktrees/session";
-      const core = newCore({ interactiveWorktree: async () => worktree });
+      const core = newCore();
       const publication = admission.tryAcquire({
         worktree,
         kind: "git",
@@ -500,30 +497,24 @@ describe("conversation core for seats", () => {
         inputOrigin: "user",
       });
       await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(userCalls).toEqual([]);
-
-      admission.release(publication);
-      await new Promise((resolve) => setTimeout(resolve, 20));
       expect(userCalls).toHaveLength(1);
-      // Supervised writers still work beside it; Git operations wait for it.
-      const seat = admission.tryAcquire({
+      expect(admission.held().map((grant) => grant.holder)).toEqual([
+        "publish",
+      ]);
+      // Git operations and supervised writers take the worktree while it runs.
+      admission.release(publication);
+      const next = admission.tryAcquire({
         worktree,
-        kind: "scoped_write",
-        paths: ["src"],
-        holder: "seat",
+        kind: "git",
+        holder: "publish-2",
       });
-      expect(seat).not.toBeNull();
-      if (seat !== null) admission.release(seat);
-      expect(
-        admission.tryAcquire({ worktree, kind: "git", holder: "publish-2" }),
-      ).toBeNull();
+      expect(next).not.toBeNull();
+      if (next !== null) admission.release(next);
 
       finish(ok());
       if (sent.kind === "accepted") await sent.settled;
       await core.conversationIdle("conv-u");
-      expect(
-        admission.tryAcquire({ worktree, kind: "git", holder: "publish-3" }),
-      ).not.toBeNull();
+      expect(admission.held()).toEqual([]);
     });
 
     it("refuses a conversation the core does not run, and one already running a turn", async () => {
@@ -2093,7 +2084,6 @@ describe("conversation core for seats", () => {
 });
 
 describe("custody of a runtime that still owes work (design C5b §3)", () => {
-  const worktreeOf = async () => worktree;
   const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
   async function eventually(check: () => boolean): Promise<void> {
     for (let i = 0; i < 400; i += 1) {
@@ -2179,9 +2169,9 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     return { lease: opened.lease, turnAttempt: opened.turnAttempt, held };
   }
 
-  it("keeps a turn's runtime in custody when it still owes work, taking custody's own attempt and worktree grant before the turn lets go of its own", async () => {
+  it("keeps a turn's runtime in custody when it still owes work, under custody's own attempt and holding no workspace grant", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const held = retained();
     let grantsAtOpen: string[] = [];
     const opened: { lease: CustodyLease | null; turnAttempt: string } = {
@@ -2204,7 +2194,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     await core.conversationIdle("conv-u");
 
     const custody = `custody:${opened.turnAttempt}`;
-    expect(grantsAtOpen).toEqual([sent.cause, custody]);
+    expect(grantsAtOpen).toEqual([]);
     expect(repo().getAttempt(opened.turnAttempt)).toMatchObject({
       state: "settled",
       outcome: { status: "succeeded" },
@@ -2215,22 +2205,21 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       state: "admitted",
       outcome: null,
     });
-    // Custody holds the worktree for its writes: a publication waits for it.
-    expect(admission.held().map((grant) => grant.holder)).toEqual([custody]);
+    // Background work holds nothing a publication or a seat waits for.
+    expect(admission.held()).toEqual([]);
     expect(
       admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
-    ).toBeNull();
+    ).not.toBeNull();
     // Nothing runs: the queue may hand a message over.
     expect(core.isBusy("conv-u")).toBe(false);
     expect(core.runningAttempt("conv-u")).toBeNull();
     expect(held.told).toEqual([]);
   });
 
-  it("ends custody once the runtime owes nothing: it closes and collects the runtime first, then settles, lets the worktree go and leaves the busy set", async () => {
+  it("ends custody once the runtime owes nothing: it closes and collects the runtime first, then settles and leaves the busy set", async () => {
     interactiveConversation();
     const idle: string[] = [];
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       onConversationIdle: (conversationId) => idle.push(conversationId),
     });
     let collect: () => void = () => {};
@@ -2240,10 +2229,9 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
     lease.settled();
     await tick();
-    // Still closing: custody keeps its attempt, its grant and the conversation.
+    // Still closing: custody keeps its attempt and the conversation.
     expect(held.told).toEqual(["close"]);
     expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
-    expect(admission.held()).toHaveLength(1);
     expect(await core.admission("conv-u", "task")).toMatchObject({
       code: "busy",
     });
@@ -2273,7 +2261,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("refuses a task, a command, a claim and maintenance while custody holds the conversation, saying why, and admits a message", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     await custodyAfterTurn(core);
 
     for (const turn of ["task", "command", "claim"] as const)
@@ -2362,9 +2350,9 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     expect(lease.row()).toEqual({ status: "running", source: "workflow" });
   });
 
-  it("hands the runtime over to a message at its admission: until then custody keeps it and its grant, then custody settles handed over and its grant goes", async () => {
+  it("hands the runtime over to a message at its admission: until then custody keeps it, then custody settles handed over", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease, held } = await custodyAfterTurn(core);
     freeSlots = 0;
     const sent = await core.sendUserMessage({
@@ -2375,12 +2363,9 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     if (sent.kind !== "accepted") throw new Error(sent.message);
     await tick();
 
-    // Waiting for model capacity: custody still owns the runtime and the worktree.
+    // Waiting for model capacity: custody still owns the runtime.
     expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
     expect(held.told).toEqual([]);
-    expect(admission.held().map((grant) => grant.holder)).toEqual([
-      `custody:${repo().getAttempt(lease.attemptId)?.cause.slice("custody:".length)}`,
-    ]);
     // The waiting turn holds the row: no provider turn's source is shown.
     expect(lease.row()).toEqual({ status: "running", source: null });
 
@@ -2398,14 +2383,14 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     });
     // Never closed: the turn runs on the runtime custody kept.
     expect(held.told).toEqual(["released:handed_over"]);
-    expect(grantsAtRun).toEqual([sent.cause]);
+    expect(grantsAtRun).toEqual([]);
     expect(losses).toEqual([]);
     expect(lease.row()).toBeNull();
   });
 
   it("starts a message that arrives while custody is closing its runtime only once the close is over, with nothing handed over", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     let collect: () => void = () => {};
     const held = retained(() => new Promise((resolve) => (collect = resolve)));
     const { lease } = await custodyAfterTurn(core, held);
@@ -2433,7 +2418,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("keeps custody the owner when the message waiting to take over is cancelled before admission, and shows the row as custody leaves it", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease, held } = await custodyAfterTurn(core);
     freeSlots = 0;
     const sent = await core.sendUserMessage({
@@ -2454,12 +2439,11 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     expect(claims).toEqual([]);
     expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
     expect(held.told).toEqual([]);
-    expect(admission.held()).toHaveLength(1);
   });
 
   it("while a message waits for model capacity, keeps a provider turn that starts meanwhile on the row, and Stop stops both", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease, held } = await custodyAfterTurn(core);
     freeSlots = 0;
     const sent = await core.sendUserMessage({
@@ -2491,7 +2475,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("stops custody on request, answering once its runtime is collected: the loss is recorded and custody settles stopped", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     let collect: () => void = () => {};
     const held = retained(() => new Promise((resolve) => (collect = resolve)));
     const { lease } = await custodyAfterTurn(core, held);
@@ -2514,9 +2498,9 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     expect(admission.held()).toEqual([]);
   });
 
-  it("fails the stop and keeps custody's worktree grant when its runtime cannot be confirmed collected", async () => {
+  it("fails the stop when its runtime cannot be confirmed collected, and still holds no workspace grant", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const held = retained(async () => {
       throw new Error("the CLI did not exit");
     });
@@ -2528,9 +2512,12 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     // The person hears the stop was not confirmed; the agent's loss waits until it is.
     expect(losses).toEqual([`${lease.attemptId}:stopped:unconfirmed`]);
     expect(repo().getAttempt(lease.attemptId)?.state).toBe("admitted");
-    expect(
-      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
-    ).toBeNull();
+    // The conversation keeps its own work out until the processes are confirmed stopped.
+    expect(await core.admission("conv-u", "message")).toMatchObject({
+      code: "busy",
+      message: expect.stringContaining("could not be confirmed stopped"),
+    });
+    expect(admission.held()).toEqual([]);
   });
 
   /** The production loss recorder over the fixture's subscription store, and what it kept. */
@@ -2582,7 +2569,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     interactiveConversation();
     const loss = realLossRecorder();
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       custodyLoss: loss.custodyLoss,
     });
     const held = retained(async () => {
@@ -2617,7 +2603,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     interactiveConversation();
     const loss = realLossRecorder();
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       custodyLoss: loss.custodyLoss,
     });
     const held = retained(async () => {
@@ -2652,7 +2637,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     interactiveConversation();
     const loss = realLossRecorder();
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       custodyLoss: loss.custodyLoss,
     });
     let fail: (error: Error) => void = () => {};
@@ -2690,7 +2674,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       const base = createConversationCoreRepo(fixture.db);
       let onRead: (() => void) | null = null;
       const core = newCore({
-        interactiveWorktree: worktreeOf,
         repo: {
           ...base,
           attemptsInState(state) {
@@ -2734,7 +2717,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
   it("ends custody at its bound as timed out, recording the loss", async () => {
     interactiveConversation();
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       custodyBoundMs: 15,
     });
     const { lease, held } = await custodyAfterTurn(core);
@@ -2751,7 +2733,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("ends custody lost when its runtime dies, closing and collecting the dead runtime", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease, held } = await custodyAfterTurn(core);
 
     lease.lost();
@@ -2767,7 +2749,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
   it("at server stop ends custody as interrupted once its runtime is closed, and keeps none for a turn ending meanwhile", async () => {
     interactiveConversation();
     interactiveConversation("conv-v");
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease, held } = await custodyAfterTurn(core);
     let opened: CustodyLease | null | undefined;
     nextUserResult = (input) =>
@@ -2799,7 +2781,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     const loss = realLossRecorder();
     let writeFailures = 1;
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       async custodyLoss(input) {
         if (writeFailures > 0) {
           writeFailures -= 1;
@@ -2850,7 +2831,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     interactiveConversation();
     const loss = realLossRecorder();
     const core = newCore({
-      interactiveWorktree: worktreeOf,
       custodyLoss: loss.custodyLoss,
     });
     // A task started after the settle check: the close cuts it short and reports it.
@@ -2883,7 +2863,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       const loss = realLossRecorder();
       let writeFailures = failure === "the loss cannot be written" ? 1 : 0;
       const core = newCore({
-        interactiveWorktree: worktreeOf,
         async custodyLoss(input) {
           if (writeFailures > 0) {
             writeFailures -= 1;
@@ -2924,7 +2903,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("refuses the next message, saying why, while the loss a custody left still cannot be recorded", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease } = await custodyAfterTurn(core);
     lossFailures = 2;
     await core.stopConversation("conv-u").settled;
@@ -2947,7 +2926,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("records at the next boot a loss the server could not record before it stopped", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease } = await custodyAfterTurn(core);
     lossFailures = 1;
     await core.stopConversation("conv-u").settled;
@@ -2962,7 +2941,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
   it("retiring the conversation stops its custody, collecting the runtime before disposing of it", async () => {
     interactiveConversation();
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     const { lease, held } = await custodyAfterTurn(core);
 
     await core.retireConversation("conv-u", async () => {
@@ -2974,37 +2953,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       end: "stopped",
     });
     expect(admission.held()).toEqual([]);
-  });
-
-  it("after a restart fences a crashed custody's worktree even when its loss cannot be recorded yet", async () => {
-    interactiveConversation();
-    repo().insertAttempt({
-      attemptId: "custody-1",
-      conversationId: "conv-u",
-      cause: "custody:turn-1",
-      state: "admitted",
-      outcome: null,
-      openedAt: now,
-      settledAt: null,
-    });
-    uptime = 4_970;
-    lossFailures = 1;
-    const core = newCore({ interactiveWorktree: worktreeOf });
-    await core.recover();
-
-    expect(
-      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
-    ).toBeNull();
-    expect(
-      admission.tryAcquire({
-        worktree,
-        kind: "interactive_write",
-        holder: "turn",
-      }),
-    ).toBeNull();
-    expect(
-      createConversationCoreRepo(fixture.db).getAttempt("custody-1")?.state,
-    ).toBe("admitted");
   });
 
   it("after a crash during custody, boot records the runtime loss before settling custody interrupted, and a later boot adds nothing", async () => {
@@ -3036,7 +2984,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     expect(losses).toEqual(["custody-1:interrupted"]);
   });
 
-  it("after a restart keeps a crashed custody's worktree closed to turns and publications until 5 s after the server started", async () => {
+  it("after a restart holds nothing on a crashed custody's worktree: a Git operation and the next message start at once", async () => {
     interactiveConversation();
     repo().insertAttempt({
       attemptId: "custody-1",
@@ -3047,41 +2995,17 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       openedAt: now,
       settledAt: null,
     });
-    uptime = 4_970;
-    const core = newCore({ interactiveWorktree: worktreeOf });
+    const core = newCore();
     await core.recover();
 
-    expect(
-      admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
-    ).toBeNull();
+    expect(admission.held()).toEqual([]);
     const sent = await core.sendUserMessage({
       conversationId: "conv-u",
       text: "Where were we?",
       inputOrigin: "user",
     });
-    await tick();
-    expect(userCalls).toEqual([]);
-
     if (sent.kind === "accepted") await sent.settled;
     expect(userCalls).toHaveLength(1);
-    await core.conversationIdle("conv-u");
-    expect(admission.held()).toEqual([]);
-  });
-
-  it("fences nothing when the server has been up longer than the window", async () => {
-    interactiveConversation();
-    repo().insertAttempt({
-      attemptId: "custody-1",
-      conversationId: "conv-u",
-      cause: "custody:turn-1",
-      state: "admitted",
-      outcome: null,
-      openedAt: now,
-      settledAt: null,
-    });
-    uptime = 6_000;
-    await newCore({ interactiveWorktree: worktreeOf }).recover();
-    expect(admission.held()).toEqual([]);
   });
 
   describe("guards outside the conversation (design C5b §5)", () => {
@@ -3151,7 +3075,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
     it("names the conversations of a project or session whose background work custody holds, and none whose turn only runs", async () => {
       interactiveConversation();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       let finish: () => void = () => {};
       nextUserResult = () =>
         new Promise((resolve) => (finish = () => resolve(ok())));
@@ -3192,7 +3116,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
     it("keeps naming background work whose Stop could not confirm its runtime collected, until a later close collects it", async () => {
       interactiveConversation();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const { held } = await custodyAfterTurn(
         core,
         retained(async () => {
@@ -3213,7 +3137,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
     it("refuses archive and deletion again on every retry while that runtime stays unconfirmed, changing nothing", async () => {
       interactiveConversation();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       await custodyAfterTurn(
         core,
         retained(async () => {
@@ -3254,7 +3178,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       const asked: string[] = [];
       const order: string[] = [];
       const core = newCore({
-        interactiveWorktree: worktreeOf,
         custodyFence(place) {
           asked.push(`${place.projectPath}:${place.sessionName}`);
           return closed;
@@ -3365,7 +3288,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("closes a session to background work: stops its custody, refuses custody that tries to open meanwhile, commits, and opens again afterwards", async () => {
       interactiveConversation();
       sibling();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       let collect: () => void = () => {};
       const a = await custodyAfterTurn(
         core,
@@ -3459,7 +3382,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("waits for a refused custody's release before an archive commits, and refuses when that release cannot be collected", async () => {
       interactiveConversation();
       sibling();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const { closing, commits } = await closingWithPendingRelease(core, {
         ...ok(),
         runtimeUncollected: "the CLI did not exit",
@@ -3475,7 +3398,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("commits the archive once a refused custody's release is collected", async () => {
       interactiveConversation();
       sibling();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const { closing, commits } = await closingWithPendingRelease(core, ok());
 
       await closing;
@@ -3486,7 +3409,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("lets marking merged read a refused custody's release only once it settled, so the read sees it unconfirmed", async () => {
       interactiveConversation();
       const core = newCore({
-        interactiveWorktree: worktreeOf,
         // A merge is delivering the session: the turn's custody is refused at its end.
         custodyFence: () => "merging",
       });
@@ -3531,7 +3453,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("fences only new custody through a commit that keeps existing custody (marking a session merged), and releases the fence even when the commit fails", async () => {
       interactiveConversation();
       sibling();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const a = await custodyAfterTurn(core);
 
       let write: () => void = () => {};
@@ -3562,7 +3484,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("refuses the closing before its commit when a stopped custody cannot be collected, and releases the fence", async () => {
       interactiveConversation();
       sibling();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       await custodyAfterTurn(
         core,
         retained(async () => {
@@ -3591,7 +3513,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("refuses a session's deletion before retiring any of its conversations when the second's collection fails, so the first still takes a message", async () => {
       interactiveConversation();
       sibling();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const a = await custodyAfterTurn(core);
       await turnOwing(core, "conv-b", {
         held: retained(async () => {
@@ -3622,7 +3544,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
 
     it("refuses the retirement without withdrawing queued input or retiring the conversation, when custody cannot be collected", async () => {
       interactiveConversation();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const { held } = await custodyAfterTurn(
         core,
         retained(async () => {
@@ -3658,10 +3580,11 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       expect(held.told).toEqual(["close", "released:stopped"]);
       expect(repo().getMailbox("queued-1")?.state).toBe("queued");
       expect(notStarted).toEqual([]);
-      // Its processes may still write: the worktree stays held for them.
-      expect(
-        admission.tryAcquire({ worktree, kind: "git", holder: "publish" }),
-      ).toBeNull();
+      // Its processes may still write: the conversation, not the worktree, stays closed to new work.
+      expect(await core.admission("conv-u", "message")).toMatchObject({
+        code: "busy",
+      });
+      expect(admission.held()).toEqual([]);
     });
 
     it("refuses the retirement with the typed refusal when disposing of the runtime cannot close it", async () => {
@@ -3678,7 +3601,6 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
       interactiveConversation();
       const changes: string[] = [];
       const core = newCore({
-        interactiveWorktree: worktreeOf,
         custodyChanged: (place, held) =>
           changes.push(
             `${place.projectPath}:${place.sessionName}:${place.conversationId}:${held}`,
@@ -3708,7 +3630,7 @@ describe("custody of a runtime that still owes work (design C5b §3)", () => {
     it("leaves custody elsewhere alone", async () => {
       interactiveConversation();
       otherSessionConversation();
-      const core = newCore({ interactiveWorktree: worktreeOf });
+      const core = newCore();
       const { held } = await custodyAfterTurn(core);
       await core.closeBackgroundWork(
         { projectPath: "/repo", sessionName: "other" },

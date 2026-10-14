@@ -6,7 +6,7 @@ function statusView() {
   return specStatusViewSchema.parse({
     specId: "spec-one",
     slug: "native-sdd",
-    phase: { primary: "executing" },
+    phase: { primary: "draft" },
     gates: [],
     pendingApprovals: [],
     approvalLedger: {
@@ -27,17 +27,7 @@ function statusView() {
       elementId: null,
     })),
     currentRevision: null,
-    coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
     imported: false,
-    executions: [
-      {
-        id: "execution-one",
-        state: "running",
-        workflowExecutionId: "workflow-one",
-        workflowSeedSource: null,
-        workflowStatus: "completed",
-      },
-    ],
   });
 }
 
@@ -111,7 +101,6 @@ describe("spec disclosure", () => {
     const result = await fixture.run(["spec", "status", "native-sdd"], "text");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("outstanding (rev 3)");
-    expect(result.stdout).toContain("workflow lane workflow-one completed");
     expect(result.stdout).toContain("1 omitted");
     expect(result.stdout).toContain("cctl spec status --full -- native-sdd");
     expect(result.stdout).not.toContain('"status": {');

@@ -327,7 +327,11 @@ const publicationUncertainReportSchema = z
   })
   .strict();
 
-/** What publishing a lane reports. Only `published` makes the lane's code visible outside it. */
+/**
+ * What publishing a lane reports. Only `published` lets work that needs the
+ * lane's code proceed. Lane content can reach the session worktree earlier: an
+ * owner commit during the merge carries it, and a held ref lock leaves it staged.
+ */
 export const lanePublicationReportSchema = z.discriminatedUnion("kind", [
   publishedReportSchema,
   publishBlockedReportSchema,
@@ -337,6 +341,34 @@ export const lanePublicationReportSchema = z.discriminatedUnion("kind", [
   refusedReportSchema,
 ]);
 export type LanePublicationReport = z.infer<typeof lanePublicationReportSchema>;
+
+/**
+ * Why a publication waits for the session worktree, as Workspace knows it in
+ * memory; never persisted. `publication`: another lane's publication into the
+ * same session runs, and this one is queued behind it. `grants`: supervised
+ * work or another operation holds the session worktree (each holder is the
+ * cause it holds it for). `session_lock`: a CC job holds the session's Git
+ * lock; `job` is null when the holder cannot be named. `git_lock`: the session
+ * worktree's index lock or the session branch's ref lock exists, held by
+ * another Git process or left behind by one.
+ */
+export const publicationWaitSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("publication"), laneId: z.string() }).strict(),
+  z
+    .object({ kind: z.literal("grants"), holders: z.array(z.string()) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("session_lock"),
+      job: z
+        .object({ jobId: z.string(), jobType: z.string() })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("git_lock"), lock: z.string() }).strict(),
+]);
+export type PublicationWait = z.infer<typeof publicationWaitSchema>;
 
 /** The settled outcome of a Workspace operation, as requesters consume it. */
 export const workspaceReportSchema = z.discriminatedUnion("kind", [

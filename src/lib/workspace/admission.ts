@@ -1,8 +1,10 @@
 /**
- * Workspace admission: which uses of one worktree may overlap. Interactive turns
- * are cooperative writers and wait only for Git operations; supervised writers
- * coordinate strictly through disjoint scopes; stable reads exclude supervised
- * writes inside their scope. In-process: one server owns every worktree.
+ * Workspace admission: which supervised uses of one worktree may overlap.
+ * Supervised writers coordinate strictly through disjoint scopes; stable reads
+ * exclude supervised writes inside their scope; Git operations exclude every
+ * supervised use. Interactive turns take no grant: they are cooperative
+ * writers that neither wait nor are waited on. In-process: one server owns
+ * every worktree.
  */
 
 import type {
@@ -13,7 +15,6 @@ import type {
 
 export type GrantKind =
   | "observe"
-  | "interactive_write"
   | "scoped_write"
   | "full_write"
   | "stable_read"
@@ -112,8 +113,6 @@ export function grantsConflict(a: GrantRequest, b: GrantRequest): boolean {
   if (a.worktree !== b.worktree) return false;
   if (a.kind === "observe" || b.kind === "observe") return false;
   if (a.kind === "git" || b.kind === "git") return true;
-  if (a.kind === "interactive_write" || b.kind === "interactive_write")
-    return false;
   if (
     a.kind === "full_write" &&
     (SUPERVISED_WRITES.has(b.kind) || b.kind === "stable_read")
@@ -135,7 +134,11 @@ export interface WorkspaceAdmission {
   /** Waits in arrival order until compatible; rejects when `signal` aborts first. */
   acquire(request: GrantRequest, signal?: AbortSignal): Promise<Grant>;
   release(grant: Grant): void;
-  /** Held grants and earlier waiters that stand in this request's way. */
+  /**
+   * Held grants and the waiters ahead of this request that stand in its way.
+   * For a request already waiting (the same object passed to `acquire`), only
+   * the waiters queued before it; for any other, every conflicting waiter.
+   */
   blockers(request: GrantRequest): GrantRequest[];
   held(): Grant[];
   /** Resolves on the next release, or when `signal` aborts. */
@@ -147,15 +150,6 @@ interface Waiter {
   resolve(grant: Grant): void;
   reject(error: Error): void;
 }
-
-/**
- * An interactive turn waits only for Git and publication operations that hold
- * its worktree, never behind one still waiting: a waiting publication may be
- * queued behind supervised work, and a person must not wait for that (§6.2,
- * decision A). The publication waits for the interactive turns instead.
- */
-const jumpsTheQueue = (request: GrantRequest): boolean =>
-  request.kind === "interactive_write";
 
 export function createWorkspaceAdmission(): WorkspaceAdmission {
   const granted = new Map<number, Grant>();
@@ -196,8 +190,7 @@ export function createWorkspaceAdmission(): WorkspaceAdmission {
     tryAcquire(request) {
       const blocked =
         conflictsWithHeld(request).length > 0 ||
-        (!jumpsTheQueue(request) &&
-          waiters.some((waiter) => grantsConflict(waiter.request, request)));
+        waiters.some((waiter) => grantsConflict(waiter.request, request));
       return blocked ? null : grant(request);
     },
     acquire(request, signal) {
@@ -243,15 +236,12 @@ export function createWorkspaceAdmission(): WorkspaceAdmission {
       });
     },
     blockers(request) {
-      const ahead = jumpsTheQueue(request)
-        ? []
-        : waiters
-            .filter(
-              (waiter) =>
-                waiter.request !== request &&
-                grantsConflict(waiter.request, request),
-            )
-            .map((waiter) => waiter.request);
+      const position = waiters.findIndex(
+        (waiter) => waiter.request === request,
+      );
+      const ahead = (position === -1 ? waiters : waiters.slice(0, position))
+        .filter((waiter) => grantsConflict(waiter.request, request))
+        .map((waiter) => waiter.request);
       return [...conflictsWithHeld(request), ...ahead];
     },
     held() {

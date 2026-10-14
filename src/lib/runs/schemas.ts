@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   laneProvisionReportSchema,
   lanePublicationReportSchema,
+  publicationWaitSchema,
 } from "@/lib/workspace/schemas";
 import {
   contextStartRequestSchema,
@@ -774,6 +775,8 @@ export const runViewSchema = z
       z
         .object({
           key: z.string(),
+          /** The lane's id across runs, by which another lane's wait names it. */
+          laneId: z.string(),
           worktreePath: z.string(),
           branch: z.string(),
           state: runLaneStatusSchema,
@@ -783,6 +786,8 @@ export const runViewSchema = z
           detail: z.string().nullable(),
           /** The commit publication put on the session branch. */
           commit: z.string().nullable(),
+          /** What a publishing lane waits for now; null when it is not waiting. */
+          waitingOn: publicationWaitSchema.nullable(),
         })
         .strict(),
     ),

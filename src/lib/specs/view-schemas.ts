@@ -270,8 +270,8 @@ const specTaskPlanStatusSchema = z
     dependsOn: z.array(z.string().min(1)),
     /**
      * Depended-on task ids this revision does not carry, sorted. Rendering one
-     * raw in `dependsOn` would put an id the compiler cannot order in a field
-     * of handles, hiding the same fork the unresolved criteria expose.
+     * raw in `dependsOn` would put an unresolvable id in a field of handles,
+     * hiding an amendment that forked past its own content.
      * Defaulted so a payload from a server without the field still parses.
      */
     unresolvedDependsOnTaskElementIds: z.array(z.string().min(1)).default([]),
@@ -283,15 +283,6 @@ const specTaskPlanStatusSchema = z
      */
     executionLane: z.string().min(1).nullable().default(null),
     touchedPaths: z.array(z.string().min(1)),
-    /** Handles of the covered criteria this revision carries, in payload order. */
-    criterionCoverage: z.array(z.string().min(1)),
-    /**
-     * Covered criterion ids this revision does not carry, sorted. They are
-     * counted by neither side of `coverage`, so a reader who is not told about
-     * them reads a plan pointing at lost content as fully covered. Defaulted so
-     * a payload from a server without the field still satisfies the strict parse.
-     */
-    unresolvedCriterionElementIds: z.array(z.string().min(1)).default([]),
   })
   .strict();
 

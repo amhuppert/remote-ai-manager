@@ -258,50 +258,23 @@ const GRANDFATHERED_LEGACY_CSS = [
 // DELETED from the state-store public API in the focused-first completion
 // (Design 2.3): the whole-tree read/mutate surface no longer exists, so there is
 // no legitimate whole-state importer to allowlist. The allowlist is EMPTY on
-// purpose — every module goes through a focused accessor/setter, and the one
-// honest whole-state consumer (startup rehydration) uses the startup-owned
-// `readAllForStartupFromDb`, which builds its own cold repos over the DB and is
-// NOT a `StateStore` method (see `startup-reader.ts`), not these deleted
-// exports. The no-restricted-imports rule below stays as a tripwire: if anyone
-// re-introduces one of these names on the store and imports it, lint fails
-// immediately rather than the import being quietly allowlisted.
+// purpose — every module goes through a focused accessor/setter. The
+// no-restricted-imports rule below stays as a tripwire: if anyone re-introduces
+// one of these names on the store and imports it, lint fails immediately rather
+// than the import being quietly allowlisted.
 const WHOLE_STATE_ALLOWED = [];
 
-// The one production consumer of the startup-owned whole-state read. Deleting
-// `readState`/`mutateState`/`writeState` closed the public store surface, but
-// the replacement `readAllForStartup(FromDb)` still assembles a whole-tree read
-// (it is deliberately NOT a `StateStore` method and NOT on the index barrel).
-// The gate below restricts importing `**/state-store/startup-reader` to this
-// allowlist so a domain module cannot reach the whole-state enumeration through
-// the startup module either — the loophole Design 2.3 exists to eliminate. A
-// new startup consumer must be added here with a reason.
-const STARTUP_READER_ALLOWED = [];
-
-// Shared whole-state `no-restricted-imports` restriction objects. Because ESLint
-// flat config REPLACES a rule (never merges) when a later block re-declares it
-// for overlapping files, every block that sets `no-restricted-imports` on src
-// files MUST spread these patterns in — otherwise that block's files silently
-// lose the whole-state guard (a real bypass a collaboration override introduced
-// before this was composed). `WHOLE_STATE_NAME_RESTRICTION` blocks the deleted
-// names on the store; `STARTUP_READER_RESTRICTION` blocks importing the startup
-// reader module. The startup owner (rehydration.ts) spreads only the former.
+// Shared whole-state `no-restricted-imports` restriction. Because ESLint flat
+// config REPLACES a rule (never merges) when a later block re-declares it for
+// overlapping files, every block that sets `no-restricted-imports` on src files
+// MUST include this pattern — otherwise that block's files silently lose the
+// whole-state guard.
 const WHOLE_STATE_NAME_RESTRICTION = {
   group: ["**/state-store", "**/state-store/accessors", "**/state-store/store"],
   importNames: ["readState", "mutateState", "writeState"],
   message:
     "readState/mutateState/writeState hydrate or rewrite the ENTIRE ManagerState on every call (PERFORMANCE.md patterns 1–2). Use a focused accessor/setter instead. If you genuinely need the whole tree, add this file to WHOLE_STATE_ALLOWED in eslint.config.mjs with a reason.",
 };
-const STARTUP_READER_RESTRICTION = {
-  group: ["**/state-store/startup-reader"],
-  message:
-    "readAllForStartup/readAllForStartupFromDb is the whole-state startup enumeration — it assembles a whole-tree read and is NOT a StateStore method (Design 2.3). Only the startup/rehydration path may import it. Domain code must use a focused accessor; add a new startup consumer to STARTUP_READER_ALLOWED in eslint.config.mjs with a reason.",
-};
-// Every non-owner override spreads this; the startup owner spreads only the name
-// restriction (it legitimately imports the reader).
-const WHOLE_STATE_IMPORT_RESTRICTIONS = [
-  WHOLE_STATE_NAME_RESTRICTION,
-  STARTUP_READER_RESTRICTION,
-];
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -432,73 +405,11 @@ const eslintConfig = defineConfig([
   // importers must reach for a focused accessor or be added to
   // WHOLE_STATE_ALLOWED with a reason. NOTE: any LATER block that also sets
   // `no-restricted-imports` for src files REPLACES this rule for its files (flat
-  // config never merges) — so both such blocks below (collaboration, rehydration
-  // owner) spread the shared whole-state restrictions back in. Do not add a new
-  // `no-restricted-imports` override without composing these.
+  // config never merges), so such a block must include
+  // WHOLE_STATE_NAME_RESTRICTION in its patterns.
   {
     files: ["src/**/*.{ts,tsx}"],
     ignores: [...WHOLE_STATE_ALLOWED, "**/*.test.{ts,tsx}", "**/*.stories.tsx"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        { patterns: [...WHOLE_STATE_IMPORT_RESTRICTIONS] },
-      ],
-    },
-  },
-  {
-    files: [],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "@/lib/workflows/primitives/human-approval-gate",
-              message:
-                "Workflow-scoped collaboration must NEVER pause for user input. Report requires_user_input as a structured result instead. See design §Workflow Collaboration Envelope and Requirement 4.1.",
-            },
-            {
-              name: "@/lib/workflows/collaboration/envelope",
-              message:
-                "Workflow-scoped collaboration must not couple to the user-triggered envelope. Duplicate the round/collaborator-invocation logic locally per design §Envelope Extraction Decision.",
-            },
-          ],
-          // Spread the whole-state restrictions FIRST: this block replaces the
-          // general rule for these files, so without them a collaboration module
-          // could import `readState`/`mutateState`/`writeState` or the live
-          // `startup-reader` lint-clean (a real bypass this composition closes).
-          patterns: [
-            ...WHOLE_STATE_IMPORT_RESTRICTIONS,
-            {
-              group: [
-                "**/workflows/primitives/human-approval-gate",
-                "**/workflows/primitives/human-approval-gate.*",
-              ],
-              message:
-                "Workflow-scoped collaboration must NEVER pause for user input. Report requires_user_input as a structured result instead.",
-            },
-            {
-              group: [
-                "**/workflows/collaboration/envelope",
-                "**/workflows/collaboration/envelope.*",
-              ],
-              message:
-                "Workflow-scoped collaboration must not couple to the user-triggered envelope.",
-            },
-          ],
-        },
-      ],
-    },
-  },
-  // Startup/rehydration exemption. The whole-state block above restricts every
-  // src file from importing `**/state-store/startup-reader`; the startup path is
-  // the ONE legitimate consumer. This override (placed after that block so it
-  // wins for its files) re-declares `no-restricted-imports` with ONLY the
-  // whole-state-NAME restriction — deliberately dropping the startup-reader
-  // restriction so rehydration can compose `readAllForStartupFromDb`, while
-  // still tripping on the deleted store names.
-  {
-    files: STARTUP_READER_ALLOWED,
     rules: {
       "no-restricted-imports": [
         "error",

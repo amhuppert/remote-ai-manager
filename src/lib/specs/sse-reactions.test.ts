@@ -1,6 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
-import { conversationKeys } from "@/lib/conversations/query-keys";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import { specKeys } from "./query-keys";
 import { registerSpecSseReactions } from "./sse-reactions";
@@ -28,43 +27,6 @@ describe("registerSpecSseReactions", () => {
     });
 
     expect(invalidate).toHaveBeenCalled();
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: specKeys.all });
-  });
-
-  it("refreshes the active-conversations feed when an execution changes so Active Work stays live", () => {
-    const { fake, invalidate } = setup();
-
-    fake.emit("spec-execution-changed", {
-      type: "spec-execution-changed",
-      projectPath: "/repos/demo",
-      specId: "spec-1",
-      specSlug: "native-sdd",
-      occurredAt: "2026-07-18T00:00:00Z",
-      kind: "execution_started",
-      revisionId: "revision-2",
-    });
-
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: specKeys.all });
-    expect(invalidate).toHaveBeenCalledWith({
-      queryKey: conversationKeys.active(),
-    });
-  });
-
-  it("refreshes plan review and preview when another client changes a delivery plan", () => {
-    const { fake, invalidate } = setup();
-
-    fake.emit("spec-delivery-plan-changed", {
-      type: "spec-delivery-plan-changed",
-      projectPath: "/repos/demo",
-      specId: "spec-1",
-      specSlug: "native-sdd",
-      occurredAt: "2026-08-15T00:00:00Z",
-      kind: "reaffirmed",
-      attemptId: "attempt-1",
-      draftRevision: 3,
-      candidateId: null,
-    });
-
     expect(invalidate).toHaveBeenCalledWith({ queryKey: specKeys.all });
   });
 

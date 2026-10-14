@@ -1,24 +1,4 @@
-import {
-  encodePathSegment,
-  type CliEnv,
-  type SessionContext,
-} from "../../transport";
-
-export type DevCommandTarget = { kind: "session" };
-
-export type DevCommandTargetInference =
-  | { ok: true; target: DevCommandTarget }
-  | { ok: false; message: string };
-
-export function inferDevCommandTarget(
-  flags: { readonly project?: string; readonly session?: string },
-  _env: CliEnv,
-): DevCommandTargetInference {
-  if (flags.project !== undefined || flags.session !== undefined) {
-    return { ok: true, target: { kind: "session" } };
-  }
-  return { ok: true, target: { kind: "session" } };
-}
+import { encodePathSegment, type SessionContext } from "../../transport";
 
 /** A dev server that is up and can be addressed — a second CC instance. */
 export interface DevInstance {
@@ -30,9 +10,7 @@ export interface DevInstance {
 
 export function devServerRequestPath(
   context: SessionContext,
-  _target: DevCommandTarget,
   suffix = "",
 ): string {
-  const path = `/api/projects/${encodePathSegment(context.project)}/sessions/${encodePathSegment(context.session)}/dev-servers${suffix}`;
-  return path;
+  return `/api/projects/${encodePathSegment(context.project)}/sessions/${encodePathSegment(context.session)}/dev-servers${suffix}`;
 }

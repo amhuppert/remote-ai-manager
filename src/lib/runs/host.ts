@@ -90,7 +90,7 @@ const runControllerId = (runId: string): string => `run:${runId}`;
 type LaneStep = "provision" | "publish";
 
 /** A lane step's cause names the run, the step, the lane and the attempt; the Run reads them back from it. */
-const laneStepCause = (
+export const laneStepCause = (
   runId: string,
   step: LaneStep,
   lane: string,

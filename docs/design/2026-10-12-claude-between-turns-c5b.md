@@ -14,6 +14,9 @@ retaining runtime) and 5 (guards outside the conversation, the Stop affordance a
 (`.cc/temp/reviews/c5b-design-{opus,codex}.md`) and Astra's verification of revision 2
 (`.cc/temp/reviews/c5b-design-verify-codex.md`, cited "V-1" and so on). The slice 3 amendments below follow its
 reviews (`.cc/temp/reviews/c5b-s3-{codex,opus}.md`) and the report `.cc/temp/overhaul/c5b-slice3-report.md`.
+Amended on 2026-10-14 by `2026-10-14-workspace-write-relaxation.md` §2: custody holds the runtime but no workspace
+grant, publication no longer waits for custody, and the restart fence is deleted. The passages this changes are marked
+superseded where they stand.
 
 **Sources.** Facts and citations: `.cc/temp/overhaul/c5b-research.md` (cited "R§n"). Review findings are cited as
 "O-F1", "A-1" and so on.
@@ -43,7 +46,8 @@ O-F10):
   idempotent `onTerminated` event that fires whatever the task inventory. Backend-neutral code never reasons about
   task classes, uuids, notifications or CLI states.
 - **The core executor decides which admitted attempt owns the runtime, its grant and its row.** It also decides when
-  that ownership ends.
+  that ownership ends. **Superseded in part (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** neither
+  an ordinary turn nor custody holds a workspace grant, so the executor decides ownership of the runtime and the row.
 
 The capability is declared on the descriptor next to `externalTurns`, and conformance checks that the declaration is
 coherent. Only Claude declares it. Codex and Cursor are unchanged (R§4 F8).
@@ -100,7 +104,7 @@ attempt id, the current-attempt rule of r2 §4.3.
 | Resource | During custody |
 |---|---|
 | Execution | The custody attempt (`core_attempts`, `admitted`) and the executor's per-conversation loop. The admission rules below are per entry kind (§4) |
-| Workspace grant | Custody's own `interactive_write` on the worktree, taken with `tryAcquire` before the ending turn releases its grant. Interactive grants never conflict with each other and jump the queue (`workspace/admission.ts:114-116`, `:157`), so the take always succeeds and no grant moves (O-F2) |
+| Workspace grant | ~~Custody's own `interactive_write` on the worktree, taken with `tryAcquire` before the ending turn releases its grant. Interactive grants never conflict with each other and jump the queue (`workspace/admission.ts:114-116`, `:157`), so the take always succeeds and no grant moves (O-F2)~~ **Superseded (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** none. The `interactive_write` kind and its queue-jumping are deleted; custody holds the runtime, not a grant, so a conversation's background work affects no other operation's admission. The conversation's own guard against an uncollected runtime (`readyForMessage`) stays |
 | Model-capacity slot | Not held. A segment (§3.3) cannot wait for capacity because the provider has already started, so a segment over-commits `maxConcurrentQueries` for its length. This is a stated exception; segments can be long |
 | Runtime | Retained and registered (MCP status, capabilities, skill commands) |
 
@@ -120,6 +124,9 @@ At the end of an ordinary turn, inside today's `runRecordedTurn` boundary, in th
      refused custody is still an admitted attempt that owes its loss (§6), settled `refused` once the loss is recorded
      with the runtime seen collected.
 2. Settle the turn's **accounting**: cost, duration, turn count and the attempt's terminal. Release its slot and grant.
+
+   **Superseded in part (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** an ordinary turn takes no
+   workspace grant and custody takes none (§3.2), so step 1 takes no grant and step 2 releases only the slot.
 3. **Project the row from the surviving owner's actual state**, not from the ending turn (V-4):
    - `running` while a segment is active;
    - `waiting_for_input` while a durable question remains;
@@ -193,6 +200,10 @@ The queue bridge treats idle custody as not busy for draining, so a queued messa
    collects it before its grant is released. Admission waits for a custody that has started ending, and never takes
    one over.
 
+**Superseded in part (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** the handover moves no grant. The
+turn acquires its slot but no workspace grant (step 1), custody holds no grant to keep or release (steps 1 and 3), and
+a turn that fails after taking the runtime over has no grant to release once it has collected the runtime (step 4).
+
 **Attribution is adapter-owned (A-3, O-F5).** The adapter stamps a uuid on every prompt and live input it sends. It
 resolves a caller turn on a result whose `user_message_uuid(s)` names that prompt. A result that names no input
 answers the waiting caller only when its origin is absent or `human` (zeroed crash and startup results carry no
@@ -220,7 +231,7 @@ Probe 1 confirms it for folded and queued prompts. There is no order-based attri
 
 | Path | Rule |
 |---|---|
-| Lane publication into the session worktree | Waits on the grant conflict (Workspace admission, unchanged) |
+| Lane publication into the session worktree | ~~Waits on the grant conflict (Workspace admission, unchanged)~~ **Superseded (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1–§2.2):** does not wait for custody or any interactive turn. Background work during custody is a cooperative writer like any interactive edit: publication keeps unrelated uncommitted work and refuses, changing nothing, when files are in the way of the lane's files |
 | Session merge | Refused, advisory and in the in-lock check, while any conversation of the session holds custody, or an ended custody's runtime is still not confirmed collected (the core's one background-work safety read). Land and a finalizing conflict retry apply the advisory refusal before dispatch, so a parked candidate is kept; a graph lane's own non-finalizing merge is not refused. Marking a session merged refuses the same way, reading and writing `finished` with the session closed to new custody. Ordinary turns are untouched, including the merge's own resolver and repair task turns, so there is no new refusal for them on any backend (V-3). Custody opening (§3.3 step 1) consults the session's finished state and A4's finalizing-merge job check at the insert boundary, after every await. So no custody starts once a merge is finalizing, and a turn that ends then releases its runtime with a loss notice. A project conversation's custody on the project checkout is a stated limit, the same exposure the actor had (O-F12) |
 | Session or conversation deletion | Runs with its scope closed to background work: custody there is stopped and every runtime confirmed collected (an earlier unconfirmed one included) before anything is retired or removed, no custody opens until the deletion is done, and unconfirmed collection refuses it. Retirement confirms collection before it withdraws queued input. Project deletion retires every conversation, its sessions' and its own, before removing anything |
 | Archive (conversation, session, bulk, project) | Runs the same closing around the flag's write; failed collection refuses the archive, and dev servers stop only after the custody stop succeeded. Custody opening also refuses for an archived conversation, session or project, so a turn finishing after an archive releases its runtime with a notice (A-smaller 3, O-F12) |
@@ -242,13 +253,20 @@ Stated limits of these guards:
 - A turn that has been stopped never opens custody, whenever the stop reached it (before its engine started, or after
   its result while its receipts settle): its runtime is closed while the turn still holds its grant.
 
+**Superseded in part (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** neither custody nor the stopped
+turn holds a workspace grant. Failed collection no longer quarantines a grant of theirs: the conversation's own guard
+against an uncollected runtime (`readyForMessage`) holds its next turn, so custody's collection no longer reaches
+publication. Grant quarantine still applies to seat grants: a seat whose processes could not be confirmed stopped keeps
+its grant, and a publication into that seat's worktree waits until the server restarts.
+
 **Loss notices.**
 - A loss notice claims only a termination that was seen. When the runtime could not be confirmed collected, the
   person is told the stop could not be confirmed, and the agent's notice waits until it can be.
 - Custody stays admitted until its loss is recorded for the agent. Its runtime, grant and busy-set entry are still
   released once collected. The next message's admission records the owed loss before the turn prepares its input,
   or refuses the message with the reason; boot records it otherwise (as `interrupted`, since the original end is
-  not stored).
+  not stored). **Superseded in part (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** custody holds no
+  grant; its runtime and busy-set entry are released once collected.
 - One loss has one record. Custody records it whenever it holds the runtime, closes it itself on a handover's drift,
   or a closed scope refused it and the refusal records the loss. The adapter's own report of lost tasks then only
   clears the activity indicator and hands its task inventory to custody. Custody's notice and the agent's recovery
@@ -291,8 +309,11 @@ Stated limits of these guards:
 
 **Restart after a crash.**
 - An admitted custody row is a crash.
-- Boot first closes the worktree the custody held to turns and publications until 5 s after the server started
-  (§9.1, probe 2), whether or not its notice can be recorded.
+- ~~Boot first closes the worktree the custody held to turns and publications until 5 s after the server started
+  (§9.1, probe 2), whether or not its notice can be recorded.~~ **Superseded (2026-10-14,
+  `2026-10-14-workspace-write-relaxation.md` §2.1):** the restart fence is deleted. Turns are no longer gated by
+  grants, and a publication racing background work the crash orphaned is the same case as one racing any interactive
+  edit.
 - Boot records its runtime-loss notice, keyed by the custody attempt id and therefore idempotent. The notice is
   persisted before the attempt is settled, so a second crash retries it (A-10).
 - Boot then settles the attempt with the custody outcome. The domain outcome union and the repository's maximal
@@ -305,6 +326,12 @@ on `SIGTERM` and `SIGKILL`.
   attestation, the precedent being `captureExecutionStopped` (amendment 13). Until that hold exists, Claude is not
   declared retaining.
 - The loss notice states what is known; it never claims termination it did not observe.
+
+**Superseded in part (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1, §2.3):** probe 2 found that
+background Bash stops about 5 s after its CLI's parent dies (§9.1), so no cleanup hold was built, and the restart fence
+that closed that window is deleted too. Background writes orphaned in that window are treated like any interactive
+edit that races a publication: the merge keeps unrelated work and refuses a collision, and an edit to a lane file while
+the merge runs is one of the residual risks its §2.3 accepts.
 
 ## 7. Cost and continuity
 
@@ -379,6 +406,9 @@ Evidence: `.cc/temp/c5b-probes/`.
    - A Command Center restart takes longer than that, so no durable cleanup hold is needed. **Slice 3 obligation:**
      boot does not admit a turn or a publication into a worktree that a recovered custody attempt held until 5 s after
      the server start. This check costs nothing on a normal restart and closes the window if a restart is ever faster.
+     **Superseded (2026-10-14, `2026-10-14-workspace-write-relaxation.md` §2.1):** the obligation is withdrawn and the
+     restart fence that met it is deleted. Turns are no longer gated by grants, and a publication racing background
+     writes orphaned in this window is the same case as one racing any interactive edit.
 3. **Task end to continuation (probe 3): passed.**
    - `background_tasks_changed: []`, the terminal `task_updated` and `task_notification` arrive in the same
      millisecond.

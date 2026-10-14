@@ -506,7 +506,6 @@ function RequirementDocument({
         const status = detail.elementStatuses.requirements.find(
           (candidate) => candidate.elementId === entry.element.id,
         )?.status;
-        const proof = requirementProofPresentation(status);
         const approval = requirementApprovalPresentation(
           detail,
           entry.element.id,
@@ -534,7 +533,6 @@ function RequirementDocument({
                 <CompactMarkdown content={textOrDash(payload.statement)} />
               </div>
               <div className="flex flex-wrap items-center gap-sm">
-                <StatusChip tone={proof.tone}>{proof.label}</StatusChip>
                 <StatusChip tone={approval.tone}>{approval.label}</StatusChip>
                 <StatusChip tone="neutral">
                   {sentenceCase(payload.priority)}
@@ -1041,12 +1039,6 @@ function requirementApprovalPresentation(
     return { label: "Awaiting approval", tone: "amber" };
   }
   return APPROVAL_PRESENTATION[validity];
-}
-
-function requirementProofPresentation(
-  _status: RequirementStatus | undefined,
-): ChipPresentation {
-  return { label: "Defined", tone: "neutral" };
 }
 
 function decisionStatusPresentation(

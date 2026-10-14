@@ -46,10 +46,6 @@ function bundle(overrides: Record<string, unknown> = {}): unknown {
     slug: SLUG,
     name: "Parity Feature",
     source: { label: "kiro:.kiro/specs/parity-feature" },
-    // Opted out of the delivered marking so the bundle reaches the lint at all:
-    // a criteria-less bundle claiming delivery is refused before the first
-    // write, which would prove nothing about lint parity.
-    delivered: false,
     sections: [],
     requirements: [
       {

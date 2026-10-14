@@ -105,7 +105,7 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 /**
- * A plan-stage draft its author has asked to have reviewed. The review request
+ * A design-stage draft its author has asked to have reviewed. The review request
  * leaves it an editable draft; every human review act below lands on it.
  */
 async function reviewableDraft(
@@ -131,7 +131,7 @@ async function reviewableDraft(
     actor: AGENT,
   });
   db.prepare(
-    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+    "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
   ).run(created.draft.id);
   for (const { elementId, ...element } of [
     {
@@ -157,21 +157,6 @@ async function reviewableDraft(
         rejectedAlternatives: [],
         reason: "No prompt can bypass the gate.",
         tracedRequirementElementIds: ["requirement-1"],
-      },
-    },
-    {
-      elementId: "task-1",
-      kind: "task" as const,
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task" as const,
-        title: "Implement review service",
-        instructions: "Implement and test the review service.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: ["decision-1"],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
       },
     },
   ]) {
@@ -657,7 +642,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -831,17 +815,17 @@ describe("ReviewService", () => {
         .filter(({ revision_id }) => revision_id === created.draft.id)
         .map(({ subject_kind }) => subject_kind)
         .sort(),
-    ).toEqual(["decision", "plan", "requirement", "revision"]);
+    ).toEqual(["decision", "requirement", "revision"]);
 
     const projection = await projectionOf(created.spec, created.draft.id);
     expect(
       projection.approvalLedger.subjects.map(
         ({ classification }) => classification,
       ),
-    ).toEqual(["combined_act", "combined_act", "combined_act"]);
+    ).toEqual(["combined_act", "combined_act"]);
     expect(projection.approvalLedger).toMatchObject({
-      satisfied: 3,
-      combinedAct: 3,
+      satisfied: 2,
+      combinedAct: 2,
       currentRevision: 0,
       carried: 0,
       importSettled: 0,
@@ -864,7 +848,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -931,7 +914,7 @@ describe("ReviewService", () => {
       });
     }
 
-    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(44);
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(43);
     expect(await snapshotReads()).toEqual(withThreeApprovals);
     expect(new Set(withThreeApprovals).size).toBe(withThreeApprovals.length);
   });
@@ -1039,14 +1022,13 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
     });
     expect(bulk.ok).toBe(true);
     const rows = reviewRepo.findApprovalsBySpecId(created.spec.id);
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(2);
     expect(new Set(rows.map(({ granted_at }) => granted_at)).size).toBe(1);
     expect(rows.every(({ validity }) => validity === "valid")).toBe(true);
     expect(
@@ -1106,14 +1088,13 @@ describe("ReviewService", () => {
     // is the only thing that can refuse it.
     const created = await reviewableDraft("fast-path");
     const readHash = await reviewHash(created.draft.id);
-    await agentEdits(created.spec.id, created.draft.id, "task-1", {
-      kind: "task",
-      title: "Implement review service",
-      instructions: "Implement and test the review service end to end.",
+    await agentEdits(created.spec.id, created.draft.id, "decision-1", {
+      kind: "decision",
+      title: "Transition owner",
+      chosenApproach: "The server owns every review transition.",
+      rejectedAlternatives: [],
+      reason: "No prompt can bypass the gate.",
       tracedRequirementElementIds: ["requirement-1"],
-      tracedDecisionElementIds: ["decision-1"],
-      coveredCriterionElementIds: ["criterion-1"],
-      dependsOnTaskElementIds: [],
     });
     const eventsBefore = specEvents.findBySpecId(created.spec.id);
 
@@ -1301,7 +1282,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -1347,7 +1327,7 @@ describe("ReviewService", () => {
     expect(specEvents.findBySpecId(created.spec.id)).toEqual(before.events);
   });
 
-  it("refuses bulk plan approval for a withdrawn plan and its design follow-up", async () => {
+  it("refuses bulk plan approval for a withdrawn revision and its design follow-up", async () => {
     const created = await reviewableDraft();
     await expect(
       reviewing.withdraw({
@@ -1364,7 +1344,7 @@ describe("ReviewService", () => {
       createdAt: "2026-07-18T14:10:00.000Z",
     });
 
-    const withdrawnLegacyPlan = await reviewing.bulkApprove({
+    const withdrawn = await reviewing.bulkApprove({
       specId: created.spec.id,
       revisionId: created.draft.id,
       expectedReviewHash: await reviewHash(created.draft.id),
@@ -1372,9 +1352,9 @@ describe("ReviewService", () => {
       approver: "alex",
       actor: HUMAN,
     });
-    expect(withdrawnLegacyPlan).toMatchObject({
+    expect(withdrawn).toMatchObject({
       ok: false,
-      refusal: { code: "gate_blocked" },
+      refusal: { code: "stage_blocked" },
     });
 
     const designFollowUp = await reviewing.bulkApprove({
@@ -1466,7 +1446,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -1526,7 +1505,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -1611,7 +1589,6 @@ describe("ReviewService", () => {
     ).toEqual([
       { gate: "requirements", basis: "notify_policy", approval_id: null },
       { gate: "design", basis: "notify_policy", approval_id: null },
-      { gate: "plan", basis: "notify_policy", approval_id: null },
     ]);
   });
 
@@ -1633,7 +1610,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -1678,11 +1654,10 @@ describe("ReviewService", () => {
       expect.arrayContaining([
         { subject_kind: "requirement", element_id: "requirement-1" },
         { subject_kind: "decision", element_id: "decision-1" },
-        { subject_kind: "plan", element_id: null },
         { subject_kind: "revision", element_id: null },
       ]),
     );
-    expect(approvals).toHaveLength(4);
+    expect(approvals).toHaveLength(3);
 
     const revisionApproval = approvals.find(
       (approval) => approval.subject_kind === "revision",
@@ -1702,11 +1677,6 @@ describe("ReviewService", () => {
         basis: "human_approval",
         approval_id: revisionApproval.id,
       },
-      {
-        gate: "plan",
-        basis: "human_approval",
-        approval_id: revisionApproval.id,
-      },
     ]);
   });
 
@@ -1719,7 +1689,6 @@ describe("ReviewService", () => {
       subjects: [
         { subjectKind: "requirement", elementId: "requirement-1" },
         { subjectKind: "decision", elementId: "decision-1" },
-        { subjectKind: "plan", elementId: null },
       ],
       approver: "alex",
       actor: HUMAN,
@@ -1737,7 +1706,7 @@ describe("ReviewService", () => {
       ok: true,
       value: { revision: { state: "approved" } },
     });
-    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(4);
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(3);
   });
 
   it("refuses a fast-path sign-off by an agent", async () => {
@@ -1808,9 +1777,9 @@ describe("ReviewService", () => {
       ok: true,
       value: { revision: { state: "approved" } },
     });
-    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(4);
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(3);
     expect(
       reviewRepo.findGateAdmissionsByRevision(created.draft.id),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
   });
 });

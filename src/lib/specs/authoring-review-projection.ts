@@ -314,15 +314,16 @@ function projectGates(
     const priorRows = input.admissions.filter(
       (admission) => admission.gate === gate && !countsNow(admission),
     );
+    // A withdrawn revision is terminal: no later transition consults its
+    // gates, so none of them asks a human for anything on its behalf.
+    const terminalRevision = input.snapshot?.revision.state === "withdrawn";
     const isConsulted =
-      input.snapshot?.revision.state !== "withdrawn" &&
-      stage !== "plan" &&
-      consulted.has(gate);
+      !terminalRevision && stage !== "plan" && consulted.has(gate);
     const reason: SpecGateApplicabilityReason = isConsulted
       ? gate === stage
         ? "current_stage"
         : "changed_since_governance_base"
-      : dialRequiresHumanApproval(dial)
+      : !terminalRevision && dialRequiresHumanApproval(dial)
         ? "unchanged_since_governance_base"
         : "dial_off";
     return {

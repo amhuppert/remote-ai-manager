@@ -25,6 +25,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { PLAN_IN_EVERGREEN_RATIONALE } from "./refusal-rationale";
 
 const PROJECT_PATH = "/repos/native-sdd-batch";
 const ACTOR = { kind: "agent", conversationId: "conversation-1" } as const;
@@ -452,8 +453,7 @@ describe("AuthoringService.upsertDraftElements", () => {
         index: 1,
         elementId: "task-1",
         code: "stage_blocked",
-        rationale:
-          "delivery plans bind a settled design; authoring one earlier would shape the design around its own execution",
+        rationale: PLAN_IN_EVERGREEN_RATIONALE,
       }),
     ]);
     const snapshot = await specs.getRevisionSnapshot(created.draft.id);

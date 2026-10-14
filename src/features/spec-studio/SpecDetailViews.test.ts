@@ -15,7 +15,7 @@ describe("initialDetailViewForDeepLink", () => {
     );
   });
 
-  it("maps structural and launch handles into the five detail views", () => {
+  it("maps structural handles into the detail views", () => {
     expect(initialDetailViewForDeepLink("R1", "native-sdd")).toBe(
       "requirements",
     );
@@ -24,19 +24,10 @@ describe("initialDetailViewForDeepLink", () => {
     );
     expect(initialDetailViewForDeepLink("D1", "native-sdd")).toBe("design");
     expect(initialDetailViewForDeepLink("T1", "native-sdd")).toBe("history");
-    expect(initialDetailViewForDeepLink("execution_start", "native-sdd")).toBe(
-      "delivery",
-    );
     expect(initialDetailViewForDeepLink(null, "native-sdd")).toBe("overview");
     expect(initialDetailViewForDeepLink("Q1", undefined)).toBe("overview");
     expect(initialDetailViewForDeepLink("not a handle", "native-sdd")).toBe(
       "overview",
-    );
-  });
-
-  it("routes the delivery gate deep link to the Delivery bridge", () => {
-    expect(initialDetailViewForDeepLink("delivery", "native-sdd")).toBe(
-      "delivery",
     );
   });
 });

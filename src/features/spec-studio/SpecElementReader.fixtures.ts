@@ -96,7 +96,6 @@ export function specElementReaderDetailFixture(): SpecDetailView {
     ...detail,
     currentRevision: populatedSnapshot,
     currentApprovedRevision: populatedSnapshot,
-    executionRevisionSnapshots: [populatedSnapshot],
     approvals: [
       {
         id: "approval-requirement-1",
@@ -125,21 +124,7 @@ export function specElementReaderDetailFixture(): SpecDetailView {
       requirements: [
         {
           elementId: "requirement-1",
-          status: {
-            approval: "valid",
-            coverage: "covered",
-            proof: "partial",
-          },
-        },
-      ],
-      tasks: [
-        {
-          elementId: "task-1",
-          status: { status: "completed" },
-        },
-        {
-          elementId: "task-2",
-          status: { status: "running" },
+          status: { approval: "valid" },
         },
       ],
     },

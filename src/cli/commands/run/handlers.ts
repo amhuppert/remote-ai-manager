@@ -343,6 +343,30 @@ function notStartedState(
   return "starting";
 }
 
+type LaneData = JsonData<RunViewData>["lanes"][number];
+
+/**
+ * What a publishing lane waits for, as the clause after its state. Another
+ * lane of this run is named by its key, one of another run by its lane id.
+ */
+function publicationWaitText(
+  wait: NonNullable<LaneData["waitingOn"]>,
+  lanes: readonly LaneData[],
+): string {
+  switch (wait.kind) {
+    case "publication":
+      return `waiting for lane ${lanes.find((lane) => lane.laneId === wait.laneId)?.key ?? wait.laneId} to finish publishing`;
+    case "grants":
+      return `waiting for ${wait.holders.join(", ")} to release the session worktree`;
+    case "session_lock":
+      return wait.job === null
+        ? "waiting for the session's Git lock"
+        : `waiting for ${wait.job.jobType} job ${wait.job.jobId} to release the session`;
+    case "git_lock":
+      return `waiting for Git's lock ${wait.lock} to go (another Git process is using the session, or one left it behind: delete it once no Git process runs there)`;
+  }
+}
+
 /** The charter and document revisions a started context froze, or null when it froze none. */
 function frozeText(
   froze: {
@@ -416,10 +440,14 @@ function viewText(view: JsonData<RunViewData>): string {
   }
   for (const lane of view.lanes) {
     const attempt = lane.attempt === null ? "" : ` (attempt ${lane.attempt})`;
+    const waiting =
+      lane.waitingOn === null
+        ? ""
+        : `, ${publicationWaitText(lane.waitingOn, view.lanes)}`;
     const detail = lane.detail === null ? "" : `: ${lane.detail}`;
     const commit = lane.commit === null ? "" : ` as ${lane.commit}`;
     lines.push(
-      `lane ${lane.key} [${lane.branch} at ${lane.worktreePath}]: ${lane.state}${attempt}${commit}${detail}`,
+      `lane ${lane.key} [${lane.branch} at ${lane.worktreePath}]: ${lane.state}${attempt}${waiting}${commit}${detail}`,
     );
   }
   for (const loop of view.loops)

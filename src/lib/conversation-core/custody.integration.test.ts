@@ -27,10 +27,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createControlPermitsRepo } from "@/lib/state-store/control-permits-repo";
 import { createConversationCoreRepo } from "@/lib/state-store/conversation-core-repo";
-import {
-  createWorkspaceAdmission,
-  type WorkspaceAdmission,
-} from "@/lib/workspace/admission";
+import { createWorkspaceAdmission } from "@/lib/workspace/admission";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
 import type { RecordSubscriptionNoticeInput } from "@/lib/subscriptions/service";
 import {
@@ -193,7 +190,6 @@ function compose(
   factory: ConversationBackendFactory,
   options: {
     rows?: "memory" | "production";
-    order?: string[];
     /** The custody attempt a closed scope's refusal inserts cannot be written. */
     custodyInsertFails?: boolean;
   } = {},
@@ -209,7 +205,6 @@ function compose(
   );
   const memory = memoryRow();
   const { row, statuses } = memory;
-  const order = options.order ?? [];
   const turnHooks: TurnHooks = {
     beforeSend() {},
     prepare() {},
@@ -480,21 +475,12 @@ function compose(
       repo.insertAttempt(record);
     },
   };
-  const workspace = createWorkspaceAdmission();
-  // Grant releases join the order log, so a test can see what was collected before a worktree was let go.
-  const admission: WorkspaceAdmission = {
-    ...workspace,
-    release(grant) {
-      order.push(`release:${grant.holder}`);
-      workspace.release(grant);
-    },
-  };
+  const admission = createWorkspaceAdmission();
   const core: ConversationCore = createConversationCore({
     transaction: (fn) => persistence.db.transaction(fn)(),
     repo: coreRepo,
     permits: createControlPermits(createControlPermitsRepo(persistence.db)),
     admission,
-    interactiveWorktree: async () => WORKTREE,
     async createSeatConversation() {
       throw new Error("no seats here");
     },
@@ -524,7 +510,6 @@ function compose(
         tasks,
       });
     },
-    uptimeMs: () => 60_000,
     slots: {
       acquire(_label, signal) {
         if (slots.free > 0) {
@@ -579,7 +564,6 @@ function compose(
     frameHold,
     turnHooks,
     instructions,
-    order,
     storedRow,
     slots,
     releaseSlot,
@@ -651,7 +635,7 @@ interface DrivenRuntime extends ConversationBackendRuntime {
 
 function drivenClaude(
   turns: Array<{ costUsd: number; owesAfter: boolean }>,
-  options: { order?: string[]; closeFailure?: string } = {},
+  options: { closeFailure?: string } = {},
 ) {
   const created: DrivenRuntime[] = [];
   const result = (costUsd: number | null): ConversationBackendTurnResult => ({
@@ -740,7 +724,6 @@ function drivenClaude(
           return { ...result(next.costUsd), finalText: "Done." };
         },
         async close() {
-          options.order?.push("close");
           if (options.closeFailure !== undefined)
             throw new Error(options.closeFailure);
           runtime.closed = true;
@@ -956,11 +939,8 @@ describe("custody on the conversation core (design C5b, slice 3)", () => {
   });
   describe("review fixes", () => {
     it("Stop while a message that took the runtime over is still preparing collects the runtime instead of keeping it in a new custody", async () => {
-      const order: string[] = [];
-      const provider = drivenClaude([{ costUsd: 0.25, owesAfter: true }], {
-        order,
-      });
-      const h = compose(provider.factory, { order });
+      const provider = drivenClaude([{ costUsd: 0.25, owesAfter: true }]);
+      const h = compose(provider.factory);
       await (
         await h.send("Start the build in the background")
       ).settled;
@@ -982,9 +962,6 @@ describe("custody on the conversation core (design C5b, slice 3)", () => {
       ]);
       expect(provider.runtime.closed).toBe(true);
       expect(h.admission.held()).toEqual([]);
-      expect(order.indexOf("close")).toBeLessThan(
-        order.indexOf(`release:${second.cause}`),
-      );
     });
 
     it("Stop after the result, while the turn settles its receipts, collects the runtime instead of keeping it in custody", async () => {
@@ -1025,17 +1002,12 @@ describe("custody on the conversation core (design C5b, slice 3)", () => {
       const kept = h.custodyAttempts().filter((a) => a.state === "admitted");
       expect(kept).toHaveLength(1);
       expect(provider.runtime.closed).toBe(false);
-      expect(h.admission.held().map((grant) => grant.holder)).toEqual([
-        kept[0]?.cause,
-      ]);
+      expect(h.admission.held()).toEqual([]);
     });
 
-    it("a message that took the runtime over and cannot begin its turn collects a runtime that owes nothing more before letting its worktree go", async () => {
-      const order: string[] = [];
-      const provider = drivenClaude([{ costUsd: 0.25, owesAfter: true }], {
-        order,
-      });
-      const h = compose(provider.factory, { order });
+    it("a message that took the runtime over and cannot begin its turn collects a runtime that owes nothing more", async () => {
+      const provider = drivenClaude([{ costUsd: 0.25, owesAfter: true }]);
+      const h = compose(provider.factory);
       await (
         await h.send("Start the build in the background")
       ).settled;
@@ -1051,16 +1023,12 @@ describe("custody on the conversation core (design C5b, slice 3)", () => {
       await h.core.conversationIdle(CHAT);
 
       expect(provider.runtime.closed).toBe(true);
-      expect(order.indexOf("close")).toBeGreaterThanOrEqual(0);
-      expect(order.indexOf("close")).toBeLessThan(
-        order.indexOf(`release:${second.cause}`),
-      );
       expect(h.custodyAttempts().filter((a) => a.state === "admitted")).toEqual(
         [],
       );
     });
 
-    it("keeps the turn's worktree grant when the runtime such a failed turn inherited cannot be collected", async () => {
+    it("keeps the conversation closed to new work, not the worktree, when the runtime such a failed turn inherited cannot be collected", async () => {
       const provider = drivenClaude([{ costUsd: 0.25, owesAfter: true }], {
         closeFailure: "the CLI did not exit",
       });
@@ -1079,13 +1047,15 @@ describe("custody on the conversation core (design C5b, slice 3)", () => {
       expect(await second.settled).toMatchObject({ status: "failed" });
       await h.core.conversationIdle(CHAT);
 
+      // The runtime host keeps the failure, which the conversation's hold reads to refuse new work.
+      expect(h.host.closeFailure(CHAT)).toContain("the CLI did not exit");
       expect(
         h.admission.tryAcquire({
           worktree: WORKTREE,
           kind: "git",
           holder: "publish",
         }),
-      ).toBeNull();
+      ).not.toBeNull();
     });
 
     it("keeps the stored row running when a turn ends with a continuation already running in custody", async () => {

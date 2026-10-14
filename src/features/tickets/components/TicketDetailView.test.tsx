@@ -498,14 +498,12 @@ describe("TicketDetailView spec read-through", () => {
                 slug: "native-sdd",
                 name: "Native SDD",
                 revision: 4,
-                phase: { primary: "executing", authoringFacet: "draft" },
-                criteriaProgress: { proven: 7, total: 12 },
+                phase: { primary: "draft", authoringStage: "design" },
                 linkedTasks: [
                   {
                     taskElementId: "task-17",
                     taskHandle: "T17",
                     sourceTaskState: "current",
-                    workStatus: "running",
                   },
                 ],
               },
@@ -522,11 +520,9 @@ describe("TicketDetailView spec read-through", () => {
     const specs = await screen.findByRole("region", { name: "Specs" });
     expect(
       await within(specs).findByRole("link", {
-        name: /Native SDD.*Executing.*Draft/,
+        name: /Native SDD.*Draft · design/,
       }),
     ).toHaveAttribute("href", "/specs/command-center/native-sdd");
-    expect(within(specs).getByText("7/12 criteria proven")).toBeInTheDocument();
-    expect(within(specs).getByText("Running")).toBeInTheDocument();
     // The linked task is cited by its spec handle, never the raw element id.
     expect(within(specs).getByText("T17")).toBeInTheDocument();
     expect(within(specs).queryByText("task-17")).toBeNull();
@@ -568,13 +564,11 @@ describe("TicketDetailView spec read-through", () => {
                 name: "Native SDD",
                 revision: amended ? 5 : 4,
                 phase: { primary: amended ? "draft" : "approved" },
-                criteriaProgress: { proven: amended ? 0 : 1, total: 1 },
                 linkedTasks: [
                   {
                     taskElementId: "task-17",
                     taskHandle: "T17",
                     sourceTaskState: amended ? "removed" : "current",
-                    workStatus: "pending",
                   },
                 ],
               },
@@ -615,73 +609,6 @@ describe("TicketDetailView spec read-through", () => {
     ).toBeInTheDocument();
     expect(within(specs).getByText("Draft")).toBeInTheDocument();
     expect(ticketWrites).toBe(0);
-  });
-
-  it("refreshes linked task status from workflow SSE without refresh or polling", async () => {
-    let workStatus: "pending" | "completed" = "pending";
-    let readThroughRequests = 0;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-      const path = new URL(
-        typeof input === "string" ? input : input.toString(),
-        "http://localhost",
-      ).pathname;
-      if (path.endsWith("/tickets/session-links")) return Response.json({});
-      if (path === "/api/specs/command-center/ticket-read-through/12") {
-        readThroughRequests += 1;
-        return Response.json({
-          specs: [
-            {
-              specId: "spec-1",
-              slug: "native-sdd",
-              name: "Native SDD",
-              revision: 4,
-              phase: { primary: "executing", authoringFacet: "draft" },
-              criteriaProgress: { proven: 1, total: 1 },
-              linkedTasks: [
-                {
-                  taskElementId: "task-17",
-                  taskHandle: "T17",
-                  sourceTaskState: "current",
-                  workStatus,
-                },
-              ],
-            },
-          ],
-        });
-      }
-      return Response.json(DETAIL);
-    });
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-    const events = new FakeEventSource("/api/events");
-    registerSpecSseReactions(events as unknown as EventSource, { queryClient });
-    renderDetail(queryClient);
-
-    const specs = await screen.findByRole("region", { name: "Specs" });
-    expect(await within(specs).findByText("Pending")).toBeInTheDocument();
-    expect(readThroughRequests).toBe(1);
-
-    workStatus = "completed";
-    act(() => {
-      events.emit("graph-workflow-task-status", {
-        type: "graph-workflow-task-status",
-        projectName: DETAIL.projectName,
-        sessionName: "native-sdd-execution",
-        executionId: "workflow-execution-1",
-        taskId: "spec-task-task-17",
-        contextId: "context-task-17",
-        status: "completed",
-        source: "user",
-        order: 1,
-      });
-    });
-
-    expect(await within(specs).findByText("Completed")).toBeInTheDocument();
-    expect(readThroughRequests).toBe(2);
   });
 
   it("graduates the ticket through the links service action and opens the seeded spec", async () => {

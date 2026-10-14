@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveCliPrincipalIdentity } from "./transport";
 
-describe("environment workflow principal", () => {
+describe("environment caller principal", () => {
   it("uses the injected caller identity rather than the routing conversation", () => {
     expect(
       resolveCliPrincipalIdentity({
@@ -16,23 +16,7 @@ describe("environment workflow principal", () => {
       }),
     });
   });
-  it("attaches the injected lane scope without a signing key", () => {
-    expect(
-      resolveCliPrincipalIdentity({
-        CC_CONVERSATION_ID: "lane-conversation",
-        CC_WORKFLOW_EXECUTION_ID: "execution",
-        CC_WORKFLOW_CONTEXT_ID: "context",
-      }),
-    ).toEqual({
-      lane: JSON.stringify({
-        laneKind: "implementer",
-        executionId: "execution",
-        contextId: "context",
-        conversationId: "lane-conversation",
-      }),
-    });
-  });
-  it("does not turn a routing-only conversation into a workflow caller", () => {
+  it("does not turn a routing-only conversation into a caller", () => {
     expect(
       resolveCliPrincipalIdentity({
         CC_SESSION: "session",

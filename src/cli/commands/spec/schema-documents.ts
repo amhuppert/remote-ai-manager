@@ -28,7 +28,7 @@ import {
   IMPORTED_VALIDATION_STRATEGY_NOTE,
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   executionLaneSchema,
-  importBundleSchema,
+  importBundleContentSchema,
   sectionRoleSchema,
   specElementPayloadSchema,
   touchedPathSchema,
@@ -614,7 +614,7 @@ const IMPORT_BUNDLE_EXAMPLE: ImportBundle = {
  * Command Center, so this text and its example are the whole mapping contract.
  */
 function importBundleDocument(): SchemaDocument {
-  const jsonSchema = jsonSchemaOf(importBundleSchema);
+  const jsonSchema = jsonSchemaOf(importBundleContentSchema);
   return {
     id: IMPORT_BUNDLE_DOCUMENT_ID,
     title: "spec import bundle document",

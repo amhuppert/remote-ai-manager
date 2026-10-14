@@ -244,13 +244,6 @@ const capturedNotepad = {
 
 function detailPayload(
   sectionBody = "Lifecycle spine: draft, review, execution, delivery.",
-  delivery = {
-    allWaived: false,
-    deliveredCount: 7,
-    provenCount: 7,
-    deliveredExternallyCriterionIds: [] as string[],
-    totalInScope: 12,
-  },
 ) {
   const payload = {
     spec: executingSpec,
@@ -361,34 +354,6 @@ function detailPayload(
             updatedAt: NOW,
           },
         },
-        {
-          element: {
-            id: "task-1",
-            specId: executingSpec.id,
-            kind: "task",
-            number: 1,
-            parentElementId: null,
-            createdAt: NOW,
-          },
-          version: {
-            revisionId: detailRevision.id,
-            elementId: "task-1",
-            position: 4,
-            payload: {
-              kind: "task",
-              title: "Build Spec Studio",
-              instructions: "Render the approved spec.",
-              tracedRequirementElementIds: ["requirement-1"],
-              tracedDecisionElementIds: ["decision-1"],
-              coveredCriterionElementIds: ["criterion-1"],
-              dependsOnTaskElementIds: [],
-            },
-            payloadHash: "task-1-hash",
-            elementVersion: 2,
-            createdAt: NOW,
-            updatedAt: NOW,
-          },
-        },
       ],
       assumptionCitations: [],
     },
@@ -435,7 +400,6 @@ function detailPayload(
         updatedAt: NOW,
       },
     ],
-    executions: [],
     linkedTickets: [
       {
         projectName: "command-center",
@@ -447,17 +411,7 @@ function detailPayload(
       requirements: [
         {
           elementId: "requirement-1",
-          status: {
-            approval: "valid" as const,
-            coverage: "covered" as const,
-            proof: "pending" as const,
-          },
-        },
-      ],
-      tasks: [
-        {
-          elementId: "task-1",
-          status: { status: "pending" as const },
+          status: { approval: "valid" as const },
         },
       ],
     },
@@ -470,11 +424,7 @@ function detailPayload(
         authoringStage: detailRevision.authoringStage,
       },
       slug: "native-sdd",
-      phase: {
-        primary: "executing",
-        authoringFacet: "draft",
-        authoringStage: "requirements",
-      },
+      phase: { primary: "draft", authoringStage: "requirements" },
       gates: [
         {
           gate: "requirements",
@@ -497,17 +447,16 @@ function detailPayload(
         {
           gate: "plan",
           dial: "gate",
-          state: "pending",
+          state: "not_required",
           applicability: {
-            reason: "current_stage",
+            reason: "unchanged_since_governance_base",
             governanceBaseRevisionId: "revision-3",
           },
         },
       ],
-      applicableGates: ["requirements", "design", "plan"],
+      applicableGates: ["requirements", "design"],
       pendingApprovals: [
         { gate: "design", subject: "D1", elementId: "decision-1" },
-        { gate: "plan", subject: "plan", elementId: null },
       ],
       approvalLedger: ledgerOf([
         {
@@ -522,16 +471,8 @@ function detailPayload(
           elementId: "decision-1",
           classification: "pending",
         },
-        {
-          gate: "plan",
-          subject: "plan",
-          elementId: null,
-          classification: "pending",
-        },
       ]),
       openQuestions: [],
-      coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
-      delivery,
       imported: false,
     },
     importRecord: null,
@@ -643,26 +584,19 @@ function reviewDetailPayload() {
       validity: "stale" as const,
     })),
     // What the server projects for this revision: the requirement changed and
-    // owes its approval, the decision did not change so its gate is not
-    // consulted, and the plan stage is the revision's own.
+    // owes its approval, and the decision did not change so its gate is not
+    // consulted.
     status: {
       ...payload.status,
-      applicableGates: ["requirements", "plan"],
+      applicableGates: ["requirements"],
       pendingApprovals: [
         { gate: "requirements", subject: "R1", elementId: "requirement-1" },
-        { gate: "plan", subject: "plan", elementId: null },
       ],
       approvalLedger: ledgerOf([
         {
           gate: "requirements",
           subject: "R1",
           elementId: "requirement-1",
-          classification: "pending",
-        },
-        {
-          gate: "plan",
-          subject: "plan",
-          elementId: null,
           classification: "pending",
         },
       ]),
@@ -845,19 +779,17 @@ describe("Spec Studio detail routes", () => {
       currentApprovedRevision: null,
       approvals: [],
       comments: [],
-      executions: [],
       linkedTickets: [],
-      elementStatuses: { requirements: [], tasks: [] },
+      elementStatuses: { requirements: [] },
       status: {
         specId: executingSpec.id,
         currentRevision: null,
         slug: "native-sdd",
-        phase: { primary: "executing" },
+        phase: { primary: "draft" },
         gates: [],
         pendingApprovals: [],
         approvalLedger: ledgerOf([]),
         openQuestions: [],
-        coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
         imported: false,
       },
       importRecord: null,
@@ -874,32 +806,6 @@ describe("Spec Studio detail routes", () => {
     expect(
       screen.getByText("Opened from alias old-native-sdd"),
     ).toBeInTheDocument();
-  });
-
-  it("opens execution-start attention links on the Delivery view", async () => {
-    pathname = "/specs/command-center/native-sdd";
-    window.history.replaceState(
-      {},
-      "",
-      "/specs/command-center/native-sdd?el=execution_start",
-    );
-    api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
-    api.json("POST", "/api/specs/command-center/native-sdd/actions/verify", {
-      ok: true,
-      checkedRevisionIds: [detailRevision.id],
-      mismatches: [],
-      consistencyFindings: [],
-    });
-
-    renderWithQuery(<SpecDetailPage />);
-
-    expect(
-      await screen.findByRole("heading", { name: "Delivery" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delivery" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
   });
 
   it("offers clip beside comment and lands the selection under the selected section's reference", async () => {
@@ -1657,24 +1563,13 @@ describe("Spec Studio detail routes", () => {
         validity: "valid",
         subject_fingerprint_json: subjectFingerprintFixture("decision-1"),
       },
-      {
-        id: "approval-plan",
-        spec_id: executingSpec.id,
-        subject_kind: "plan",
-        element_id: null,
-        revision_id: detailRevision.id,
-        approver: "alex",
-        granted_at: NOW,
-        validity: "valid",
-        subject_fingerprint_json: subjectFingerprintFixture(null),
-      },
     ];
     const base = reviewDetailPayload();
     const reviewPayload = {
       ...base,
       approvals,
-      // Plan and design already hold their approvals, so the requirement is
-      // the one subject the server still owes.
+      // Design already holds its approval, so the requirement is the one
+      // subject the server still owes.
       status: {
         ...base.status,
         pendingApprovals: [

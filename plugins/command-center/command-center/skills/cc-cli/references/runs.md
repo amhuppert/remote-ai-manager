@@ -68,9 +68,10 @@ launch adds `ownerConversationId`. Keep the run id: every other verb takes it.
 `run show` prints the run's progress, then each context as
 `- <key> [<context-id>]: <state>` with its tasks, open questions, halt and
 occurrence, last summary, result and the document revisions it froze, then
-lanes, loops, the charter, documents, run-level halts and the last five
-boundaries. `run definition` writes the workflow definition as written to a
-JSON file under `.cc/temp/cctl-artifacts/`; the reply names its revision, and
+lanes (a publishing lane names what it waits for), loops, the charter,
+documents, run-level halts and the last five boundaries. `run definition`
+writes the workflow definition as written to a JSON file under
+`.cc/temp/cctl-artifacts/`; the reply names its revision, and
 its `artifact:` line names the file. Copy it, edit the copy and amend with
 that: the written file is never overwritten, so an edited one would block
 reading the same revision again. An agent run has none.

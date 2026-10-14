@@ -1274,26 +1274,6 @@ describe("authoringReviewProjection", () => {
     });
   });
 
-  /**
-   * The execution gates are per-run. With no run in a position to receive the
-   * act they ask nothing, so calling them pending contradicts the
-   * applicability the same row reports and puts a pending gate beside an empty
-   * outstanding list on every spec that has not started.
-   */
-  it("reads an execution gate with no run in position as not required", () => {
-    const projection = project(
-      withdrawnAttemptChain("Gates survive a withdrawn attempt."),
-    );
-
-    for (const gate of ["execution_start", "delivery"] as const) {
-      const status = gateOf(projection, gate);
-      expect(status.dial).toBe("gate");
-      expect(status.state).toBe("not_required");
-      expect(status.applicability.reason).toBe("dial_off");
-      expect(projection.applicableGates).not.toContain(gate);
-    }
-  });
-
   it("reports a signed-off revision with the approval that signed it", () => {
     const chain = withdrawnAttemptChain("Gates survive a withdrawn attempt.");
     const signedOff = chain.snapshots[chain.snapshots.length - 1]!;

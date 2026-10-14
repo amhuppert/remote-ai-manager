@@ -153,7 +153,6 @@ function bundle(
         disposition: "confirmed",
       },
     ],
-    delivered: true,
     ...overrides,
   };
 }
@@ -291,7 +290,6 @@ describe("cctl spec import", () => {
       expect(sent).toMatchObject({
         slug: "imported-feature",
         source: { label: SOURCE_LABEL },
-        delivered: true,
         dryRun: index === 0,
       });
       expect(sent.requirements[0]?.criteria).toHaveLength(2);
@@ -310,7 +308,7 @@ describe("cctl spec import", () => {
     });
   });
 
-  it("retains the provenance and delivery testimony in the native receipt", async () => {
+  it("retains the approved revision and its counts in the native receipt", async () => {
     const result = await runCcWithHost(
       ["spec", "import", "--file", BUNDLE_FILE, "--json"],
       env,
@@ -325,26 +323,24 @@ describe("cctl spec import", () => {
     });
   });
 
-  it("keeps an undelivered import distinct from an external-delivery testimony", async () => {
-    const host = makeHost({ file: bundle({ delivered: false }) });
-    const originalFetch = host.fetch;
-    host.fetch = async (url, init) =>
-      JSON.parse(init.body ?? "{}").dryRun
-        ? originalFetch(url, init)
-        : response({
-            ...RECEIPT,
-            revision: { ...RECEIPT.revision },
-          });
-    const result = await runCcWithHost(
-      ["spec", "import", "--file", BUNDLE_FILE, "--json"],
-      env,
-      host,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(inlineDataOf(result)).toMatchObject({
-      revision: {},
-    });
-  });
+  it.each([true, false])(
+    "refuses a bundle carrying the retired delivered field (%s) before sending it",
+    async (delivered) => {
+      const host = makeHost({ file: bundle({ delivered }) });
+      const result = await runCcWithHost(
+        ["spec", "import", "--file", BUNDLE_FILE, "--json"],
+        env,
+        host,
+      );
+      expect(result.exitCode).toBe(2);
+      expect(JSON.parse(result.stdout).error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["delivered"] }),
+        ]),
+      );
+      expect(host.requests).toHaveLength(0);
+    },
+  );
 
   it("rehearses without a commit and retains counts and prospective stable handles", async () => {
     const host = makeHost();

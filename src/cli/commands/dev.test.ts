@@ -9,12 +9,6 @@ const baseEnv: CliEnv = {
   CC_SESSION: "my-session",
 };
 
-const workflowEnv: CliEnv = {
-  ...baseEnv,
-  CC_WORKFLOW_EXECUTION_ID: "execution-1",
-  CC_WORKFLOW_CONTEXT_ID: "context-1",
-};
-
 interface RecordedRequest {
   url: string;
   init: FetchInit;
@@ -147,70 +141,18 @@ describe("cctl dev list", () => {
     expect(result.stdout.toLowerCase()).toContain("no dev servers");
   });
 
-  it("carries the invoking workflow context identity to the server", async () => {
-    const host = makeHost(() => jsonResponse({ servers: [server()] }));
-
-    const result = await runCcWithHost(["dev", "list"], workflowEnv, host);
-
-    expect(result.exitCode).toBe(0);
-    const url = new URL(host.requests[0]?.url ?? "");
-    expect(url.searchParams.get("executionId")).toBe("execution-1");
-    expect(url.searchParams.get("contextId")).toBe("context-1");
-  });
-
-  it("rejects incomplete workflow identity before issuing a request", async () => {
-    const host = makeHost(() => jsonResponse({ servers: [server()] }));
-
-    const result = await runCcWithHost(
-      ["dev", "list"],
-      {
-        ...baseEnv,
-        CC_WORKFLOW_EXECUTION_ID: "execution-1",
-      },
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("CC_WORKFLOW_CONTEXT_ID");
-    expect(host.requests).toHaveLength(0);
-  });
-
-  it("uses an explicitly selected session instead of ambient workflow identity", async () => {
+  it("uses an explicitly selected session instead of the ambient session", async () => {
     const host = makeHost(() => jsonResponse({ servers: [server()] }));
 
     const result = await runCcWithHost(
       ["dev", "list", "--project", "cc", "--session", "other"],
-      workflowEnv,
+      baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(0);
     const url = new URL(host.requests[0]?.url ?? "");
     expect(url.pathname).toBe("/api/projects/cc/sessions/other/dev-servers");
-    expect(url.searchParams.has("executionId")).toBe(false);
-    expect(url.searchParams.has("contextId")).toBe(false);
-  });
-
-  it("treats a rejected workflow target as an operation failure without retrying as the session", async () => {
-    const host = makeHost(() =>
-      jsonResponse(
-        {
-          error: "workflow context missing",
-          code: "WORKFLOW_CONTEXT_NOT_FOUND",
-          instruction: "Run `cctl workflow status`.",
-        },
-        404,
-      ),
-    );
-
-    const result = await runCcWithHost(["dev", "list"], workflowEnv, host);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("instruction: Run `cctl workflow status`.");
-    expect(host.requests).toHaveLength(1);
-    expect(
-      new URL(host.requests[0]?.url ?? "").searchParams.get("executionId"),
-    ).toBe("execution-1");
   });
 });
 
@@ -442,37 +384,6 @@ describe("cctl dev ensure", () => {
     );
     expect(envelope.hint).toContain("cctl dev list");
   });
-
-  it("retains workflow identity on the initial list, start, and every readiness poll", async () => {
-    let listCount = 0;
-    const host = makeHost((req) => {
-      if (req.init.method === "POST") {
-        return jsonResponse(
-          { status: "accepted", server: server({ status: "starting" }) },
-          202,
-        );
-      }
-      listCount++;
-      return jsonResponse({
-        servers: [
-          server({
-            status: listCount >= 3 ? "running" : "starting",
-            port: listCount >= 3 ? 5010 : null,
-          }),
-        ],
-      });
-    });
-
-    const result = await runCcWithHost(["dev", "ensure"], workflowEnv, host);
-
-    expect(result.exitCode).toBe(0);
-    expect(host.requests.length).toBeGreaterThanOrEqual(4);
-    for (const request of host.requests) {
-      const url = new URL(request.url);
-      expect(url.searchParams.get("executionId")).toBe("execution-1");
-      expect(url.searchParams.get("contextId")).toBe("context-1");
-    }
-  });
 });
 
 describe("cctl dev stop", () => {
@@ -515,21 +426,6 @@ describe("cctl dev stop", () => {
     const envelope = JSON.parse(result.stdout);
     expect(envelope.ok).toBe(false);
     expect(envelope.error.details.serverCode).toBe("UNKNOWN_DEV_SERVER");
-  });
-
-  it("carries the invoking workflow context identity to the stop route", async () => {
-    const host = makeHost(() => jsonResponse({ status: "ok" }));
-
-    const result = await runCcWithHost(
-      ["dev", "stop", "web"],
-      workflowEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    const url = new URL(host.requests[0]?.url ?? "");
-    expect(url.searchParams.get("executionId")).toBe("execution-1");
-    expect(url.searchParams.get("contextId")).toBe("context-1");
   });
 });
 

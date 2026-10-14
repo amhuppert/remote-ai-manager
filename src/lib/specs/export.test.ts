@@ -258,7 +258,7 @@ describe("canonical spec export and verification", () => {
       }),
     ]);
     expect(JSON.parse(first.manifest)).toMatchObject({
-      formatVersion: 5,
+      formatVersion: 6,
       elementOrdering: {
         scope: "revision",
         sortKeys: ["position", "elementId"],
@@ -330,19 +330,19 @@ describe("canonical spec export and verification", () => {
     expect(compareCanonicalSpecBundles(current, older)).toEqual({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 5,
+      currentFormatVersion: 6,
       againstFormatVersion: 2,
-      message: "canonical bundle format 2 differs from current format 5",
+      message: "canonical bundle format 2 differs from current format 6",
       instruction:
         "Export a fresh canonical bundle, then verify against that file.",
       issue: {
         path: "bundle.manifest.formatVersion",
-        message: "expected current format 5, found 2",
+        message: "expected current format 6, found 2",
       },
     });
   });
 
-  it("strictly decodes and re-renders an intact format-5 bundle", async () => {
+  it("strictly decodes and re-renders an intact format-6 bundle", async () => {
     const bundle = renderCanonicalBundle(
       await loadSpecExportState(exportDeps, specId),
     );
@@ -580,7 +580,7 @@ describe("canonical spec export and verification", () => {
     );
     const olderManifest = {
       formatVersion: 3,
-      obsoleteAttentionRecords: "not a format-5 manifest",
+      obsoleteAttentionRecords: "not a format-6 manifest",
     };
 
     expect(
@@ -591,14 +591,14 @@ describe("canonical spec export and verification", () => {
     ).toEqual({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 5,
+      currentFormatVersion: 6,
       againstFormatVersion: 3,
-      message: "canonical bundle format 3 differs from current format 5",
+      message: "canonical bundle format 3 differs from current format 6",
       instruction:
         "Export a fresh canonical bundle, then verify against that file.",
       issue: {
         path: "bundle.manifest.formatVersion",
-        message: "expected current format 5, found 3",
+        message: "expected current format 6, found 3",
       },
     });
   });
@@ -618,7 +618,7 @@ describe("canonical spec export and verification", () => {
     ).toMatchObject({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 5,
+      currentFormatVersion: 6,
       againstFormatVersion: 4,
     });
   });
@@ -638,20 +638,20 @@ describe("canonical spec export and verification", () => {
     ).toEqual({
       ok: false,
       code: "bundle_format_mismatch",
-      currentFormatVersion: 5,
+      currentFormatVersion: 6,
       againstFormatVersion: null,
       message:
-        "canonical bundle format is missing or invalid; current format is 5",
+        "canonical bundle format is missing or invalid; current format is 6",
       instruction:
         "Export a fresh canonical bundle, then verify against that file.",
       issue: {
         path: "bundle.manifest.formatVersion",
-        message: "expected current format 5, found missing or invalid format",
+        message: "expected current format 6, found missing or invalid format",
       },
     });
   });
 
-  it.each(["5", 5.5])(
+  it.each(["6", 6.5])(
     "reports invalid format marker %j as a format mismatch",
     async (formatVersion) => {
       const bundle = renderCanonicalBundle(
@@ -668,7 +668,7 @@ describe("canonical spec export and verification", () => {
       ).toMatchObject({
         ok: false,
         code: "bundle_format_mismatch",
-        currentFormatVersion: 5,
+        currentFormatVersion: 6,
         againstFormatVersion: null,
         issue: { path: "bundle.manifest.formatVersion" },
       });
@@ -2970,7 +2970,7 @@ describe("canonical spec export and verification", () => {
       id: draftRevisionId,
       specId,
       baseRevisionId: revisionId,
-      authoringStage: "plan",
+      authoringStage: "design",
       createdAt: "2026-07-19T10:00:00.000Z",
     });
     const baseVersion = await specs.findElementVersion(
@@ -3280,10 +3280,3 @@ describe("canonical spec export and verification", () => {
     ]);
   });
 });
-
-/**
- * The pinned-revision document the launch path seeds into every lane worktree.
- * Its contract is that it renders the PINNED snapshot through the one canonical
- * revision renderer — a mid-run amendment moves live spec state, never this.
- */
-describe("pinned spec document", () => {});

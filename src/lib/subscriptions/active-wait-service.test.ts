@@ -387,7 +387,11 @@ describe("explicit finite terminal waits", () => {
     });
     expect(
       await subscriptions.get(recipient, wait.subscriptionId),
-    ).toMatchObject({ mode: "passive", expiresAt: null, status: "following" });
+    ).toMatchObject({
+      mode: "passive",
+      expiresAt: follow.createdAt,
+      status: "following",
+    });
     expect(await service.prepareBatch(recipient)).toBeNull();
   });
   it("continues other ready waits when one receipt read and its diagnostic write fail", async () => {
@@ -478,40 +482,6 @@ describe("explicit finite terminal waits", () => {
         status: 409,
       });
     }
-  });
-  it("retains spent history while an explicit rearm awaits the next terminal boundary", async () => {
-    const h = harness();
-    h.setSource({
-      ...terminal,
-      resumable: true,
-      fact: {
-        ...terminal.fact,
-        outcome: "halted",
-        eventKind: "graph-workflow-boundary:halt",
-      },
-    });
-    h.setOccurrenceId("boundary-1");
-    const input = {
-      recipient,
-      source: { kind: "validation", id: "workflow" } as const,
-      reason: "Continue",
-    };
-    const first = await h.build().register(input);
-    const batch = await h.build().prepareBatch(recipient);
-    if (!batch) throw Error("Expected batch");
-    await h.build().settleBatch(batch.id, "accepted");
-    const next = await h.build().register(input);
-    expect(next).toMatchObject({
-      state: "waiting",
-      baselineOccurrenceId: "boundary-1",
-      deliveryId: null,
-    });
-    expect(next.id).not.toBe(first.id);
-    expect(await h.build().list(recipient)).toHaveLength(2);
-    expect(await h.build().prepareBatch(recipient)).toBeNull();
-    h.setOccurrenceId("boundary-2");
-    await h.build().reconcile(recipient);
-    expect(await h.build().prepareBatch(recipient)).not.toBeNull();
   });
   it("closes a shared wait after passive input acceptance without queuing another turn", async () => {
     const h = harness();

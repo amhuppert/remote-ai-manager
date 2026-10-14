@@ -150,22 +150,7 @@ function makeHost(
         "/tmp/decisions.json": {
           decisions: [{ statement: "Adopt library conventions." }],
         },
-        "/tmp/plan.json": { expectedRevision: 1, summary: "s", objective: "o" },
-        "/tmp/inputs.json": {},
         "/tmp/template-inputs.json": { parameters: {} },
-        "/tmp/edit.json": {
-          expectedRevision: 1,
-          operations: [
-            { type: "update-context", contextId: "worker", title: "Updated" },
-          ],
-        },
-        "/tmp/live-edit.json": {
-          executionId: "exec-7",
-          baseLiveRevision: 1,
-          operations: [
-            { type: "update-context", contextId: "worker", title: "Updated" },
-          ],
-        },
       };
       return filePath in payloads ? JSON.stringify(payloads[filePath]) : null;
     },
@@ -396,22 +381,25 @@ describe("cctl at project conversation scope — project-supported commands", ()
     });
   });
 
-  it("spec authoring still works at project scope instead of demanding a session", async () => {
-    const host = makeHost(
-      () =>
-        new Response(
-          JSON.stringify({ spec: { slug: "feat", status: "abandoned" } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-    );
+  /**
+   * The spec group, like memory below, is absent from the inventory: it no
+   * longer reads the session environment. Its project-scope routing still
+   * needs covering.
+   */
+  it("spec commands still work at project scope instead of demanding a session", async () => {
+    const host = makeHost();
     const result = await runCcWithHost(
-      ["spec", "abandon", "feat", "--reason", "superseded"],
+      ["spec", "status", "feat"],
       projectEnv,
       host,
     );
 
     expect(result.stderr).not.toContain("CC_SESSION");
-    expect(pathOf(onlyRequest(host).url)).not.toContain("/sessions/");
+    expect(host.requests.length, result.stderr).toBeGreaterThan(0);
+    for (const request of host.requests) {
+      expect(request.url).not.toContain("__project__");
+      expect(request.url).not.toContain("/sessions/");
+    }
   });
 
   /**
@@ -470,21 +458,12 @@ describe("cctl at project conversation scope — session-only commands", () => {
   // The inventory is the contract (R2.4): every command classified session-only
   // must refuse loudly at project scope rather than build a sentinel URL.
   const invocations: Record<string, string[]> = {
-    agent: ["agent", "status", "run-1"],
     charter: ["charter", "write", "--file", "/tmp/charter.json"],
     decisions: ["decisions", "propose", "--file", "/tmp/decisions.json"],
     dev: ["dev", "list"],
     docs: ["docs", "list"],
     fixture: ["fixture", "session", "create", "cc"],
     run: ["run", "show", "run-1"],
-    // Exercises the group default through the EXECUTION verbs, and each lane
-    // entry point, rather than one representative — a single sample let the
-    // project-supported definition verbs hide inside a session-only group.
-    workflow: ["workflow", "live", "get"],
-    // A leaf that differs from its project-supported group: starting an execution
-    // pins it to a session, and approveExecutionStart refuses one whose session is
-    // null, so a project-scope start would persist an unapprovable execution.
-    "spec start": ["spec", "start", "feat", "--file", "/tmp/inputs.json"],
     // A leaf that differs from its project-supported group: a launch starts a
     // run in a session worktree.
     "run template launch": [
@@ -505,55 +484,6 @@ describe("cctl at project conversation scope — session-only commands", () => {
     ],
   };
 
-  /** Session-only workflow verbs that resolve through the group entry. */
-  const sessionOnlyWorkflowVerbs: string[][] = [
-    ["workflow", "validate", "--file", "/tmp/plan.json"],
-    ["workflow", "status"],
-    ["workflow", "status", "exec-7"],
-    ["workflow", "start", "wf-1"],
-    ["workflow", "wait", "exec-7", "--timeout", "1ms"],
-    ["workflow", "abandon", "exec-7", "--reason", "superseded"],
-    ["workflow", "live", "get"],
-    ["workflow", "live", "edit", "--file", "/tmp/live-edit.json"],
-    ["workflow", "live", "edit-preview", "--file", "/tmp/live-edit.json"],
-    ["workflow", "live", "pause"],
-    ["workflow", "live", "resume"],
-    ["workflow", "task", "complete", "t1", "--summary", "s"],
-    ["workflow", "task", "add", "--title", "t", "--instructions", "i"],
-    ["workflow", "collab", "request", "--brief", "b"],
-  ];
-
-  for (const argv of sessionOnlyWorkflowVerbs) {
-    it(`${argv.slice(0, 3).join(" ")} refuses at project scope`, async () => {
-      const host = makeHost();
-      const result = await runCcWithHost(argv, projectEnv, host);
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("CC_SESSION");
-      expect(host.requests).toHaveLength(0);
-    });
-  }
-
-  it("workflow run gives project conversations session-conversation guidance without a request", async () => {
-    const host = makeHost();
-    const result = await runCcWithHost(
-      ["workflow", "run", "--file", "/tmp/plan.json", "--json"],
-      projectEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: false,
-      effect: "not_applied",
-      error: {
-        code: "CC_USAGE",
-        message: expect.stringContaining("session conversation"),
-      },
-    });
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("covers every session-only command in the inventory", () => {
     expect(Object.keys(invocations).sort()).toEqual(
       [...SESSION_ONLY_CLI_COMMANDS].sort(),
@@ -566,11 +496,6 @@ describe("cctl at project conversation scope — session-only commands", () => {
   // green while project agents silently lost a working command (R2.4).
   describe("project-supported commands do not demand a session", () => {
     const projectSupportedInvocations: Record<string, string[]> = {
-      // Leaves that differ from their session-only group: the profile library
-      // is project-scoped, so a project agent keeps the discovery surface even
-      // though `agent run` needs a session worktree.
-      "agent list": ["agent", "list"],
-      "agent get": ["agent", "get", "builtin:standard-agent"],
       ask: ["ask", "--file", "/tmp/ask.json"],
       conversation: ["conversation", "read", "conv-1"],
       doctor: ["doctor"],
@@ -578,30 +503,9 @@ describe("cctl at project conversation scope — session-only commands", () => {
       notify: ["notify", "done"],
       // Template authoring is project-scoped even though `run` needs a session.
       "run template": ["run", "template", "list"],
-      spec: ["spec", "abandon", "feat", "--reason", "x"],
       subscription: ["subscription", "list"],
       ticket: ["ticket", "list"],
       validate: ["validate", "list"],
-      "workflow create": ["workflow", "create", "--file", "/tmp/plan.json"],
-      "workflow replace": [
-        "workflow",
-        "replace",
-        "wf-1",
-        "--file",
-        "/tmp/plan.json",
-      ],
-      "workflow list": ["workflow", "list"],
-      "workflow get": ["workflow", "get", "wf-1"],
-      "workflow edit": ["workflow", "edit", "wf-1", "--file", "/tmp/edit.json"],
-      "workflow edit-preview": [
-        "workflow",
-        "edit-preview",
-        "wf-1",
-        "--file",
-        "/tmp/edit.json",
-      ],
-      "workflow delete": ["workflow", "delete", "wf-1"],
-      "workflow templates": ["workflow", "templates"],
     };
 
     it("covers every project-supported command in the inventory", () => {
