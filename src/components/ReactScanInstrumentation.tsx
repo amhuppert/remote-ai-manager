@@ -89,17 +89,23 @@ export default function ReactScanInstrumentation(): null {
       }
     };
 
-    void import("react-scan").then(({ scan }) => {
-      scan({
-        enabled: true,
-        log: false,
-        showToolbar: false,
-        showFPS: false,
-        showNotificationCount: false,
-        trackUnnecessaryRenders: true,
-        onRender,
+    // Webpack prunes imports inside this branch before resolving dev-only packages.
+    if (
+      process.env.NODE_ENV === "development" ||
+      process.env.NODE_ENV === "test"
+    ) {
+      void import("react-scan").then(({ scan }) => {
+        scan({
+          enabled: true,
+          log: false,
+          showToolbar: false,
+          showFPS: false,
+          showNotificationCount: false,
+          trackUnnecessaryRenders: true,
+          onRender,
+        });
       });
-    });
+    }
   }, []);
 
   return null;
