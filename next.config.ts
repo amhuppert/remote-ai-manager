@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
     "*": ["./.worktrees/**", "./.cc/**", "./.config/**"],
   },
   experimental: {
+    // Page collection imports repositories sharing one SQLite configuration.
+    cpus: 1,
     // `src/middleware.ts` matches `/api/:path*`, so Next buffers a clone of
     // every API request body and truncates it at the 10 MB default — the route
     // handler, not just the middleware, receives the cut body. Ticket bundle
