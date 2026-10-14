@@ -28,12 +28,8 @@ function valueImports(file: string): string[] {
 }
 
 describe("reviewed module boundaries", () => {
-  it("keeps ticket storage bindings and persisted plan reviews independent of execution composition", () => {
-    const roots = [
-      "src/lib/tickets/storage-production.ts",
-      "src/lib/workflows/plan-review/schemas.ts",
-      "src/lib/state-store/graph-plan-reviews-repo.ts",
-    ];
+  it("keeps ticket storage bindings independent of execution composition", () => {
+    const roots = ["src/lib/tickets/storage-production.ts"];
     expect(coreBoundaryViolations(readValueGraph(repoRoot, roots))).toEqual([]);
   }, 30000);
   it("keeps context-artifact storage independent of compaction and non-HTTP consumers independent of routes", () => {
@@ -41,40 +37,20 @@ describe("reviewed module boundaries", () => {
       (root) =>
         root.startsWith("src/lib/context-artifacts/") ||
         root === "src/lib/tickets/service-factory.ts" ||
-        root === "src/lib/workflows/conversation/production.ts" ||
+        root === "src/lib/conversation-core/production-turn-dependencies.ts" ||
         root === "src/lib/conversations/naming-context.ts",
     );
     expect(coreBoundaryViolations(readValueGraph(repoRoot, roots))).toEqual([]);
   }, 30000);
-  it("keeps the conversation core and lifecycle fixture independent of production composition", () => {
+  it("keeps the conversation executor and runtime binding independent of production composition", () => {
     const cores = [
-      "src/lib/workflows/conversation/manager.ts",
-      "src/lib/workflows/conversation/testing/lifecycle-fixture.ts",
+      "src/lib/conversation-core/executor.ts",
+      "src/lib/conversation-core/turn/runtime-binding.ts",
     ];
     const compositions = [
-      "src/lib/workflows/conversation/lifecycle.ts",
-      "src/lib/workflows/conversation/production.ts",
-      "src/lib/workflows/production.ts",
-    ];
-    const graph = readValueGraph(repoRoot, cores);
-    const paths = cores.flatMap((core) =>
-      compositions.flatMap((composition) => {
-        const chain = shortestImportPath(graph, core, composition);
-        return chain === null ? [] : [chain];
-      }),
-    );
-    expect(paths).toEqual([]);
-  }, 30000);
-  it("keeps the graph manager and cohort harness independent of production composition", () => {
-    const cores = [
-      "src/lib/workflow-graph/workflow-manager.ts",
-      "src/lib/workflow-graph/testing/cohort-engine-harness.ts",
-    ];
-    const compositions = [
-      "src/lib/workflow-graph/production.ts",
-      "src/lib/workflows/production.ts",
-      "src/lib/workflows/conversation/lifecycle.ts",
-      "src/lib/workflows/conversation/production.ts",
+      "src/lib/supervision/production.ts",
+      "src/lib/conversation-core/production-turn-dependencies.ts",
+      "src/lib/prompt/sdk-driver.ts",
     ];
     const graph = readValueGraph(repoRoot, cores);
     const paths = cores.flatMap((core) =>
@@ -90,7 +66,6 @@ describe("reviewed module boundaries", () => {
       "src/lib/prompt/sdk-driver",
       "src/lib/jobs/queue",
       "src/lib/notifications/service",
-      "src/lib/workflows/production",
       "src/lib/workflows/merge/initiation",
       "src/lib/sessions/optimistic-production",
     ]);

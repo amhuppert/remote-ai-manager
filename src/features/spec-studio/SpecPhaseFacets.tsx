@@ -1,32 +1,18 @@
 import type { SpecDetailView } from "@/lib/specs/queries";
 import { cn } from "@/lib/ui/cn";
 
-import { deliveryLabel, deliveryTone, phaseLabels } from "./presentation";
+import { phaseLabels } from "./presentation";
 
 const phaseClass = {
   draft: "text-amber",
   approved: "text-green",
-  executing: "text-cyan",
-  delivered: "text-green",
   abandoned: "text-red",
 } as const;
 
 const phaseDotClass = {
   draft: "bg-amber shadow-[0_0_7px_var(--color-amber-glow)]",
   approved: "bg-green shadow-[0_0_7px_var(--color-green-glow)]",
-  executing:
-    "bg-cyan shadow-[0_0_7px_var(--color-cyan-glow)] animate-pulse-dot",
-  delivered: "bg-green shadow-[0_0_7px_var(--color-green-glow)]",
   abandoned: "bg-red shadow-[0_0_7px_var(--color-red-glow)]",
-} as const;
-
-const deliveryClass = {
-  green: "text-green",
-  amber: "text-amber",
-  cyan: "text-cyan",
-  neutral: "text-text-tertiary",
-  red: "text-red",
-  violet: "text-violet",
 } as const;
 
 export default function SpecPhaseFacets({
@@ -37,11 +23,7 @@ export default function SpecPhaseFacets({
   const phase = status.phase.primary;
   const authoringFacet = status.phase.authoringFacet;
   const authoringStage = status.phase.authoringStage;
-  const showDelivery = phase === "executing" || phase === "delivered";
-  const hasFacet =
-    authoringFacet !== undefined ||
-    authoringStage !== undefined ||
-    showDelivery;
+  const hasFacet = authoringFacet !== undefined || authoringStage !== undefined;
 
   return (
     <div
@@ -67,19 +49,10 @@ export default function SpecPhaseFacets({
           {authoringFacet !== undefined && (
             <span>{phaseLabels[authoringFacet]}</span>
           )}
-          {authoringFacet !== undefined &&
-            (authoringStage !== undefined || showDelivery) && (
-              <span aria-hidden="true">·</span>
-            )}
-          {authoringStage !== undefined && <span>{authoringStage} stage</span>}
-          {authoringStage !== undefined && showDelivery && (
+          {authoringFacet !== undefined && authoringStage !== undefined && (
             <span aria-hidden="true">·</span>
           )}
-          {showDelivery && (
-            <span className={deliveryClass[deliveryTone(status.delivery)]}>
-              {deliveryLabel(status.delivery)}
-            </span>
-          )}
+          {authoringStage !== undefined && <span>{authoringStage} stage</span>}
         </span>
       )}
     </div>

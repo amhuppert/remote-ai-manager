@@ -26,17 +26,25 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { _createTestDbAtPath } from "../../src/lib/state-store/state-db";
-import { runMigrations } from "../../src/lib/state-store/migrator";
+import { RETIRED_HISTORY_BUILD } from "../../src/lib/state-store/migration-history";
 import { migrations as productionMigrations } from "../../src/lib/state-store/migrations";
-import { runNativeSddV2CutoverBeforeStateDbOpen } from "../../src/lib/state-store/migrations/0030-native-sdd-v2-cutover";
+import type { StateMigration } from "../../src/lib/state-store/migrations/types";
+import { createDeploy15Database } from "../../src/lib/state-store/migrations/testing/deploy-1-5-database";
 import {
   rehearsalEnvironment,
   rehearseMigrations,
   type RehearsalDeps,
 } from "./rehearse";
 
-const LATEST = productionMigrations[productionMigrations.length - 1];
-const CUTOVER_MANIFEST = "native-sdd-v2-cutover-manifest.json";
+/** A migration newer than the retired history, which adds one table. */
+const PROBE: StateMigration = {
+  name: "9000-rehearsal-probe",
+  async up({ context }) {
+    context.db.exec(
+      "CREATE TABLE IF NOT EXISTS rehearsal_probe (id TEXT PRIMARY KEY)",
+    );
+  },
+};
 
 let root: string;
 let source: string;
@@ -66,7 +74,7 @@ function deps(overrides: Partial<RehearsalDeps> = {}): RehearsalDeps {
   };
 }
 
-function forget(migrationName: string | undefined): void {
+function forget(migrationName: string): void {
   const db = new Database(dbIn(source));
   db.prepare("DELETE FROM applied_migrations WHERE name = ?").run(
     migrationName,
@@ -74,27 +82,14 @@ function forget(migrationName: string | undefined): void {
   db.close();
 }
 
-/**
- * A stopped data directory one migration behind this build: current tables,
- * the native SDD cutover complete, every migration but the latest ledgered.
- */
-async function seedSourceBehindLatest(): Promise<void> {
-  const db = _createTestDbAtPath(dbIn(source));
-  await runMigrations({ db, configDir: null });
-  db.close();
-  writeFileSync(path.join(source, "config.json"), '{"projects":[]}\n');
-  await runNativeSddV2CutoverBeforeStateDbOpen(source);
-  forget(LATEST?.name);
-}
-
-beforeEach(async () => {
+beforeEach(() => {
   root = realpathSync(
     mkdtempSync(path.join(tmpdir(), "migration-rehearsal-test-")),
   );
   source = path.join(root, "cc");
   scratch = path.join(root, "rehearsal");
-  mkdirSync(source);
-  await seedSourceBehindLatest();
+  createDeploy15Database(source);
+  writeFileSync(path.join(source, "config.json"), '{"projects":[]}\n');
 });
 
 afterEach(() => {
@@ -102,7 +97,7 @@ afterEach(() => {
 });
 
 describe("rehearseMigrations", () => {
-  it("applies this build's pending migrations to a copy, leaving the source untouched", async () => {
+  it("passes a deploy 1.5 copy through the history guard and a floor that changes nothing, leaving the source untouched", async () => {
     const before = snapshotDirectory(source);
 
     const result = await rehearseMigrations(
@@ -114,14 +109,36 @@ describe("rehearseMigrations", () => {
       ok: true,
       report: {
         scratchDir: scratch,
-        pendingBefore: [LATEST?.name],
-        applied: [LATEST?.name],
+        history: "eligible",
+        pendingBefore: [],
+        applied: [],
+        schemaChanges: { added: [], removed: [], changed: [] },
         before: { integrityProblems: [], foreignKeyViolations: 0 },
         after: { integrityProblems: [], foreignKeyViolations: 0 },
       },
     });
     expect(existsSync(path.join(scratch, "config.json"))).toBe(true);
     expect(snapshotDirectory(source)).toEqual(before);
+  });
+
+  it("applies this build's pending migrations to the copy and reports the schema they changed", async () => {
+    const result = await rehearseMigrations(
+      { from: source, to: scratch },
+      deps({ migrations: [...productionMigrations, PROBE] }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      report: {
+        pendingBefore: [PROBE.name],
+        applied: [PROBE.name],
+        schemaChanges: {
+          added: ["table rehearsal_probe"],
+          removed: [],
+          changed: [],
+        },
+      },
+    });
   });
 
   it("copies a database left with unmerged writes without opening it: the copy has them, the source files are unchanged", async () => {
@@ -136,9 +153,10 @@ describe("rehearseMigrations", () => {
     copyFileSync(dbIn(source), dbIn(crashed));
     copyFileSync(`${dbIn(source)}-wal`, `${dbIn(crashed)}-wal`);
     writer.close();
-    for (const file of ["config.json", CUTOVER_MANIFEST]) {
-      copyFileSync(path.join(source, file), path.join(crashed, file));
-    }
+    copyFileSync(
+      path.join(source, "config.json"),
+      path.join(crashed, "config.json"),
+    );
     const before = snapshotDirectory(crashed);
 
     const result = await rehearseMigrations(
@@ -159,7 +177,7 @@ describe("rehearseMigrations", () => {
     copy.close();
   });
 
-  it("refuses migrations from before the supported baseline, naming them, before running anything", async () => {
+  it("refuses a copy that has not finished the retired history, naming what it lacks and the build that finishes it", async () => {
     forget("0035-generalized-model-selection");
 
     const result = await rehearseMigrations(
@@ -170,20 +188,8 @@ describe("rehearseMigrations", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain("0035-generalized-model-selection");
+    expect(result.reason).toContain(RETIRED_HISTORY_BUILD.sha);
     expect(existsSync(scratch)).toBe(false);
-  });
-
-  it("refuses a data directory whose native SDD cutover has not completed", async () => {
-    rmSync(path.join(source, CUTOVER_MANIFEST));
-
-    const result = await rehearseMigrations(
-      { from: source, to: scratch },
-      deps(),
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain(CUTOVER_MANIFEST);
   });
 
   it("reports integrity problems the data already had separately from new ones", async () => {

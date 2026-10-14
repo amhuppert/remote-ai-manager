@@ -92,7 +92,7 @@ export default function CheckpointForkProvenance({
       ? `${origin.source.projectName}#${work.ticketNumber}`
       : work?.kind === "spec_task"
         ? "Spec task"
-        : "Workflow assignment";
+        : "Related work";
   return (
     <div
       className="flex shrink-0 flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-base px-lg py-sm font-mono text-[0.72rem] text-text-secondary"
@@ -116,9 +116,7 @@ export default function CheckpointForkProvenance({
           <details className="min-w-0">
             <summary>{label}</summary>
             <p className="break-all">
-              {work.kind === "spec_task"
-                ? `Spec ${work.specId} · task ${work.elementId} · revision ${work.revisionId}`
-                : `Execution ${work.executionId} · ${work.owner.kind === "context" || work.owner.kind === "loop_template" ? work.owner.contextId : "workflow"} · ${work.useSite} · assignment ${work.assignmentId}`}
+              {`Spec ${work.specId} · task ${work.elementId} · revision ${work.revisionId}`}
             </p>
           </details>
         ))}

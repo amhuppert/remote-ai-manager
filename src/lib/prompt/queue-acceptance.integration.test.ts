@@ -1,11 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
-import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import type { TranscriptEntry } from "./transcript";
-import { queueMessage, type QueueMessageDeps } from "./queue";
+import { queueMessage } from "./queue";
+import { createCoreLiveQueueHarness } from "./testing/core-live-queue-fixture";
 import { createConversationSubscriptionsRepo } from "@/lib/state-store/conversation-subscriptions-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { createSubscriptionService } from "@/lib/subscriptions/service";
@@ -27,7 +25,7 @@ describe.each(["session", "project"] as const)(
       fixture.seedProject(key.projectPath);
       const conversation = makeConversationState({
         id: key.conversationId,
-        status: "running",
+        status: "awaiting",
         agentBackend: "claude",
         scope,
       });
@@ -42,70 +40,27 @@ describe.each(["session", "project"] as const)(
         );
       }
     });
-    afterEach(() => fixture.close());
+    afterEach(async () => {
+      for (const turn of activeTurns.splice(0)) {
+        turn.harness.endTurn();
+        await turn.ended;
+      }
+      fixture.close();
+    });
 
-    function harness() {
-      let sequence = 0;
-      const service = createMessageQueueService({
-        ...fixture.deps,
-        getProjectDisplayName: () => "repo",
-        broadcast: () => {},
-        now: () => new Date().toISOString(),
-        newId: () => `message-${++sequence}`,
-      });
-      const archive: TranscriptEntry[] = [];
-      const outputs: string[] = [];
-      const runtime: ConversationBackendRuntime = {
-        backend: "claude",
-        status: "alive",
-        modelSelection: { modelId: "opus", parameters: {} },
-        sendTurn: async () => {
-          throw new Error("unexpected turn");
-        },
-        close: async () => {},
-        queueUserInput: async (input) => {
-          await input.onAccepted?.();
-          outputs.push(
-            input.content
-              .flatMap((block) => (block.type === "text" ? [block.text] : []))
-              .join(""),
-          );
-        },
-      };
-      const deps: Partial<QueueMessageDeps> = {
-        ...service,
-        getRuntime: () => runtime,
-        getProjectDisplayName: () => "repo",
-        readLiveReference: async () => null,
-        readNotepadForInjection: async () => null,
-        recordNotepadDeliveries: async () => {},
-        subscriptions: undefined,
-        ownSubscriptionReceipt: () => true,
-        appendTranscriptEntry: async (_id, entry) => {
-          archive.push(entry);
-        },
-      };
-      const send = (text = "hello") =>
-        queueMessage({
-          ...key,
-          backend: "claude",
-          text,
-          inputOrigin: "user",
-          deps,
-        });
-      const reload = () =>
-        fixture
-          .recreateStore()
-          .getConversation(
-            key.projectPath,
-            key.sessionName,
-            key.conversationId,
-          );
-      return { service, archive, outputs, runtime, deps, send, reload };
+    const activeTurns: Array<{
+      harness: ReturnType<typeof createCoreLiveQueueHarness>;
+      ended: Promise<unknown>;
+    }> = [];
+    async function harness() {
+      const h = createCoreLiveQueueHarness(fixture, key);
+      const turn = await h.startTurn();
+      activeTurns.push({ harness: h, ended: turn.ended });
+      return { ...h, ended: turn.ended };
     }
 
     it("archives once before releasing the accepted response", async () => {
-      const h = harness();
+      const h = await harness();
       h.runtime.queueUserInput = async (input) => {
         await input.onAccepted?.();
         await input.onAccepted?.();
@@ -118,9 +73,9 @@ describe.each(["session", "project"] as const)(
     });
 
     it("attaches a passive briefing to live user input without recording it as user text", async () => {
-      const h = harness();
+      const h = await harness();
       let state = "pending";
-      h.deps.subscriptions = {
+      h.inputDeps.subscriptions = {
         prepareBriefing: async () => {
           state = "queued";
           return {
@@ -136,7 +91,9 @@ describe.each(["session", "project"] as const)(
         expect(state).toBe("queued");
         expect(input.content[0]).toEqual({
           type: "text",
-          text: "<passive-briefing>Latest update</passive-briefing>",
+          text: expect.stringContaining(
+            "<passive-briefing>Latest update</passive-briefing>",
+          ),
         });
         await input.onAccepted?.();
       };
@@ -147,9 +104,9 @@ describe.each(["session", "project"] as const)(
     });
 
     it("leaves passive updates pending for generated ordinary text and question-answer input", async () => {
-      const h = harness();
+      const h = await harness();
       let preparations = 0;
-      h.deps.subscriptions = {
+      h.inputDeps.subscriptions = {
         prepareBriefing: async () => {
           preparations++;
           return {
@@ -185,7 +142,7 @@ describe.each(["session", "project"] as const)(
     });
 
     it("records live accepted notepad involvement even when the watermark write fails", async () => {
-      const h = harness();
+      const h = await harness();
       const repo = createConversationSubscriptionsRepo(
         fixture.db,
         createWriteQueue(),
@@ -195,7 +152,7 @@ describe.each(["session", "project"] as const)(
         isRecipientEligible: async () => true,
         readSource: async () => ({ cursor: null, facts: [], missing: true }),
       });
-      h.deps.readNotepadForInjection = async () => ({
+      h.inputDeps.context.readNotepadForInjection = async () => ({
         id: "notes",
         name: "Notes",
         revision: 7,
@@ -203,10 +160,10 @@ describe.each(["session", "project"] as const)(
         writeMode: "full-edit",
         openComments: { count: 0, latestCreatedAt: null },
       });
-      h.deps.recordNotepadDeliveries = async () => {
+      h.inputDeps.effects.recordNotepadDeliveries = async () => {
         throw new Error("Source deleted before watermark persistence");
       };
-      h.deps.subscriptions = {
+      h.inputDeps.subscriptions = {
         prepareBriefing: async () => ({
           block: null,
           onInputAccepted: async () => {},
@@ -230,12 +187,7 @@ describe.each(["session", "project"] as const)(
         }),
         source: { kind: "notepad", id: "notes" },
       });
-      expect((await h.reload())?.pendingQueue).toMatchObject([
-        {
-          status: "uncertain",
-          error: "Source deleted before watermark persistence",
-        },
-      ]);
+      expect((await h.reload())?.pendingQueue).toEqual([]);
       expect(h.archive).toHaveLength(1);
       expect(h.archive[0]).toMatchObject({
         id: "message-1",
@@ -245,9 +197,9 @@ describe.each(["session", "project"] as const)(
     });
 
     it("holds unconfirmed live briefing delivery as uncertain", async () => {
-      const h = harness();
+      const h = await harness();
       let disposition: string | undefined;
-      h.deps.subscriptions = {
+      h.inputDeps.subscriptions = {
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {},
@@ -262,21 +214,16 @@ describe.each(["session", "project"] as const)(
     });
 
     it("retains an accepted live briefing receipt for repair without redispatch", async () => {
-      const h = harness();
+      const h = await harness();
       let fail = true;
       let accepted = false;
       let recorded = false;
       let dispatches = 0;
-      const receipts: (() => Promise<void>)[] = [];
-      h.deps.ownSubscriptionReceipt = (_input, finish) => {
-        receipts.push(finish);
-        return true;
-      };
       const record = async () => {
         if (fail) throw new Error("receipt unavailable");
         recorded = true;
       };
-      h.deps.subscriptions = {
+      h.inputDeps.subscriptions = {
         prepareBriefing: async () => ({
           block: "Update",
           onInputAccepted: async () => {
@@ -293,17 +240,17 @@ describe.each(["session", "project"] as const)(
         await input.onAccepted?.();
       };
       const sent = await h.send();
-      expect(sent.entry.status).toBe("uncertain");
-      expect(receipts).toHaveLength(1);
+      expect(sent.deliveryTiming).toBe("in_turn");
+      expect((await h.reload())?.pendingQueue).toEqual([]);
       expect(recorded).toBe(false);
       fail = false;
-      await receipts[0]?.();
+      await h.turns.settleRetained(key.conversationId);
       expect(recorded).toBe(true);
       expect(dispatches).toBe(1);
     });
 
     it("preserves explicit user provenance through a durable queued-message reload", async () => {
-      const h = harness();
+      const h = await harness();
       const queued = await h.service.enqueue({
         ...key,
         inputOrigin: "user",
@@ -316,31 +263,14 @@ describe.each(["session", "project"] as const)(
     });
 
     it.each(["user", "generated"] as const)(
-      "does not send %s input after its owner finalizes receipts during asynchronous preparation",
+      "keeps the turn's ownership until asynchronous %s input preparation and delivery settle",
       async (inputOrigin) => {
-        const h = harness();
+        const h = await harness();
         const entered = Promise.withResolvers<void>();
         const resume = Promise.withResolvers<null>();
-        const receipts: (() => Promise<void>)[] = [];
-        let disposition: string | undefined;
-        let dispatches = 0;
-        h.deps.ownSubscriptionReceipt = (_input, finish) => {
-          receipts.push(finish);
-          return true;
-        };
-        h.deps.subscriptions = {
-          prepareBriefing: async () => ({
-            block: "Update",
-            onInputAccepted: async () => {},
-            finish: async (options) => {
-              disposition = options?.disposition;
-            },
-          }),
-          recordAcceptedNotepadReferences: async () => {},
-        };
         const reference =
           '<ticket-ref project-name="repo" ticket-number="1" identifier="REPO-1" title="Ticket" read-command="cctl ticket show 1" />';
-        h.deps.readNotepadForInjection = async () => ({
+        h.inputDeps.context.readNotepadForInjection = async () => ({
           id: "notes",
           name: "Notes",
           revision: 7,
@@ -348,66 +278,60 @@ describe.each(["session", "project"] as const)(
           writeMode: "full-edit",
           openComments: { count: 0, latestCreatedAt: null },
         });
-        h.deps.readLiveReference = async () => {
+        h.inputDeps.context.readLiveReference = async () => {
           entered.resolve();
           return resume.promise;
         };
-        h.runtime.queueUserInput = async () => {
-          dispatches++;
-        };
-        const sending = queueMessage({
-          ...key,
-          backend: "claude",
-          inputOrigin,
-          deps: h.deps,
-          text:
-            inputOrigin === "user"
-              ? reference
-              : '<notepad-ref notepad-id="notes" />',
-        });
+        const sending = h.send(
+          inputOrigin === "user"
+            ? reference
+            : '<notepad-ref notepad-id="notes" />',
+          { inputOrigin },
+        );
         await entered.promise;
-        await receipts[0]?.();
+        let settled = false;
+        void h.ended.then(() => {
+          settled = true;
+        });
+        h.endTurn();
+        await Promise.resolve();
+        expect(settled).toBe(false);
         resume.resolve(null);
         await sending;
-        expect(dispatches).toBe(0);
-        expect(disposition).toBe(
-          inputOrigin === "user" ? "not_sent" : undefined,
-        );
-        expect((await h.reload())?.pendingQueue[0]?.status).toBe("pending");
+        await h.ended;
+        expect(h.received).toHaveLength(1);
+        expect((await h.reload())?.pendingQueue).toEqual([]);
       },
     );
 
-    it("keeps a live message pending when its host refuses receipt ownership", async () => {
-      const h = harness();
-      let disposition: string | undefined;
-      let dispatches = 0;
-      h.deps.ownSubscriptionReceipt = () => false;
-      h.deps.subscriptions = {
-        prepareBriefing: async () => ({
-          block: "Update",
-          onInputAccepted: async () => {},
-          finish: async (options) => {
-            disposition = options?.disposition;
-          },
-        }),
+    it("keeps a live message pending when the core declines admission", async () => {
+      const h = await harness();
+      let preparations = 0;
+      h.inputDeps.subscriptions = {
+        prepareBriefing: async () => {
+          preparations++;
+          return {
+            block: "Update",
+            onInputAccepted: async () => {},
+            finish: async () => {},
+          };
+        },
       };
-      h.runtime.queueUserInput = async () => {
-        dispatches++;
-      };
+      h.deps.core!.acceptsLive = async () => false;
       const sent = await h.send();
       expect(sent.deliveryTiming).toBe("next_turn");
-      expect(dispatches).toBe(0);
-      expect(disposition).toBe("not_sent");
+      expect(h.received).toEqual([]);
+      expect(preparations).toBe(0);
       expect((await h.reload())?.pendingQueue[0]?.status).toBe("pending");
     });
 
     it("continues after archive when settlement fails, holding review and blocking redelivery", async () => {
-      const h = harness();
-      h.deps.markDelivered = async () => {
+      const h = await harness();
+      h.settlement.confirm = async () => {
         throw new Error("settlement unavailable");
       };
       const result = await h.send();
-      expect(result.entry.status).toBe("uncertain");
+      expect(result.deliveryTiming).toBe("in_turn");
       expect(h.outputs).toEqual(["hello"]);
       expect(h.archive).toHaveLength(1);
       await h.send("later");
@@ -419,9 +343,9 @@ describe.each(["session", "project"] as const)(
     });
 
     it("does not recreate a row pruned before settlement reporting failed", async () => {
-      const h = harness();
-      h.deps.markDelivered = async (input) => {
-        await h.service.markDelivered(input);
+      const h = await harness();
+      h.settlement.confirm = async (input) => {
+        await h.service.confirmDelivery(input);
         throw new Error("settlement reporting failed");
       };
       await h.send();
@@ -431,11 +355,11 @@ describe.each(["session", "project"] as const)(
     });
 
     it("retains the delivering claim if the uncertain write also fails", async () => {
-      const h = harness();
-      h.deps.markDelivered = async () => {
+      const h = await harness();
+      h.settlement.confirm = async () => {
         throw new Error("settlement unavailable");
       };
-      h.deps.markUncertain = async () => {
+      h.settlement.uncertain = async () => {
         throw new Error("store unavailable");
       };
       await h.send();
@@ -447,20 +371,48 @@ describe.each(["session", "project"] as const)(
     });
 
     it("rejects archival without returning accepted input to pending", async () => {
-      const h = harness();
-      h.deps.appendTranscriptEntry = async () => {
-        throw new Error("archive unavailable");
-      };
+      const h = await harness();
+      h.failures.archive = true;
       const result = await h.send();
-      expect(result.entry.status).toBe("uncertain");
-      expect(h.outputs).toEqual([]);
+      expect(result.deliveryTiming).toBe("in_turn");
+      expect(h.received).toHaveLength(1);
       expect((await h.reload())?.pendingQueue[0]?.status).toBe("uncertain");
     });
 
-    it("holds image archive failures before releasing the response", async () => {
-      const h = harness();
-      h.deps.getNextImageIndex = async () => 1;
-      h.deps.saveTranscriptImage = async () => {
+    it("delivers queued image bytes with text and archives image references once", async () => {
+      const h = await harness();
+      const image = {
+        attachmentId: "image",
+        mediaType: "image/png" as const,
+        base64Data: "aW1hZ2U=",
+      };
+      const result = await h.send("look at this", { images: [image] });
+      expect(result.deliveryTiming).toBe("in_turn");
+      expect(h.received).toHaveLength(1);
+      expect(h.received[0]?.content).toContainEqual({
+        type: "image",
+        mediaType: image.mediaType,
+        base64Data: image.base64Data,
+      });
+      expect(h.received[0]?.content[0]).toMatchObject({
+        type: "text",
+        text: expect.stringContaining("look at this"),
+      });
+      expect(h.archive).toHaveLength(1);
+      expect(h.archive[0]?.content).toContainEqual({
+        type: "image_ref",
+        mediaType: image.mediaType,
+        imagePath: `/repo/.cc/images/${key.conversationId}/1.png`,
+      });
+      expect(JSON.stringify(h.archive[0])).not.toContain(image.base64Data);
+      expect(h.order).toEqual(["image", "send", "archive", "release"]);
+      expect((await h.reload())?.pendingQueue).toEqual([]);
+    });
+
+    it("keeps an image persistence failure pending before dispatch", async () => {
+      const h = await harness();
+      h.imageIO.getNextImageIndex = async () => 1;
+      h.imageIO.saveTranscriptImage = async () => {
         throw new Error("image archive unavailable");
       };
       const result = await queueMessage({
@@ -472,17 +424,17 @@ describe.each(["session", "project"] as const)(
         ],
         deps: h.deps,
       });
-      expect(result.entry.status).toBe("uncertain");
+      expect(result.deliveryTiming).toBe("next_turn");
       expect(h.archive).toEqual([]);
-      expect(h.outputs).toEqual([]);
-      expect((await h.reload())?.pendingQueue[0]?.status).toBe("uncertain");
+      expect(h.received).toEqual([]);
+      expect((await h.reload())?.pendingQueue[0]?.status).toBe("pending");
     });
 
     it("persists promptly and preserves order before asynchronous reference preparation", async () => {
-      const h = harness();
+      const h = await harness();
       const slow = Promise.withResolvers<null>();
       const entered = Promise.withResolvers<void>();
-      h.deps.readNotepadForInjection = async () => {
+      h.inputDeps.context.readNotepadForInjection = async () => {
         entered.resolve();
         return slow.promise;
       };

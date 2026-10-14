@@ -24,7 +24,6 @@ import type { useCollabContext } from "@/features/session/hooks/use-collab-conte
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { OwnerRunCards } from "./OwnerRunCards";
-import { useWorkflowReceiptTranscriptExtensions } from "./WorkflowReceiptCard";
 
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type CollabContext = ReturnType<typeof useCollabContext>;
@@ -99,11 +98,6 @@ export default function ConversationPanelContainer({
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
   const custody = useConversationCustody(conversationId);
-  const workflowReceiptExtensions = useWorkflowReceiptTranscriptExtensions({
-    projectName,
-    sessionName,
-    conversationId,
-  });
   const [nav, setNav] = useState<TranscriptNav | null>(null);
 
   // The same conversation identity the row renderer stamps as the clip source;
@@ -171,7 +165,6 @@ export default function ConversationPanelContainer({
           renderRow: renderCollabRow,
           suppressIndicator: hasActiveCollab,
         }}
-        extensions={workflowReceiptExtensions}
         showInFlightBanners
         leadingSlot={
           <div

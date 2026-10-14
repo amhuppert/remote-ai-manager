@@ -15,7 +15,6 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runCircuitBreakerGate } from "./circuit-breaker-gate";
 import { gateResultSchema, type GateResult } from "./gate-vocabulary";
 import {
   approveHumanApprovalGate,
@@ -94,25 +93,18 @@ describe("shared gate behavior", () => {
       infraReason: "exception",
     });
   });
-
-  it("trips the circuit-breaker when the consecutive-failure count hits the configured threshold", () => {
-    const gate = runCircuitBreakerGate({ failureCount: 3, threshold: 3 });
-    expectSharedShape(gate);
-    expect(gate.status).toBe("fail");
-    if (gate.status !== "fail") return;
-    expect(gate.kind).toBe("circuit_breaker");
-    expect(gate.details).toMatchObject({
-      tripped: true,
-      failureCount: 3,
-      threshold: 3,
-    });
-  });
 });
 
 describe("shared gate purity", () => {
   it("returns a fresh, equivalent envelope on repeated invocations of the same input", () => {
-    const a = runCircuitBreakerGate({ failureCount: 3, threshold: 3 });
-    const b = runCircuitBreakerGate({ failureCount: 3, threshold: 3 });
+    const a = runStructuredOutputGate({}, {}, () => ({
+      valid: true,
+      errors: [],
+    }));
+    const b = runStructuredOutputGate({}, {}, () => ({
+      valid: true,
+      errors: [],
+    }));
     expectSharedShape(a);
     expectSharedShape(b);
     expect(a).not.toBe(b);

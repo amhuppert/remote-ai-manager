@@ -30,9 +30,16 @@ import {
 } from "@/lib/conversations/message-queue-service";
 import { clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches } from "@/lib/state-store";
 import {
-  checkpointAcceptsQueuedInput,
-  ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
-} from "@/lib/workflows/conversation/lifecycle";
+  coreCheckpoints,
+  drainCoreConversation,
+} from "@/lib/supervision/handles";
+const checkpointAcceptsQueuedInput = (conversationId: string) =>
+  coreCheckpoints()?.acceptsQueuedInput(conversationId) ?? false;
+const defaultEnsureConversationActorAndDrain = (
+  _projectPath: string,
+  _sessionName: string,
+  conversationId: string,
+) => drainCoreConversation(conversationId);
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { createProjectConversationService } from "./service";

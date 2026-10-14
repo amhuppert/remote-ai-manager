@@ -49,7 +49,6 @@ function makeRow(id: string): ActiveConversation {
     worktreePath: "/repo/demo/.worktrees/feature-x",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
   };
 }
@@ -87,9 +86,7 @@ function createHarness(rows: ActiveConversation[]) {
     conversationKeys.active(),
     {
       conversations: rows,
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
-      specExecutions: [],
     },
   );
   const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");

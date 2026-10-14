@@ -32,10 +32,7 @@ const PROJECT_PATH = "/repos/library-project";
 const OTHER_PROJECT_PATH = "/repos/other-project";
 
 const NO_REFERENCES: AgentProfileSavedReferences = {
-  definitions: [],
-  templates: [],
   runTemplates: [],
-  workflowDefaults: false,
 };
 
 let configDir: string;
@@ -550,10 +547,7 @@ describe("agent profile library — deletion preview (R15.1)", () => {
       content: authoring({ name: "Edited" }),
     });
     referenceAnswer = {
-      definitions: [HOLDER],
-      templates: [],
-      runTemplates: [],
-      workflowDefaults: true,
+      runTemplates: [HOLDER],
     };
 
     const report = await library.previewDeletion(
@@ -581,17 +575,14 @@ describe("agent profile library — deletion preview (R15.1)", () => {
   it("re-asks on every call rather than answering from the previous scan", async () => {
     await library.previewDeletion(PROJECT_PATH, refOf("global", "reviewer"));
     referenceAnswer = {
-      definitions: [HOLDER],
-      templates: [],
       runTemplates: [],
-      workflowDefaults: false,
     };
     const second = await library.previewDeletion(
       PROJECT_PATH,
       refOf("global", "reviewer"),
     );
 
-    expect(second.savedReferenceEnumeration.definitions).toEqual([HOLDER]);
+    expect(second.savedReferenceEnumeration.runTemplates).toEqual([HOLDER]);
     expect(referenceQueries).toHaveLength(2);
   });
 

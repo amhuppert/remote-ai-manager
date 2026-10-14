@@ -19,7 +19,7 @@ import {
   appendDebugLogEntry as defaultAppendDebugLogEntry,
   getDebugLogStats as defaultGetDebugLogStats,
 } from "@/lib/debug-log/service";
-import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
+import { getDefaultDebugAdapter } from "@/lib/conversations/debug-adapter";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { DebugLogEntry } from "@/lib/debug-log/schemas";

@@ -24,7 +24,6 @@ describe("buildConversationRowMenuItems", () => {
         scope: "project",
         worktreePath: "/tmp/worktree",
         archived: false,
-        approvalGatePending: false,
       },
       {
         onOpenConversation: vi.fn(),
@@ -45,7 +44,6 @@ describe("buildConversationRowMenuItems", () => {
         scope: "project",
         worktreePath: "/tmp/worktree",
         archived: false,
-        approvalGatePending: false,
       },
       {
         onOpenConversation: vi.fn(),
@@ -72,7 +70,6 @@ describe("buildConversationRowMenuItems", () => {
         scope: "project",
         worktreePath: "/tmp/worktree",
         archived: false,
-        approvalGatePending: false,
       },
       {
         onOpenConversation: vi.fn(),

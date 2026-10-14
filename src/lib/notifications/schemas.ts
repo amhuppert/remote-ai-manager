@@ -16,7 +16,6 @@ const pushTriggerSchema = z.object({
   specApprovalRequested: z.boolean().default(true),
   specApprovalGranted: z.boolean().default(true),
   specPolicyAdmitted: z.boolean().default(true),
-  planRepair: z.boolean().default(true),
 });
 
 export const pushNotificationConfigSchema = z.object({
@@ -33,7 +32,6 @@ export const pushNotificationConfigSchema = z.object({
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
-    planRepair: true,
   }),
 });
 export type PushNotificationConfig = z.infer<
@@ -49,7 +47,6 @@ const rawPushTriggerSchema = z.object({
   specApprovalRequested: z.boolean().optional(),
   specApprovalGranted: z.boolean().optional(),
   specPolicyAdmitted: z.boolean().optional(),
-  planRepair: z.boolean().optional(),
 });
 
 export const rawPushNotificationConfigSchema = z.object({
@@ -92,19 +89,10 @@ export const specNotificationTypeSchema = z.enum([
   "spec-approval-requested",
   "spec-approval-granted",
   "spec-policy-admitted",
-  // A routed waiver request opens a Needs You item (R14.3); push maps onto
-  // the existing specApprovalRequested trigger.
-  "spec-waiver-requested",
-  // Closes any open requested row: waiver granted, or requests cleared when
-  // an execution/spec is abandoned; push maps onto specApprovalGranted.
+  // Closes an authoring request; push maps onto specApprovalGranted.
   "spec-attention-resolved",
 ]);
 export type SpecNotificationType = z.infer<typeof specNotificationTypeSchema>;
-
-const workflowNotificationTypeSchema = z.literal("workflow-result-ready");
-export type WorkflowNotificationType = z.infer<
-  typeof workflowNotificationTypeSchema
->;
 
 const notificationBaseSchema = z.object({
   id: z.string(),
@@ -153,21 +141,11 @@ export const specNotificationSchema = notificationBaseSchema.extend({
   approvalId: z.string().min(1).optional(),
 });
 
-export const workflowNotificationSchema = notificationBaseSchema.extend({
-  source: z.literal("workflow"),
-  type: workflowNotificationTypeSchema,
-  sessionName: z.string().min(1),
-  executionId: z.string().min(1),
-  originConversationId: z.string().min(1),
-  deepLink: z.string().min(1),
-});
-
 export const notificationSchema = registerTrustedSchema(
   z.discriminatedUnion("source", [
     jobNotificationSchema,
     projectConversationNotificationSchema,
     specNotificationSchema,
-    workflowNotificationSchema,
   ]),
   "notificationSchema",
 );
@@ -177,7 +155,6 @@ export type ProjectConversationNotification = z.infer<
   typeof projectConversationNotificationSchema
 >;
 export type SpecNotification = z.infer<typeof specNotificationSchema>;
-export type WorkflowNotification = z.infer<typeof workflowNotificationSchema>;
 
 // ============================================================
 // SSE Events

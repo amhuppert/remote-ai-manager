@@ -37,10 +37,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import {
-  createActorDependenciesFixture,
-  groupActorFixtureDependencies,
-} from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { turnInputFixture } from "./testing/turn-input-fixture";
 import { prepareTurnInput } from "./turn-input";
 import type { PassiveSubscriptionContextDependencies } from "@/lib/conversation-core/contributions/passive-subscription-context";
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -339,9 +336,7 @@ function harness(
     timeouts: async () => ({ timeoutMs: 0, stallTimeoutMs: 0 }),
     log,
   });
-  const grouped = groupActorFixtureDependencies(
-    createActorDependenciesFixture(),
-  );
+  const grouped = turnInputFixture();
   const contextDeps = {
     ...grouped,
     effects: {

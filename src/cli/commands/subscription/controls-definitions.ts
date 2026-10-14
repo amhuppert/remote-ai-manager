@@ -42,7 +42,7 @@ export const subscriptionSubscribeSpec = {
   path: "subscription subscribe",
   summary: "Explicitly subscribe this conversation to an exact source",
   description:
-    "Create or update a durable subscription for the addressed ordinary conversation. Passive mode waits for the next user message. Active mode registers a finite terminal wait for workflow executions, validation runs or git jobs and returns immediately; it does not poll or transfer a validation submitter lease. Active lifetime defaults to 24 hours and is limited to 7 days. This explicit request restores a general opt-out with a current source baseline and resumes delivery. A live finite wait keeps its reason and expiry. After settlement or cancellation, an undelivered terminal result remains obtainable. A consumed halt can be re-armed for a later workflow boundary; a consumed final result is refused instead of creating an ineffective wait.",
+    "Create or update a durable subscription for the addressed ordinary conversation. Passive mode waits for the next user message. Active mode registers a finite terminal wait for validation runs or git jobs and returns immediately; it does not poll or transfer a validation submitter lease. Active lifetime defaults to 24 hours and is limited to 7 days. This explicit request restores a general opt-out with a current source baseline and resumes delivery. A live finite wait keeps its reason and expiry. After settlement or cancellation, an undelivered terminal result remains obtainable. A consumed final result is refused instead of creating an ineffective wait.",
   requires: "cc",
   effects: "write",
   args: [
@@ -51,14 +51,7 @@ export const subscriptionSubscribeSpec = {
       description: "Source kind from subscription catalog",
       value: {
         kind: "enum",
-        values: [
-          "notepad",
-          "ticket",
-          "spec",
-          "workflow",
-          "validation",
-          "git_job",
-        ],
+        values: ["notepad", "ticket", "spec", "run", "validation", "git_job"],
       },
     },
     {
@@ -165,7 +158,7 @@ export const subscriptionModeSpec = {
   path: "subscription mode",
   summary: "Change one subscription's passive or active mode",
   description:
-    "Change delivery mode for an existing subscription. Active mode is limited to finite terminal waits for exact workflow executions, validation runs and git jobs; a new wait defaults to 24 hours. Mode changes preserve pause state and a live wait's reason, expiry and outcome. Passive mode safely withdraws pending or unsent planned wakes; delivering or ambiguous wakes require queue review. After settlement or cancellation, active mode can create a new wait generation for an undelivered outcome or a resumed workflow. A consumed final result is refused with ACTIVE_WAIT_SOURCE_FINAL.",
+    "Change delivery mode for an existing subscription. Active mode is limited to finite terminal waits for exact validation runs and git jobs; a new wait defaults to 24 hours. Mode changes preserve pause state and a live wait's reason, expiry and outcome. Passive mode safely withdraws pending or unsent planned wakes; delivering or ambiguous wakes require queue review. After settlement or cancellation, active mode can create a new wait generation for an undelivered outcome. A consumed final result is refused with ACTIVE_WAIT_SOURCE_FINAL.",
   requires: "cc",
   effects: "write",
   args: [
@@ -265,9 +258,14 @@ export const subscriptionSubscribeCommand = ccCommands.defineCommand(
         why: "Select the catalog's revision event in passive mode",
       },
       {
-        args: { kind: "workflow", "source-id": "execution-one" },
+        args: { kind: "run", "source-id": "run-one" },
+        flags: { reason: "Track run progress", mode: "passive" },
+        why: "Follow run boundaries within this project",
+      },
+      {
+        args: { kind: "validation", "source-id": "validation-one" },
         flags: {
-          reason: "Continue after completion",
+          reason: "Continue after validation",
           mode: "active",
           "expires-in": 3600,
         },

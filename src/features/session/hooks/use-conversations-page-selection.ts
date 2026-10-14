@@ -125,7 +125,6 @@ export function useConversationsPageSelection(
       role: null,
       lastActivitySummary: null,
       unread: false,
-      pendingApproval: null,
       backgroundActivity: null,
     };
   }, [lookup, params.conversationId]);

@@ -42,6 +42,8 @@
     "ds-bundle",
     "claude-design",
     ".worktrees",
-    "memory-bank"
+    "memory-bank",
+    ".cc",
+    ".config"
   ]
 }

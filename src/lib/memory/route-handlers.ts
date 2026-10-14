@@ -27,11 +27,11 @@ import { z } from "zod";
 
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import {
-  getConversationRuntimeConfiguration,
-  readDesiredConversationRuntimeConfiguration,
-} from "@/lib/workflows/conversation/lifecycle";
+  coreRuntimeConfiguration as getConversationRuntimeConfiguration,
+  readCoreDesiredRuntimeConfiguration as readDesiredConversationRuntimeConfiguration,
+} from "@/lib/supervision/handles";
 
-import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
+import { readNextTurnContextLoss } from "@/lib/memory/next-turn-context-loss";
 import { getConversationCheckpointsRepo } from "@/lib/conversation-checkpoints/service-factory";
 import type { CheckpointScopeKey } from "@/lib/conversation-checkpoints/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
@@ -45,12 +45,8 @@ import {
 } from "@/lib/shared/route-resolution";
 import { getStateStore } from "@/lib/state-store";
 import { getTicketsRepo } from "@/lib/tickets/storage-production";
-import { findLaneBindingForConversation } from "@/lib/workflow-graph/lane-binding";
 
-import type {
-  MemoryConversationLocation,
-  MemoryLaneBindingRef,
-} from "./delivery-policy";
+import type { MemoryConversationLocation } from "./delivery-policy";
 import { renderMemoryArchive } from "./export";
 import type { MemoryFreshnessEngine } from "./freshness";
 import type { MemoryIndexContextProvider } from "./index-live-context";
@@ -142,11 +138,6 @@ export interface MemoryRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | null>;
-  /** The execution context a lane conversation drives right now, or null. */
-  findLaneBinding(ref: MemoryLaneBindingRef): Promise<{
-    readonly executionId: string;
-    readonly contextId: string;
-  } | null>;
   /**
    * The context-loss signals this conversation's NEXT turn would carry, read
    * from outside a turn (D4).
@@ -1510,14 +1501,6 @@ export function createMemoryRouteHandlers(
           "The index is composed for one conversation's next turn, so there is nothing to render without one.",
         );
       }
-      const lane =
-        location.conversation.kind === "session"
-          ? await deps.findLaneBinding({
-              projectPath: location.projectPath,
-              sessionName: location.conversation.sessionName,
-              conversationId: query.value.conversation,
-            })
-          : null;
 
       // Read, never assumed. A conversation whose next turn must create a
       // runtime with no resume handle is due a FULL block even though its
@@ -1532,8 +1515,8 @@ export function createMemoryRouteHandlers(
           conversationId: query.value.conversation,
           conversation: location.conversation,
           role: location.role,
-          workflowExecutionId: lane?.executionId ?? null,
-          workflowContextId: lane?.contextId ?? null,
+          workflowExecutionId: null,
+          workflowContextId: null,
           ...contextLoss,
         },
         query.value.full ? "full" : "next-turn",
@@ -1767,15 +1750,6 @@ function defaultDeps(): MemoryRouteDeps {
         },
         conversationId,
       ),
-    async findLaneBinding(ref) {
-      const execution = await getStateStore().getActiveGraphWorkflowExecution(
-        ref.projectPath,
-        ref.sessionName,
-      );
-      return execution === null
-        ? null
-        : findLaneBindingForConversation(execution, ref.conversationId);
-    },
     auth: createAgentAuth(),
   };
 }

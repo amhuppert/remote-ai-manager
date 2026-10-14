@@ -20,7 +20,6 @@ import {
   jobNotificationSchema,
   notificationSchema,
   specNotificationSchema,
-  workflowNotificationSchema,
 } from "@/lib/notifications/schemas";
 import type { JobType } from "@/lib/jobs/schemas";
 import type {
@@ -31,8 +30,6 @@ import type {
   ProjectConversationNotificationType,
   SpecNotification,
   SpecNotificationType,
-  WorkflowNotification,
-  WorkflowNotificationType,
 } from "@/lib/notifications/schemas";
 import { PersistenceError } from "@/lib/shared/errors";
 import {
@@ -51,7 +48,7 @@ const notificationLogger = createLogger("state-store.notifications");
 const notificationRowSchema = registerTrustedSchema(
   z.object({
     id: z.string(),
-    source: z.enum(["job", "project-conversation", "spec", "workflow"]),
+    source: z.enum(["job", "project-conversation", "spec"]),
     type: z.string(),
     title: z.string(),
     message: z.string(),
@@ -78,9 +75,6 @@ const notificationRowSchema = registerTrustedSchema(
     spec_gate_request_id: z.string().nullable(),
     spec_deep_link_id: z.string().nullable(),
     spec_approval_id: z.string().nullable(),
-    workflow_execution_id: z.string().nullable(),
-    workflow_origin_conversation_id: z.string().nullable(),
-    workflow_deep_link: z.string().nullable(),
     created_at: z.string(),
   }),
   "notificationRowSchema",
@@ -149,20 +143,6 @@ function parseSpecNotificationOrFail(
   identifier: string | undefined,
 ): SpecNotification {
   const result = specNotificationSchema.safeParse(candidate);
-  if (!result.success) {
-    return logAndThrowNotificationValidationFailure(
-      identifier,
-      result.error.issues,
-    );
-  }
-  return result.data;
-}
-
-function parseWorkflowNotificationOrFail(
-  candidate: unknown,
-  identifier: string | undefined,
-): WorkflowNotification {
-  const result = workflowNotificationSchema.safeParse(candidate);
   if (!result.success) {
     return logAndThrowNotificationValidationFailure(
       identifier,
@@ -279,11 +259,6 @@ function rowToNotification(rawRow: unknown): Notification {
     if (row.spec_approval_id !== null) {
       candidate.approvalId = row.spec_approval_id;
     }
-  } else {
-    candidate.sessionName = row.session_name;
-    candidate.executionId = row.workflow_execution_id;
-    candidate.originConversationId = row.workflow_origin_conversation_id;
-    candidate.deepLink = row.workflow_deep_link;
   }
 
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
@@ -342,18 +317,6 @@ export interface CreateSpecNotificationInput {
   dedupeKey: string;
 }
 
-export interface CreateWorkflowNotificationInput {
-  type: WorkflowNotificationType;
-  title: string;
-  message: string;
-  projectName: string;
-  sessionName: string;
-  executionId: string;
-  originConversationId: string;
-  deepLink: string;
-  dedupeKey: string;
-}
-
 export interface GetNotificationsOptions {
   unread?: boolean;
   limit?: number;
@@ -387,11 +350,6 @@ export interface CreateSpecNotificationResult {
   created: boolean;
 }
 
-export interface CreateWorkflowNotificationResult {
-  notification: WorkflowNotification;
-  created: boolean;
-}
-
 export interface NotificationsRepo {
   createJobNotification(input: CreateNotificationInput): JobNotification;
   createProjectConversationNotification(
@@ -400,12 +358,6 @@ export interface NotificationsRepo {
   createSpecNotification(
     input: CreateSpecNotificationInput,
   ): CreateSpecNotificationResult;
-  createWorkflowNotification(
-    input: CreateWorkflowNotificationInput,
-  ): CreateWorkflowNotificationResult;
-  createWorkflowNotificationInTransaction(
-    input: CreateWorkflowNotificationInput,
-  ): CreateWorkflowNotificationResult;
   /** All spec-source notifications for the spec, oldest first. */
   findSpecNotificationsBySpecId(specId: string): SpecNotification[];
   getNotifications(options?: GetNotificationsOptions): PaginatedNotifications;
@@ -460,25 +412,6 @@ export function createNotificationsRepo(db: Db): NotificationsRepo {
       {
         code: "invalid_source",
         message: "Expected spec notification for dedupe key",
-      },
-    ]);
-  }
-
-  function getWorkflowNotificationByDedupeKey(
-    dedupeKey: string,
-  ): WorkflowNotification | undefined {
-    const row = db
-      .prepare(
-        "SELECT * FROM notifications WHERE source = 'workflow' AND dedupe_key = ?",
-      )
-      .get(dedupeKey) as unknown;
-    if (row === undefined) return undefined;
-    const notification = rowToNotification(row);
-    if (notification.source === "workflow") return notification;
-    return logAndThrowNotificationValidationFailure(notification.id, [
-      {
-        code: "invalid_source",
-        message: "Expected workflow notification for dedupe key",
       },
     ]);
   }
@@ -745,85 +678,10 @@ export function createNotificationsRepo(db: Db): NotificationsRepo {
     );
   }
 
-  function persistWorkflowNotification(
-    input: CreateWorkflowNotificationInput,
-  ): CreateWorkflowNotificationResult {
-    const existing = getWorkflowNotificationByDedupeKey(input.dedupeKey);
-    if (existing !== undefined) {
-      return { notification: existing, created: false };
-    }
-
-    const id = randomUUID();
-    const candidate = {
-      id,
-      source: "workflow" as const,
-      type: input.type,
-      title: input.title,
-      message: input.message,
-      read: false,
-      projectName: input.projectName,
-      sessionName: input.sessionName,
-      executionId: input.executionId,
-      originConversationId: input.originConversationId,
-      deepLink: input.deepLink,
-      createdAt: sqliteUtcNow(),
-    };
-    const validated = parseWorkflowNotificationOrFail(candidate, id);
-    const result = db
-      .prepare(
-        `INSERT OR IGNORE INTO notifications (
-               id, source, type, title, message, read, project_name,
-               session_name, dedupe_key, workflow_execution_id,
-               workflow_origin_conversation_id, workflow_deep_link, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        validated.id,
-        validated.source,
-        validated.type,
-        validated.title,
-        validated.message,
-        validated.read ? 1 : 0,
-        validated.projectName,
-        validated.sessionName,
-        input.dedupeKey,
-        validated.executionId,
-        validated.originConversationId,
-        validated.deepLink,
-        validated.createdAt,
-      );
-
-    if (result.changes === 0) {
-      const duplicate = getWorkflowNotificationByDedupeKey(input.dedupeKey);
-      if (duplicate !== undefined) {
-        return { notification: duplicate, created: false };
-      }
-    }
-
-    return { notification: validated, created: true };
-  }
-
-  function createWorkflowNotification(
-    input: CreateWorkflowNotificationInput,
-  ): CreateWorkflowNotificationResult {
-    return timedSync(
-      notificationLogger,
-      "state-db.createWorkflowNotification",
-      {
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        executionId: input.executionId,
-      },
-      () => persistWorkflowNotification(input),
-    );
-  }
-
   return {
     createJobNotification,
     createProjectConversationNotification,
     createSpecNotification,
-    createWorkflowNotification,
-    createWorkflowNotificationInTransaction: persistWorkflowNotification,
     findSpecNotificationsBySpecId,
 
     getNotifications(options: GetNotificationsOptions = {}) {

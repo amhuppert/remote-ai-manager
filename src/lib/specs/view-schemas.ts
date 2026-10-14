@@ -1,19 +1,6 @@
-import { planReviewAdvisorySchema } from "@/lib/workflows/plan-review/status-schemas";
-import { deliveryReadinessSchema } from "./delivery-review-schemas";
 import { z } from "zod";
-
-import {
-  graphWorkflowExecutionOriginSchema,
-  graphWorkflowStatusSchema,
-} from "@/lib/workflow-graph/spec-bridge";
 import { revisionDiffResultSchema } from "./revision-diff";
-import { executionScopeSchema } from "./scope-validation";
-import {
-  deliveryDisplaySchema,
-  requirementStatusSchema,
-  specPhaseProjectionSchema,
-  taskWorkStatusSchema,
-} from "./phase";
+import { requirementStatusSchema, specPhaseProjectionSchema } from "./phase";
 import {
   specAssumptionViewSchema,
   specElementGetResponseSchema,
@@ -22,7 +9,6 @@ import {
 } from "./reference-view-schemas";
 import {
   actorProvenanceSchema,
-  deliveryPlanAttemptStatusSchema,
   evidenceKindSchema,
   resolvedGateDialSchema,
   specAliasSchema,
@@ -30,13 +16,7 @@ import {
   specAssumptionDispositionSchema,
   specAuthoringStageSchema,
   specCommentResolutionSchema,
-  specCriterionDispositionRowSchema,
-  specDeliveryVerdictRowSchema,
   specElementKindSchema,
-  specExecutionCleanupPhaseSchema,
-  specExecutionStateSchema,
-  specDeliveryBasisSchema,
-  specWorkflowLaneStatusSchema,
   specGateAdmissionRowSchema,
   specGatePolicySchema,
   specGatePresetSchema,
@@ -51,7 +31,6 @@ import {
   specRevisionSnapshotSchema,
   specRevisionStateSchema,
   specSchema,
-  specWaiverRowSchema,
   sectionRoleSchema,
 } from "./schemas";
 
@@ -87,14 +66,6 @@ export type SpecRevisionSnapshotView = z.infer<
   typeof specRevisionSnapshotViewSchema
 >;
 
-const specCoverageSchema = z
-  .object({
-    coveredCriteria: z.number().int().nonnegative(),
-    totalCriteria: z.number().int().nonnegative(),
-    percentage: z.number().int().min(0).max(100),
-  })
-  .strict();
-
 /**
  * One admission row as the projection reports it. Whether it satisfies
  * anything is said by the list it appears in — `currentAdmissions` or
@@ -105,7 +76,6 @@ const specGatePriorAdmissionSchema = z
   .object({
     revisionId: z.string().min(1),
     revisionNumber: z.number().int().positive(),
-    executionId: z.string().min(1).nullable(),
     basis: specGateAdmissionRowSchema.shape.basis,
     actor: actorProvenanceSchema.nullable(),
     admittedAt: z.string().min(1),
@@ -359,30 +329,6 @@ const draftHealthTierSchema = z
   .strict();
 
 /**
- * The runs behind the phase, reconciled at read time. `phase: executing`
- * collapses every run into one word, so state and workflow linkage are what
- * let a reader tell a parked graph review from a launched lane — and
- * they are the only fields that make a parked run diagnosable without a
- * second full detail read.
- */
-const specStatusExecutionSchema = z
-  .object({
-    id: z.string().min(1),
-    state: specExecutionStateSchema,
-    workflowSeedSource: graphWorkflowExecutionOriginSchema.nullable(),
-    workflowExecutionId: z.string().min(1).nullable(),
-    deliveryBasis: specDeliveryBasisSchema.optional(),
-    /**
-     * The linked lane's live status at read time. A `running` spec execution
-     * whose lane already completed is waiting on the session's delivering
-     * merge, not working — this is the only field that shows the difference.
-     */
-    workflowStatus: specWorkflowLaneStatusSchema.nullable(),
-  })
-  .strict();
-export type SpecStatusExecution = z.infer<typeof specStatusExecutionSchema>;
-
-/**
  * One remaining authoring stage and the gate that concludes it (R25.5).
  * `concludedBy` is `advance` only where the stage's dial admits the transition
  * without review — every other stage ends this draft with the sign-off its
@@ -549,77 +495,6 @@ export const specProjectSearchViewSchema = z
   })
   .strict();
 
-/** The current attempt's server-computed delivery standing for one criterion. */
-export const criterionDeliveryProjectionSchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    handle: z.string().min(1),
-    deliveryState: z.enum([
-      "delivered",
-      "waived",
-      "delivered_elsewhere",
-      "verdict_recorded",
-      "awaiting_outcome",
-    ]),
-    verdict: specDeliveryVerdictRowSchema.nullable(),
-  })
-  .strict();
-export type CriterionDeliveryProjection = z.infer<
-  typeof criterionDeliveryProjectionSchema
->;
-
-/**
- * A run in the domain shape the rest of this surface speaks: camelCase, the
- * scope column parsed into the object it holds, and the revision's number
- * alongside its internal id.
- *
- * `state`, `workflowSeedSource` and `workflowExecutionId` are load-bearing,
- * not decoration: they identify the immutable launch bound to the run and
- * separate a parked graph review from a launched lane.
- */
-export const specExecutionViewSchema = z
-  .object({
-    id: z.string().min(1),
-    specId: z.string().min(1),
-    revisionId: z.string().min(1),
-    revisionNumber: z.number().int().positive().nullable(),
-    state: specExecutionStateSchema,
-    workflowSeedSource: graphWorkflowExecutionOriginSchema.nullable(),
-    workflowExecutionId: z.string().min(1).nullable(),
-    deliveryBasis: specDeliveryBasisSchema.optional(),
-    /**
-     * Null when the stored scope does not parse. A row written by an older
-     * build must not 500 the read, and an empty scope would be a different
-     * claim than "the scope could not be read".
-     */
-    scope: executionScopeSchema.nullable(),
-    sessionName: z.string().nullable(),
-    deliveredAt: z.string().nullable(),
-    abandonedReason: z.string().nullable(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-    // Required, deliberately no default: a fixture or producer that omits the
-    // projection must fail the schema guard loudly rather than render an
-    // empty merge gate that silently agrees with a stale server.
-    deliveryProjection: z.array(criterionDeliveryProjectionSchema),
-  })
-  .strict();
-export type SpecExecutionView = z.infer<typeof specExecutionViewSchema>;
-
-/**
- * The `start-execution` receipt: the freshly created run in the same domain
- * shape the read path projects, minus the delivery projection (a merge-gate
- * concern the just-started run has no standing for yet). Returning the raw
- * persistence row here is what made `spec start` the one mutation whose
- * response an agent had to read with snake_case keys.
- */
-export const specStartedExecutionViewSchema = specExecutionViewSchema.omit({
-  deliveryProjection: true,
-});
-export type SpecStartedExecutionView = z.infer<
-  typeof specStartedExecutionViewSchema
->;
-
 /**
  * A gate admission in the domain shape: camelCase, actor provenance parsed
  * into the object it holds, and the revision's number alongside its id. It
@@ -634,7 +509,6 @@ export const specGateAdmissionViewSchema = z
     approvalId: z.string().min(1).nullable(),
     revisionId: z.string().min(1).nullable(),
     revisionNumber: z.number().int().positive().nullable(),
-    executionId: z.string().min(1).nullable(),
     actor: actorProvenanceSchema.nullable(),
     createdAt: z.string().min(1),
   })
@@ -690,46 +564,13 @@ export const specEditContextViewSchema = z
   .strict();
 export type SpecEditContextView = z.infer<typeof specEditContextViewSchema>;
 
-export const deliveryPlanNextActSchema = z
-  .object({
-    actor: z.enum(["agent", "human"]),
-    command: z.string().min(1),
-    reason: z.string().min(1),
-  })
-  .strict();
-export type DeliveryPlanNextAct = z.infer<typeof deliveryPlanNextActSchema>;
-
-export const specDeliveryPlanStatusSchema = z
-  .object({
-    attemptId: z.string().min(1),
-    status: deliveryPlanAttemptStatusSchema,
-    pinnedRevisionId: z.string().min(1),
-    draftRevision: z.number().int().positive(),
-    workflowDefinition: z
-      .object({
-        id: z.string().min(1),
-        revision: z.number().int().positive(),
-        builderHref: z.string().min(1),
-      })
-      .strict(),
-    nextAct: deliveryPlanNextActSchema,
-    reviewStatus: planReviewAdvisorySchema,
-  })
-  .strict();
-export type SpecDeliveryPlanStatus = z.infer<
-  typeof specDeliveryPlanStatusSchema
->;
-
 export const specStatusViewSchema = z
   .object({
     specId: z.string().min(1),
     currentRevision: specEditContextViewSchema.shape.currentRevision,
-    // The status endpoint includes the live plan; embedded detail omits it.
-    deliveryPlan: specDeliveryPlanStatusSchema.nullable().optional(),
     reviewHref: z.string().min(1).optional(),
     slug: z.string().min(1),
     phase: specPhaseProjectionSchema,
-    executions: z.array(specStatusExecutionSchema).default([]),
     gates: z.array(specGateStatusSchema),
     // Null exactly when no draft is open; defaulted so payloads written before
     // this field still satisfy the strict parse.
@@ -778,9 +619,6 @@ export const specStatusViewSchema = z
     // Null exactly when the spec carries no revision to lint. Defaulted so a
     // payload written before this field still satisfies the strict parse.
     draftHealth: draftHealthTierSchema.nullable().default(null),
-    coverage: specCoverageSchema,
-    delivery: deliveryDisplaySchema,
-    deliveryReadiness: deliveryReadinessSchema.nullable().optional(),
     /**
      * Whether this spec entered the system by import, derived server-side from
      * the `import`-basis gate admissions on the current approved revision's
@@ -820,19 +658,11 @@ const specOutlineElementIdentitySchema = z
   })
   .strict();
 
-const specOutlineCriterionStatusSchema = z
-  .object({
-    coverage: z.enum(["covered", "uncovered"]),
-    proof: z.enum(["pending", "proven", "waived", "delivered_externally"]),
-  })
-  .strict();
-
 export const specOutlineCriterionViewSchema = specOutlineElementIdentitySchema
   .extend({
     validationKinds: z
       .array(evidenceKindSchema)
       .max(evidenceKindSchema.options.length),
-    status: specOutlineCriterionStatusSchema,
   })
   .strict();
 
@@ -859,9 +689,7 @@ export const specOutlineDecisionViewSchema = specOutlineElementIdentitySchema
   .strict();
 
 export const specOutlineTaskViewSchema = specOutlineElementIdentitySchema
-  .extend({
-    status: taskWorkStatusSchema,
-  })
+  .extend({})
   .strict();
 
 /**
@@ -1065,12 +893,8 @@ export const specDetailViewSchema = z
     baseRevision: specRevisionSnapshotViewSchema.nullable(),
     currentRevision: specRevisionSnapshotViewSchema.nullable(),
     currentApprovedRevision: specRevisionSnapshotViewSchema.nullable(),
-    executionRevisionSnapshots: z.array(specRevisionSnapshotViewSchema),
     approvals: z.array(specApprovalRowSchema),
     comments: z.array(specCommentViewSchema),
-    executions: z.array(specExecutionViewSchema),
-    criterionDispositions: z.array(specCriterionDispositionRowSchema),
-    waivers: z.array(specWaiverRowSchema),
     // Admissions recorded against the executions' revisions, so the UI can
     // present gated actions honestly (granted vs still blocking).
     gateAdmissions: z.array(specGateAdmissionViewSchema).default([]),
@@ -1081,14 +905,6 @@ export const specDetailViewSchema = z
             .object({
               elementId: z.string().min(1),
               status: requirementStatusSchema,
-            })
-            .strict(),
-        ),
-        tasks: z.array(
-          z
-            .object({
-              elementId: z.string().min(1),
-              status: taskWorkStatusSchema,
             })
             .strict(),
         ),
@@ -1246,47 +1062,7 @@ const integrityMismatchSchema = z
   })
   .strict();
 
-/**
- * The one consistency-finding shape `cctl spec verify` reports (design §9).
- *
- * Content hashes answer "was this spec's approved text tampered with"; they
- * cannot answer "did an act this spec started ever finish". Unfinished acts —
- * a cleanup the abandon coordinator never completed — land in this ONE
- * discriminated union so a reader, the CLI renderer, and Studio consume a
- * single report rather than a second parallel section per family.
- *
- * Every member carries `remedy`: the exact act that disposes of the finding,
- * with its target id, so a report never states a problem without its exit.
- */
-const executionLifecycleFindingSchema = z
-  .object({
-    family: z.literal("execution-lifecycle"),
-    code: z.enum([
-      /** A durable `abandoning` row: the coordinator stopped mid-cleanup. */
-      "abandon_cleanup_unfinished",
-      /**
-       * `abandoned`, yet the linked run is still live or still owns the
-       * session's slot — the pre-coordinator orphan shape. No coordinator
-       * re-entry exists from `abandoned`, so its remedy is workflow-side.
-       */
-      "abandoned_execution_workflow_unreleased",
-    ]),
-    specExecutionId: z.string().min(1),
-    /** The coordinator's reached phase; null outside `abandoning`. */
-    cleanupPhase: specExecutionCleanupPhaseSchema.nullable(),
-    workflowExecutionId: z.string().min(1).nullable(),
-    deliveryBasis: specDeliveryBasisSchema.optional(),
-    workflowStatus: graphWorkflowStatusSchema.nullable(),
-    /** Whether the linked run still holds the session's execution slot. */
-    ownsExecutionSlot: z.boolean(),
-    detail: z.string().min(1),
-    remedy: z.string().min(1),
-  })
-  .strict();
-
-export const specConsistencyFindingSchema = z.discriminatedUnion("family", [
-  executionLifecycleFindingSchema,
-]);
+export const specConsistencyFindingSchema = z.never();
 export type SpecConsistencyFinding = z.infer<
   typeof specConsistencyFindingSchema
 >;

@@ -124,47 +124,6 @@ function AgentGlyph(): React.JSX.Element {
   );
 }
 
-function WorkflowGlyph(): React.JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <circle
-        cx="3.5"
-        cy="3.5"
-        r="2.1"
-        stroke="currentColor"
-        strokeWidth="1.2"
-      />
-      <circle
-        cx="12.5"
-        cy="3.5"
-        r="2.1"
-        stroke="currentColor"
-        strokeWidth="1.2"
-      />
-      <circle
-        cx="8"
-        cy="12.5"
-        r="2.1"
-        stroke="currentColor"
-        strokeWidth="1.2"
-      />
-      <path
-        d="M5 4.5 L11 4.5 M4.5 5.2 L7.4 11 M11.5 5.2 L8.6 11"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 export default function ProjectDetailView({
   projectName,
   defaultAgentBackend,
@@ -238,16 +197,13 @@ export default function ProjectDetailView({
   }, [deleteTarget, deleteMutation, cancelDelete]);
 
   const handleRunCommand = useCallback(
-    (id: "new" | "capabilities" | "workflow-builder") => {
+    (id: "new" | "capabilities") => {
       switch (id) {
         case "new":
           openCreateModal();
           break;
         case "capabilities":
           setCapabilitiesOpen(true);
-          break;
-        case "workflow-builder":
-          router.push(`/projects/${encodeURIComponent(projectName)}/workflows`);
           break;
       }
     },
@@ -401,14 +357,7 @@ export default function ProjectDetailView({
                       </span>
                     )}
                   </Link>
-                  <Link
-                    href={`/projects/${encodeURIComponent(projectName)}/workflows`}
-                    className={CC_IBTN_LINK_CLASS}
-                    title="Open the Workflow Builder"
-                  >
-                    <WorkflowGlyph />
-                    Workflows
-                  </Link>
+
                   <Link
                     href={`/projects/${encodeURIComponent(projectName)}/agents`}
                     className={CC_IBTN_LINK_CLASS}

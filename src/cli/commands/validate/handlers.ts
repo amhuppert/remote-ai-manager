@@ -316,12 +316,6 @@ export const runHandler: Write<typeof validateRunSpec> = {
         ...(app.env["CC_VALIDATION_RUN_ID"]
           ? { nestedValidationRunId: app.env["CC_VALIDATION_RUN_ID"] }
           : {}),
-        ...(app.env["CC_WORKFLOW_EXECUTION_ID"] !== undefined
-          ? { workflowExecutionId: app.env["CC_WORKFLOW_EXECUTION_ID"] }
-          : {}),
-        ...(app.env["CC_WORKFLOW_CONTEXT_ID"] !== undefined
-          ? { workflowContextId: app.env["CC_WORKFLOW_CONTEXT_ID"] }
-          : {}),
       });
       if (!body.success)
         return {

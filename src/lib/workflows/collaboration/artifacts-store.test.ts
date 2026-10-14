@@ -21,12 +21,9 @@ import {
   readCollaborationArtifacts,
 } from "./artifacts-store";
 import { collaborationArtifactSchema } from "./types";
-import { collaborationWorkflowArtifactEntrySchema } from "./feature-snapshot";
 import type { CollaborationArtifact } from "./types";
-import type { CollaborationWorkflowArtifactEntry } from "./feature-snapshot";
 import {
   makeAgentOneInitialDraft,
-  makeAgentOneProposedChanges,
   makeFinalAnswer,
   makeOpenConflicts,
 } from "./test-fixtures";
@@ -176,29 +173,5 @@ describe("collaboration artifacts sidecar store", () => {
     expect(result.parseFailures.map((f) => f.lineIndex)).toEqual([2]);
     expect(result.invalidLines.map((l) => l.lineIndex)).toEqual([3]);
     expect(result.invalidLines[0]!.issues).toContain("agent");
-  });
-
-  it("round-trips workflow-path entries through their wrapper schema", async () => {
-    const entry: CollaborationWorkflowArtifactEntry = {
-      kind: "proposed_changes",
-      agent: "agent_one",
-      round: 2,
-      value: makeAgentOneProposedChanges({
-        round: 2,
-        summary: "n",
-        accepted_from_other_agent_draft: [],
-        proposed_changes: [],
-        remaining_disagreements: [],
-      }),
-    };
-    await appendCollaborationArtifact("wf-wrap", entry, configDir);
-
-    const read = await readCollaborationArtifacts(
-      "wf-wrap",
-      collaborationWorkflowArtifactEntrySchema,
-      configDir,
-    );
-
-    expect(read).toEqual([entry]);
   });
 });

@@ -35,22 +35,8 @@ export const validationSubmitBodySchema = z
      * capacity while waiting for capacity).
      */
     nestedValidationRunId: z.string().trim().min(1).optional(),
-    // Claimed lane identity from CC_WORKFLOW_EXECUTION_ID/CONTEXT_ID. Never
-    // authoritative — the server cross-checks it against graph state and
-    // fails closed on any mismatch. Both travel together or not at all.
-    workflowExecutionId: z.string().trim().min(1).optional(),
-    workflowContextId: z.string().trim().min(1).optional(),
   })
-  .strict()
-  .refine(
-    (body) =>
-      (body.workflowExecutionId === undefined) ===
-      (body.workflowContextId === undefined),
-    {
-      message:
-        "workflowExecutionId and workflowContextId must be supplied together",
-    },
-  );
+  .strict();
 
 // Accepted submissions answer 202 (the work is initiated, never awaited);
 // pre-admission refusals (`not_started`) answer 200 with the foundation

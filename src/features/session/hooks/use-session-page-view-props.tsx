@@ -113,7 +113,6 @@ export function useSessionPageViewProps(
     },
     promptInputSlotProps: {
       isWorkflowManagedConversation: identity.isWorkflowManagedConversation,
-      approvalGate: prompt.approvalGate,
       pendingQuestions: store.pendingQuestions,
       pendingQuestionId: store.pendingQuestionId,
       currentQuestionIndex: store.currentQuestionIndex,

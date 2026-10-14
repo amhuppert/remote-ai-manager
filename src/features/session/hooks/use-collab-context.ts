@@ -4,7 +4,7 @@ import { useCallback, useMemo } from "react";
 import {
   useCollaborationStopMutation,
   useCollaborationResumeMutation,
-} from "@/lib/workflows/mutations";
+} from "@/lib/collaboration/mutations";
 import { useReferenceDocumentsQuery } from "@/lib/reference-documents/queries";
 import {
   useCollabConfigDraft,

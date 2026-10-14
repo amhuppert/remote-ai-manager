@@ -5,16 +5,8 @@ import type { SubscriptionRecipient } from "@/lib/subscriptions/schemas";
 type Db = InstanceType<typeof Database>;
 const sourceLinkSchema = z.object({ id: z.string(), occurredAt: z.string() });
 const specLinkSchema = z.object({ id: z.string(), eventId: z.number().int() });
-const workflowAddressSchema = z.object({
-  projectPath: z.string(),
-  sessionName: z.string(),
-});
-const sourceIdSchema = z.object({ id: z.string() });
 
 export interface SubscriptionSourceQueriesRepo {
-  findWorkflowAddress(
-    executionId: string,
-  ): z.infer<typeof workflowAddressSchema> | null;
   findTicketInvolvement(
     recipient: SubscriptionRecipient,
     sessionName: string | null,
@@ -22,22 +14,12 @@ export interface SubscriptionSourceQueriesRepo {
   findSpecInvolvement(
     recipient: SubscriptionRecipient,
   ): z.infer<typeof specLinkSchema>[];
-  findWorkflowInvolvement(recipient: SubscriptionRecipient): string[];
-  firstOutstandingWorkflowBoundary(
-    recipient: SubscriptionRecipient,
-    executionId: string,
-  ): number | null;
 }
 
 /** Reverse lookups over canonical domain records; this repository owns no source state. */
 export function createSubscriptionSourceQueriesRepo(
   db: Db,
 ): SubscriptionSourceQueriesRepo {
-  const workflowAddress = db.prepare(`
-    SELECT project_path AS projectPath, session_name AS sessionName FROM graph_workflow_executions WHERE execution_id = ?
-    UNION ALL
-    SELECT project_path AS projectPath, session_name AS sessionName FROM graph_workflow_archived_executions WHERE execution_id = ?
-    LIMIT 1`);
   const ticketLinks = db.prepare(`
     SELECT id, MIN(occurredAt) AS occurredAt FROM (
       SELECT t.id, a.created_at AS occurredAt FROM ticket_attachments a JOIN tickets t ON t.id = a.ticket_id
@@ -55,31 +37,7 @@ export function createSubscriptionSourceQueriesRepo(
       AND json_extract(e.actor_json, '$.conversationId') = @conversationId
       AND e.event_type <> 'spec-intervention-recorded'
     GROUP BY s.id`);
-  const workflowLinks = db.prepare(`
-    SELECT execution_id AS id FROM graph_workflow_executions WHERE project_path = @projectPath AND json_extract(definition_json, '$.ownerConversationId') = @conversationId
-    UNION
-    SELECT execution_id AS id FROM graph_workflow_archived_executions WHERE project_path = @projectPath AND json_extract(execution_json, '$.ownerConversationId') = @conversationId`);
-  const firstOutstanding = db.prepare(`
-    SELECT MIN(r.boundary_seq) AS boundary FROM graph_workflow_result_deliveries r
-    WHERE r.project_path = @projectPath AND r.origin_conversation_id = @conversationId
-      AND r.execution_id = @executionId AND r.delivery_state = 'pending'
-      AND NOT EXISTS (
-        SELECT 1 FROM conversation_subscription_deliveries d
-        WHERE d.project_path = r.project_path AND d.conversation_id = r.origin_conversation_id
-          AND d.source_kind = 'workflow' AND d.source_id = r.execution_id
-          AND d.occurrence_id = CAST(r.boundary_seq AS TEXT)
-          AND d.state IN ('accepted', 'superseded')
-      )`);
   return {
-    firstOutstandingWorkflowBoundary(recipient, executionId) {
-      return z
-        .object({ boundary: z.number().int().nullable() })
-        .parse(firstOutstanding.get({ ...recipient, executionId })).boundary;
-    },
-    findWorkflowAddress(executionId) {
-      const row: unknown = workflowAddress.get(executionId, executionId);
-      return row === undefined ? null : workflowAddressSchema.parse(row);
-    },
     findTicketInvolvement(recipient, sessionName) {
       return z
         .array(sourceLinkSchema)
@@ -87,12 +45,6 @@ export function createSubscriptionSourceQueriesRepo(
     },
     findSpecInvolvement(recipient) {
       return z.array(specLinkSchema).parse(specLinks.all(recipient));
-    },
-    findWorkflowInvolvement(recipient) {
-      return z
-        .array(sourceIdSchema)
-        .parse(workflowLinks.all(recipient))
-        .map((row) => row.id);
     },
   };
 }

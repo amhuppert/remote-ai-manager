@@ -151,7 +151,6 @@ const makeSessions = (count: number): SessionListItem[] =>
     promptCount: i * 3,
     derivedLastActivityAt: now,
     collabContribution: null,
-    hasActiveGraphWorkflow: false,
   }));
 
 const makeProjectConversation = (

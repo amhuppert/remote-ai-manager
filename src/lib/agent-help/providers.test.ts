@@ -7,15 +7,12 @@
  * service logs + omits — see service.test.ts) per engineering-principles.
  */
 import { describe, expect, it } from "vitest";
-
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type { DevServerStatusItem } from "@/lib/dev-server/service";
 
 import {
   createConversationProvider,
   createDevProvider,
   createFixtureProvider,
-  createWorkflowProvider,
   type ConversationArtifactSummary,
   type HelpContextRequest,
 } from "./providers";
@@ -155,95 +152,6 @@ describe("fixture provider", () => {
       },
     });
     await expect(provider.provide(BASE)).rejects.toThrow("boom");
-  });
-});
-
-describe("workflow provider", () => {
-  const laneRequest: HelpContextRequest = {
-    command: ["workflow", "task", "complete"],
-    project: "repo",
-    session: "sess",
-    executionId: "execution-1",
-    contextId: "context-implement",
-  };
-
-  it("summarizes lane identity, tasks, and the iteration budget", async () => {
-    const execution = createWorkflowExecution();
-    execution.taskStates["task-implement-1"]!.status = "running";
-    execution.contextStates["context-implement"]!.iterationCount = 2;
-    execution.contextStates["context-implement"]!.totalTaskCount = 3;
-    execution.contextStates["context-implement"]!.completedTaskCount = 1;
-
-    const provider = createWorkflowProvider({
-      resolveProjectPath: async () => "/p",
-      getActiveGraphWorkflowExecution: async () => execution,
-    });
-
-    expect(await provider.provide(laneRequest)).toEqual([
-      {
-        title: "workflow lane",
-        body: [
-          "lane: Implement",
-          "current task: Write code",
-          "remaining tasks: 2",
-          "iterations: 2 of 3 before the circuit breaker halts",
-          "lane-only verbs: cctl workflow task complete/add, shared-doc upsert, collab request",
-        ].join("\n"),
-      },
-    ]);
-  });
-
-  it("reports 'none in progress' when no task is running", async () => {
-    const execution = createWorkflowExecution();
-    const provider = createWorkflowProvider({
-      resolveProjectPath: async () => "/p",
-      getActiveGraphWorkflowExecution: async () => execution,
-    });
-    const [block] = await provider.provide(laneRequest);
-    expect(block?.body).toContain("current task: none in progress");
-  });
-
-  it("returns [] outside a lane (executionId/contextId absent)", async () => {
-    const provider = createWorkflowProvider({
-      resolveProjectPath: async () => "/p",
-      getActiveGraphWorkflowExecution: async () => createWorkflowExecution(),
-    });
-    expect(
-      await provider.provide({
-        command: ["workflow", "create"],
-        project: "repo",
-        session: "sess",
-      }),
-    ).toEqual([]);
-  });
-
-  it("returns [] when the active execution id does not match the lane", async () => {
-    const execution = createWorkflowExecution({ id: "other-execution" });
-    const provider = createWorkflowProvider({
-      resolveProjectPath: async () => "/p",
-      getActiveGraphWorkflowExecution: async () => execution,
-    });
-    expect(await provider.provide(laneRequest)).toEqual([]);
-  });
-
-  it("returns [] when there is no active execution", async () => {
-    const provider = createWorkflowProvider({
-      resolveProjectPath: async () => "/p",
-      getActiveGraphWorkflowExecution: async () => null,
-    });
-    expect(await provider.provide(laneRequest)).toEqual([]);
-  });
-
-  it("propagates a dependency failure", async () => {
-    const provider = createWorkflowProvider({
-      resolveProjectPath: async () => "/p",
-      getActiveGraphWorkflowExecution: async () => {
-        throw new Error("state read failed");
-      },
-    });
-    await expect(provider.provide(laneRequest)).rejects.toThrow(
-      "state read failed",
-    );
   });
 });
 

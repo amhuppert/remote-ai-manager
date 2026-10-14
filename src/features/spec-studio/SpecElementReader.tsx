@@ -30,8 +30,6 @@ type SnapshotElement = Snapshot["elements"][number];
 type ApprovalValidity = SpecDetailView["approvals"][number]["validity"];
 type RequirementStatus =
   SpecDetailView["elementStatuses"]["requirements"][number]["status"];
-type TaskStatus =
-  SpecDetailView["elementStatuses"]["tasks"][number]["status"]["status"];
 
 interface ChipPresentation {
   label: string;
@@ -54,14 +52,6 @@ const REVISION_PRESENTATION: Record<
   draft: { label: "Draft", tone: "neutral" },
   approved: { label: "Approved", tone: "green" },
   withdrawn: { label: "Withdrawn", tone: "neutral" },
-};
-
-const TASK_STATUS_PRESENTATION: Record<TaskStatus, ChipPresentation> = {
-  pending: { label: "Pending", tone: "neutral" },
-  running: { label: "Running", tone: "cyan" },
-  interrupted: { label: "Interrupted", tone: "amber" },
-  completed: { label: "Completed", tone: "green" },
-  failed: { label: "Failed", tone: "red" },
 };
 
 const APPROVAL_PRESENTATION: Record<
@@ -92,7 +82,8 @@ export function SpecElementReader({
     slug: detail.spec.slug,
     revision:
       detail.currentRevision !== null &&
-      detail.currentRevision.revision.state === "draft"
+      detail.currentRevision.revision.state === "draft" &&
+      detail.currentRevision.revision.authoringStage !== "plan"
         ? detail.currentRevision
         : null,
   });
@@ -778,7 +769,6 @@ function DecisionDocument({
 }
 
 function TaskDocument({
-  detail,
   snapshot,
   tasks,
   readerId,
@@ -797,13 +787,6 @@ function TaskDocument({
         const payload = entry.version.payload;
         const handle = handleFor(entry, snapshot);
         const headingId = `${readerId}-task-${index}`;
-        const statusValue = detail.elementStatuses.tasks.find(
-          (candidate) => candidate.elementId === entry.element.id,
-        )?.status.status;
-        const status =
-          statusValue === undefined
-            ? TASK_STATUS_PRESENTATION.pending
-            : TASK_STATUS_PRESENTATION[statusValue];
         const dependencies = elementHandles(
           payload.dependsOnTaskElementIds,
           snapshot,
@@ -874,9 +857,7 @@ function TaskDocument({
                   {textOrDash(payload.title)}
                 </span>
               </h3>
-              <div className="flex flex-wrap items-center gap-sm">
-                <StatusChip tone={status.tone}>{status.label}</StatusChip>
-              </div>
+              <div className="flex flex-wrap items-center gap-sm"></div>
               <RemoveElementAction
                 removal={removal}
                 kindLabel="task"
@@ -1063,33 +1044,9 @@ function requirementApprovalPresentation(
 }
 
 function requirementProofPresentation(
-  status: RequirementStatus | undefined,
+  _status: RequirementStatus | undefined,
 ): ChipPresentation {
-  switch (status?.proof) {
-    case "proven":
-      return { label: "Proven", tone: "green" };
-    case "waived":
-      return { label: "Waived", tone: "amber" };
-    case "proven_and_waived":
-      return { label: "Proven + waived", tone: "green" };
-    // Neutral rather than green: the requirement is settled, but on an import's
-    // testimony, and green is this system's success tone for work it saw
-    // merged.
-    case "delivered_externally":
-      return { label: "Delivered externally", tone: "neutral" };
-    case "partial":
-      return { label: "Proof partial", tone: "amber" };
-    case "pending":
-      if (status.coverage === "covered") {
-        return { label: "Covered", tone: "green" };
-      }
-      if (status.coverage === "partial") {
-        return { label: "Partially covered", tone: "amber" };
-      }
-      return { label: "Uncovered", tone: "amber" };
-    case undefined:
-      return { label: "Not assessed", tone: "neutral" };
-  }
+  return { label: "Defined", tone: "neutral" };
 }
 
 function decisionStatusPresentation(

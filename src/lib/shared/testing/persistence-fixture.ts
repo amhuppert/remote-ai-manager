@@ -17,17 +17,11 @@ import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
-import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
-import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
-import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
 import { createProjectConversationsRepo } from "@/lib/state-store/project-conversations-repo";
 import { createProjectsRepo } from "@/lib/state-store/projects-repo";
 import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import type { ConversationsRepo } from "@/lib/state-store/conversations-repo";
-import type { GraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
-import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
-import type { GraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
 import type { ProjectsRepo } from "@/lib/state-store/projects-repo";
 import type { SessionsRepo } from "@/lib/state-store/sessions-repo";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
@@ -63,14 +57,6 @@ export interface PersistenceFixture {
   readonly db: Db;
   readonly store: StateStore;
   readonly deps: ConversationSeamDeps;
-  readonly graphWorkflowEvents: GraphWorkflowEventsRepo;
-  /**
-   * The ACTIVE graph-workflow execution repo. It keeps a parsed-row cache, so a
-   * test proving durability rather than memory must read back through a second
-   * `createGraphWorkflowExecutionsRepo(fixture.db)` — the post-restart reader.
-   */
-  readonly graphWorkflowExecutions: GraphWorkflowExecutionsRepo;
-  readonly graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   readonly specs: SpecsRepo;
   seedProject(rootPath: string): void;
   seedSession(
@@ -127,9 +113,6 @@ function buildStore(db: Db): StateStore {
       projects: createProjectsRepo(db),
       sessions: createSessionsRepo(db),
       conversations: createConversationsRepo(db),
-      graphWorkflowEvents: createGraphWorkflowEventsRepo(db),
-      graphWorkflowArchivedExecutions:
-        createGraphWorkflowArchivedExecutionsRepo(db),
       projectConversations: createProjectConversationsRepo(db),
     },
   });
@@ -157,18 +140,12 @@ export function createPersistenceFixture(options?: {
     projects: createProjectsRepo(db),
     sessions: createSessionsRepo(db),
     conversations: createConversationsRepo(db),
-    graphWorkflowEvents: createGraphWorkflowEventsRepo(db),
-    graphWorkflowArchivedExecutions:
-      createGraphWorkflowArchivedExecutionsRepo(db),
   } satisfies {
     projects: ProjectsRepo;
     sessions: SessionsRepo;
     conversations: ConversationsRepo;
-    graphWorkflowEvents: GraphWorkflowEventsRepo;
-    graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   };
   const specs = createSpecsRepo(db, writeQueue);
-  const graphWorkflowExecutions = createGraphWorkflowExecutionsRepo(db);
   const projectConversations = createProjectConversationsRepo(db);
 
   const store = createStateStore({
@@ -186,9 +163,6 @@ export function createPersistenceFixture(options?: {
     db,
     store,
     deps,
-    graphWorkflowEvents: repos.graphWorkflowEvents,
-    graphWorkflowExecutions,
-    graphWorkflowArchivedExecutions: repos.graphWorkflowArchivedExecutions,
     specs,
     seedProject(rootPath) {
       repos.projects.upsert({ rootPath });

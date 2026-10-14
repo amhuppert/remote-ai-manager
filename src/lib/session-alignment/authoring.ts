@@ -5,7 +5,7 @@
  * `draft_ready` for `/align` or `activated` for approved-decision
  * incorporation, while proposals persist for review.
  */
-import type { ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
+import type { RunningTurnDescription as ActiveConversationTurnDescription } from "@/lib/conversation-core/interactive-turns";
 import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 

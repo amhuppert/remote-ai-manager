@@ -8,7 +8,6 @@ import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { buildConversationContext } from "@/lib/conversations/copy-context";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
 
 interface AnswerMutation {
   mutateAsync: (input: {
@@ -83,11 +82,6 @@ export function useSessionHandlers({
   failPrompt,
   onOpenConversation,
 }: UseSessionHandlersArgs): SessionHandlers {
-  const graphWorkflowExecutionQuery = useGraphWorkflowExecutionQuery(
-    projectName,
-    sessionName,
-  );
-
   const handleAnswerSubmit = useCallback(
     async (questionId: string, answers: Record<string, AskQuestionAnswer>) => {
       try {
@@ -153,15 +147,8 @@ export function useSessionHandlers({
       sessionName,
       session,
       conversationId,
-      graphWorkflowExecution: graphWorkflowExecutionQuery.data ?? null,
     });
-  }, [
-    session,
-    conversationId,
-    projectName,
-    sessionName,
-    graphWorkflowExecutionQuery.data,
-  ]);
+  }, [session, conversationId, projectName, sessionName]);
 
   return { handleAnswerSubmit, handleDelete, handleFork, buildContext };
 }

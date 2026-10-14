@@ -10,7 +10,7 @@ export const devSpecs = {
     path: "dev list",
     summary: "Read development server status",
     description:
-      "Read current session or workflow-context servers, local URLs, errors, and log paths. Explicit project/session flags select the session target.",
+      "Read current session servers, local URLs, errors, and log paths. Explicit project/session flags select the session target.",
     requires: "cc",
     effects: "read",
     args: [],
@@ -29,8 +29,7 @@ export const devSpecs = {
   stop: {
     path: "dev stop",
     summary: "Stop an addressed development server",
-    description:
-      "Stop the named server in the current session or workflow context.",
+    description: "Stop the named server in the current session.",
     requires: "cc",
     effects: "write",
     args: [serverName],
@@ -82,6 +81,6 @@ export const devGroups = [
     path: "dev",
     summary: "Manage development servers",
     description:
-      "Development servers serve the invoking session or workflow context's worktree. A CC development instance owns separate state; use dev doctor to identify it.",
+      "Development servers serve the invoking session's worktree. A CC development instance owns separate state; use dev doctor to identify it.",
   }),
 ] as const;

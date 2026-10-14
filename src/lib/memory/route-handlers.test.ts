@@ -1,11 +1,11 @@
-import { runtimeConfigurationFixture } from "@/lib/workflows/conversation/testing/runtime-configuration-fixture";
+import { runtimeConfigurationFixture } from "@/lib/conversation-core/testing/runtime-configuration-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createAgentAuth } from "@/lib/agent-gateway/token";
-import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
+import { readNextTurnContextLoss } from "@/lib/memory/next-turn-context-loss";
 import type { PublishFn } from "@/lib/events/publication";
 import {
   createPersistenceFixture,
@@ -140,9 +140,6 @@ function buildHandlers(): MemoryRouteHandlers {
         async findLinkedTicketId() {
           return null;
         },
-        async findBoundSpecId() {
-          return null;
-        },
         async readBudget() {
           return {
             bytes: MEMORY_INDEX_BUDGET_DEFAULT_BYTES,
@@ -184,9 +181,6 @@ function buildHandlers(): MemoryRouteHandlers {
       return projectPath === PROJECT_PATH && sessionName === SESSION_NAME
         ? SESSION_CREATED_AT
         : null;
-    },
-    async findLaneBinding() {
-      return null;
     },
     readNextTurnContextLoss: (conversationId) =>
       contextLossReader === null

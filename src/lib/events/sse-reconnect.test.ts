@@ -5,7 +5,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { reconnectReconcile } from "./sse-reconnect";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
-import { collaborationKeys } from "../workflows/query-keys";
+import { collaborationKeys } from "../collaboration/query-keys";
 import { devServerKeys } from "../dev-server/query-keys";
 import { notificationKeys } from "../notifications/query-keys";
 import { sessionKeys } from "../sessions/query-keys";
@@ -130,7 +130,6 @@ describe("reconnectReconcile", () => {
     ]);
     client.setQueryData(conversationKeys.active(), {
       conversations: [],
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
     });
     client.setQueryData(collaborationKeys.list("proj", "sess-a"), []);

@@ -395,17 +395,16 @@ describe("createConversationCommandService eligible path", () => {
    * without the advisory pre-check the command pays for a generation turn and a
    * full merge pipeline before learning the answer.
    */
-  it("refuses /merge before any agent turn while a graph workflow holds the session lease", async () => {
+  it("refuses /merge before any agent turn while a run is current in the session", async () => {
     const deps = makeDeps({
       evaluateSessionMergeAdmission: vi.fn(async () => ({
         admitted: false as const,
         refusal: {
-          code: "GRAPH_WORKFLOW_ACTIVE" as const,
-          executionId: "execution-1",
-          status: "running" as const,
-          remedy: "inspect_or_pause" as const,
+          code: "RUN_CURRENT" as const,
+          runId: "run-1",
+          progress: "running" as const,
           message:
-            "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+            "Run run-1 is running. Let it finish before merging this session.",
         },
       })),
     });
@@ -420,7 +419,7 @@ describe("createConversationCommandService eligible path", () => {
     expect(deps.resolveMergeTarget).not.toHaveBeenCalled();
     expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
     expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.text).toContain(
-      "Complete or abort it before merging this session.",
+      "Let it finish before merging this session.",
     );
   });
 

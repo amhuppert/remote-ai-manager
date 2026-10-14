@@ -14,7 +14,6 @@ import {
   SSE_PUBLICATION_SANCTIONED,
   CROSS_FEATURE_ALLOWLIST,
   STATE_STORE_CONSTRUCTION_ALLOWLIST,
-  GRAPH_OWNERSHIP_ALLOWLIST,
 } from "./eslint-rules/seam-allowlists.mjs";
 
 // Surfaces migrated to Tailwind utilities (utility-first BY DESIGN). The Tailwind
@@ -103,7 +102,6 @@ const MIGRATED_UTILITY_FIRST = [
   "src/features/session/conversation/ConversationMentionChip.stories.tsx",
   "src/features/session/conversation/DocsPanel.tsx",
   "src/features/session/conversation/FileMentionChip.tsx",
-  "src/features/session/conversation/GraphWorkflowCard.tsx",
   "src/features/session/conversation/RightPane.tsx",
   "src/features/session/conversation/SpecBrowser.tsx",
   "src/features/session/conversation/SyntheticForkBadge.tsx",
@@ -120,7 +118,6 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/memory/**/*.{ts,tsx}",
   "src/features/memory/**/*.{ts,tsx}",
   "src/features/session/conversation/ConversationLinkChip.tsx",
-  "src/components/CollapsibleText.tsx",
   "src/components/MergeToast.tsx",
   "src/components/InputNeededToast.tsx",
   "src/components/PromptErrorToast.tsx",
@@ -145,9 +142,6 @@ const MIGRATED_UTILITY_FIRST = [
   // below, alongside the B-4 MobilePromptToolbar entry), but MobileBottomBar and
   // MobileSessionView.stories still consume the legacy .cc-tab/.mobile-bottom-bar
   // recipes (deferred graph-context) — they stay guarded, so NO dir glob here.
-  "src/features/workflows-builder/**/*.{ts,tsx}",
-  "src/features/session-workflow/**/*.{ts,tsx}",
-  "src/components/workflow-graph/**/*.{ts,tsx}",
   "src/features/session/mobile/MobileInfoPanel.tsx",
   "src/components/ToolUseGroup.tsx",
   "src/components/CommandIndicator.tsx",
@@ -175,8 +169,6 @@ const MIGRATED_UTILITY_FIRST = [
   // global-workflow-templates library + launch UI: authored utility-first against
   // the design system. Mirrors the .prettierrc class-sort override and the
   // tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
-  "src/components/WorkflowLaunchForm.tsx",
-  "src/features/workflow-templates/**/*.{ts,tsx}",
   // Conversation-compaction UI (context-artifact envelope viewer + inline
   // message viewer): authored utility-first against the design system. Mirrors
   // the .prettierrc class-sort override and the tailwind-utility-collisions
@@ -186,12 +178,10 @@ const MIGRATED_UTILITY_FIRST = [
   // field editors reused by the builder and the execution inspector. Mirrors the
   // .prettierrc class-sort override and the tailwind-utility-collisions
   // UTILITY_FIRST_PATHS allowlist.
-  "src/components/workflow-config/**/*.{ts,tsx}",
   // Lanes-first graph-workflow config panel: the host-aware configuration
   // editor mounted by the builder and the execution page, authored
   // utility-first against the design system. Mirrors the .prettierrc class-sort
   // override and the tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
-  "src/components/workflow-config-panel/**/*.{ts,tsx}",
   // Ticket-system UI: tickets feature + the promoted session indicator, authored
   // utility-first against the design system. Mirrors the .prettierrc class-sort
   // override and the tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
@@ -249,7 +239,6 @@ const MIGRATED_UTILITY_FIRST = [
 // are the Tailwind directive entry points, ignored by the css block below).
 const APPROVED_GLOBAL_CSS_AREAS = [
   "/features/_root/styles/", // foundation (tokens, reset, shell, typography, …)
-  "/components/workflow-graph/", // React Flow vendor stylesheet
 ];
 
 // Pre-existing legacy feature stylesheets, grandfathered as debt: they may keep
@@ -262,9 +251,7 @@ const GRANDFATHERED_LEGACY_CSS = [
   "/features/project-detail/composer/styles/composer.css",
   "/features/project-detail/styles/project-detail.css",
   "/features/session-diff/styles/session-diff.css",
-  "/features/session-workflow/styles/session-workflow.css",
   "/components/session/sidebar/styles/PeekPopover.css",
-  "/features/workflows-builder/styles/workflows-builder.css",
 ];
 
 // Whole-state escape hatches. `readState`/`mutateState`/`writeState` were
@@ -288,9 +275,7 @@ const WHOLE_STATE_ALLOWED = [];
 // allowlist so a domain module cannot reach the whole-state enumeration through
 // the startup module either — the loophole Design 2.3 exists to eliminate. A
 // new startup consumer must be added here with a reason.
-const STARTUP_READER_ALLOWED = [
-  "src/lib/workflows/conversation/rehydration.ts",
-];
+const STARTUP_READER_ALLOWED = [];
 
 // Shared whole-state `no-restricted-imports` restriction objects. Because ESLint
 // flat config REPLACES a rule (never merges) when a later block re-declares it
@@ -397,10 +382,6 @@ const eslintConfig = defineConfig([
         "error",
         { allowlist: BACKEND_SEAM_ALLOWLIST },
       ],
-      "architecture-seams/no-graph-ownership-violation": [
-        "error",
-        { allowlist: GRAPH_OWNERSHIP_ALLOWLIST },
-      ],
       "architecture-seams/no-raw-broadcaster-import": [
         "error",
         { sanctioned: SSE_PUBLICATION_SANCTIONED },
@@ -465,12 +446,7 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: [
-      "src/lib/workflows/collaboration/workflow-envelope.ts",
-      "src/lib/workflows/collaboration/workflow-envelope.test.ts",
-      "src/lib/workflows/collaboration/feature-snapshot.ts",
-      "src/lib/workflows/collaboration/feature-snapshot.test.ts",
-    ],
+    files: [],
     rules: {
       "no-restricted-imports": [
         "error",

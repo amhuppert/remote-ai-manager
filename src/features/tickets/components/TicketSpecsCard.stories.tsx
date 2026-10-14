@@ -9,14 +9,12 @@ const linkedSpec = {
   slug: "native-sdd",
   name: "Native spec-driven development",
   revision: 4,
-  phase: { primary: "executing", authoringFacet: "draft" },
-  criteriaProgress: { proven: 9, total: 12 },
+  phase: { primary: "draft", authoringStage: "plan" },
   linkedTasks: [
     {
       taskElementId: "task-9",
       taskHandle: "T9",
       sourceTaskState: "current",
-      workStatus: "running",
     },
   ],
 } satisfies TicketSpecReadThrough["specs"][number];
@@ -41,7 +39,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const LiveProgress: Story = {};
+export const AuthoringPhase: Story = {};
 
 export const SourceTaskDrift: Story = {
   args: {

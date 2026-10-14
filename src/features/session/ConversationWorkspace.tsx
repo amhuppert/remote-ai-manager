@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { deriveSessionStatus } from "@/lib/sessions/derived";
 import { isSessionNotFoundError } from "@/lib/sessions/queries";
 import { useDebugModeToggleMutation } from "@/lib/debug-log/mutations";
-import { useCollaborationStartMutation } from "@/lib/workflows/mutations";
+import { useCollaborationStartMutation } from "@/lib/collaboration/mutations";
 import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { useTddToggleMutation } from "@/lib/sessions/mutations";
@@ -15,7 +15,7 @@ import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { useConversationCustody } from "@/lib/active-conversations/queries";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
-import { isWorkflowLaneRole } from "@/lib/conversations/schemas";
+import {} from "@/lib/conversations/schemas";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import ConversationWorkspaceView from "@/features/session/ConversationWorkspaceView";
@@ -32,7 +32,6 @@ import { useSessionPageLocalState } from "@/features/session/hooks/use-session-p
 import { useSessionPageQueries } from "@/features/session/hooks/use-session-page-queries";
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
 import type { SessionWorkspaceSlices } from "@/features/session/hooks/session-workspace-slices";
-import { useApprovalGate } from "@/features/session/hooks/use-approval-gate";
 import { useActivatePanelSession } from "@/stores/session-detail.store";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
@@ -87,7 +86,6 @@ export default function ConversationWorkspace({
     sessionQuery,
     conversationsQuery,
     collaborationListQuery,
-    graphWorkflowExecutionQuery,
     messagesQuery,
     rawMessages,
   } = useSessionPageQueries(projectName, sessionName, conversationId);
@@ -114,9 +112,7 @@ export default function ConversationWorkspace({
   const conversationRole = session?.conversations.find(
     (c) => c.id === conversationId,
   )?.role;
-  const isWorkflowManagedConversation = isWorkflowLaneRole(
-    conversationRole ?? null,
-  );
+  const isWorkflowManagedConversation = conversationRole != null;
 
   const activeConversation = useMemo(
     () => session?.conversations.find((c) => c.id === conversationId),
@@ -154,18 +150,7 @@ export default function ConversationWorkspace({
     setCollabConfigDraft,
     clearCollabConfigDraft,
   } = collab;
-  // An undecided approval gate keeps chat live alongside the panel (6.1);
-  // once the decision is recorded the standing clears and the workflow-managed
-  // read-only treatment returns.
-  const approvalGate = useApprovalGate({
-    projectName,
-    sessionName,
-    conversationId,
-    execution: graphWorkflowExecutionQuery.data ?? null,
-    conversationBusy: activeConversation?.status === "running",
-  });
-  const isReadOnly =
-    (isWorkflowManagedConversation && approvalGate === null) || hasActiveCollab;
+  const isReadOnly = isWorkflowManagedConversation || hasActiveCollab;
 
   const {
     send: sendPrompt,
@@ -432,7 +417,6 @@ export default function ConversationWorkspace({
       cumulativeImageCount,
     },
     prompt: {
-      approvalGate,
       handleSendPrompt,
       handlePromptTextChange,
       canStop,

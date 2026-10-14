@@ -62,10 +62,8 @@ describe("cli source scan", () => {
 
   it("stops a command mention at the first token that cannot be a path segment", () => {
     expect(
-      cctlCommandMentions(
-        "run `cctl workflow live get exec-7 --full` to see it",
-      ),
-    ).toEqual([["workflow", "live", "get", "exec-7"]]);
+      cctlCommandMentions("run `cctl run show run-7 --full` to see it"),
+    ).toEqual([["run", "show", "run-7"]]);
     expect(cctlCommandMentions("cctl spec show <slug>")).toEqual([
       ["spec", "show"],
     ]);
@@ -78,7 +76,7 @@ describe("cli source scan", () => {
     const paths = sources.map((file) => file.relativePath);
 
     expect(paths).toContain("transport.ts");
-    expect(paths).toContain("commands/workflow/definitions.ts");
+    expect(paths).toContain("commands/run/definitions.ts");
     expect(paths).toContain("commands/spec/native-read.ts");
     expect(paths.filter((file) => file.includes(".test."))).toEqual([]);
   });

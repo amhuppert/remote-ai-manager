@@ -18,7 +18,6 @@ import {
   touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
-import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
 import {
   artifactTextOf,
   inlineDataOf,
@@ -234,7 +233,6 @@ describe("cctl spec schema", () => {
     const example = parsed.data;
 
     expect(example.source.label.length).toBeGreaterThan(0);
-    expect(example.delivered).toBe(true);
     expect(example.sections.length).toBeGreaterThan(0);
 
     const requirement = example.requirements[0];
@@ -276,56 +274,6 @@ describe("cctl spec schema", () => {
         ({ disposition }) => disposition === "confirmed",
       ),
     ).toHaveLength(1);
-  });
-
-  it("publishes the lint registry as one offline guidance document", async () => {
-    const documents = await readDocuments();
-    const guidance = documents.find(({ id }) => id === "guidance");
-    const reference = z
-      .object({
-        lintTaxonomy: z.object({
-          evergreen: z.array(
-            z.object({ ruleId: z.string(), severity: z.string() }),
-          ),
-          deliveryPlan: z.array(
-            z.object({
-              ruleId: z.string(),
-              severity: z.string(),
-              note: z.string().optional(),
-            }),
-          ),
-        }),
-      })
-      .parse(guidance?.example);
-
-    expect(reference).toEqual(NATIVE_SDD_GUIDANCE);
-
-    expect(reference.lintTaxonomy.evergreen).toContainEqual({
-      ruleId: "9.3.uncovered-criterion",
-      severity: "blocks_propose",
-    });
-    expect(
-      reference.lintTaxonomy.evergreen.map(({ severity }) => severity),
-    ).not.toContain("blocks_claim");
-    // The propose gate's own codes, published: the taxonomy is what makes the
-    // refusal readable before a planner triggers it.
-    expect(
-      reference.lintTaxonomy.deliveryPlan.map(({ ruleId }) => ruleId),
-    ).toEqual(
-      NATIVE_SDD_GUIDANCE.lintTaxonomy.deliveryPlan.map(({ ruleId }) => ruleId),
-    );
-    expect(reference.lintTaxonomy.deliveryPlan).toContainEqual({
-      ruleId: "launch/charter-unauthored",
-      severity: "blocks_propose",
-    });
-
-    // Severity alone would mislead on the two reaffirmation codes: they block
-    // propose, but no agent write clears them, so the note must say where the
-    // rows come from and what the per-row note marks.
-    const notes = guidance?.notes.join(" ") ?? "";
-    expect(notes).not.toContain("empty delivery-plan lint taxonomy");
-    expect(notes).toContain("blocks_propose");
-    expect(notes).toContain("human act");
   });
 
   /**
@@ -881,18 +829,5 @@ describe("cctl spec schema", () => {
     expect(result.stderr).toContain("requirements");
     expect(result.stderr).toContain("requirement");
     expect(result.stderr).not.toContain("cctl spec schema scope");
-  });
-
-  it("refuses the retired execution-scope document and points at plan editing", async () => {
-    const result = await runCcWithHost(
-      ["spec", "schema", "scope"],
-      env,
-      offlineHost(),
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('Unknown spec document "scope"');
-    expect(result.stderr).toContain("cctl spec schema");
-    expect(result.stderr).not.toContain("spec start <slug> --file");
   });
 });

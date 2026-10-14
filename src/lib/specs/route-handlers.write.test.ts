@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { PersistenceError } from "@/lib/shared/errors";
 import type { Db } from "@/lib/state-store/schemas";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -54,7 +53,6 @@ function revision(
     citationHash: "a".repeat(64),
     proposedAt: null,
     approvedAt: null,
-    externalDelivery: null,
     createdAt: "2026-07-18T00:00:00.000Z",
     ...fields,
   };
@@ -177,7 +175,6 @@ function createServices() {
           contentHash: null,
           proposedAt: null,
           approvedAt: null,
-          externalDelivery: null,
           createdAt: "2026-07-18T00:00:00.000Z",
         },
       })),
@@ -256,22 +253,6 @@ function createServices() {
       citeAssumption: vi.fn(),
       unciteAssumption: vi.fn(),
       changePolicy: vi.fn(),
-    },
-    evidence: {
-      requestWaiver: vi.fn(),
-      grantWaiver: vi.fn(),
-      markWaiverStaleForCriterionChange: vi.fn(),
-      setDisposition: vi.fn(),
-    },
-    execution: {
-      start: vi.fn(),
-      linkWorkflowExecution: vi.fn(),
-      markRunning: vi.fn(),
-      markDelivered: vi.fn(),
-      abandonExecution: vi.fn(),
-      abandonSpec: vi.fn(),
-      captureScopeAmendment: vi.fn(),
-      getStatus: vi.fn(),
     },
     links: {
       promoteConversation: vi.fn(),
@@ -599,7 +580,6 @@ describe("spec write route handlers", () => {
       citationHash: "0".repeat(64),
       proposedAt: null,
       approvedAt: null,
-      externalDelivery: null,
       createdAt: "2026-07-18T00:00:00.000Z",
     };
     vi.mocked(services.authoring.advanceAuthoringStage).mockRejectedValueOnce(
@@ -900,144 +880,6 @@ describe("spec write route handlers", () => {
     expect(body).not.toHaveProperty("provenance_json");
   });
 
-  it("returns the launched approved candidate with the execution's parsed plan scope", async () => {
-    const services = createServices();
-    vi.mocked(services.execution.start).mockResolvedValueOnce({
-      ok: true as const,
-      execution: {
-        id: "execution-9",
-        spec_id: spec.id,
-        revision_id: "revision-1",
-        scope_json: JSON.stringify({
-          selectedTaskIds: ["task-1"],
-          selectedCriterionIds: ["criterion-1"],
-          exclusionDispositions: [],
-        }),
-        state: "definition_review" as const,
-        execution_start_dial: "gate" as const,
-        workflow_definition_id: "workflow-definition-1",
-        workflow_definition_revision: 1,
-        workflow_execution_id: null,
-        session_name: "feature-session",
-        delivered_at: null,
-        abandoned_reason: null,
-        cleanup_phase: null,
-        linked_workflow_execution_id: null,
-        cleanup_last_error: null,
-        cleanup_last_error_at: null,
-        created_at: "2026-07-18T00:00:00.000Z",
-        updated_at: "2026-07-18T00:00:00.000Z",
-      },
-      workflowDefinition: { id: "workflow-definition-1", revision: 1 },
-      revisionNumber: 4,
-      deliveryPlan: {
-        attemptId: "attempt-approved",
-        candidateId: "candidate-approved",
-        candidateHash: "sha256:candidate",
-        workflowExecutionId: "workflow-execution-9",
-        resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
-      },
-    });
-    const handlers = createSpecWriteRouteHandlers(createDeps(services));
-
-    const response = await handlers.specActionPOST(
-      postRequest({
-        revisionId: "revision-1",
-        sessionName: "feature-session",
-        parameters: {
-          required: "ticket-66",
-          mode: "careful",
-          brief: "Preserve this text exactly.\nIncluding its newline.",
-        },
-      }),
-      routeContext("start-execution"),
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body).toMatchObject({
-      execution: {
-        id: "execution-9",
-        specId: spec.id,
-        revisionId: "revision-1",
-        revisionNumber: 4,
-        state: "definition_review",
-        workflowExecutionId: null,
-        scope: {
-          selectedTaskIds: ["task-1"],
-          selectedCriterionIds: ["criterion-1"],
-          exclusionDispositions: [],
-        },
-        sessionName: "feature-session",
-      },
-      workflowDefinition: { id: "workflow-definition-1", revision: 1 },
-      deliveryPlan: {
-        attemptId: "attempt-approved",
-        candidateId: "candidate-approved",
-        candidateHash: "sha256:candidate",
-        workflowExecutionId: "workflow-execution-9",
-        resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
-      },
-    });
-    expect(services.execution.start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        parameters: {
-          required: "ticket-66",
-          mode: "careful",
-          brief: "Preserve this text exactly.\nIncluding its newline.",
-        },
-      }),
-    );
-    expect(body.execution).not.toHaveProperty("scope_json");
-    expect(body.execution).not.toHaveProperty("spec_id");
-  });
-
-  it("abandons a whole spec from human transport only, keeping abandon-execution agent-reachable", async () => {
-    const services = createServices();
-    const handlers = createSpecWriteRouteHandlers(createDeps(services));
-    const agentHeaders = {
-      authorization: "Bearer valid",
-      "x-cc-conversation-id": "conversation-agent",
-    };
-
-    const agentSpecResponse = await handlers.specActionPOST(
-      postRequest({ reason: "superseded" }, agentHeaders),
-      routeContext("abandon-spec"),
-    );
-    expect(agentSpecResponse.status).toBe(403);
-    await expect(agentSpecResponse.json()).resolves.toMatchObject({
-      code: "human_act_required",
-    });
-    expect(services.execution.abandonSpec).not.toHaveBeenCalled();
-
-    const humanSpecResponse = await handlers.specActionPOST(
-      postRequest({ reason: "superseded" }),
-      routeContext("abandon-spec"),
-    );
-    expect(humanSpecResponse.status).toBe(200);
-    expect(services.execution.abandonSpec).toHaveBeenCalledWith({
-      specId: spec.id,
-      reason: "superseded",
-      actor: { kind: "human" },
-    });
-
-    const agentExecutionResponse = await handlers.specActionPOST(
-      postRequest(
-        { executionId: "execution-1", reason: "restarting" },
-        agentHeaders,
-      ),
-      routeContext("abandon-execution"),
-    );
-    expect(agentExecutionResponse.status).toBe(200);
-    expect(services.execution.abandonExecution).toHaveBeenCalledWith(
-      expect.objectContaining({
-        executionId: "execution-1",
-        reason: "restarting",
-        actor: expect.objectContaining({ kind: "agent" }),
-      }),
-    );
-  });
-
   it("preserves ok on a clean integrity report instead of stripping the result envelope", async () => {
     const services = createServices();
     vi.mocked(services.verify).mockResolvedValueOnce({
@@ -1236,7 +1078,6 @@ describe("content review acts on the open draft", () => {
     reviewRepo = createSpecReviewRepo(db);
     eventsRepo = createSpecEventsRepo(db);
     const linksRepo = createSpecLinksRepo(db);
-    const deliveryRepo = createSpecDeliveryRepo(db);
     const events = createSpecEventsPublisher({
       appendInTransaction: eventsRepo.appendInTransaction,
       publish: () => ({ delivered: true }),
@@ -1244,7 +1085,6 @@ describe("content review acts on the open draft", () => {
     const review = createReviewService({
       specs,
       review: reviewRepo,
-      delivery: deliveryRepo,
       links: linksRepo,
       events,
       attention: eventsRepo,
@@ -1255,7 +1095,6 @@ describe("content review acts on the open draft", () => {
       review: reviewRepo,
       links: linksRepo,
       events,
-      waivers: deliveryRepo,
       approvalRequests: {
         requestApproval: (input) => review.requestApproval(input),
       },

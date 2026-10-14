@@ -124,19 +124,16 @@ Runner configuration loads from the candidate worktree, so it cannot be the auth
 
 ### Select merge gates
 
-Populate `validation.preMerge` as the ordered command list for Smart Merge and Smart Commit. Populate `validation.laneMerge` when graph lane merges should use a cheaper ordered subset; otherwise omit it and lane merges inherit `preMerge`. Preserve tool dependencies in the order, typically format → lint → typecheck → test/build.
+Populate `validation.preMerge` as the ordered command list for Smart Merge and Smart Commit. Preserve tool dependencies in the order, typically format → lint → typecheck → test/build.
 
-The lists select commands independently of registration: every selected name must exist in `validation.commands`, while registered commands may remain available for agent diagnostics without joining either merge gate.
+The lists select commands independently of registration: every selected name must exist in `validation.commands`, while registered commands may remain available for agent diagnostics without joining the merge gate.
 
 ### Trust boundary
 
 Command Center resolves wrapper paths from the canonical project root and runs them with the session or lane worktree as `cwd`. An unmerged session therefore cannot exercise edits to its own registry or wrappers through `cctl validate`; developing a wrapper is the narrow diagnostic case where running that wrapper directly is legitimate. State that reason first and use the smallest scope.
 
 Establish canonical registrations before launching delivery when practical.
-Graph roles freeze their command selection at launch: `all` includes only the
-commands registered then, even if that set is empty. Registering checks later
-does not enable them in a running execution; an authorized workflow live edit
-must update its role selection. Local wrapper results remain local evidence,
+Run seats use the checks their launch grants. Amend work that has not started when its check selection must change. Local wrapper results remain local evidence,
 not CC validation gates, until the checks are registered and selected.
 
 ## Step 3: Propose Configuration
@@ -201,8 +198,7 @@ For `CommandCenter.json`, use this shape and include only detected commands:
         "pathArgs": "paths"
       }
     },
-    "preMerge": ["format", "lint", "typecheck", "test"],
-    "laneMerge": ["typecheck", "test"]
+    "preMerge": ["format", "lint", "typecheck", "test"]
   }
 }
 ```
@@ -232,7 +228,7 @@ After writing:
 
 1. Read back every created or modified file.
 2. Verify wrapper shebangs and executable permissions.
-3. Verify every `preMerge` and `laneMerge` name is registered and every command has `command.full`.
+3. Verify every `preMerge` name is registered and every command has `command.full`.
 4. Verify each declared cost is honest for the scope it prices: a scalar or `cost.full` matches the maximum fixed worker/resource profile of both variants, `cost.changed` matches the changed wrapper's profile, and a `paths` block appears only where the explicit-paths branch cannot widen beyond the forwarded files.
 5. Verify every test wrapper pins workers and overwrites `NODE_OPTIONS` with its inherited per-process heap cap; for Vitest, verify the canonical launcher supplies the final `poolOptions.forks.execArgv` after candidate configuration resolution.
 6. Verify each wrapper is silent on success, complete on failure, and colorless.
@@ -247,7 +243,7 @@ List all created and modified files, explain the selected cost and scoping for e
 
 **Existing CommandCenter.json:** Merge the `validation` registry and preserve unrelated fields, especially `devServers`. Never silently overwrite.
 
-**Existing monolithic validation script:** Propose splitting its tool phases into logical commands with fixed full/changed wrappers under `scripts/validate/`, then preserve ordering through `preMerge` and `laneMerge` lists.
+**Existing monolithic validation script:** Propose splitting its tool phases into logical commands with fixed full/changed wrappers under `scripts/validate/`, then preserve ordering through `preMerge` lists.
 
 **Existing test config with dynamic parallelism:** Make the canonical wrapper enforce a fixed command profile whose maximum worker count and inherited heap match its declared cost. When candidate worker `execArgv` can override the inherited heap, the wrapper-owned launcher must supply the final fixed `execArgv`. Runner config may mirror only beneath that override and cannot own the profile. A separate resource profile becomes a separate registered command.
 

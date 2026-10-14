@@ -15,7 +15,7 @@ import { useThinkingBlockExpansionHotkeys } from "@/hooks/use-thinking-block-exp
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useForkConversationMutation } from "@/lib/conversations/mutations";
 import { useSessionQuery } from "@/lib/sessions/queries";
-import { useCollaborationListQuery } from "@/lib/workflows/queries";
+import { useCollaborationListQuery } from "@/lib/collaboration/queries";
 import {
   useConversationBackgroundActivity,
   useConversationCustody,
@@ -26,7 +26,6 @@ import type { SessionActiveConversation } from "@/lib/active-conversations/schem
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { createPaneForkHandler } from "./pane-fork-handler";
 import { OwnerRunCards } from "@/features/session/conversation/OwnerRunCards";
-import { useWorkflowReceiptTranscriptExtensions } from "@/features/session/conversation/WorkflowReceiptCard";
 
 export interface PaneConversationBodyProps {
   projectName: string;
@@ -84,11 +83,6 @@ export default function PaneConversationBody({
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys(isActive);
   const backgroundActivity = useConversationBackgroundActivity(conversationId);
   const custody = useConversationCustody(conversationId);
-  const workflowReceiptExtensions = useWorkflowReceiptTranscriptExtensions({
-    projectName,
-    sessionName,
-    conversationId,
-  });
 
   // The pane body only reads collaboration DISPLAY state (passage props,
   // stop, answers) — it renders no config row — so catalog-derived defaults
@@ -217,7 +211,6 @@ export default function PaneConversationBody({
           renderRow: renderCollabRow,
           suppressIndicator: collab.hasActiveCollab,
         }}
-        extensions={workflowReceiptExtensions}
         showInFlightBanners
       />
       <OwnerRunCards

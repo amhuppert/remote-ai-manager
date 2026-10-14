@@ -22,8 +22,6 @@ function hasMatchingAmbientIdentity(app: CcApplication) {
     !env["CC_PROJECT"] ||
     !env["CC_SERVER_URL"] ||
     !env["CC_API_TOKEN"] ||
-    env["CC_WORKFLOW_EXECUTION_ID"] ||
-    env["CC_WORKFLOW_CONTEXT_ID"] ||
     (env[CONVERSATION_IDENTITY_ENV_VAR] &&
       env[CONVERSATION_IDENTITY_ENV_VAR] !== conversation)
   )

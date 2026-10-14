@@ -212,9 +212,7 @@ export function createLiveReferenceChip(deps: {
             <div className="flex flex-col gap-md font-mono text-[0.78rem] leading-relaxed">
               <div className="flex items-center justify-between gap-sm">
                 <span className="text-[0.7rem] tracking-wider text-text-primary/75 uppercase">
-                  {props.target.kind === "execution"
-                    ? "Workflow execution"
-                    : props.target.kind}
+                  {props.target.kind}
                 </span>
                 <StatusChip tone={tone}>
                   {tone === "neutral" || tone === "red" ? (
@@ -356,7 +354,6 @@ export function ReferenceGlyph({
   const paths = {
     ticket: "M3 6h14v3a3 3 0 0 0 0 6v3H3v-3a3 3 0 0 0 0-6V6Z",
     conversation: "M3 3h14v11H8l-5 4V3Z",
-    execution: "M3 4h5v5H3zM12 12h5v5h-5zM8 6h6v6",
   };
   return (
     <svg

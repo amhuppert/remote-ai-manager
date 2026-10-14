@@ -23,16 +23,10 @@ export function isActionableSubscriptionDelivery(
   );
   if (ready && subscription.mode === "active")
     return ready.batchId === null && delivery.state === "pending";
-  if (
-    subscription.mode !== "passive" &&
-    subscription.source.kind !== "workflow"
-  )
-    return false;
+  if (subscription.mode !== "passive") return false;
   return (
     subscription.expiresAt === null ||
     subscription.expiresAt > at ||
-    (subscription.source.kind === "workflow" &&
-      subscription.mode === "active") ||
     (ready !== undefined && ready.batchId === null)
   );
 }

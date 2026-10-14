@@ -1,33 +1,7 @@
 /**
- * Answer route (docs/design/cc-cli/03 §3): consume the pending question batch
- * and deliver the answers to the asking agent.
- *
- * Two paths, discriminated on the conversation's role:
- *
- * - Ordinary conversation: consuming the marker and enqueuing the answer happen
- *   in ONE durable write (`consumePendingQuestionId` on the standard submission
- *   path), so a crash can never strand a consumed marker without its queued
- *   answer. The cleared `pendingQuestionId`/`pendingQuestions` marker is the
- *   idempotency point — a duplicate POST gets 410. The answers travel through
- *   the standard prompt-submission path (queue + drain), formatted as the
- *   delimited <cc-question-answers> block so they survive queue coalescing.
- *
- * - Graph-workflow lane conversation (role "iteration" | "validator"): the
- *   answer is recorded on the execution's context record via the user-input
- *   gate — no message is queued and auto-drain never fires. The conversation's
- *   pending marker is then cleared durably, and a `CLEAR_PENDING_QUESTION`
- *   machine transition syncs a live actor; with nothing queued to consume the
- *   marker later, the durable write is what makes the clear survive an actor
- *   that has already ended its turn. The execution loop resumes the lane from
- *   the recorded answers. A duplicate lane answer is rejected by the gate as
- *   already-answered → 410.
- *
- * Two scope adapters share the ordinary path: the session adapter resolves
- * project → session → conversation, the project adapter resolves the project
- * conversation directly (no session record). Both reach `deliverAnswers`, so
- * answering is one domain operation with two ways of being addressed (D1). The
- * lane divert stays in the session adapter — graph workflow execution at project
- * scope is a spec non-goal.
+ * Consumes a question batch and queues its answers in one durable write.
+ * The core clears the running turn's marker and drains the queued answer.
+ * Session and project routes share the same delivery operation.
  */
 
 import { NextResponse } from "next/server";
@@ -38,22 +12,10 @@ import {
 } from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import {
-  getConversation,
-  getProjectConversation,
-  getSession,
-  mutateConversation,
-  getActiveGraphWorkflowExecution,
-  mutateActiveGraphWorkflowExecution,
-  reserveActiveGraphWorkflowExecution,
-  archiveActiveGraphWorkflowExecution,
-  getGraphWorkflowPendingArtifacts,
-  clearGraphWorkflowPendingArtifacts,
-} from "@/lib/state-store";
+import { getConversation, getProjectConversation } from "@/lib/state-store";
 import {
   answerQuestionRequestSchema,
   type AnswerQuestionRequest,
-  type ConversationRole,
   type ConversationState,
 } from "@/lib/conversations/schemas";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
@@ -62,20 +24,8 @@ import {
   type ConversationScopeRef,
 } from "./conversation-target";
 import { createLogger, withTracing, type Logger } from "@/lib/logging";
-import {
-  ensureConversationActorAndDrain,
-  clearConversationQuestion,
-} from "@/lib/workflows/conversation/lifecycle";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ApiError } from "@/lib/api/errors";
-import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
-import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
-import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
-import {
-  createUserInputGateService,
-  type RecordAnswersInput,
-  type RecordAnswersResult,
-} from "@/lib/workflow-graph/user-input-gate";
 import {
   queueMessage,
   type QueueMessageParams,
@@ -86,16 +36,27 @@ import {
   isInTurnQuestionId,
   type InTurnQuestionScope,
 } from "./in-turn-questions";
+import {
+  coreQuestionCommand,
+  drainCoreConversation,
+} from "@/lib/supervision/handles";
+const clearConversationQuestion = (
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  input: { questionId: string },
+) =>
+  coreQuestionCommand(
+    { projectPath, sessionName, conversationId },
+    { kind: "clear_question", ...input },
+  );
+const ensureConversationActorAndDrain = (
+  _projectPath: string,
+  _sessionName: string,
+  conversationId: string,
+) => drainCoreConversation(conversationId);
 
 const logger = createLogger("answer-route-handlers");
-
-/**
- * Graph-workflow lane roles (implementer = "iteration", context-validator =
- * "validator"). A lane answer is diverted onto the execution's context record
- * instead of the conversation's message queue — the loop resumes the lane from
- * there. Mirrors `LANE_ASK_ROLES` in the ask route.
- */
-const LANE_ANSWER_ROLES = new Set<ConversationRole>(["iteration", "validator"]);
 
 /**
  * What delivering an answer needs, independent of how the conversation was
@@ -139,18 +100,6 @@ export interface AnswerRouteDeps extends AnswerDeliveryDeps {
     sessionName: string,
     conversationId: string,
   ): Promise<ConversationState | null>;
-  recordLaneAnswers(input: RecordAnswersInput): Promise<RecordAnswersResult>;
-  /**
-   * Durably drop the conversation's pending-question marker, but only while it
-   * still names `questionBatchId` — a marker that has moved on belongs to a
-   * later ask that this answer must not silently retire.
-   */
-  clearPendingQuestion(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    questionBatchId: string;
-  }): Promise<void>;
 }
 
 export interface ProjectAnswerRouteDeps extends AnswerDeliveryDeps {
@@ -279,10 +228,8 @@ async function deliverAnswers(
     );
   }
 
-  // If the asking turn is still running, clear the machine's pending
-  // question too, so finalizingTurn settles to idle instead of
-  // waitingForInput. Refusal is fine — a waitingForInput actor clears the
-  // question when the queued answer claims its turn.
+  // Clear the running turn's marker before it settles. The queued answer
+  // already consumed the durable marker under the same question identity.
   await deps.clearConversationQuestion(
     projectPath,
     storeSessionName,
@@ -356,67 +303,6 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
       });
     }
 
-    // Graph-workflow lane answer: record on the execution's context record and
-    // clear the conversation marker via a machine transition. No message is
-    // queued and auto-drain never fires — the execution loop resumes the lane
-    // from the recorded answers (Req 4.3/5.4/7.3). Session-only by spec
-    // non-goal: graph workflow execution never runs at project scope.
-    if (
-      conversation.role !== null &&
-      LANE_ANSWER_ROLES.has(conversation.role)
-    ) {
-      const recorded = await deps.recordLaneAnswers({
-        projectPath,
-        sessionName,
-        conversationId,
-        questionBatchId: body.questionId,
-        answers: body.answers,
-      });
-      if (!recorded.ok) {
-        deps.log.info("answer.lane_rejected", {
-          conversationId,
-          sessionName,
-          questionId: body.questionId,
-          reason: recorded.reason,
-        });
-        return NextResponse.json(
-          { error: "already answered or superseded" } satisfies ApiError,
-          { status: 410 },
-        );
-      }
-
-      // The marker is retired durably, then the machine is told. The ordinary
-      // path can lean on a refused transition because its queued answer clears
-      // the marker when the row is claimed; a lane answer queues nothing, so a
-      // refusal here — the asking turn has ended, so the actor is usually gone
-      // — would leave the marker standing forever. The execution loop reads
-      // exactly that field to decide whether a resumed lane still owes a
-      // question, so a stale marker re-parks the lane on the batch it was just
-      // handed answers for, and the run can never move past it.
-      await deps.clearPendingQuestion({
-        projectPath,
-        sessionName,
-        conversationId,
-        questionBatchId: body.questionId,
-      });
-      await deps.clearConversationQuestion(
-        projectPath,
-        sessionName,
-        conversationId,
-        {
-          questionId: body.questionId,
-        },
-      );
-
-      deps.log.info("answer.lane_recorded", {
-        conversationId,
-        sessionName,
-        questionId: body.questionId,
-        answerCount: Object.keys(body.answers).length,
-      });
-      return NextResponse.json({ ok: true });
-    }
-
     // A session route always has a real session name — the public-param refusal
     // above rejects the sentinel, so the scope ref is the session variant by
     // construction.
@@ -461,57 +347,12 @@ export function createProjectAnswerHandlers(deps: ProjectAnswerRouteDeps) {
   return { POST: post };
 }
 
-const eventPublisher = createGraphWorkflowExecutionEventPublisher({
-  dispatchPush: dispatchPushForGraphWorkflowEvent,
-});
-
-const executionRepository = createGraphWorkflowExecutionRepository({
-  getSession,
-  getActiveGraphWorkflowExecution,
-  mutateActiveGraphWorkflowExecution,
-  reserveActiveGraphWorkflowExecution,
-  archiveActiveGraphWorkflowExecution,
-
-  getGraphWorkflowPendingArtifacts,
-  clearGraphWorkflowPendingArtifacts,
-  eventPublisher,
-});
-
-const userInputGateService = createUserInputGateService({
-  getActive: executionRepository.getActive,
-  mutateActive: executionRepository.mutateActive,
-  publishUserInputPending: eventPublisher.publishUserInputPending,
-  publishUserInputResolved: eventPublisher.publishUserInputResolved,
-  deliver: eventPublisher.deliver,
-  clearConversationQuestion,
-  now: () => new Date().toISOString(),
-});
-
 const defaultHandlers = createAnswerHandlers({
   resolveProjectPath,
   getConversation,
   clearConversationQuestion,
   queueMessage,
   ensureConversationActorAndDrain,
-  recordLaneAnswers: userInputGateService.recordAnswers,
-  clearPendingQuestion: async ({
-    projectPath,
-    sessionName,
-    conversationId,
-    questionBatchId,
-  }) => {
-    await mutateConversation(
-      projectPath,
-      sessionName,
-      conversationId,
-      "answer.clear_pending_question",
-      (conversation) => {
-        if (conversation.pendingQuestionId !== questionBatchId) return;
-        conversation.pendingQuestionId = null;
-        conversation.pendingQuestions = null;
-      },
-    );
-  },
   readConfig,
   log: logger,
 });

@@ -17,9 +17,9 @@ export interface ClientAdvisory {
 export const CLIENT_ADVISORIES = {
   payload_outside_cc: {
     evidence:
-      "A graph-workflow lane commits its whole worktree ('git add -A') at land time, so a payload left at the worktree root landed in the diff its context validator reviewed and derailed the context.",
+      "A run lane commits its worktree at land time, so payload files belong under .cc/temp/.",
     reminder: (filePath: string) =>
-      `"${filePath}" is outside .cc/ — author cctl payload files under .cc/temp/ so a lane commit ('git add -A') doesn't sweep them into the branch`,
+      `"${filePath}" is outside .cc/ — author cctl payload files under .cc/temp/ so a lane commit does not sweep them into the branch`,
   },
 } satisfies Record<string, ClientAdvisory>;
 

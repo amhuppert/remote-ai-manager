@@ -57,7 +57,6 @@ export interface SessionIdentitySlice {
 
 /** Prompt turn execution: send / stop / answer / debug / fork + approval gate. */
 export interface PromptExecutionSlice {
-  approvalGate: ConversationWorkspaceViewProps["promptInputSlotProps"]["approvalGate"];
   handleSendPrompt: PromptComposerArgs["handleSendPrompt"];
   handlePromptTextChange: PromptComposerArgs["handlePromptTextChange"];
   canStop: boolean;

@@ -1076,7 +1076,6 @@ export function createMessageQueueService(
         const wakeHold = subscriptionWakeHold({
           conversation,
           sessionArchived: false,
-          execution: null,
         });
         const result = claimNextTurnBatchTransform(
           conversation.pendingQueue,
@@ -1132,7 +1131,6 @@ export function createMessageQueueService(
             subscriptionWakeHold({
               conversation,
               sessionArchived: false,
-              execution: null,
             });
           const result = claimNextTurnBatchTransform(
             conversation.pendingQueue,

@@ -1,7 +1,6 @@
 import { findRefTags } from "@/lib/conversations/ref-tags";
 import { conversationRefAttrsSchema } from "@/lib/conversations/schemas";
 import { ticketRefAttrsSchema } from "@/lib/tickets/schemas";
-import { executionRefAttrsSchema } from "@/lib/workflow-graph/references";
 import { liveReferenceKey, type LiveReferenceTarget } from "./schemas";
 
 export function collectLiveReferenceTargets(
@@ -32,19 +31,6 @@ export function collectLiveReferenceTargets(
           kind: "conversation",
           projectName: parsed.data["project-name"],
           id: parsed.data["conversation-id"],
-        },
-      });
-  }
-  for (const ref of findRefTags(source, "execution-ref")) {
-    const parsed = executionRefAttrsSchema.safeParse(ref.attrs);
-    if (parsed.success)
-      found.push({
-        start: ref.start,
-        target: {
-          kind: "execution",
-          projectName: parsed.data["project-name"],
-          sessionName: parsed.data["session-name"],
-          id: parsed.data["execution-id"],
         },
       });
   }

@@ -59,21 +59,6 @@ export function createSubscriptionInvolvementReader(
         reason: "Spec authored or reviewed by this conversation",
       });
     }
-    for (const id of deps.queries.findWorkflowInvolvement(recipient)) {
-      // Discovery must not replay completed history, but a launcher result
-      // recorded before its first follow is still an owed delivery.
-      const outstanding = deps.queries.firstOutstandingWorkflowBoundary(
-        recipient,
-        id,
-      );
-      involvement.push({
-        source: { kind: "workflow", id },
-        reason: "Workflow launched by this conversation",
-        ...(outstanding === null
-          ? {}
-          : { initialCursor: String(Math.max(0, outstanding - 1)) }),
-      });
-    }
     return involvement;
   };
 }

@@ -26,43 +26,6 @@ import type {
   NotificationCreatedEvent,
   NotificationUpdatedEvent,
 } from "@/lib/notifications/schemas";
-import type {
-  GraphWorkflowApprovalPendingEvent,
-  GraphWorkflowApprovalResolvedEvent,
-  GraphWorkflowBatchScheduledEvent,
-  GraphWorkflowBoundaryEvent,
-  GraphWorkflowCharterRegisteredEvent,
-  GraphWorkflowCharterUpdatedEvent,
-  GraphWorkflowCircuitBreakerEvent,
-  GraphWorkflowContextSkippedEvent,
-  GraphWorkflowRouteResolvedEvent,
-  GraphWorkflowLoopDecisionEvent,
-  GraphWorkflowContextStatusEvent,
-  GraphWorkflowJoinStatusEvent,
-  GraphWorkflowLaneConcurrentAdmissionEvent,
-  GraphWorkflowLaneCommitEvent,
-  GraphWorkflowLaneCreatedEvent,
-  GraphWorkflowLaneDriftHaltedEvent,
-  GraphWorkflowLaneLandedEvent,
-  GraphWorkflowLaneStatusEvent,
-  GraphWorkflowGraphExpandedEvent,
-  GraphWorkflowLiveEditAppliedEvent,
-  GraphWorkflowPlanRepairEvent,
-  GraphWorkflowExecutionAmendedEvent,
-  GraphWorkflowExecutionReleasedEvent,
-  GraphWorkflowResultRecordedEvent,
-  GraphWorkflowMergeStatusEvent,
-  GraphWorkflowPendingHaltReasonEvent,
-  GraphWorkflowPlanDefectHaltedEvent,
-  GraphWorkflowSharedDocumentsUpdatedEvent,
-  GraphWorkflowStatusEvent,
-  GraphWorkflowTaskStatusEvent,
-  GraphWorkflowUserInputPendingEvent,
-  GraphWorkflowUserInputResolvedEvent,
-  GraphWorkflowValidationResultEvent,
-  GraphWorkflowValidationSpecialistResultEvent,
-  GraphWorkflowValidationIncidentEvent,
-} from "@/lib/workflow-graph/event-schemas";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
 import type {
   DebugModeStatusEvent,
@@ -163,26 +126,6 @@ export const specApprovalChangedEventSchema = z
   })
   .strict();
 
-export const specExecutionChangedEventSchema = z
-  .object({
-    type: z.literal("spec-execution-changed"),
-    ...specEventIdentityShape,
-    revisionId: z.string().min(1),
-    executionId: z.string().min(1),
-  })
-  .strict();
-
-export const specEvidenceChangedEventSchema = z
-  .object({
-    type: z.literal("spec-evidence-changed"),
-    ...specEventIdentityShape,
-    revisionId: z.string().min(1),
-    criterionId: z.string().min(1).optional(),
-    taskId: z.string().min(1).optional(),
-    executionId: z.string().min(1).optional(),
-  })
-  .strict();
-
 export const specAttentionChangedEventSchema = z
   .object({
     type: z.literal("spec-attention-changed"),
@@ -192,24 +135,11 @@ export const specAttentionChangedEventSchema = z
   })
   .strict();
 
-export const specDeliveryPlanChangedEventSchema = z
-  .object({
-    type: z.literal("spec-delivery-plan-changed"),
-    ...specEventIdentityShape,
-    attemptId: z.string().min(1),
-    draftRevision: z.number().int().positive(),
-    candidateId: z.string().min(1).nullable(),
-  })
-  .strict();
-
 export const specSseEventSchema = z.discriminatedUnion("type", [
   specChangedEventSchema,
   specRevisionChangedEventSchema,
   specApprovalChangedEventSchema,
-  specExecutionChangedEventSchema,
-  specEvidenceChangedEventSchema,
   specAttentionChangedEventSchema,
-  specDeliveryPlanChangedEventSchema,
 ]);
 export type SpecSseEvent = z.infer<typeof specSseEventSchema>;
 
@@ -235,41 +165,6 @@ export type SSEEvent =
   | MessageQueuedEvent
   | ConversationOpenEvent
   | MessageQueueUpdatedEvent
-  | GraphWorkflowStatusEvent
-  | GraphWorkflowContextStatusEvent
-  | GraphWorkflowContextSkippedEvent
-  | GraphWorkflowRouteResolvedEvent
-  | GraphWorkflowLoopDecisionEvent
-  | GraphWorkflowTaskStatusEvent
-  | GraphWorkflowValidationResultEvent
-  | GraphWorkflowValidationSpecialistResultEvent
-  | GraphWorkflowValidationIncidentEvent
-  | GraphWorkflowCircuitBreakerEvent
-  | GraphWorkflowPlanDefectHaltedEvent
-  | GraphWorkflowSharedDocumentsUpdatedEvent
-  | GraphWorkflowPendingHaltReasonEvent
-  | GraphWorkflowMergeStatusEvent
-  | GraphWorkflowBatchScheduledEvent
-  | GraphWorkflowBoundaryEvent
-  | GraphWorkflowResultRecordedEvent
-  | GraphWorkflowLaneStatusEvent
-  | GraphWorkflowLaneCreatedEvent
-  | GraphWorkflowLaneConcurrentAdmissionEvent
-  | GraphWorkflowLaneLandedEvent
-  | GraphWorkflowLaneDriftHaltedEvent
-  | GraphWorkflowLaneCommitEvent
-  | GraphWorkflowJoinStatusEvent
-  | GraphWorkflowApprovalPendingEvent
-  | GraphWorkflowApprovalResolvedEvent
-  | GraphWorkflowUserInputPendingEvent
-  | GraphWorkflowUserInputResolvedEvent
-  | GraphWorkflowCharterRegisteredEvent
-  | GraphWorkflowCharterUpdatedEvent
-  | GraphWorkflowLiveEditAppliedEvent
-  | GraphWorkflowGraphExpandedEvent
-  | GraphWorkflowPlanRepairEvent
-  | GraphWorkflowExecutionReleasedEvent
-  | GraphWorkflowExecutionAmendedEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent
   | DebugLogReceivedEvent

@@ -24,7 +24,6 @@ function conversation(id: string): SessionActiveConversation {
     worktreePath: "/repo/.worktrees/hotkeys",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     sessionName: "hotkeys",
     branchName: "cc/hotkeys",

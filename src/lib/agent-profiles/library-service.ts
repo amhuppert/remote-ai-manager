@@ -176,36 +176,12 @@ export interface AgentProfileReferenceReporter {
   ): Promise<AgentProfileSavedReferences>;
 }
 
-/** The share of the report graph workflow storage holds, until deploy 2 deletes it. */
-export interface AgentProfileWorkflowReferenceReporter {
-  enumerateSavedReferences(
-    projectPath: AgentProfileProjectScope,
-    ref: AgentProfileRef,
-  ): Promise<Omit<AgentProfileSavedReferences, "runTemplates">>;
-}
-
 /** The share of the report the run template library holds. */
 export interface AgentProfileRunTemplateReferenceReporter {
   runTemplateHolders(
     projectPath: AgentProfileProjectScope,
     ref: AgentProfileRef,
   ): Promise<AgentProfileRunTemplateHolder[]>;
-}
-
-/** One report from both domains that hold profile references. */
-export function combineReferenceReporters(
-  workflow: AgentProfileWorkflowReferenceReporter,
-  runTemplates: AgentProfileRunTemplateReferenceReporter,
-): AgentProfileReferenceReporter {
-  return {
-    async enumerateSavedReferences(projectPath, ref) {
-      const [workflowHolders, runTemplateHolders] = await Promise.all([
-        workflow.enumerateSavedReferences(projectPath, ref),
-        runTemplates.runTemplateHolders(projectPath, ref),
-      ]);
-      return { ...workflowHolders, runTemplates: runTemplateHolders };
-    },
-  };
 }
 
 export interface AgentProfileLibraryService {
@@ -596,10 +572,7 @@ export function createAgentProfileLibraryService(
       tier: ref.tier,
       profileId: ref.id,
       revision: expectedRevision,
-      referencingDefinitions: savedReferenceEnumeration.definitions.length,
-      referencingTemplates: savedReferenceEnumeration.templates.length,
       referencingRunTemplates: savedReferenceEnumeration.runTemplates.length,
-      referencedByWorkflowDefaults: savedReferenceEnumeration.workflowDefaults,
     });
 
     return {

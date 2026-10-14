@@ -45,12 +45,12 @@ provides `elementId`, `kind`, and `elementVersion` there. Use those identities
 rather than traversing the durable snapshot row.
 
 Plan reads and open/propose/reopen receipts keep the plan at
-`payload.data.plan`. Abandon returns only the retired attempt's ID.
+
 For example, this extracts selected plan fields from a successful read while
 handling inline output, automatic spill, and explicit JSON `--out`:
 
 ```sh
-cctl spec plan status my-spec --json > .cc/temp/plan-receipt.json
+
 python3 - <<'PY'
 import json
 from pathlib import Path
@@ -72,7 +72,7 @@ print(json.dumps({'attempt': plan['attempt'], 'nextAct': plan['nextAct']}, inden
 PY
 ```
 
-`spec status`, `spec diff`, `spec delta`, `spec plan get`, and `spec plan status`
+
 return bounded collections by default. Follow omission commands or choose
 `--full` for complete data and optional `--out` artifact delivery.
 

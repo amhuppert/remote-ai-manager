@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import { reviewView } from "./delivery-plan-review.fixtures";
 import SpecLifecycleLanes from "./SpecLifecycleLanes";
 
 const meta = {
@@ -10,14 +9,13 @@ const meta = {
   parameters: { a11y: { test: "error" }, layout: "fullscreen" },
   args: {
     detail: specControlsDetailFixture(),
-    deliveryPlan: null,
   },
 } satisfies Meta<typeof SpecLifecycleLanes>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const DeliveredBaseline: Story = {
+export const ApprovedBaseline: Story = {
   args: { detail: specControlsDetailFixture() },
 };
 
@@ -55,12 +53,5 @@ export const DesignReview: Story = {
       };
       return detail;
     })(),
-  },
-};
-
-export const ConcurrentOldExecution: Story = {
-  args: {
-    detail: ExtensionRequirements.args?.detail,
-    deliveryPlan: reviewView({ attempt: { status: "launched" } }),
   },
 };

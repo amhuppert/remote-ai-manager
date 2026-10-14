@@ -37,9 +37,7 @@ describe("ProjectsIndexPage hotkeys", () => {
     client.setQueryData(configKeys.all, { baseDir: "/repos" });
     client.setQueryData(conversationKeys.active(), {
       conversations: [],
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
-      specExecutions: [],
     });
     client.setQueryData(notificationKeys.list(), {
       notifications: [],

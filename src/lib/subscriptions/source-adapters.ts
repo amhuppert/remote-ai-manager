@@ -1,14 +1,9 @@
 import { gitJobSourceFact } from "./git-job-source";
 import { createNotepadSourceReader } from "./notepad-source";
-import { createWorkflowSourceReader } from "./workflow-source";
 import { createRunSourceReader, type RunSourceDeps } from "./run-source";
 import type { NotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import type { NotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
-import type { GraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import type { JobsRepo } from "@/lib/jobs/repo";
-import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
-import type { GraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
-import type { GraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import type { NotepadsRepo } from "@/lib/state-store/notepads-repo";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
@@ -31,13 +26,9 @@ export interface SubscriptionSourceDeps {
   notepads: NotepadsRepo;
   comments: NotepadCommentsRepo;
   watermarks: NotepadDeliveryWatermarksRepo;
-  resultDeliveries: GraphWorkflowResultDeliveriesRepo;
   tickets: TicketsRepo;
   specs: SpecsRepo;
   specEvents: SpecEventsRepo;
-  workflows: GraphWorkflowExecutionsRepo;
-  archivedWorkflows: GraphWorkflowArchivedExecutionsRepo;
-  workflowEvents: GraphWorkflowEventsRepo;
   validations: ValidationRunsRepo;
   jobs: JobsRepo;
   queries: SubscriptionSourceQueriesRepo;
@@ -104,12 +95,7 @@ export function projectSpecSourceFact(input: {
   return {
     occurrenceId: String(event.id),
     eventKind: event.event_type,
-    category:
-      event.event_type === "spec-execution-changed"
-        ? "outcome"
-        : decision
-          ? "decision"
-          : "revision",
+    category: decision ? "decision" : "revision",
     sourceTitle: spec.name,
     summary: `${event.event_type}: ${payloadSummary(payload) || kind}`,
     occurredAt: event.occurred_at,
@@ -127,7 +113,6 @@ export function projectSpecSourceFact(input: {
 
 export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
   const readNotepad = createNotepadSourceReader(deps);
-  const readWorkflow = createWorkflowSourceReader(deps);
   const readRun = createRunSourceReader(deps.runs);
   return async function readSource(
     recipient: SubscriptionRecipient,
@@ -218,8 +203,6 @@ export function createSubscriptionSourceReader(deps: SubscriptionSourceDeps) {
         ],
       };
     }
-    if (source.kind === "workflow")
-      return readWorkflow(recipient, source, cursor);
     if (source.kind === "ticket") {
       const ticket = await deps.tickets.findById(source.id);
       if (!ticket || ticket.projectPath !== recipient.projectPath)

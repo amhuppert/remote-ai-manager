@@ -27,7 +27,6 @@ const enabledConfig: PushNotificationConfig = {
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
-    planRepair: true,
   },
 };
 

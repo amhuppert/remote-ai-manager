@@ -9,21 +9,6 @@ import { liveReferenceReader } from "./reader";
 const auth = createAgentAuth();
 const logger = createLogger("live-references.routes");
 
-export const executionsGET = withTracing(
-  async (request: Request): Promise<Response> => {
-    if ((await auth.validateOptionalToken(request)).kind === "invalid")
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const { listExecutionReferences } =
-      await import("@/lib/state-store/execution-reference-repo");
-    const { getStateDb } = await import("@/lib/state-store");
-    const query = new URL(request.url).searchParams.get("q") ?? "";
-    return NextResponse.json(
-      { items: listExecutionReferences(getStateDb(), query) },
-      { headers: { "Cache-Control": "no-store" } },
-    );
-  },
-);
-
 export const referencesPOST = withTracing(
   async (request: Request): Promise<Response> => {
     const refused = await auth.validateOptionalToken(request);

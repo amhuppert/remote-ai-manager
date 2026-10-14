@@ -27,10 +27,6 @@ import { resolveConversationNamingConfig } from "./schemas";
 import { rawGlobalConfigSchema } from "@/lib/config/schemas";
 import type { GlobalConfig, RawGlobalConfig } from "@/lib/config/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
-import {
-  createAssignmentReferenceChecker,
-  type AssignmentReferenceChecker,
-} from "@/lib/workflow-graph/assignment-references";
 
 const log = createLogger("config");
 
@@ -48,7 +44,6 @@ export interface ConfigRouteDeps {
   readConfig(): Promise<GlobalConfig>;
   readRawConfig(): Promise<RawGlobalConfig>;
   writeRawConfig(config: RawGlobalConfig): Promise<void>;
-  assignmentReferences?: AssignmentReferenceChecker;
 }
 
 const defaultDeps: ConfigRouteDeps = {
@@ -62,8 +57,6 @@ const defaultDeps: ConfigRouteDeps = {
 // ---------------------------------------------------------------------------
 
 export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
-  const assignmentReferences =
-    deps.assignmentReferences ?? createAssignmentReferenceChecker();
   async function GET(): Promise<Response> {
     try {
       const [config, raw] = await Promise.all([
@@ -143,26 +136,6 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
       if (!(error instanceof BackendAdmissionError)) throw error;
       return NextResponse.json(
         { error: error.message, code: error.code, refusal: error.refusal },
-        { status: 400 },
-      );
-    }
-
-    // Canonicalization proves the effective config and its model selections;
-    // profile existence still needs the async library. `workflowDefaults` is a
-    // global-scope document — it applies to every project — so it is held to
-    // the global tier-scope rule.
-    const referenceIssues = await assignmentReferences.checkWorkflowDefaults(
-      canonical.workflowDefaults,
-    );
-    if (referenceIssues.length > 0) {
-      const detail = referenceIssues
-        .map((issue) => `${issue.path}: ${issue.message}`)
-        .join("; ");
-      log.warn("config.update_assignment_reference_error", {
-        paths: referenceIssues.map((issue) => issue.path),
-      });
-      return NextResponse.json(
-        { error: `Invalid config: ${detail}` },
         { status: 400 },
       );
     }

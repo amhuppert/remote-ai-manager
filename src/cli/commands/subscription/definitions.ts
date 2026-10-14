@@ -29,14 +29,14 @@ export const subscriptionWaitSpec = {
   path: "subscription wait",
   summary: "Register a terminal wait and return immediately",
   description:
-    "Wait for the exact workflow execution, validation run or git job to reach a terminal state. Registration returns the durable wait id and state immediately; it does not block or poll. The server schedules an ordinary conversation turn with the result. The lifetime defaults to 24 hours and is limited to 7 days. A live wait retains its deadline; paused, passive or unfollowed controls require explicit restoration. After settlement or cancellation, an undelivered terminal result remains obtainable. A consumed resumable halt can be re-armed for a later workflow boundary; a consumed final result is refused instead of creating an ineffective wait. A validation wait does not detach the run or renew its private submitter lease; lease interruption is a terminal result. Workflow lanes cannot register waits.",
+    "Wait for the exact validation run or git job to reach a terminal state. Registration returns the durable wait id and state immediately; it does not block or poll. The server schedules an ordinary conversation turn with the result. The lifetime defaults to 24 hours and is limited to 7 days. A live wait retains its deadline; paused, passive or unfollowed controls require explicit restoration. After settlement or cancellation, an undelivered terminal result remains obtainable. A consumed final result is refused instead of creating an ineffective wait. A validation wait does not detach the run or renew its private submitter lease; lease interruption is a terminal result. Managed conversations cannot register waits.",
   requires: "cc",
   effects: "write",
   args: [
     {
       name: "kind",
       description: "Terminal source kind",
-      value: { kind: "enum", values: ["workflow", "validation", "git_job"] },
+      value: { kind: "enum", values: ["validation", "git_job"] },
     },
     {
       name: "source-id",
@@ -179,12 +179,12 @@ export const subscriptionWaitCommand = ccCommands.defineCommand(
   {
     examples: [
       {
-        args: { kind: "workflow", "source-id": "execution-one" },
+        args: { kind: "validation", "source-id": "validation-one" },
         flags: {
-          reason: "Continue when the workflow finishes",
+          reason: "Continue when validation finishes",
           "expires-in": 3600,
         },
-        why: "Resume from an exact workflow result without blocking this turn",
+        why: "Resume from an exact validation result without blocking this turn",
       },
       {
         args: { kind: "validation", "source-id": "validation-one" },

@@ -19,28 +19,6 @@ export const checkpointRelatedWorkSchema = z.discriminatedUnion("kind", [
       revisionId: z.string().min(1),
     })
     .strict(),
-  z
-    .object({
-      kind: z.literal("workflow_assignment"),
-      executionId: z.string().min(1),
-      sessionName: z.string().min(1),
-      assignmentId: z.string().min(1),
-      owner: z.discriminatedUnion("kind", [
-        z.object({ kind: z.literal("workflow") }).strict(),
-        z
-          .object({ kind: z.literal("context"), contextId: z.string().min(1) })
-          .strict(),
-        z
-          .object({
-            kind: z.literal("loop_template"),
-            loopGroupId: z.string().min(1),
-            contextId: z.string().min(1),
-          })
-          .strict(),
-      ]),
-      useSite: z.enum(["implementer", "validator"]),
-    })
-    .strict(),
 ]);
 export type CheckpointRelatedWork = z.infer<typeof checkpointRelatedWorkSchema>;
 

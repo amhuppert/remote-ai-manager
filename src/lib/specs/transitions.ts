@@ -23,7 +23,6 @@ import {
   COMBINED_APPROVAL_DIAL,
   authoringApprovalsCollapseIntoSignOff,
   dialRequiresHumanApproval,
-  isExploratoryShippingRefused,
   policyChangeRequiresHardConfirmation,
   resolveDial,
   type ResolvedGateDial,
@@ -45,15 +44,9 @@ import type {
   SpecApprovalSubjectKind,
   SpecAuthoringStage,
   SpecElementKind,
-  SpecExecutionState,
   SpecGatePolicy,
   SpecRevisionState,
 } from "./schemas";
-import {
-  validateExecutionScope,
-  type ExecutionScope,
-  type ScopePlan,
-} from "./scope-validation";
 
 export {
   authoringStages,
@@ -77,8 +70,6 @@ export type TransitionRefusal = Omit<Refusal, "findings"> & {
 export type TransitionDecision =
   | { ok: true }
   | { ok: false; refusal: TransitionRefusal };
-
-export type DeliveryGateResult = TransitionDecision;
 
 export interface ReviewThreadSnapshot {
   handle: string;
@@ -139,23 +130,6 @@ export interface SignOffContext {
   approvalApplies: ApprovalApplicability;
 }
 
-export interface StartExecutionContext {
-  policy: SpecGatePolicy;
-  specAbandoned: boolean;
-  revisionId?: string;
-  revisionState: SpecRevisionState;
-  authoringStage: SpecAuthoringStage;
-  scope?: ExecutionScope;
-  plan: ScopePlan;
-  activeExecution: boolean;
-}
-
-export interface WaiverContext {
-  actor: ActorProvenance;
-  reason: string;
-  existingWaiver: boolean;
-}
-
 export interface OpenDraftSnapshot {
   revisionNumber: number;
   authoringStage: SpecAuthoringStage;
@@ -168,31 +142,6 @@ export interface PolicyChangeContext {
   hardConfirmed: boolean;
   /** Absent when no draft is open; an approved revision is never one. */
   openDraft?: OpenDraftSnapshot;
-}
-
-export interface DeliveryWaiverSnapshot {
-  revisionId: string;
-  grantedByHuman: boolean;
-  reason: string;
-  stale: boolean;
-}
-
-export interface DeliveryCriterionSnapshot {
-  criterionId: string;
-  handle: string;
-  validProof: boolean;
-  humanAccepted?: boolean;
-  waiver: DeliveryWaiverSnapshot | null;
-  deliveredByMergedExecution: boolean;
-}
-
-export interface DeliveryGateContext {
-  policy: SpecGatePolicy;
-  executionState: SpecExecutionState;
-  pinnedRevisionId?: string;
-  pinnedScope?: ExecutionScope;
-  deliveryApprovalGranted: boolean;
-  criteria: DeliveryCriterionSnapshot[];
 }
 
 function allowed(): TransitionDecision {
@@ -251,6 +200,12 @@ export function admitDraftWrite(
   sectionRole: SectionRole | undefined,
   resolvedDials: ResolvedAuthoringDials,
 ): TransitionDecision {
+  if (stage === "plan")
+    return refused(
+      "stage_blocked",
+      ["Legacy plan revisions are read-only."],
+      "Open a design amendment.",
+    );
   const elementStage = authoringStageForElement(elementKind, sectionRole);
   const elementStagePosition = authoringStageIndex(elementStage);
   const currentStagePosition = authoringStageIndex(stage);
@@ -263,9 +218,9 @@ export function admitDraftWrite(
     return refused(
       "stage_blocked",
       [
-        `A ${label} is authored in a delivery plan attempt, not an evergreen revision.`,
+        `A ${label} is legacy read-only content. Plan implementation with a run.`,
       ],
-      "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl workflow replace <definitionId> --file <plan.json>`.",
+      "Create implementation work with `cctl run launch`.",
       { rationale: PLAN_IN_EVERGREEN_RATIONALE },
     );
   }
@@ -320,7 +275,7 @@ export function advanceAuthoringStage(
     return refused(
       "gate_blocked",
       ["Design is the final evergreen authoring stage."],
-      "Propose the design stage when it is ready for review, then run `cctl spec plan open <slug>` after sign-off.",
+      "Propose the design stage when it is ready for review.",
     );
   }
   const dial = resolveDial(policy, stage);
@@ -393,7 +348,6 @@ export function approvalUnmetConditions(
     context;
   const requirementsDial = resolveDial(policy, "requirements");
   const designDial = resolveDial(policy, "design");
-  const planDial = resolveDial(policy, "plan");
 
   if (authoringApprovalsCollapseIntoSignOff(policy, authoringStage)) {
     // The combined dial collapses per-element approvals into one human act:
@@ -465,16 +419,6 @@ export function approvalUnmetConditions(
   }
   if (consulted.has("design")) {
     requireElementApprovals(designDial, "decision", "Decision");
-  }
-
-  if (
-    authoringStage === "plan" &&
-    dialRequiresHumanApproval(planDial) &&
-    !approvalHeld(context.approvals, approvalApplies, "plan", null)
-  ) {
-    unmetConditions.push(
-      `Execution plan needs a valid approval for ${revisionId}.`,
-    );
   }
 
   return unmetConditions;
@@ -559,6 +503,12 @@ function proposeDials(
  * freeze the draft itself, because no human act follows to do it.
  */
 export function propose(context: ProposeContext): TransitionDecision {
+  if (context.authoringStage === "plan")
+    return refused(
+      "stage_blocked",
+      ["Legacy plan revisions are read-only."],
+      "Open a design amendment.",
+    );
   if (context.revisionState !== "draft") {
     return refused(
       "gate_blocked",
@@ -625,6 +575,12 @@ export function approveElement(
 }
 
 export function signOffRevision(context: SignOffContext): TransitionDecision {
+  if (context.authoringStage === "plan")
+    return refused(
+      "stage_blocked",
+      ["Legacy plan revisions are read-only."],
+      "Open a design amendment.",
+    );
   if (context.revisionState === "approved") {
     return allowed();
   }
@@ -659,118 +615,12 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
   );
 }
 
-/**
- * Classifies the archived evergreen Plan-stage start contract. Production
- * starts resolve and launch an approved DeliveryPlanAttempt through
- * ExecutionService; this remains for legacy revision compatibility tests.
- */
-export function startExecution(
-  context: StartExecutionContext,
-): TransitionDecision {
-  if (context.specAbandoned) {
-    return refused(
-      "gate_blocked",
-      ["An abandoned spec is terminal and cannot start another execution."],
-      "Use the abandoned spec history; create a new spec for future work.",
-    );
-  }
-
-  const revisionId = context.revisionId;
-  const scope = context.scope;
-  const pinConditions: string[] = [];
-  if (!revisionId) {
-    pinConditions.push("Execution start requires a pinned revision.");
-  }
-  if (!scope) {
-    pinConditions.push("Execution start requires a pinned scope.");
-  }
-  if (!revisionId || !scope) {
-    return refused(
-      "invalid_scope",
-      pinConditions,
-      "Select an approved revision and an explicit execution scope, then start again.",
-    );
-  }
-
-  if (context.revisionState !== "approved") {
-    return refused(
-      "revision_not_approved",
-      ["The pinned revision is not approved."],
-      "Complete revision sign-off before starting execution.",
-    );
-  }
-
-  if (context.authoringStage !== "plan") {
-    return refused(
-      "gate_blocked",
-      ["The pinned revision has not completed plan-stage authoring."],
-      "Complete plan-stage authoring and sign off that revision before starting execution.",
-    );
-  }
-
-  if (context.activeExecution) {
-    return refused(
-      "execution_active",
-      ["The spec already has an active execution."],
-      "Finish or abandon the active execution before starting another.",
-    );
-  }
-
-  const scopeResult = validateExecutionScope(context.plan, scope);
-  if (!scopeResult.valid) {
-    return refused(
-      "invalid_scope",
-      scopeResult.defects.map((defect) => defect.message),
-      "Repair the selected tasks, criteria, and exclusions, then start again.",
-    );
-  }
-
-  return allowed();
-}
-
-export function grantWaiver(context: WaiverContext): TransitionDecision {
-  const unmetConditions: string[] = [];
-  if (context.actor.kind !== "human") {
-    unmetConditions.push("Waiver grant is a human-only act.");
-  }
-  if (context.reason.trim().length === 0) {
-    unmetConditions.push("A waiver requires a reason.");
-  }
-  if (unmetConditions.length > 0) {
-    return refused(
-      context.actor.kind !== "human" ? "human_act_required" : "validation",
-      unmetConditions,
-      context.actor.kind !== "human"
-        ? "Ask a human to grant the waiver with a reason in Spec Studio."
-        : "Provide a reason for the waiver.",
-    );
-  }
-
-  if (context.existingWaiver) {
-    return refused(
-      "gate_blocked",
-      ["This criterion and revision already has a terminal waiver decision."],
-      "Use the existing waiver or create an amendment for a changed criterion.",
-    );
-  }
-
-  return allowed();
-}
-
 export function changePolicy(context: PolicyChangeContext): TransitionDecision {
   if (context.actor.kind !== "human") {
     return refused(
       "human_act_required",
       ["Gate policy changes are human-only acts."],
       "Ask a human to change the policy in Spec Studio.",
-    );
-  }
-
-  if (context.proposedPolicy.overrides?.delivery === "off") {
-    return refused(
-      "gate_blocked",
-      ["The delivery gate can be Notify or Gate, but never Off."],
-      "Set the delivery override to Notify or Gate.",
     );
   }
 
@@ -845,116 +695,4 @@ function stagingDecided(dial: ResolvedGateDial): boolean {
     case "off":
       return true;
   }
-}
-
-function validWaiver(
-  waiver: DeliveryWaiverSnapshot | null,
-  pinnedRevisionId: string,
-): boolean {
-  return (
-    waiver !== null &&
-    waiver.revisionId === pinnedRevisionId &&
-    waiver.grantedByHuman &&
-    waiver.reason.trim().length > 0 &&
-    !waiver.stale
-  );
-}
-
-export function evaluateDeliveryGate(
-  context: DeliveryGateContext,
-): DeliveryGateResult {
-  if (context.executionState !== "running") {
-    return refused(
-      "gate_blocked",
-      [
-        `Delivery requires a running execution; this execution is ${context.executionState}.`,
-      ],
-      "The execution is terminal or has not started; delivery cannot proceed from this state.",
-    );
-  }
-
-  if (isExploratoryShippingRefused(context.policy)) {
-    return refused(
-      "delivery_gate_failed",
-      ["Exploratory specs cannot merge."],
-      "Switch the spec to a shipping-capable preset through a human-confirmed policy change.",
-    );
-  }
-
-  const pinnedRevisionId = context.pinnedRevisionId;
-  const pinnedScope = context.pinnedScope;
-  const pinConditions: string[] = [];
-  if (!pinnedRevisionId) {
-    pinConditions.push("Delivery requires the execution's pinned revision.");
-  }
-  if (!pinnedScope) {
-    pinConditions.push("Delivery requires the execution's pinned scope.");
-  } else if (pinnedScope.selectedCriterionIds.length === 0) {
-    pinConditions.push("Delivery scope selects no criteria.");
-  }
-  if (
-    !pinnedRevisionId ||
-    !pinnedScope ||
-    pinnedScope.selectedCriterionIds.length === 0
-  ) {
-    return refused(
-      "invalid_scope",
-      pinConditions,
-      "Restore the execution's immutable revision and scope pin before merging.",
-    );
-  }
-
-  if (
-    resolveDial(context.policy, "delivery") === "gate" &&
-    !context.deliveryApprovalGranted
-  ) {
-    return {
-      ok: false,
-      refusal: {
-        code: "gate_blocked",
-        reason: "approval_required",
-        unmetConditions: ["The delivery gate requires human approval."],
-        instruction:
-          "Open the spec’s Delivery view in Spec Studio, settle the listed acceptance criteria, and approve delivery to continue merge.",
-      },
-    };
-  }
-
-  const criteriaById = new Map(
-    context.criteria.map((criterion) => [criterion.criterionId, criterion]),
-  );
-  const unmetConditions: string[] = [];
-
-  for (const criterionId of pinnedScope.selectedCriterionIds) {
-    const criterion = criteriaById.get(criterionId);
-    if (!criterion) {
-      unmetConditions.push(
-        `${criterionId} has no loaded delivery state for the pinned scope.`,
-      );
-      continue;
-    }
-
-    if (
-      criterion.validProof ||
-      criterion.humanAccepted ||
-      validWaiver(criterion.waiver, pinnedRevisionId) ||
-      criterion.deliveredByMergedExecution
-    ) {
-      continue;
-    }
-
-    unmetConditions.push(
-      `${criterion.handle} needs valid proof, a valid human waiver for ${pinnedRevisionId}, or prior merged delivery.`,
-    );
-  }
-
-  if (unmetConditions.length > 0) {
-    return refused(
-      "delivery_gate_failed",
-      unmetConditions,
-      "Repair or replace the graph execution until each required authored claimant has valid proof, obtain any required human waiver, or repair the delivery scope before merging.",
-    );
-  }
-
-  return allowed();
 }

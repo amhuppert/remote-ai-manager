@@ -23,10 +23,6 @@ import {
   outputSchemaInputSchema,
   portableMcpConfigInputSchema,
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { WorkflowLaneIdentity } from "@/lib/agent-backends/conversation";
-import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
-import type { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
-import type { SettledConversationTurn } from "./turn-result";
 
 // ============================================================
 // Context
@@ -226,32 +222,6 @@ export const taskTurnRequestSchema = taskTurnSpecSchema
   })
   .extend({ kind: z.literal("task_run") });
 export type TaskTurnRequest = z.input<typeof taskTurnRequestSchema>;
-export type TurnSpec = ConversationTurnSpec | TaskTurnSpec;
-export type TurnRequest = ConversationTurnRequest | TaskTurnRequest;
-
-export function normalizeTurn(
-  request: ConversationTurnRequest,
-  backend: TurnSpec["backend"],
-): ConversationTurnSpec;
-export function normalizeTurn(
-  request: TaskTurnRequest,
-  backend: TurnSpec["backend"],
-): TaskTurnSpec;
-export function normalizeTurn(
-  request: TurnRequest,
-  backend: TurnSpec["backend"],
-): TurnSpec {
-  return request.kind === "task_run"
-    ? taskTurnSpecSchema.parse({
-        ...request,
-        backend: request.backend ?? backend,
-      })
-    : conversationTurnSpecSchema.parse({
-        ...request,
-        backend: request.backend ?? backend,
-      });
-}
-
 export const conversationAddressSchema = z
   .object({
     projectPath: z.string().min(1),
@@ -281,46 +251,4 @@ export const conversationBindingSchema = z.discriminatedUnion("kind", [
 ]);
 export type ConversationBinding = z.infer<typeof conversationBindingSchema>;
 
-export interface ConversationExecutionContext {
-  workflowContext?: WorkflowLaneIdentity;
-  tooling?: ConversationToolingOverrides;
-}
-
 export type TurnCancelReason = "user" | "timeout" | "stalled" | "shutdown";
-export interface AdmittedConversationTurn {
-  readonly attemptId: string;
-  readonly completed: Promise<SettledConversationTurn>;
-  cancel(reason: TurnCancelReason): Promise<SettledConversationTurn>;
-}
-
-export type TurnAdmissionRefusalCode =
-  | "busy"
-  | "cancelled"
-  | "binding_mismatch"
-  | "not_found"
-  | "queue_review_required"
-  | "profile_refused";
-export type TurnAdmissionRefusal =
-  | {
-      kind: "refused";
-      code: Exclude<TurnAdmissionRefusalCode, "profile_refused">;
-      message: string;
-    }
-  | {
-      kind: "refused";
-      code: "profile_refused";
-      message: string;
-      error: AgentProfileNotResolvableError;
-    };
-export type TurnAdmission =
-  | { kind: "accepted"; turn: AdmittedConversationTurn }
-  | TurnAdmissionRefusal;
-
-export interface ConversationTurnSubmission {
-  binding: ConversationBinding;
-  turn: TurnRequest;
-  executionContext?: ConversationExecutionContext;
-  transport?: { streamId: string; emit(event: string, data: unknown): void };
-  signal?: AbortSignal;
-  waitUntilReady?: boolean;
-}

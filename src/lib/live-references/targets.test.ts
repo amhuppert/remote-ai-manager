@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { buildTicketRefXml } from "@/lib/tickets/references";
-import { buildExecutionRefXml } from "@/lib/workflow-graph/references";
 import { collectLiveReferenceTargets } from "./targets";
 
 describe("live reference discovery", () => {
@@ -10,25 +9,11 @@ describe("live reference discovery", () => {
       ticketNumber: 90,
       title: "Capture",
     });
-    const run = buildExecutionRefXml({
-      projectName: "cc",
-      sessionName: "capture",
-      executionId: "run-1",
-      title: "Delivery",
-    });
     expect(
       collectLiveReferenceTargets(
-        `${ticket}\n<notepad-content>\n${ticket}\n${run}\n<notepad-ref notepad-id="nested" name="Nested" />\n</notepad-content>`,
+        `${ticket}\n<notepad-content>\n${ticket}\n<notepad-ref notepad-id="nested" name="Nested" />\n</notepad-content>`,
       ),
-    ).toEqual([
-      { kind: "ticket", projectName: "cc", id: "90" },
-      {
-        kind: "execution",
-        projectName: "cc",
-        sessionName: "capture",
-        id: "run-1",
-      },
-    ]);
+    ).toEqual([{ kind: "ticket", projectName: "cc", id: "90" }]);
   });
 
   it("ignores malformed references and literal code examples", () => {

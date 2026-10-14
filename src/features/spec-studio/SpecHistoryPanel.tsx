@@ -27,8 +27,6 @@ export type SpecHistoryKind =
   | "approval"
   | "admission"
   | "gate"
-  | "execution"
-  | "waiver"
   | "attention"
   | "comment";
 
@@ -57,13 +55,7 @@ interface SpecHistoryFieldChange {
   after: string;
 }
 
-type HistoryFilter =
-  | "all"
-  | "approvals"
-  | "admissions"
-  | "attention"
-  | "gates"
-  | "executions";
+type HistoryFilter = "all" | "approvals" | "admissions" | "attention" | "gates";
 
 const FILTERS: ReadonlyArray<{ value: HistoryFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -71,7 +63,6 @@ const FILTERS: ReadonlyArray<{ value: HistoryFilter; label: string }> = [
   { value: "admissions", label: "Policy admissions" },
   { value: "attention", label: "Attention records" },
   { value: "gates", label: "Gate changes" },
-  { value: "executions", label: "Executions" },
 ];
 
 type AdmissionReviewState = "idle" | "open" | "acknowledged" | "objected";
@@ -97,7 +88,6 @@ export default function SpecHistoryPanel({
     if (filter === "all") return true;
     if (filter === "admissions") return event.kind === "admission";
     if (filter === "attention") return event.kind === "attention";
-    if (filter === "executions") return event.kind === "execution";
     if (filter === "gates") return event.kind === "gate";
     // A policy admission is never a human approval, whatever it is admitting.
     // Without this the imported answer and disposition rows list here on their
@@ -105,7 +95,6 @@ export default function SpecHistoryPanel({
     if (event.emphasis === "policy") return false;
     return (
       event.kind === "approval" ||
-      event.kind === "waiver" ||
       (event.kind === "revision" && event.emphasis === "human")
     );
   });
@@ -150,7 +139,7 @@ export default function SpecHistoryPanel({
             </h2>
             <p className="mt-xs mb-0 max-w-[620px] font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
               Human decisions are recorded separately from policy admissions and
-              execution lifecycle events.
+              authoring events.
             </p>
           </div>
         </div>
@@ -559,39 +548,6 @@ export function buildSpecHistory(
       occurredAt: admission.createdAt,
       href: null,
       priority: 40,
-    });
-  }
-
-  for (const execution of detail.executions) {
-    const presentation = executionHistoryPresentation(execution.state);
-    events.push({
-      id: execution.id,
-      kind: "execution",
-      emphasis: "system",
-      tone: presentation.tone,
-      label: presentation.label,
-      detail:
-        execution.sessionName === null
-          ? `Execution ${execution.id}`
-          : `Session ${execution.sessionName}`,
-      occurredAt: execution.deliveredAt ?? execution.createdAt,
-      href: null,
-      priority: 35,
-    });
-  }
-
-  for (const waiver of detail.waivers) {
-    const subject = handles.get(waiver.criterion_element_id) ?? "Criterion";
-    events.push({
-      id: waiver.id,
-      kind: "waiver",
-      emphasis: "human",
-      tone: waiver.stale === 0 ? "amber" : "neutral",
-      label: `${subject} waived`,
-      detail: waiver.reason,
-      occurredAt: waiver.waived_at,
-      href: elementHref(projectName, detail.spec.slug, subject),
-      priority: 60,
     });
   }
 
@@ -1011,28 +967,6 @@ function elementHandles(
   return handles;
 }
 
-function executionHistoryPresentation(
-  state: SpecDetailView["executions"][number]["state"],
-): {
-  label: string;
-  tone: StatusChipTone;
-} {
-  switch (state) {
-    case "definition_review":
-      return { label: "Execution definition proposed", tone: "amber" };
-    case "running":
-      return { label: "Execution started", tone: "cyan" };
-    case "delivered":
-      return { label: "Execution delivered", tone: "green" };
-    case "abandoned":
-      return { label: "Execution abandoned", tone: "red" };
-    case "abandoning":
-      // Amber, not red: cleanup is in flight and may still be waiting on the
-      // linked workflow, so this is an attention state rather than a settled one.
-      return { label: "Execution abandonment in progress", tone: "amber" };
-  }
-}
-
 function historyKindLabel(kind: SpecHistoryKind): string {
   switch (kind) {
     case "spec":
@@ -1045,10 +979,6 @@ function historyKindLabel(kind: SpecHistoryKind): string {
       return "Policy admission";
     case "gate":
       return "Gate change";
-    case "execution":
-      return "Execution";
-    case "waiver":
-      return "Waiver";
     case "attention":
       return "Attention record";
     case "comment":
@@ -1059,7 +989,6 @@ function historyKindLabel(kind: SpecHistoryKind): string {
 function gateLabel(
   gate: SpecDetailView["gateAdmissions"][number]["gate"],
 ): string {
-  if (gate === "execution_start") return "Execution start";
   return `${gate.slice(0, 1).toUpperCase()}${gate.slice(1)}`;
 }
 

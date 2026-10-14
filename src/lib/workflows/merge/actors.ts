@@ -21,15 +21,9 @@ import type {
   TargetCheckoutState,
 } from "@/lib/git/worktree";
 import type { ConflictArtifacts } from "@/lib/git/conflict-markers";
-import type {
-  DeliveryGateEvaluateInput,
-  DeliveryGateEvaluation,
-  DeliveryGateEvaluator,
-} from "./types";
+import type {} from "./types";
 import { resolveSessionConversationId } from "../validation-fix/actors";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { evaluateGraphWorkflowSessionDelivery } from "@/lib/workflow-graph/lifecycle-classifier";
 import { currentRunRefusal, type CurrentRun } from "@/lib/runs/session-guard";
 import {
   backgroundWorkRefusal,
@@ -232,77 +226,6 @@ export type PublishActorOutput =
       status: "failed";
       error: string;
     };
-
-export type DeliveryGateActorInput = Omit<
-  DeliveryGateEvaluateInput,
-  "workflowExecutionId"
-> & {
-  workflowExecutionId?: string;
-};
-
-export type DeliveryGateActorOutput = DeliveryGateEvaluation;
-
-// ============================================================
-// Actor Definitions
-// ============================================================
-
-export function createDeliveryGateActor(evaluator: DeliveryGateEvaluator) {
-  return fromPromise<DeliveryGateActorOutput, DeliveryGateActorInput>(
-    async ({ input }) => {
-      if (!input.workflowExecutionId && !input.specExecutionId) {
-        logger.debug("delivery_gate.skipped", {
-          preparedSha: input.preparedSha,
-          projectPath: input.projectPath,
-        });
-        return { status: "pass", satisfied: [], deferred: [] };
-      }
-
-      logger.info("delivery_gate.evaluate_started", {
-        workflowExecutionId: input.workflowExecutionId,
-        preparedSha: input.preparedSha,
-        expectedTargetSha: input.expectedTargetSha,
-        projectPath: input.projectPath,
-      });
-      const result = await evaluator.evaluate({
-        workflowExecutionId: input.workflowExecutionId,
-        ...(input.specExecutionId && {
-          specExecutionId: input.specExecutionId,
-        }),
-        preparedSha: input.preparedSha,
-        expectedTargetSha: input.expectedTargetSha,
-        projectPath: input.projectPath,
-        ...(input.candidateValidation && {
-          candidateValidation: input.candidateValidation,
-        }),
-      });
-
-      if (result.status === "refused") {
-        logger.warn("delivery_gate.refused", {
-          workflowExecutionId: input.workflowExecutionId,
-          preparedSha: input.preparedSha,
-          unmetCount: result.unmet.length,
-        });
-        return result;
-      }
-
-      logger.info("delivery_gate.passed", {
-        workflowExecutionId: input.workflowExecutionId,
-        preparedSha: input.preparedSha,
-        satisfiedCount: result.satisfied.length,
-        deferredCount: result.deferred.length,
-      });
-      return result;
-    },
-  );
-}
-
-export const deliveryGateActor = createDeliveryGateActor({
-  async evaluate() {
-    throw new Error(
-      "Delivery gate evaluator is required for a linked workflow execution",
-    );
-  },
-});
 
 /** Read the worktree's currently checked-out branch (null = detached HEAD). */
 export const getCurrentBranchActor = fromPromise<
@@ -578,21 +501,6 @@ export interface PublishActorDeps {
     operation: () => Promise<T>,
   ): Promise<T>;
   setSessionFinished(projectPath: string, sessionName: string): Promise<void>;
-  /**
-   * The delivery gate reads tenure, not status, so this must surface the halt
-   * reason and abandonment too: a status alone cannot tell a resumable halt
-   * (still holding the lease) from a non-resumable or abandoned one (which
-   * holds nothing and must not block the merge). `definitionApproval` rides
-   * along so the refusal can name the canonical remedy for the blocker's own
-   * state.
-   */
-  getActiveGraphWorkflowExecution(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<Pick<
-    GraphWorkflowExecution,
-    "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
-  > | null>;
   /** The session's runs that have not finished; finishing the session waits for every one. */
   currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
   /** The session's conversations whose background work custody holds between turns; finishing the session waits for each. */
@@ -710,22 +618,6 @@ export async function runPublish(
 
   try {
     if (input.finalizeSession) {
-      const deliveryDecision = evaluateGraphWorkflowSessionDelivery(
-        await deps.getActiveGraphWorkflowExecution(
-          input.projectPath,
-          input.sessionName,
-        ),
-      );
-      if (!deliveryDecision.allowed) {
-        logger.warn("publishActor.active_graph_workflow_refused", {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          executionId: deliveryDecision.executionId,
-          workflowStatus: deliveryDecision.status,
-          remedy: deliveryDecision.remedy,
-        });
-        return { status: "failed", error: deliveryDecision.message };
-      }
       const runRefusal = currentRunRefusal(
         deps.currentRuns(input.projectPath, input.sessionName),
         "merging this session",
@@ -938,8 +830,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
     const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
     const { getSessionLifecycleGate } =
       await import("@/lib/sessions/lifecycle-gate");
-    const { getActiveGraphWorkflowExecution, setSessionFinished } =
-      await import("@/lib/state-store");
+    const { setSessionFinished } = await import("@/lib/state-store");
     const { stopAllForSession } = await import("@/lib/dev-server/registry");
     const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
     const { reconcileTicketSessionLifecycle } =
@@ -961,7 +852,6 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
             operation,
           ),
         setSessionFinished,
-        getActiveGraphWorkflowExecution,
         currentRuns,
         backgroundWork: sessionBackgroundWork,
         reconcileTicketSessionLifecycle,

@@ -17,15 +17,6 @@ import type {
 } from "@/lib/conversations/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
 import type { SessionConversationListItem } from "@/lib/state-store";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import type {
-  GraphWorkflowAbandonment,
-  GraphWorkflowApprovalDecision,
-  GraphWorkflowApprovalScope,
-  GraphWorkflowExecution,
-  GraphWorkflowHaltReason,
-} from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 
 function convo(
   status: ConversationStatus,
@@ -71,10 +62,7 @@ function makeConversation(
   });
 }
 
-function makeState(
-  conversations: ConversationState[],
-  graphWorkflowExecution: GraphWorkflowExecution | null = null,
-): ManagerState {
+function makeState(conversations: ConversationState[]): ManagerState {
   return managerStateSchema.parse({
     projects: {
       "/repo/project": {
@@ -94,7 +82,6 @@ function makeState(
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,
-            graphWorkflowExecution,
             referenceDocuments: [],
           },
         },
@@ -133,38 +120,15 @@ function stateToActiveDeps(
   };
 }
 
-/**
- * Build the active-executions map the handlers read, keyed by the NUL-separated
- * `${projectPath} ${sessionName}` the production accessor emits. The fixture
- * state's single session is `/repo/project` :: `session-a`.
- */
-function activeExecutionsMap(
-  graphWorkflowExecution: GraphWorkflowExecution | null,
-): Map<string, GraphWorkflowExecution> {
-  const map = new Map<string, GraphWorkflowExecution>();
-  if (graphWorkflowExecution) {
-    map.set(
-      `/repo/project${String.fromCharCode(0)}session-a`,
-      graphWorkflowExecution,
-    );
-  }
-  return map;
-}
-
 async function listRows(
   conversations: ConversationState[],
-  graphWorkflowExecution: GraphWorkflowExecution | null = null,
   overrides: Partial<ActiveConversationsRouteDeps> = {},
 ) {
   const deps: ActiveConversationsRouteDeps = {
-    ...stateToActiveDeps(makeState(conversations, graphWorkflowExecution)),
+    ...stateToActiveDeps(makeState(conversations)),
     getProjectDisplayName: vi.fn().mockReturnValue("project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
     listProjectConversations: vi.fn().mockResolvedValue([]),
-    listActiveGraphWorkflowExecutions: vi
-      .fn()
-      .mockResolvedValue(activeExecutionsMap(graphWorkflowExecution)),
-    listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
     getBackgroundActivity: () => null,
     ...overrides,
   };
@@ -174,89 +138,6 @@ async function listRows(
   const body = activeConversationsResponseSchema.parse(await response.json());
   return body.conversations;
 }
-
-describe("GET — active spec executions", () => {
-  it("serves feed items and drops executions in archived projects", async () => {
-    const liveItem = {
-      executionId: "spec-execution-live",
-      state: "definition_review" as const,
-      specSlug: "native-sdd",
-      specName: "Native SDD",
-      projectPath: "/repo/project",
-      projectName: "project",
-      sessionName: "session-a",
-      createdAt: "2026-07-19T09:00:00.000Z",
-    };
-    const archivedItem = {
-      ...liveItem,
-      executionId: "spec-execution-archived",
-      projectPath: "/repo/archived",
-      projectName: "archived",
-    };
-    const deps: ActiveConversationsRouteDeps = {
-      ...stateToActiveDeps({
-        ...makeState([]),
-        archivedProjects: ["/repo/archived"],
-      }),
-      getProjectDisplayName: vi.fn().mockReturnValue("project"),
-      readLastAssistantContent: vi.fn().mockResolvedValue(null),
-      listProjectConversations: vi.fn().mockResolvedValue([]),
-      listActiveGraphWorkflowExecutions: vi
-        .fn()
-        .mockResolvedValue(activeExecutionsMap(null)),
-      listActiveSpecExecutions: vi
-        .fn()
-        .mockResolvedValue([liveItem, archivedItem]),
-      getBackgroundActivity: () => null,
-    };
-
-    const handlers = createActiveConversationsRouteHandlers(deps);
-    const response = await handlers.GET();
-    expect(response.status).toBe(200);
-    const body = activeConversationsResponseSchema.parse(await response.json());
-
-    expect(body.specExecutions).toEqual([liveItem]);
-  });
-});
-
-describe("GET — top-level read concurrency", () => {
-  it("does not serialize the project-conversation and workflow reads behind the session-list read", async () => {
-    let releaseSessions!: () => void;
-    const sessionsGate = new Promise<void>((resolve) => {
-      releaseSessions = resolve;
-    });
-    const listProjectConversations = vi.fn().mockResolvedValue([]);
-    const listActiveGraphWorkflowExecutions = vi
-      .fn()
-      .mockResolvedValue(activeExecutionsMap(null));
-    const deps: ActiveConversationsRouteDeps = {
-      ...stateToActiveDeps(makeState([])),
-      listSessionConversationListItems: vi.fn().mockImplementation(async () => {
-        await sessionsGate;
-        return [];
-      }),
-      getProjectDisplayName: vi.fn().mockReturnValue("project"),
-      readLastAssistantContent: vi.fn().mockResolvedValue(null),
-      listProjectConversations,
-      listActiveGraphWorkflowExecutions,
-      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
-      getBackgroundActivity: () => null,
-    };
-    const handlers = createActiveConversationsRouteHandlers(deps);
-
-    const pending = handlers.GET();
-    await Promise.resolve();
-    await Promise.resolve();
-    // All reads are independent; the two list reads must be in flight while the
-    // session-list read is still unresolved.
-    expect(listProjectConversations).toHaveBeenCalledTimes(1);
-    expect(listActiveGraphWorkflowExecutions).toHaveBeenCalledTimes(1);
-
-    releaseSessions();
-    const response = await pending;
-    expect(response.status).toBe(200);
-  });
-});
 
 describe("deriveLastActivitySummary", () => {
   it("returns null for status 'new'", () => {
@@ -457,272 +338,6 @@ describe("GET /api/conversations/active pending question fields", () => {
   );
 });
 
-describe("GET /api/conversations/active pending approval standing", () => {
-  const GATED_CONVERSATION_ID = "conv-gated";
-  const GATED_CONTEXT_ID = "context-implement";
-  const REQUESTED_AT = "2026-06-10T09:00:00.000Z";
-
-  const EXPECTED_STANDING = {
-    contextId: GATED_CONTEXT_ID,
-    contextTitle: "Implement",
-    requestedAt: REQUESTED_AT,
-    workflowName: null,
-    executionSuspended: false,
-    enveloped: false,
-    tasksCompleted: 0,
-    tasksTotal: 1,
-  };
-
-  function gatedExecution(
-    opts: {
-      executionStatus?: GraphWorkflowStatus;
-      decision?: GraphWorkflowApprovalDecision | null;
-      approvalScope?: GraphWorkflowApprovalScope;
-      haltReason?: GraphWorkflowHaltReason | null;
-      abandonment?: GraphWorkflowAbandonment | null;
-    } = {},
-  ): GraphWorkflowExecution {
-    // A halted fixture defaults to a resumable reason: the halt event types its
-    // reason as non-nullable, so production cannot produce a reasonless halt,
-    // and the lease predicate behind this feed reads that reason.
-    const haltReason =
-      opts.haltReason ??
-      (opts.executionStatus === "halted"
-        ? ({
-            type: "circuit_breaker",
-            contextId: GATED_CONTEXT_ID,
-            condition: "retry_exhaustion",
-            summary: null,
-          } as const)
-        : null);
-    const execution = createWorkflowExecution({
-      status: opts.executionStatus ?? "running",
-      ...(haltReason ? { haltReason } : {}),
-      ...(opts.abandonment ? { abandonment: opts.abandonment } : {}),
-    });
-    const contextState = execution.contextStates[GATED_CONTEXT_ID];
-    if (!contextState) throw new Error("fixture missing gated context");
-    contextState.status = "awaiting_approval";
-    contextState.pendingApproval = {
-      conversationId: GATED_CONVERSATION_ID,
-      requestedAt: REQUESTED_AT,
-      decision: opts.decision ?? null,
-      approvalScope: opts.approvalScope ?? { kind: "whole_tree" },
-    };
-    return execution;
-  }
-
-  function gatedConversation(overrides: Partial<ConversationState> = {}) {
-    return makeConversation({
-      id: GATED_CONVERSATION_ID,
-      status: "awaiting",
-      role: "iteration",
-      ...overrides,
-    });
-  }
-
-  it("includes a gated iteration conversation despite the role filter, carrying the standing payload", async () => {
-    const rows = await listRows([gatedConversation()], gatedExecution());
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.id).toBe(GATED_CONVERSATION_ID);
-    expect(rows[0]?.pendingApproval).toEqual(EXPECTED_STANDING);
-  });
-
-  it("marks the standing enveloped from the gate's FROZEN scope", async () => {
-    // The sidebar peek decides from this flag whether to fetch the frozen
-    // owned-path artifact, so it has to follow the parked record rather than a
-    // placement that can be edited while the gate stands (R15.2).
-    const rows = await listRows(
-      [gatedConversation()],
-      gatedExecution({
-        approvalScope: {
-          kind: "scoped",
-          ownedPaths: ["src/api"],
-          treeHash: "owned-digest",
-          headSha: "base-sha",
-        },
-      }),
-    );
-
-    expect(rows[0]?.pendingApproval?.enveloped).toBe(true);
-  });
-
-  it("keeps non-gated iteration and validator conversations hidden", async () => {
-    const rows = await listRows(
-      [
-        gatedConversation(),
-        makeConversation({ id: "conv-other-iter", role: "iteration" }),
-        makeConversation({ id: "conv-validator", role: "validator" }),
-      ],
-      gatedExecution(),
-    );
-
-    expect(rows.map((r) => r.id)).toEqual([GATED_CONVERSATION_ID]);
-  });
-
-  it.each(["new", "running", "awaiting", "waiting_for_input"] as const)(
-    "keeps standing independent of conversation status %s",
-    async (status) => {
-      const rows = await listRows(
-        [gatedConversation({ status })],
-        gatedExecution(),
-      );
-
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.pendingApproval).toEqual(EXPECTED_STANDING);
-    },
-  );
-
-  it.each([
-    { type: "approved", decidedAt: "2026-06-10T10:00:00.000Z" } as const,
-    {
-      type: "rejected",
-      message: "needs rework",
-      decidedAt: "2026-06-10T10:00:00.000Z",
-    } as const,
-  ])(
-    "drops standing the moment a $type decision is recorded",
-    async (decision) => {
-      const rows = await listRows(
-        [gatedConversation()],
-        gatedExecution({ decision }),
-      );
-
-      expect(rows).toHaveLength(0);
-    },
-  );
-
-  it.each(["aborted", "completed"] as const)(
-    "drops standing when the execution is %s",
-    async (executionStatus) => {
-      const rows = await listRows(
-        [gatedConversation()],
-        gatedExecution({ executionStatus }),
-      );
-
-      expect(rows).toHaveLength(0);
-    },
-  );
-
-  it.each(["paused", "halted"] as const)(
-    "keeps standing while the execution is %s and flags it suspended",
-    async (executionStatus) => {
-      const rows = await listRows(
-        [gatedConversation()],
-        gatedExecution({ executionStatus }),
-      );
-
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.pendingApproval).toEqual({
-        ...EXPECTED_STANDING,
-        executionSuspended: true,
-        enveloped: false,
-      });
-    },
-  );
-
-  /**
-   * A gate's standing is lease tenure, not a status set.
-   *
-   * These two halts are the cases a status set cannot see: the run can never
-   * continue, so the approval it is parked on can never be acted on. Keeping it
-   * in the Needs-Input feed asks the operator for a decision that would change
-   * nothing, forever, with no act available to clear it.
-   */
-  it("drops standing when a halt is not resumable", async () => {
-    const rows = await listRows(
-      [gatedConversation()],
-      gatedExecution({
-        executionStatus: "halted",
-        haltReason: { type: "recovery_error", message: "unrecoverable" },
-      }),
-    );
-
-    expect(rows).toHaveLength(0);
-  });
-
-  it("drops standing when a resumable halt has been abandoned", async () => {
-    const rows = await listRows(
-      [gatedConversation()],
-      gatedExecution({
-        executionStatus: "halted",
-        haltReason: {
-          type: "circuit_breaker",
-          contextId: GATED_CONTEXT_ID,
-          condition: "retry_exhaustion",
-          summary: null,
-        },
-        abandonment: {
-          abandonedAt: "2026-06-10T11:00:00.000Z",
-          actor: { kind: "human" },
-          reason: "superseded",
-        },
-      }),
-    );
-
-    expect(rows).toHaveLength(0);
-  });
-
-  it("drops standing for a pending execution that has not started", async () => {
-    // `pending` holds the lease but is still awaiting its own definition
-    // approval, so no context of it is running and a park on one is not yet a
-    // fact. Both halves of that are why the gate predicate is
-    // `holdsActionableGate`, not the lease alone.
-    const rows = await listRows(
-      [gatedConversation()],
-      gatedExecution({ executionStatus: "pending" }),
-    );
-
-    expect(rows).toHaveLength(0);
-  });
-
-  it("keeps archived conversations excluded even when gated", async () => {
-    const rows = await listRows(
-      [gatedConversation({ archived: true })],
-      gatedExecution(),
-    );
-
-    expect(rows).toHaveLength(0);
-  });
-
-  it("returns null pendingApproval for non-gated rows", async () => {
-    const rows = await listRows(
-      [makeConversation({ id: "conv-plain", status: "running" })],
-      gatedExecution(),
-    );
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.pendingApproval).toBeNull();
-  });
-
-  it("returns null pendingApproval for project-scope rows", async () => {
-    const deps: ActiveConversationsRouteDeps = {
-      ...stateToActiveDeps(makeState([])),
-      getProjectDisplayName: vi.fn().mockReturnValue("project"),
-      readLastAssistantContent: vi.fn().mockResolvedValue(null),
-      listProjectConversations: vi.fn().mockResolvedValue([
-        {
-          projectPath: "/repo/project",
-          conversation: makeConversation({ id: "proj-conv", status: "new" }),
-        },
-      ]),
-      listActiveGraphWorkflowExecutions: vi
-        .fn()
-        .mockResolvedValue(activeExecutionsMap(null)),
-      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
-      getBackgroundActivity: () => null,
-    };
-    const handlers = createActiveConversationsRouteHandlers(deps);
-    const response = await handlers.GET();
-    expect(response.status).toBe(200);
-    const body = activeConversationsResponseSchema.parse(await response.json());
-
-    expect(body.conversations).toHaveLength(1);
-    expect(body.conversations[0]?.pendingApproval).toBeNull();
-  });
-});
-
 describe("GET /api/conversations/active background activity", () => {
   const ACTIVITY: ConversationBackgroundActivity = {
     updatedAt: "2026-07-28T10:00:01.000Z",
@@ -745,7 +360,6 @@ describe("GET /api/conversations/active background activity", () => {
   it("carries the live snapshot onto the session row", async () => {
     const rows = await listRows(
       [makeConversation({ id: "conv-1", status: "awaiting" })],
-      null,
       { getBackgroundActivity: (id) => (id === "conv-1" ? ACTIVITY : null) },
     );
 
@@ -775,10 +389,6 @@ describe("GET /api/conversations/active background activity", () => {
           }),
         },
       ]),
-      listActiveGraphWorkflowExecutions: vi
-        .fn()
-        .mockResolvedValue(activeExecutionsMap(null)),
-      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
       getBackgroundActivity: (id) => (id === "proj-conv" ? ACTIVITY : null),
     };
     const handlers = createActiveConversationsRouteHandlers(deps);
@@ -797,7 +407,6 @@ describe("GET /api/conversations/active background work custody holds (design C5
         makeConversation({ id: "conv-1", status: "awaiting" }),
         makeConversation({ id: "conv-2", status: "awaiting" }),
       ],
-      null,
       { holdsCustody: (id) => id === "conv-1" },
     );
 
@@ -820,10 +429,6 @@ describe("GET /api/conversations/active background work custody holds (design C5
           }),
         },
       ]),
-      listActiveGraphWorkflowExecutions: vi
-        .fn()
-        .mockResolvedValue(activeExecutionsMap(null)),
-      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
       getBackgroundActivity: () => null,
       holdsCustody: (id) => id === "proj-conv",
     };

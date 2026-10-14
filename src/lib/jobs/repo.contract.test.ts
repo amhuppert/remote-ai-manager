@@ -36,7 +36,7 @@ afterEach(() => {
  * `jobRecordSchema` populated to a distinctive non-default value, so the
  * schema-driven durability harness can prove no column — including the optional
  * terminal metadata (`completedAt`, `mergeHash`, `commitHash`, `conflictCount`,
- * `errorMessage`), final-publish identity, the parked-merge bookkeeping a land
+ * `errorMessage`), the parked-merge bookkeeping a land
  * re-entry reconstructs its input from, and the JSON-encoded `conflictFiles`
  * column — is dropped on write or reset to its default on read.
  *
@@ -63,22 +63,12 @@ function buildMaximalJobRecord(): JobRecord {
     conflictCount: 2,
     conflictFiles: ["src/alpha.ts", "src/beta.ts"],
     errorMessage: "Auto-merge halted on overlapping edits",
-    executionId: "workflow-execution-maximal",
-    specExecutionId: "spec-execution-maximal",
-    finalPublish: true,
     parkedRef: "refs/cc-merges/job-maximal",
     preparedSha: "prepared-sha-abc123",
     expectedTargetSha: "expected-target-sha-def456",
     finalizeSessionOnPublish: true,
     skipMarkMerged: true,
     resolutionContext: "Kept the session's rename; main only reformatted.",
-    candidateValidation: {
-      validationRef: "validation-maximal",
-      validatedSha: "validated-sha-abc123",
-      validatedTreeHash: "validated-tree-def456",
-      commandIdentity: "./scripts/pre-merge.sh",
-      outcome: "pass",
-    },
   });
 }
 
@@ -92,33 +82,9 @@ const fieldPolicies = {
 } as const;
 
 describe("job-records durability contract", () => {
-  it("finds only successfully published mainline delivery for a session spec execution", () => {
-    const job = buildMaximalJobRecord();
-    repo.createJobRecord({ ...job, status: "running" });
-    expect(
-      repo.findLatestPublishedMergeBySpecExecutionId("spec-execution-maximal"),
-    ).toBeNull();
-    repo.updateJobRecord(job.jobId, {
-      status: "failed",
-      mergeHash: "failed-candidate",
-    });
-    expect(
-      repo.findLatestPublishedMergeBySpecExecutionId("spec-execution-maximal"),
-    ).toBeNull();
-    repo.updateJobRecord(job.jobId, {
-      status: "completed",
-      mergeHash: "published",
-    });
-    expect(
-      repo.findLatestPublishedMergeBySpecExecutionId("spec-execution-maximal"),
-    ).toEqual({ mergeHash: "published", deliveryGatePassed: true });
-  });
   it("round-trips every persisted durable job-record key path through the real repo", async () => {
     expect(Object.keys(jobRecordSchema.shape)).toEqual(
       expect.arrayContaining([
-        "executionId",
-        "finalPublish",
-        "candidateValidation",
         "parkedRef",
         "preparedSha",
         "expectedTargetSha",
@@ -142,13 +108,9 @@ describe("job-records durability contract", () => {
           sessionName: fixture.sessionName,
           branchName: fixture.branchName,
           startedAt: fixture.startedAt,
-          executionId: fixture.executionId,
-          specExecutionId: fixture.specExecutionId,
-          finalPublish: fixture.finalPublish,
           finalizeSessionOnPublish: fixture.finalizeSessionOnPublish,
           skipMarkMerged: fixture.skipMarkMerged,
           resolutionContext: fixture.resolutionContext,
-          candidateValidation: fixture.candidateValidation,
         });
         repo.updateJobRecord(fixture.jobId, {
           status: fixture.status,
@@ -167,9 +129,6 @@ describe("job-records durability contract", () => {
           ...(fixture.errorMessage !== undefined
             ? { errorMessage: fixture.errorMessage }
             : {}),
-          ...(fixture.executionId !== undefined
-            ? { executionId: fixture.executionId }
-            : {}),
           ...(fixture.parkedRef !== undefined
             ? { parkedRef: fixture.parkedRef }
             : {}),
@@ -178,9 +137,6 @@ describe("job-records durability contract", () => {
             : {}),
           ...(fixture.expectedTargetSha !== undefined
             ? { expectedTargetSha: fixture.expectedTargetSha }
-            : {}),
-          ...(fixture.candidateValidation !== undefined
-            ? { candidateValidation: fixture.candidateValidation }
             : {}),
         });
         const expected = repo.getJobRecord(fixture.jobId);

@@ -40,7 +40,6 @@ function makeActiveRow(
     worktreePath: "/repo/demo/.worktrees/feature-x",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
   };
 }
@@ -119,9 +118,7 @@ function createHarness(rowIds: Array<{ id: string; name?: string | null }>) {
     conversationKeys.active(),
     {
       conversations: rowIds.map((r) => makeActiveRow(r.id, r.name ?? null)),
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
-      specExecutions: [],
     },
   );
   queryClient.setQueryData<ConversationState[]>(

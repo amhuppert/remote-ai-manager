@@ -10,7 +10,6 @@ import {
 } from "./schemas";
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
-import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import { CURSOR_DEFAULT_MODEL } from "@/lib/agent-backends/cursor/model-policy";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import {
@@ -159,15 +158,8 @@ function defaultConfig(): GlobalConfig {
       },
     },
     defaultAgentBackend: "claude",
-    preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
     tailscaleEnabled: true,
-    graphWorkflowLaunchesFrozen: false,
-    // The cascade resolver's global-layer fallback IS the disk-absent default —
-    // one literal, so a newly-seeded workflow default cannot mean one thing to
-    // the resolver and another to a config file that never mentions it. Cloned
-    // because callers merge disk config into the returned object.
-    workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),
     compaction: {
       backend: "claude",
       conversationModelSelection: {
@@ -219,36 +211,6 @@ export function materializeGlobalConfig(
       rawConfig.conversationNaming.modelSelection,
     );
   }
-  const rawWorkflowDefaults = rawConfig.workflowDefaults;
-  if (rawWorkflowDefaults?.implementer?.agent.modelSelection !== undefined) {
-    merged.workflowDefaults!.implementer.agent.modelSelection = structuredClone(
-      rawWorkflowDefaults.implementer.agent.modelSelection,
-    );
-  }
-  if (rawWorkflowDefaults?.contextValidator?.assignments !== undefined) {
-    for (const [
-      index,
-      assignment,
-    ] of rawWorkflowDefaults.contextValidator.assignments.entries()) {
-      merged.workflowDefaults!.contextValidator.assignments[
-        index
-      ]!.agent.modelSelection = structuredClone(
-        assignment.agent.modelSelection,
-      );
-    }
-  }
-  if (rawWorkflowDefaults?.collaboration?.secondAgent !== undefined) {
-    merged.workflowDefaults!.collaboration.secondAgent.modelSelection =
-      structuredClone(
-        rawWorkflowDefaults.collaboration.secondAgent.modelSelection,
-      );
-  }
-  if (rawWorkflowDefaults?.planRepair?.agent !== undefined) {
-    merged.workflowDefaults!.planRepair.agent!.modelSelection = structuredClone(
-      rawWorkflowDefaults.planRepair.agent.modelSelection,
-    );
-  }
-
   const config = globalConfigSchema.parse(merged);
   canonicalizeGlobalModelSelections(config);
   return config;
@@ -301,25 +263,6 @@ function canonicalizeGlobalModelSelections(config: GlobalConfig): void {
       config.conversationNaming.modelSelection,
     );
   }
-
-  const workflowDefaults = config.workflowDefaults;
-  if (workflowDefaults === undefined) return;
-  const workflowAgents = [
-    workflowDefaults.implementer.agent,
-    ...workflowDefaults.contextValidator.assignments.map(
-      (assignment) => assignment.agent,
-    ),
-    workflowDefaults.collaboration.secondAgent,
-    ...(workflowDefaults.planRepair.agent === undefined
-      ? []
-      : [workflowDefaults.planRepair.agent]),
-  ];
-  for (const agent of workflowAgents) {
-    agent.modelSelection = canonicalSelection(
-      catalogs[agent.backend],
-      agent.modelSelection,
-    );
-  }
 }
 
 /**
@@ -356,49 +299,6 @@ export function canonicalizeRawGlobalConfig(
       config.conversationNaming!.modelSelection,
     );
   }
-
-  const rawWorkflowDefaults = canonical.workflowDefaults;
-  const workflowDefaults = config.workflowDefaults;
-  if (
-    rawWorkflowDefaults?.implementer?.agent.modelSelection !== undefined &&
-    workflowDefaults !== undefined
-  ) {
-    rawWorkflowDefaults.implementer.agent.modelSelection = structuredClone(
-      workflowDefaults.implementer.agent.modelSelection,
-    );
-  }
-  if (
-    rawWorkflowDefaults?.contextValidator?.assignments !== undefined &&
-    workflowDefaults !== undefined
-  ) {
-    for (const [
-      index,
-      assignment,
-    ] of rawWorkflowDefaults.contextValidator.assignments.entries()) {
-      assignment.agent.modelSelection = structuredClone(
-        workflowDefaults.contextValidator.assignments[index]!.agent
-          .modelSelection,
-      );
-    }
-  }
-  if (
-    rawWorkflowDefaults?.collaboration?.secondAgent !== undefined &&
-    workflowDefaults !== undefined
-  ) {
-    rawWorkflowDefaults.collaboration.secondAgent.modelSelection =
-      structuredClone(
-        workflowDefaults.collaboration.secondAgent.modelSelection,
-      );
-  }
-  if (
-    rawWorkflowDefaults?.planRepair?.agent !== undefined &&
-    workflowDefaults?.planRepair.agent !== undefined
-  ) {
-    rawWorkflowDefaults.planRepair.agent.modelSelection = structuredClone(
-      workflowDefaults.planRepair.agent.modelSelection,
-    );
-  }
-
   return canonical;
 }
 

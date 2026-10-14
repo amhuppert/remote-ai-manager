@@ -60,6 +60,9 @@ export const EMPTY_TRANSCRIPT_COMPACTION_ERROR =
 
 export interface CompactionServiceDeps {
   executeTaskRun(input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult>;
+  taskLane?(): Promise<
+    (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>
+  >;
   readEntries(transcriptPath: string | null): Promise<TranscriptEntriesResult>;
   repo: ContextArtifactsRepo;
   resolveConfig(projectPath: string): Promise<CompactionConfig>;
@@ -391,7 +394,13 @@ export function createCompactionService(
           modelSelection,
           timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
         },
-        { executeTaskRun: deps.executeTaskRun, log: genLogger },
+        {
+          executeTaskRun:
+            deps.taskLane === undefined
+              ? deps.executeTaskRun
+              : await deps.taskLane(),
+          log: genLogger,
+        },
       );
       if (!outcome.ok) return failRun(outcome.error);
       return persistSuccess(ctx, outcome, startedAt);

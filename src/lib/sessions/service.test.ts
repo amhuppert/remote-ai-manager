@@ -1,4 +1,4 @@
-import { createHostedBackendFixture } from "@/lib/workflows/conversation/testing/hosted-backend-fixture";
+import { createHostedBackendFixture } from "@/lib/conversation-core/testing/hosted-backend-fixture";
 let hosted: ReturnType<typeof createHostedBackendFixture>;
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
@@ -73,8 +73,7 @@ function createTestDeps() {
   const prepareManagedSkillsCheckoutMock = vi.fn().mockResolvedValue(undefined);
 
   const deps: SessionDeps = {
-    stopConversationActor: (...args) =>
-      hosted.manager.stopConversationActor(...args),
+    stopConversationActor: (...args) => hosted.retire(args[2]),
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
     rm: vi.fn().mockResolvedValue(undefined),
     execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],

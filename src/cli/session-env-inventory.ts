@@ -10,18 +10,15 @@
  * a new session-env reader appears without an entry here.
  *
  * "session-only" is a statement about the SERVER surface, not about the CLI: the
- * capability needs a session branch, worktree, or graph execution to mean
+ * capability needs a session branch, worktree, or run owner to mean
  * anything, so there is no project-scoped route for the command to select. Those
  * commands fail with the ordinary `no session — pass --session or set
  * CC_SESSION` usage error, which is exactly the loud failure the neutralized
  * env is designed to produce.
  *
- * Entries are keyed by COMMAND PATH and resolved longest-prefix-first, because a
- * group and its leaves can differ: `spec` authoring is project-scoped, but
- * `spec start` pins a graph execution to a session and must be refused. A
- * group-level classification that swallowed such a leaf would advertise a
- * capability that dead-ends server-side, which is the failure mode R2.4 exists to
- * prevent — so a leaf that differs from its group gets its own entry.
+ * Entries are keyed by command path and resolved longest-prefix-first. A group
+ * and its leaves can differ, so a leaf with a different scope gets its own
+ * entry rather than inheriting a capability the server cannot serve.
  */
 
 export type CliScopeSupport = "project-supported" | "session-only";
@@ -69,11 +66,6 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     support: "project-supported",
     reason:
       "Spec authoring endpoints are project-scoped already — the session identity was incidental coupling, and a PLC agent authors specs today.",
-  },
-  "spec start": {
-    support: "session-only",
-    reason:
-      "Starting an execution pins it to a session; approveExecutionStart refuses an execution whose session is null, so a project-scope start would persist an unapprovable execution. Graph workflow execution is session-only by decision.",
   },
   ticket: {
     support: "project-supported",
@@ -148,58 +140,6 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     support: "session-only",
     reason:
       "Drives a session's managed dev server, so it inherits the dev-server boundary.",
-  },
-  // The `workflow` group splits: DEFINITION authoring resolves project context
-  // only and works at project scope today, while EXECUTION and lane operations
-  // pin to a session. Classifying the whole group session-only would have taken
-  // working commands away from project agents, which is exactly what R2.4's
-  // "migrate in the same change" clause exists to prevent. The group default is
-  // session-only so a NEW subcommand fails loudly rather than being silently
-  // advertised; each project-supported verb is listed explicitly.
-  workflow: {
-    support: "session-only",
-    reason:
-      "Group default. One-off run, wait, Current-or-History status addressing, abandon, approvals, and lane operations all require an explicit session route; the definition-authoring verbs below opt back in at project scope.",
-  },
-  "workflow create": {
-    support: "project-supported",
-    reason:
-      "Authors a workflow definition against project context only (resolveProjectContext); no session, worktree, or execution is involved.",
-  },
-  "workflow replace": {
-    support: "project-supported",
-    reason:
-      "Replaces a stored workflow definition through project context only — the same project-scoped definition store `create` writes.",
-  },
-  "workflow list": {
-    support: "project-supported",
-    reason:
-      "Lists the project's workflow definitions through project context only; a session identity was never consulted.",
-  },
-  "workflow get": {
-    support: "project-supported",
-    reason:
-      "Reads a stored workflow definition (and its context/task/charter/config/params views) through project context only.",
-  },
-  "workflow edit": {
-    support: "project-supported",
-    reason:
-      "Edits a stored workflow definition through project context only; live execution editing is `workflow live edit`, which stays session-only.",
-  },
-  "workflow edit-preview": {
-    support: "project-supported",
-    reason:
-      "Previews definition edits through the same project-scoped store as workflow edit; no session or running execution is required.",
-  },
-  "workflow delete": {
-    support: "project-supported",
-    reason:
-      "Deletes a stored workflow definition through project context only; it removes a definition, not a running execution.",
-  },
-  "workflow templates": {
-    support: "project-supported",
-    reason:
-      "Lists the project's workflow templates through project context only; templates are project-level assets.",
   },
 };
 

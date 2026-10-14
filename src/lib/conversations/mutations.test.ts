@@ -61,7 +61,6 @@ function activeConvo(
     worktreePath: overrides.worktreePath ?? "/w",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
-    pendingApproval: overrides.pendingApproval ?? null,
     backgroundActivity: overrides.backgroundActivity ?? null,
   };
 }
@@ -88,7 +87,6 @@ function activeProjectConvo(
     worktreePath: overrides.worktreePath ?? "/p",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
-    pendingApproval: overrides.pendingApproval ?? null,
     backgroundActivity: overrides.backgroundActivity ?? null,
     open: overrides.open ?? true,
   };
@@ -99,9 +97,7 @@ function activeResponse(
 ): ActiveConversationsResponse {
   return {
     conversations,
-    graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
-    specExecutions: [],
   };
 }
 function makeClient() {

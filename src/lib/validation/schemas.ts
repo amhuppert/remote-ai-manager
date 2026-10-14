@@ -125,15 +125,13 @@ function requireRegisteredNames(
   block: {
     commands: Record<string, ValidationCommandConfig>;
     preMerge: string[];
-    laneMerge?: string[] | undefined;
   },
   ctx: z.RefinementCtx,
 ): void {
   const registered = Object.keys(block.commands);
   const known = new Set(registered);
-  const lists: Array<[key: "preMerge" | "laneMerge", names: string[]]> = [
+  const lists: Array<[key: "preMerge", names: string[]]> = [
     ["preMerge", block.preMerge],
-    ["laneMerge", block.laneMerge ?? []],
   ];
   for (const [key, names] of lists) {
     names.forEach((name, index) => {
@@ -158,9 +156,6 @@ export const repoValidationConfigSchema = z
     // Ordered selection used by Smart Merge and Smart Commit; independent of
     // graph script-validator selection by design.
     preMerge: z.array(validationCommandNameSchema).default([]),
-    // Ordered selection for graph lane merges; absent means lane merges fall
-    // back to preMerge.
-    laneMerge: z.array(validationCommandNameSchema).optional(),
   })
   .superRefine(requireRegisteredNames);
 export type RepoValidationConfig = z.infer<typeof repoValidationConfigSchema>;

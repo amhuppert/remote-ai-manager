@@ -3,7 +3,7 @@ import { streamingMutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { RunPromptRequest } from "@/lib/prompt/schemas";
-import { collaborationKeys } from "@/lib/workflows/query-keys";
+import { collaborationKeys } from "@/lib/collaboration/query-keys";
 import {
   type CollabConfigDraft,
   useClearCollabConfigDraftIfMatches,

@@ -8,28 +8,6 @@ import type {
   DesiredRuntimeConfiguration,
   RecreateRuntimeSnapshot,
 } from "./runtime-recreate";
-import type { ConversationBackendEvent } from "@/lib/agent-backends/conversation";
-
-/** Follows turns the provider starts on its own, such as a Claude auto-continuation. */
-export interface ExternalTurnHandler {
-  (event: ConversationBackendEvent): void;
-  /**
-   * True from an accepted turn start until its completion, set synchronously
-   * on receipt so an observer sees the turn before any frame reaches the
-   * archive or the machine.
-   */
-  readonly activeTurn: boolean;
-  /** Accepted events so far; two equal readings bracket a window with none. */
-  readonly activity: number;
-  /**
-   * Resolves once no external turn is in flight: immediately when none is,
-   * otherwise at that turn's completion or at this handler's stop. Ordinary
-   * admission waits on it rather than polling `activeTurn`.
-   */
-  settled(): Promise<void>;
-  drain(): Promise<void>;
-  stopAndDrain(): Promise<void>;
-}
 
 const logger = createLogger("conversation-runtime");
 type CleanupFailure = NonNullable<
@@ -54,10 +32,7 @@ export class ManagedConversationRuntime {
   private configuration?: DesiredRuntimeConfiguration;
   private incarnation?: symbol;
   private index?: BackendRuntimeIndex;
-  private external?: ExternalTurnHandler;
   private readonly work = new Set<Promise<void>>();
-  /** Activity of handlers already retired, so the epoch never runs backwards. */
-  private retiredActivity = 0;
   private trackedRegistrations = 0;
   private unverifiedCleanup?: CleanupFailure;
   private readonly captureReceiptFailures = new Map<string, Error>();
@@ -101,7 +76,6 @@ export class ManagedConversationRuntime {
     backend: ConversationBackendRuntime,
     configuration: DesiredRuntimeConfiguration,
     index: BackendRuntimeIndex,
-    external?: ExternalTurnHandler,
   ): void {
     if (this.unverifiedCleanup) throw new Error(this.unverifiedCleanup.message);
     if (!this.isCurrent(incarnation))
@@ -112,33 +86,15 @@ export class ManagedConversationRuntime {
     this.handle = backend;
     this.configuration = structuredClone(configuration);
     this.index = index;
-    this.external = external;
     index.register(this.conversationId, backend);
   }
 
-  /** True while the installed handler has an external turn in flight. */
-  get externalTurnActive(): boolean {
-    return this.external?.activeTurn ?? false;
-  }
-
-  /** Resolves once no external turn is in flight; see `ExternalTurnHandler.settled`. */
-  externalTurnSettled(): Promise<void> {
-    return this.external?.settled() ?? Promise.resolve();
-  }
-
   /**
-   * Monotonic count of owned activity: every accepted external event and
-   * every ordinary tracked-work registration. Checkpoint maintenance snapshots it after
-   * capture and refuses to freeze if it moved, which is how a provider
-   * auto-continuation that emitted nothing to the archive still invalidates a
-   * build.
+   * Monotonic count of ordinary tracked work. Capture receipts do not count
+   * as unrelated activity.
    */
   get activityEpoch(): number {
-    return (
-      this.retiredActivity +
-      (this.external?.activity ?? 0) +
-      this.trackedRegistrations
-    );
+    return this.trackedRegistrations;
   }
 
   /** Capture audit extends owned work without counting as unrelated activity. */
@@ -184,13 +140,9 @@ export class ManagedConversationRuntime {
   }
 
   /**
-   * Let every queued external-turn frame reach the archive and every tracked
-   * effect settle, without stopping the handler. Checkpoint maintenance calls
-   * this before it captures or rechecks the source, so an auto-continuation
-   * whose frames were still in flight is seen rather than frozen past.
+   * Await tracked effects and required capture receipts before retirement.
    */
   async settleOwnedWork(): Promise<void> {
-    await this.external?.drain();
     while (this.work.size > 0) await Promise.allSettled([...this.work]);
     for (const failure of this.captureReceiptFailures.values()) throw failure;
   }
@@ -206,7 +158,6 @@ export class ManagedConversationRuntime {
     close.completion = Promise.resolve().then(async () => {
       try {
         await backend?.close();
-        await this.external?.stopAndDrain();
         while (this.work.size > 0) await Promise.allSettled([...this.work]);
         for (const failure of this.captureReceiptFailures.values())
           throw failure;
@@ -214,10 +165,8 @@ export class ManagedConversationRuntime {
         if (this.unverifiedCleanup)
           throw new Error(this.unverifiedCleanup.message);
         if (backend) this.index?.unregister(this.conversationId, backend);
-        this.retiredActivity += this.external?.activity ?? 0;
         this.handle = undefined;
         this.configuration = undefined;
-        this.external = undefined;
         this.incarnation = undefined;
         logger.info("conversation.runtime_closed", {
           conversationId: this.conversationId,

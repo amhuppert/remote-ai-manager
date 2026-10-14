@@ -32,7 +32,6 @@ function convo(
     worktreePath: "/tmp/command-center/.worktrees/x",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     sessionName: `session-${id}`,
     branchName: `csm/${id}`,

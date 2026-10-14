@@ -7,7 +7,7 @@ import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import type { TicketLinkSummary } from "@/lib/tickets/schemas";
-import { graphWorkflowExecutionKeys } from "@/lib/workflows/query-keys";
+import {} from "@/lib/collaboration/query-keys";
 import ConversationList from "./ConversationList";
 
 function seedSessionPage(
@@ -29,14 +29,9 @@ function seedSessionPage(
     source: "cc",
     creationMode: "normal",
     tddEnabled: true,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
   });
   queryClient.setQueryData(conversationKeys.list(projectName, sessionName), []);
-  queryClient.setQueryData(
-    graphWorkflowExecutionKeys.detail(projectName, sessionName),
-    null,
-  );
 }
 
 vi.mock("next/navigation", () => ({

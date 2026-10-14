@@ -45,7 +45,6 @@ export const sessionListItemSchema = z.object({
   promptCount: z.number().int().nonnegative(),
   derivedLastActivityAt: z.string(),
   collabContribution: z.enum(["running", "paused"]).nullable(),
-  hasActiveGraphWorkflow: z.boolean(),
   spawnedFrom: spawnedFromSchema.nullable().optional(),
 });
 export type SessionListItem = z.infer<typeof sessionListItemSchema>;

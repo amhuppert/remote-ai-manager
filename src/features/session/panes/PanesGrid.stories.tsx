@@ -47,7 +47,6 @@ function makeConversation(
     lastActivitySummary:
       overrides.lastActivitySummary ?? "Edited three files in src/features.",
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     ...overrides,
   };

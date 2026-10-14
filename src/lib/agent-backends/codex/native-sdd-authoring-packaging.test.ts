@@ -10,10 +10,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCcWithHost } from "@/cli/testing/domain-runtime";
 import type { CliHost } from "@/cli/transport";
 import { publishManagedSkillBundle } from "@/lib/managed-skills/publisher";
-import {
-  NATIVE_SDD_CLAIMS_SOURCE_ID,
-  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
-} from "@/lib/specs/delivery-plan";
 
 import { ensureCodexManagedSkillsBridge } from "./managed-skills-bridge";
 
@@ -30,10 +26,6 @@ const READ_ENVELOPE_REFERENCE_COMMAND = "cctl spec schema read-envelopes";
 const EXPECTED_SECTIONS = [
   "Reading specs without flooding context",
   "Exclusive Requirements and Design checkpoints",
-  "Managed delivery workflow",
-  "Stable-source claims and dynamic accountability",
-  "Draft review, sign-off, and one-off start",
-  "Ordinary live edit, capture, and replacement",
   "Removal and reintroduction symmetry",
   "Correcting obsolete questions and assumptions",
   "Continuous review of the draft",
@@ -143,13 +135,6 @@ describe("native-sdd-authoring managed skill", () => {
       sectionBody(loadedSkill, "Reading specs without flooding context"),
     ).toContain(READ_ENVELOPE_REFERENCE_COMMAND);
     expect(loadedSkill).toContain(GENERATED_REFERENCE_COMMAND);
-    expect(loadedSkill).toContain("cctl spec start <slug> --file");
-    expect(loadedSkill).toContain("cctl workflow live edit");
-    expect(loadedSkill).toMatch(/destructive cutover/i);
-    expect(loadedSkill).toContain("legacy-retirement boundary");
-    expect(loadedSkill).toContain(
-      "parallel reader, compatibility branch, or alternate plan dialect",
-    );
     expect(loadedSkill).not.toMatch(
       /compiler|materializer|context pack|proofPlan|workflow live amend/i,
     );
@@ -230,48 +215,6 @@ describe("native-sdd-authoring managed skill", () => {
     const friction = sectionBody(skill, "Designed friction versus a defect");
     expect(friction).toMatch(/human judgment or an audit property/);
     expect(friction).toMatch(/read path|message|missing verb/);
-
-    // #80 design 4: the three constraints this run makes legible. Each row
-    // names what it protects and where its reason renders, so an agent that
-    // meets one classifies it from the taxonomy instead of a retrospective.
-    for (const row of [
-      "binding/selected-criterion-not-must-run",
-      "requires-pause",
-      "region_locked",
-    ]) {
-      expect(friction, `designed-friction row: ${row}`).toContain(row);
-    }
-    // The provenance row has to state the merge as well as the lock: an author
-    // told only that the fields are locked hand-authors them and is refused.
-    expect(friction).toMatch(/replace merges around/iu);
-    for (const omitted of [
-      "origin",
-      "approvalRequired",
-      "lockedRegions",
-      NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
-      NATIVE_SDD_CLAIMS_SOURCE_ID,
-    ]) {
-      expect(
-        friction,
-        `the provenance row names ${omitted} among what a plan omits`,
-      ).toContain(omitted);
-    }
-
-    // The delivery guidance points at its owner rather than carrying a second
-    // copy, and `cctl workflow edit` is no longer the authoring path.
-    const delivery = sectionBody(skill, "Managed delivery workflow");
-    expect(delivery).toContain(
-      "../graph-workflow-planning/references/native-spec-delivery.md",
-    );
-    expect(delivery).toContain("graph-workflow-planning");
-    expect(delivery).not.toContain("cctl workflow edit");
-
-    // #80 design 3.8 landed in this run, so the interim rule it earned — pause
-    // only once a lane is active — is retired rather than left to outlive the
-    // defect it worked around.
-    expect(skill).toMatch(/pause is safe at any point after start/iu);
-    expect(skill).toContain("cctl spec plan open <slug>");
-    expect(skill).not.toMatch(/lane (is )?active/iu);
 
     // Guidance the reflection proves is harmful: an agent told to hold design
     // work in a question stops authoring, and an assumption disposition is not
@@ -355,28 +298,5 @@ describe("native-sdd-authoring managed skill", () => {
 
     const requestApproval = await helpText(["spec", "request-approval"]);
     expect(requestApproval).toMatch(/human[\s\S]*sign[- ]off/i);
-
-    const capture = await helpText(["spec", "capture"]);
-    expect(capture).toContain("cctl spec plan open");
-    expect(capture).toContain("spec abandon");
-    expect(capture).toContain("cctl spec plan open");
-
-    const planOpen = await helpText(["spec", "plan", "open"]);
-    expect(planOpen).toContain("cctl workflow validate");
-    expect(planOpen).toContain("cctl workflow replace");
-    const planPropose = await helpText(["spec", "plan", "propose"]);
-    expect(planPropose).toContain("signs it off in Builder");
-    expect(planPropose).toContain("spec start");
-
-    const start = await helpText(["spec", "start"]);
-    expect(start).toContain("--park");
-    expect(start).toContain("spec capture");
-    expect(start).toContain("spec abandon");
-
-    const abandon = await helpText(["spec", "abandon"]);
-    // The backstop a partial abandon receipt names. `workflow live release` was
-    // retired with the explicit slot-release act (D7 decision D5): `aborted`
-    // frees the lease by itself, so abort is the whole recovery.
-    expect(abandon).toContain("workflow live abort");
   });
 });

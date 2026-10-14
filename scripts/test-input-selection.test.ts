@@ -35,21 +35,16 @@ describe("changed-scope selection of source-scanning contracts", () => {
     );
   });
 
-  it("selects the route-consumer ratchet when workflow-graph source changes", () => {
-    expect(select(["src/lib/workflow-graph/lane-join.ts"])).toContain(
-      "src/lib/workflow-graph/route-consumers.arch.test.ts",
-    );
-  });
-
-  it("selects the spec/graph boundary ratchet when spec-studio or specs source changes", () => {
+  it("selects the native-spec guidance ratchet for its declared authoring inputs", () => {
     for (const changed of [
-      "src/lib/specs/authoring-service.ts",
-      "src/features/spec-studio/SpecReviewMode.tsx",
+      "src/lib/specs/route-handlers.ts",
+      "src/lib/specs/service-factory.ts",
+      "src/lib/conversation-commands/native-spec-guidance.ts",
       "src/cli/commands/spec/native-definitions.ts",
-      "src/cli/commands/spec/native-read.ts",
+      "src/cli/commands/spec/native-write-definitions.ts",
     ]) {
       expect(select([changed]), changed).toContain(
-        "src/lib/workflow-graph/spec-graph-boundary.arch.test.ts",
+        "src/lib/specs/native-sdd-cutover.arch.test.ts",
       );
     }
   });

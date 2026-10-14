@@ -824,16 +824,9 @@ describe("seam corpus predicates", () => {
     expect(seam.inCorpus("src/lib/agent-backends/codex/translator.ts")).toBe(
       false,
     );
-    expect(
-      seam.inCorpus(
-        "src/lib/state-store/migrations/0035-generalized-model-selection.ts",
-      ),
-    ).toBe(false);
-    expect(
-      seam.inCorpus(
-        "src/lib/state-store/migrations/frozen-archived-execution.ts",
-      ),
-    ).toBe(false);
+    expect(seam.inCorpus("src/lib/state-store/migrations/index.ts")).toBe(
+      false,
+    );
     expect(
       seam.inCorpus(
         "src/features/session/conversation/collab/envelope-adapter.ts",
@@ -847,9 +840,9 @@ describe("seam corpus predicates", () => {
 
   it("deep-import seam includes tests but excludes the adapter seam", () => {
     const seam = byId.get("backend-deep-imports")!;
-    expect(
-      seam.inCorpus("src/lib/workflows/conversation/actor-impls.test.ts"),
-    ).toBe(true);
+    expect(seam.inCorpus("src/lib/conversation-core/executor.test.ts")).toBe(
+      true,
+    );
     expect(seam.inCorpus("src/lib/agent-backends/codex/translator.ts")).toBe(
       false,
     );
@@ -864,21 +857,14 @@ describe("seam corpus predicates", () => {
 
   it("404-ladder seam covers response-producing *-handler modules", () => {
     const seam = byId.get("route-404-ladders")!;
-    expect(seam.inCorpus("src/lib/workflows/definition-edit-handler.ts")).toBe(
-      true,
-    );
-    expect(
-      seam.inCorpus("src/lib/workflows/workflow-draft/route-handler.ts"),
-    ).toBe(true);
+    expect(seam.inCorpus("src/lib/example/change-handler.ts")).toBe(true);
+    expect(seam.inCorpus("src/lib/example/route-handler.ts")).toBe(true);
   });
 
   it("404-ladder seam excludes the justified non-route *-handler helpers", () => {
     const seam = byId.get("route-404-ladders")!;
     expect(
       seam.inCorpus("src/features/session/panes/pane-fork-handler.ts"),
-    ).toBe(false);
-    expect(
-      seam.inCorpus("src/lib/workflows/conversation/external-turn-handler.ts"),
     ).toBe(false);
   });
 
@@ -905,7 +891,7 @@ describe("seam corpus predicates", () => {
     const seam = byId.get("hardcoded-backend-enumeration")!;
     expect(seam.inCorpus("src/components/AgentPill.tsx")).toBe(true);
     expect(
-      seam.inCorpus("src/features/config/sections/DefaultsSection.tsx"),
+      seam.inCorpus("src/features/config/sections/BackendsSection.tsx"),
     ).toBe(true);
     expect(seam.inCorpus("src/hooks/use-something.ts")).toBe(true);
     // Non-UI domain code is covered by the backend-identity seam instead.
@@ -935,15 +921,15 @@ describe("seam corpus predicates", () => {
     expect(seam.inCorpus("src/lib/workflows/collaboration/types.ts")).toBe(
       true,
     );
-    expect(seam.inCorpus("src/lib/agent-runs/schemas.test.ts")).toBe(false);
+    expect(seam.inCorpus("src/lib/runs/workflow-definition.test.ts")).toBe(
+      false,
+    );
     // A story passes an `outputSchema` as inert prop data to render a node; it
     // authors no contract any agent run consumes, so it is prototype fixture
     // code rather than migration population.
-    expect(
-      seam.inCorpus(
-        "src/components/workflow-graph/ExecutionContextNode.stories.tsx",
-      ),
-    ).toBe(false);
+    expect(seam.inCorpus("src/features/runs/TemplateEditor.stories.tsx")).toBe(
+      false,
+    );
     expect(seam.inCorpus("src/lib/shared/testing/persistence-fixture.ts")).toBe(
       false,
     );

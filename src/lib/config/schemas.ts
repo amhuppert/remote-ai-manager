@@ -12,24 +12,11 @@ import {
   pushNotificationConfigSchema,
   rawPushNotificationConfigSchema,
 } from "@/lib/notifications/schemas";
-import { workflowCollaborationConfigSchema } from "@/lib/workflow-graph/collaboration-schemas";
-import {
-  agentAssignmentSchema,
-  graphWorkflowAgentValidationConfigSchema,
-  graphWorkflowAskUserQuestionsConfigSchema,
-  graphWorkflowCircuitBreakerPolicySchema,
-  graphWorkflowHumanApprovalGateConfigSchema,
-  graphWorkflowIterationPolicySchema,
-  graphWorkflowLaneMergeValidationConfigSchema,
-  graphWorkflowMemoryPolicyConfigSchema,
-  graphWorkflowMutabilityPolicySchema,
-  graphWorkflowPlanRepairPolicySchema,
-  graphWorkflowScriptValidatorConfigSchema,
-  validatorCohortSchema,
-} from "@/lib/workflow-graph/config-schemas";
 import { devServerConfigSchema } from "@/lib/dev-server/schemas";
 import {
   MEMORY_CONVERSATION_POLICY_DEFAULT,
+  MEMORY_IMPLEMENTER_POLICY_DEFAULT,
+  MEMORY_VALIDATOR_POLICY_DEFAULT,
   MEMORY_INDEX_BUDGET_DEFAULT_BYTES,
   MEMORY_INDEX_BUDGET_DEFAULT_HOOKS,
   MEMORY_INDEX_BUDGET_MIN_BYTES,
@@ -40,49 +27,6 @@ import {
   globalValidationConfigSchema,
   repoValidationConfigSchema,
 } from "@/lib/validation/schemas";
-
-// ============================================================
-// Workflow Defaults
-// ============================================================
-
-export const workflowDefaultsSchema = z.object({
-  implementer: agentAssignmentSchema,
-  contextValidator: validatorCohortSchema,
-  scriptValidator: graphWorkflowScriptValidatorConfigSchema,
-  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema,
-  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema,
-  iterationPolicy: graphWorkflowIterationPolicySchema,
-  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
-  mutability: graphWorkflowMutabilityPolicySchema,
-  planRepair: graphWorkflowPlanRepairPolicySchema,
-  collaboration: workflowCollaborationConfigSchema,
-  agentValidation: graphWorkflowAgentValidationConfigSchema,
-  laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema,
-  // The global tier of the memory delivery cascade for workflow roles (spec
-  // `memory` R10): the implementer and validator defaults every execution
-  // context inherits unless its workflow or the context itself overrides them.
-  memory: graphWorkflowMemoryPolicyConfigSchema,
-});
-export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
-
-const rawWorkflowDefaultsSchema = z.object({
-  implementer: agentAssignmentSchema.optional(),
-  contextValidator: validatorCohortSchema.optional(),
-  scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
-  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
-  askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
-  iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
-  circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
-  mutability: graphWorkflowMutabilityPolicySchema.optional(),
-  planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
-  collaboration: workflowCollaborationConfigSchema.optional(),
-  agentValidation: graphWorkflowAgentValidationConfigSchema.optional(),
-  laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.optional(),
-  // Same schema as the effective tier, like every other block here: each role
-  // and each half defaults independently, and the block is strict, so a
-  // misspelled role or half is refused rather than silently left at default.
-  memory: graphWorkflowMemoryPolicyConfigSchema.optional(),
-});
 
 // ============================================================
 // Compaction Config
@@ -188,12 +132,26 @@ export const resolveConversationNamingConfig = (
  * per-repo or workflow schema carries a counterpart (`delivery-policy.test.ts`
  * walks every config schema to prove it). `conversations` is the delivery
  * policy of ordinary — human-addressed — conversations; workflow roles resolve
- * through `workflowDefaults.memory` and the cascade instead.
+ * through `memory.roles`.
  */
 export const memoryConfigSchema = z.object({
   conversations: memoryDeliveryPolicySettingSchema(
     MEMORY_CONVERSATION_POLICY_DEFAULT,
   ),
+  roles: z
+    .object({
+      implementer: memoryDeliveryPolicySettingSchema(
+        MEMORY_IMPLEMENTER_POLICY_DEFAULT,
+      ),
+      validator: memoryDeliveryPolicySettingSchema(
+        MEMORY_VALIDATOR_POLICY_DEFAULT,
+      ),
+    })
+    .strict()
+    .default({
+      implementer: MEMORY_IMPLEMENTER_POLICY_DEFAULT,
+      validator: MEMORY_VALIDATOR_POLICY_DEFAULT,
+    }),
   indexBudget: z
     .object({
       bytes: z
@@ -213,6 +171,13 @@ export type MemoryConfig = z.infer<typeof memoryConfigSchema>;
 const rawMemoryConfigSchema = z
   .object({
     conversations: memoryDeliveryPolicyOverrideSchema.optional(),
+    roles: z
+      .object({
+        implementer: memoryDeliveryPolicyOverrideSchema.optional(),
+        validator: memoryDeliveryPolicyOverrideSchema.optional(),
+      })
+      .strict()
+      .optional(),
     indexBudget: z
       .object({
         bytes: z.number().int().min(MEMORY_INDEX_BUDGET_MIN_BYTES).optional(),
@@ -243,13 +208,9 @@ export const globalConfigSchema = z.object({
   ignorePatterns: z.array(z.string()),
   agentBackends: agentBackendsConfigSchema,
   maxTurns: z.number().int().positive().optional(),
-  preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
-  /** Refuses every new graph workflow launch while the old engine drains before its removal. */
-  graphWorkflowLaunchesFrozen: z.boolean().optional(),
   pushNotification: pushNotificationConfigSchema.optional(),
-  workflowDefaults: workflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.default("claude"),
@@ -385,12 +346,9 @@ export const rawGlobalConfigSchema = z.object({
   codex: movedConfigField("agentBackends.codex"),
   agentBackends: rawAgentBackendsConfigSchema.optional(),
   maxTurns: z.number().int().positive().optional(),
-  preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
-  graphWorkflowLaunchesFrozen: z.boolean().optional(),
   pushNotification: rawPushNotificationConfigSchema.optional(),
-  workflowDefaults: rawWorkflowDefaultsSchema.optional(),
   idleQuerySessionTtlMs: z.number().int().positive().optional(),
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.optional(),
@@ -474,7 +432,6 @@ export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable().optional(),
   agentBackends: perRepoAgentBackendsConfigSchema.optional(),
   preMergeCommand: movedConfigField("validation.commands/preMerge"),
-  preMergeTimeoutMs: z.number().int().positive().optional(),
   preMergePreparePath: z.enum(["plumbing", "fallback"]).optional(),
   devServers: z.array(devServerConfigSchema).optional(),
   branchPrefix: z.string().optional(),

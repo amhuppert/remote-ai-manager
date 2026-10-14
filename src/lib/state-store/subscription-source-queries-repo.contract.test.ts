@@ -3,7 +3,6 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { createSubscriptionSourceQueriesRepo } from "./subscription-source-queries-repo";
 import { createTicketsRepo } from "./tickets-repo";
 import { createSpecEventsRepo } from "./spec-events-repo";
@@ -22,9 +21,9 @@ afterEach(() => fixture.close());
 
 // Every projection field is derived from canonical domain rows. This read-only
 // repository has no persisted fields; maximal serialization contracts stay in
-// the tickets, spec-events and executions repositories.
+// the tickets and spec-events repositories.
 describe("source involvement query projections", () => {
-  it("reloads scoped source identities, earliest involvement, and immutable launch ownership", async () => {
+  it("reloads scoped source identities and earliest involvement", async () => {
     const tickets = createTicketsRepo(fixture.db, createWriteQueue());
     await tickets.create({
       id: "ticket",
@@ -88,16 +87,6 @@ describe("source involvement query projections", () => {
       }),
       payload_json: "{}",
     });
-    const execution = createWorkflowExecution({
-      id: "workflow",
-      ownerConversationId: recipient.conversationId,
-    });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      execution,
-      occurredAt,
-    );
     const reloaded = createSubscriptionSourceQueriesRepo(fixture.db);
     expect(reloaded.findTicketInvolvement(recipient, null)).toEqual([
       { id: "ticket", occurredAt },
@@ -105,40 +94,12 @@ describe("source involvement query projections", () => {
     expect(reloaded.findSpecInvolvement(recipient)).toEqual([
       { id: "spec", eventId: first.id },
     ]);
-    expect(reloaded.findWorkflowAddress("workflow")).toEqual({
-      projectPath,
-      sessionName: "session",
-    });
-    expect(reloaded.findWorkflowInvolvement(recipient)).toEqual(["workflow"]);
     const other = {
       projectPath: "/repos/another",
       conversationId: recipient.conversationId,
     };
     expect(reloaded.findTicketInvolvement(other, "session")).toEqual([]);
     expect(reloaded.findSpecInvolvement(other)).toEqual([]);
-    expect(reloaded.findWorkflowInvolvement(other)).toEqual([]);
-    fixture.graphWorkflowArchivedExecutions.insert({
-      projectPath,
-      sessionName: "session",
-      executionId: "workflow",
-      archivedAt: occurredAt,
-      status: "completed",
-      startedAt: execution.startedAt,
-      completedAt: occurredAt,
-      execution: { ...execution, status: "completed", completedAt: occurredAt },
-    });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      null,
-      occurredAt,
-    );
-    const restarted = createSubscriptionSourceQueriesRepo(fixture.db);
-    expect(restarted.findWorkflowAddress("workflow")).toEqual({
-      projectPath,
-      sessionName: "session",
-    });
-    expect(restarted.findWorkflowInvolvement(recipient)).toEqual(["workflow"]);
   });
 
   it("uses exact live session incarnations for ticket context and ignores search or refusal events", async () => {

@@ -27,7 +27,7 @@ const FILTER_OPTIONS: {
   {
     value: "needs",
     label: "Needs Input",
-    title: "Questions and approvals requiring your input",
+    title: "Questions requiring your input",
   },
   {
     value: "running",

@@ -84,7 +84,6 @@ describe("readRepoConfig", () => {
         },
       },
       preMerge: ["format", "lint", "typecheck", "seams", "test"],
-      laneMerge: ["typecheck", "seams", "test"],
     });
     expect(result).not.toHaveProperty("preMergeCommand");
     expect(result).not.toHaveProperty("preMergeTimeoutMs");
@@ -120,7 +119,6 @@ describe("readRepoConfig", () => {
             },
           },
           preMerge: ["lint", "test"],
-          laneMerge: ["test"],
         },
       }),
     );
@@ -129,7 +127,6 @@ describe("readRepoConfig", () => {
     const result = await readRepoConfig("/projects/foo");
 
     expect(result?.validation?.preMerge).toEqual(["lint", "test"]);
-    expect(result?.validation?.laneMerge).toEqual(["test"]);
     expect(result?.validation?.commands.test?.cost).toBe(8);
     expect(result?.validation?.commands.lint?.pathArgs).toBe("forbid");
   });

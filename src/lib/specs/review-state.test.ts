@@ -31,7 +31,6 @@ const REVISION: SpecRevision = {
   citationHash: "a".repeat(64),
   proposedAt: null,
   approvedAt: null,
-  externalDelivery: null,
   createdAt: NOW,
 };
 

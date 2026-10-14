@@ -142,12 +142,6 @@ function createDepsHarness(
       commitCalls.push({ worktreePath, message, opts: opts ?? {} });
       return { hash: "autofix123" };
     },
-    async resolveGitObject(_worktreePath, ref) {
-      return ref === "HEAD" ? "validated-sha" : "validated-tree";
-    },
-    createValidationRef() {
-      return "validation-ref-1";
-    },
   };
   return {
     deps,
@@ -192,13 +186,7 @@ describe("performMergeValidation", () => {
       },
     ]);
     expect(harness.waitedRunIds).toEqual(["run-1", "run-2"]);
-    expect(fact).toEqual({
-      validationRef: "validation-ref-1",
-      validatedSha: "validated-sha",
-      validatedTreeHash: "validated-tree",
-      commandIdentity: "typecheck+test",
-      outcome: "pass",
-    });
+    expect(fact).toBeNull();
   });
 
   it("uses the smart_commit source supplied by the commit machine", async () => {
@@ -406,7 +394,7 @@ describe("performMergeValidation", () => {
     expect(harness.uncommittedChecks).toHaveLength(0);
 
     release(passed("queued-run"));
-    await expect(pending).resolves.toMatchObject({ outcome: "pass" });
+    await expect(pending).resolves.toBeNull();
     expect(harness.uncommittedChecks).toEqual([BASE_INPUT.worktreePath]);
   });
 

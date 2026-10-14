@@ -20,7 +20,6 @@ const baseSession: SessionListItem = {
   promptCount: 0,
   derivedLastActivityAt: "2026-05-22T00:00:00.000Z",
   collabContribution: null,
-  hasActiveGraphWorkflow: false,
 };
 
 function make(overrides: Partial<SessionListItem>): SessionListItem {

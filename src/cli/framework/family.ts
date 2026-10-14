@@ -43,7 +43,6 @@ export const ccGlobalFlags = {
 export interface CcApplication {
   readonly host: CliHost;
   readonly env: CliEnv;
-  readonly laneReminderState?: unknown;
   readonly inboxHintState?: unknown;
   readonly globals: ParsedFlags<typeof ccGlobalFlags>;
 }

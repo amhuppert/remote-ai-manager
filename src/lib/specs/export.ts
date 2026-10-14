@@ -1,19 +1,12 @@
 import { Buffer } from "node:buffer";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-
-import {
-  isTerminalStatus,
-  type GraphWorkflowStatus,
-  type SeededWorkflowDocument,
-} from "@/lib/workflow-graph/spec-bridge";
 import type {
   ActorProvenance,
   Spec,
   SpecApprovalRow,
   SpecAssumptionCitationsMutatedEventPayload,
   SpecAssumptionRow,
-  SpecExecutionRow,
   SpecEventRow,
   SpecGateAdmissionRow,
   SpecQuestionRow,
@@ -37,7 +30,6 @@ import {
   specReviewRecordMutatedEventPayloadSchema,
   specSchema,
 } from "@/lib/specs/schemas";
-import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import {
@@ -47,35 +39,16 @@ import {
   type SpecsRepo,
 } from "@/lib/state-store/specs-repo";
 import { stableStringify } from "@/lib/shared/stable-stringify";
-
-import type { LinkedWorkflowObservation } from "./abandon-coordinator";
-import { pinnedSpecDocumentPath } from "./delivery-plan";
-import { contextSpecDocumentPath } from "./delivery-plan-finalization";
 import {
   describeReferenceIssue,
   validateAffectedReferences,
 } from "./element-references";
-import type {
-  SpecWorkflowCleanupObservation,
-  SpecWorkflowCleanupTarget,
-} from "./execution-service";
 import { validateCanonicalAuditHistory } from "./canonical-audit-history";
 import { toLintSnapshot } from "./review-state";
-import type { IntegrityReport, SpecConsistencyFinding } from "./view-schemas";
+import type { IntegrityReport } from "./view-schemas";
 
 export interface SpecExportRevision {
   readonly snapshot: SpecRevisionSnapshot;
-}
-
-/**
- * A delivery execution paired with where its linked run actually stands. The
- * observation is the abandon coordinator's own vocabulary and comes from the
- * same `observe` seam, so verification and cleanup can never disagree about
- * whether a run is still live or still owns the session's slot.
- */
-export interface SpecExportExecution {
-  readonly execution: SpecExecutionRow;
-  readonly linkedWorkflow: LinkedWorkflowObservation;
 }
 
 export interface SpecExportState {
@@ -85,22 +58,13 @@ export interface SpecExportState {
   readonly gateAdmissions: SpecGateAdmissionRow[];
   readonly questions: SpecQuestionRow[];
   readonly assumptions: SpecAssumptionRow[];
-  readonly executions: SpecExportExecution[];
   readonly attentionAuditEvents: SpecEventRow[];
 }
 
 export interface SpecExportDeps {
   specs: SpecsRepo;
   review: SpecReviewRepo;
-  delivery: SpecDeliveryRepo;
   events: Pick<SpecEventsRepo, "findBySpecId">;
-  /**
-   * The `observe` half of the production spec→workflow cleanup port. Verify
-   * only ever reads through it: reporting an orphan must never move one.
-   */
-  observeLinkedWorkflow(
-    target: SpecWorkflowCleanupTarget,
-  ): Promise<SpecWorkflowCleanupObservation>;
 }
 
 export interface CanonicalMarkdownFile {
@@ -114,10 +78,9 @@ export interface CanonicalSpecBundle {
 }
 
 /**
- * Format 5: content approvals carry the subject fingerprint they approved, and
- * revisions are only draft, approved, or withdrawn.
+ * Format 6 retains authoring content and approval history without delivery state.
  */
-export const CURRENT_CANONICAL_SPEC_BUNDLE_FORMAT_VERSION = 5;
+export const CURRENT_CANONICAL_SPEC_BUNDLE_FORMAT_VERSION = 6;
 
 /**
  * The ordering contract the repository enforces, stated in the export so a
@@ -432,7 +395,6 @@ function stateFromCanonicalManifest(
           citationHash: revision.citationHash,
           proposedAt: revision.proposedAt,
           approvedAt: revision.approvedAt,
-          externalDelivery: null,
           createdAt: revision.createdAt,
         },
         elements: revision.elements.map((element) => ({
@@ -462,7 +424,6 @@ function stateFromCanonicalManifest(
     gateAdmissions: manifest.gateAdmissions,
     questions: manifest.questions,
     assumptions: manifest.assumptions,
-    executions: [],
     attentionAuditEvents: manifest.attentionAuditEvents,
   };
 }
@@ -1264,16 +1225,6 @@ export async function loadSpecExportState(
   const gateAdmissions = loadedRevisions.flatMap(({ snapshot }) =>
     deps.review.findGateAdmissionsByRevision(snapshot.revision.id),
   );
-  const executions = await Promise.all(
-    deps.delivery.findExecutionsBySpecId(spec.id).map(async (execution) => ({
-      execution,
-      linkedWorkflow: await observeLinkedWorkflow(
-        deps,
-        spec.projectPath,
-        execution,
-      ),
-    })),
-  );
   return {
     spec,
     revisions: loadedRevisions,
@@ -1281,7 +1232,6 @@ export async function loadSpecExportState(
     gateAdmissions,
     questions: deps.review.findQuestionsBySpecId(spec.id),
     assumptions: deps.review.findAssumptionsBySpecId(spec.id),
-    executions,
     attentionAuditEvents: deps.events
       .findBySpecId(spec.id)
       .filter(
@@ -1290,33 +1240,6 @@ export async function loadSpecExportState(
           event.event_type === "spec-assumption-citations-mutated",
       ),
   };
-}
-
-/**
- * The run an execution is answerable for. `linked_workflow_execution_id` is the
- * coordinator's pinned target and wins where it exists; falling back to
- * `workflow_execution_id` is what reaches the pre-coordinator rows, which were
- * abandoned without ever pinning anything and are exactly the orphans verify
- * has to find.
- */
-async function observeLinkedWorkflow(
-  deps: SpecExportDeps,
-  projectPath: string,
-  execution: SpecExecutionRow,
-): Promise<LinkedWorkflowObservation> {
-  const workflowExecutionId =
-    execution.linked_workflow_execution_id ?? execution.workflow_execution_id;
-  if (workflowExecutionId === null || execution.session_name === null) {
-    return { kind: "never_launched" };
-  }
-  const observation = await deps.observeLinkedWorkflow({
-    projectPath,
-    sessionName: execution.session_name,
-    workflowExecutionId,
-  });
-  return observation.kind === "missing"
-    ? { kind: "missing", workflowExecutionId }
-    : { ...observation, workflowExecutionId };
 }
 
 function revisionFileName(snapshot: SpecRevisionSnapshot): string {
@@ -1538,73 +1461,6 @@ function manifestFor(state: SpecExportState): unknown {
  * governance entry that cites it, in a module the plan-authoring surfaces can
  * import without pulling the export renderer's dependencies with it.
  */
-export { pinnedSpecDocumentPath };
-
-/**
- * The pinned spec revision as the document seeded into every lane worktree at
- * launch. Rendered through the same {@link renderRevisionMarkdown} the canonical
- * bundle uses, so a lane reads byte-for-byte what `cctl spec export` writes for
- * that revision — one renderer, no second copy to drift.
- *
- * It renders the SNAPSHOT the caller pins, never live spec state: an amendment
- * proposed mid-run moves the spec's draft, and a validator judging the run must
- * still judge the contract the run was launched against.
- */
-export function buildPinnedSpecDocument(
-  spec: Spec,
-  pinned: SpecRevisionSnapshot,
-): SeededWorkflowDocument {
-  return {
-    relativePath: pinnedSpecDocumentPath(spec.slug),
-    contents: renderRevisionMarkdown(spec, pinned),
-    description: `The pinned spec ${spec.slug} at revision ${pinned.revision.number} — the contract this run implements.`,
-    readWhen:
-      "Read before judging whether work satisfies the spec; it is the pinned contract, not live spec state.",
-  };
-}
-
-export function buildContextSpecDocument(
-  spec: Spec,
-  pinned: SpecRevisionSnapshot,
-  contextId: string,
-  coveredCriterionIds: readonly string[],
-): SeededWorkflowDocument {
-  const covered = new Set(coveredCriterionIds);
-  const selected = new Set<string>();
-  const requirements = new Set<string>();
-  for (const { element, version } of pinned.elements) {
-    if (version.payload.kind !== "criterion" || !covered.has(element.id))
-      continue;
-    selected.add(element.id);
-    if (element.parentElementId !== null)
-      requirements.add(element.parentElementId);
-  }
-  for (const { element, version } of pinned.elements) {
-    if (
-      requirements.has(element.id) ||
-      (version.payload.kind === "decision" &&
-        version.payload.tracedRequirementElementIds.some((id) =>
-          requirements.has(id),
-        ))
-    )
-      selected.add(element.id);
-  }
-  const excerpt = {
-    ...pinned,
-    elements: pinned.elements.filter(({ element }) => selected.has(element.id)),
-  };
-  return {
-    relativePath: contextSpecDocumentPath(spec.slug, contextId),
-    contents:
-      renderRevisionMarkdown(spec, excerpt) +
-      (selected.size === 0
-        ? "\nNo spec criteria are covered by this context; consult the full pinned spec when needed.\n"
-        : ""),
-    description: `The pinned spec excerpt for context ${contextId} at revision ${pinned.revision.number}.`,
-    readWhen:
-      "Read before implementing or validating this context; consult the full pinned spec when the excerpt is insufficient.",
-  };
-}
 
 export function renderCanonicalBundle(
   state: SpecExportState,
@@ -1687,7 +1543,7 @@ export function verifyExportState(state: SpecExportState): IntegrityReport {
     ok: mismatches.length === 0,
     checkedRevisionIds,
     mismatches,
-    consistencyFindings: [...executionLifecycleFindings(state)],
+    consistencyFindings: [],
   };
 }
 
@@ -2302,96 +2158,4 @@ function schemaIntegrityError(
     fullPath,
     `${label} is malformed${issue === undefined ? "" : `: ${issue.message}`}`,
   );
-}
-
-/**
- * Whether the pinned run still holds the session's execution lease. Not the
- * row's position: a terminal record left in the active row holds nothing and
- * is normalized into History by the next launch, so reporting it as owning
- * the session would be a finding with no act behind it.
- */
-function ownsExecutionSlot(linked: LinkedWorkflowObservation): boolean {
-  return linked.kind === "active" && linked.leaseHeld;
-}
-
-/** The placed run, or null when nothing was launched or nothing remains. */
-function placedWorkflow(linked: LinkedWorkflowObservation): {
-  workflowExecutionId: string;
-  status: GraphWorkflowStatus;
-} | null {
-  return linked.kind === "active" || linked.kind === "archived"
-    ? { workflowExecutionId: linked.workflowExecutionId, status: linked.status }
-    : null;
-}
-
-function linkedWorkflowId(linked: LinkedWorkflowObservation): string | null {
-  return linked.kind === "never_launched" ? null : linked.workflowExecutionId;
-}
-
-/**
- * The two ways a delivery execution can be left in a state nothing will move
- * on its own (design §10).
- *
- * The `abandoning` finding is deliberately NOT gated on the linked run: the
- * two cleanup phases leave different residues — `abort_workflow` can leave the
- * run still holding the lease, and `finalize` leaves it lease-free while the
- * spec execution is still stuck. Gating on liveness would report the first and
- * silently drop the second, which is the one no other surface shows.
- */
-function executionLifecycleFindings(
-  state: SpecExportState,
-): SpecConsistencyFinding[] {
-  const findings: SpecConsistencyFinding[] = [];
-  for (const { execution, linkedWorkflow } of state.executions) {
-    const placed = placedWorkflow(linkedWorkflow);
-    const common = {
-      family: "execution-lifecycle",
-      specExecutionId: execution.id,
-      cleanupPhase: execution.cleanup_phase,
-      workflowExecutionId: linkedWorkflowId(linkedWorkflow),
-      workflowStatus: placed === null ? null : placed.status,
-      ownsExecutionSlot: ownsExecutionSlot(linkedWorkflow),
-    } as const;
-    if (execution.state === "abandoning") {
-      findings.push({
-        ...common,
-        code: "abandon_cleanup_unfinished",
-        detail: `Spec execution ${execution.id} stopped mid-abandonment at the ${execution.cleanup_phase ?? "abort_workflow"} phase${
-          execution.cleanup_last_error === null
-            ? ""
-            : `: ${execution.cleanup_last_error}`
-        }`,
-        // The remedy is executable, so it names the id the verb accepts — the
-        // workflow execution id — rather than the internal row id.
-        remedy: `Retry the same command to resume the cleanup from where it stopped: cctl spec abandon ${state.spec.slug} --execution ${common.workflowExecutionId ?? execution.workflow_execution_id ?? "<workflow-execution-id>"} --reason <reason>`,
-      });
-      continue;
-    }
-    if (execution.state !== "abandoned") continue;
-    // Only a run that still HOLDS the lease is an orphan with an exit. A
-    // lease-free record — archived, or terminal but not yet normalized —
-    // blocks nothing and is relocated by the next launch, so reporting it
-    // would be a finding no act could ever clear.
-    if (linkedWorkflow.kind !== "active" || !linkedWorkflow.leaseHeld) continue;
-    const { workflowExecutionId, status } = linkedWorkflow;
-    // Terminality is the lifecycle contract's answer, never a local one.
-    const live = !isTerminalStatus(status);
-    // No coordinator re-entry exists from `abandoned`, so re-running abandon
-    // would report success over the orphan instead of clearing it. The exit is
-    // workflow-side, and WHICH verb follows from the blocker's own state: a
-    // halted run holds the lease because its halt is resumable, and abandon is
-    // the one act that ends that tenure while preserving the halt reason;
-    // anything else still holding it is ended by abort, which releases on its
-    // own.
-    findings.push({
-      ...common,
-      code: "abandoned_execution_workflow_unreleased",
-      detail: `Spec execution ${execution.id} is abandoned, but graph workflow execution ${workflowExecutionId} is ${live ? "still live" : "still holding this session's execution lease"} (${status})`,
-      remedy:
-        status === "halted"
-          ? `Abandon it with 'cctl workflow abandon --reason <reason> --execution ${workflowExecutionId}'`
-          : `Abort it with 'cctl workflow live abort --reason <reason>' — that releases the lease`,
-    });
-  }
-  return findings;
 }

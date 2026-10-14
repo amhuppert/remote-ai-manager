@@ -165,19 +165,14 @@ const defaultConversationsDeps: ConversationsDeps = {
   getSessionConversations: defaultGetSessionConversations,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
   stopConversationActor: async (
-    projectPath,
-    sessionName,
+    _projectPath,
+    _sessionName,
     conversationId,
-    reason,
+    _reason,
   ) => {
-    const { stopConversationActor } =
-      await import("@/lib/workflows/conversation/lifecycle");
-    await stopConversationActor(
-      projectPath,
-      sessionName,
-      conversationId,
-      reason,
-    );
+    const { retireCoreConversation } =
+      await import("@/lib/supervision/handles");
+    await retireCoreConversation(conversationId);
   },
   closeBackgroundWork: async (scope, commit, options) => {
     const { closeCoreBackgroundWork } =

@@ -24,15 +24,8 @@ import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
 import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
-import {
-  targetFromStoreSessionName,
-  scopeRefFromStoreSessionName,
-} from "@/lib/conversations/conversation-target";
-import type {
-  ConversationTurnSubmission,
-  QueuedDeliveryMetadata,
-  TurnAdmission,
-} from "@/lib/conversation-core/turn/turn-spec";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import type { QueuedDeliveryMetadata } from "@/lib/conversation-core/turn/turn-spec";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -52,7 +45,6 @@ const logger = createLogger("conversation-manager");
  * the internal queue-service module.
  */
 export interface ConversationQueueDeps {
-  submitTurn(input: ConversationTurnSubmission): Promise<TurnAdmission>;
   claimNextTurnBatch(input: {
     projectPath: string;
     sessionName: string;
@@ -308,46 +300,6 @@ async function runQueuedCommand(
       });
     }
   }
-}
-
-/**
- * Claim the next-turn batch and submit exactly one turn carrying
- * the queued-delivery metadata through lifecycle admission. No-op when the queue is
- * empty. A batch claimed as a single command row is routed to the command
- * service instead of `SUBMIT_PROMPT` (req 8.3); remaining entries drain on
- * later idle entries, preserving order. If lifecycle admission refuses the turn, the claimed rows are returned to `pending` so a later
- * settle re-drains them. Fire-and-forget: any unexpected error is contained
- * and the rows are returned to `pending`.
- */
-export async function drainConversationQueue(
-  context: ConversationQueueContext,
-  deps: ConversationQueueDeps,
-): Promise<void> {
-  const { projectPath, sessionName, conversationId } =
-    conversationStoreIdentity(context);
-  await drainConversationQueueInto(context, deps, async (turn, batch) => {
-    // The queue owes the same pre-send profile admission as the interactive
-    // producer (R8/D21); the lifecycle performs it before accepting the turn.
-    const admission = await deps.submitTurn({
-      binding: {
-        kind: "durable",
-        address: {
-          projectPath,
-          target: targetFromStoreSessionName(
-            context.target.projectName,
-            sessionName,
-            conversationId,
-          ),
-        },
-      },
-      transport: {
-        streamId: `drain-${batch.deliveryAttemptId}`,
-        emit: () => {},
-      },
-      turn,
-    });
-    return admission.kind === "accepted" ? "accepted" : "refused";
-  });
 }
 
 /** One claimed batch as the input of the turn that delivers it. */

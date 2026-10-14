@@ -36,7 +36,7 @@ describe("PolicyDialog presentation", () => {
     ).toBeVisible();
 
     const dials = screen.getAllByRole("combobox");
-    expect(dials).toHaveLength(4);
+    expect(dials).toHaveLength(2);
     expect(screen.queryByRole("combobox", { name: "Plan" })).toBeNull();
     const requirements = screen.getByRole("combobox", {
       name: "Requirements",
@@ -54,15 +54,5 @@ describe("PolicyDialog presentation", () => {
         }),
       ).getByRole("button", { name: "Confirm policy change" }),
     );
-
-    const delivery = screen.getByRole("combobox", {
-      name: "Delivery",
-    });
-    await user.click(delivery);
-    expect(await screen.findByRole("option", { name: "Off" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getByText("Delivery can never be Off.")).toBeVisible();
   });
 });

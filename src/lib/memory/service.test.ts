@@ -1148,7 +1148,7 @@ describe("contribution policy (R10.1, D7)", () => {
   const OFF_POLICY: MemoryPolicyResolution = {
     role: "validator",
     read: { value: "off", source: "global" },
-    contribute: { value: "off", source: "workflow" },
+    contribute: { value: "off", source: "global" },
   };
   const OFF_FOR_VALIDATORS: MemoryContributionDecision = {
     allowed: false,
@@ -1170,7 +1170,7 @@ describe("contribution policy (R10.1, D7)", () => {
     // The refusal names the policy, its tier, and what stays available.
     expect(result.error.message).toContain("validator");
     expect(result.error.message).toContain("contribute");
-    expect(result.error.message).toContain("workflow");
+    expect(result.error.message).toContain("global");
     expect(result.error.instruction).toContain("recall");
   }
 

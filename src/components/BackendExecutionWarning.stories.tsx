@@ -3,10 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
-import {
-  AgentRuntimeFields,
-  agentConfigForBackend,
-} from "./workflow-config/AssignmentEditor";
 import BackendExecutionWarning from "./BackendExecutionWarning";
 
 function Canvas({ children }: { children: React.ReactNode }) {
@@ -44,17 +40,3 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Cursor = {} satisfies Story;
-
-export const WorkflowAssignment = {
-  render: function WorkflowAssignment() {
-    const [value, setValue] = useState(() => agentConfigForBackend("cursor"));
-    return (
-      <>
-        <h3 className="m-0 text-sm font-medium text-text-primary">
-          Workflow validator
-        </h3>
-        <AgentRuntimeFields value={value} onChange={setValue} />
-      </>
-    );
-  },
-} satisfies Story;

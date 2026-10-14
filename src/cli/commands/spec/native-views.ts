@@ -30,11 +30,9 @@ import {
   type specStatusSpec,
   type specShowSpec,
 } from "./native-definitions";
-import { describeExecution, isActiveExecution } from "./execution-progress";
 import {
   approvalLedgerLines,
   gateLines,
-  pendingBlockLines,
   signOffLines,
 } from "./projection-text";
 import { readSpecJson, specPath } from "./native-request";
@@ -57,21 +55,13 @@ function projectStatus(
   full: boolean,
   app: CcApplication,
 ) {
-  const executions = status.executions
-    .filter(isActiveExecution)
-    .map((execution) => ({ ...execution, ...describeExecution(execution) }));
-  if (full) return { view: "full" as const, status, executions };
+  if (full) return { view: "full" as const, status };
   const reveal = invocation(specStatusCommand, {
     args: { slug: status.slug },
     flags: explicitScopeFlags(app),
     level: "full",
   });
-  const boundedExecutions = boundSpecRows(executions, reveal);
   const pendingApprovals = boundSpecRows(status.pendingApprovals, reveal);
-  const deliveryBlockers = boundSpecRows(
-    status.deliveryReadiness?.blockers ?? [],
-    reveal,
-  );
   const importCarriedApprovals = boundSpecRows(
     status.importCarriedApprovals,
     reveal,
@@ -95,15 +85,6 @@ function projectStatus(
     },
     status: {
       ...status,
-      ...(status.deliveryReadiness
-        ? {
-            deliveryReadiness: {
-              ...status.deliveryReadiness,
-              blockers: deliveryBlockers.items,
-            },
-          }
-        : {}),
-      executions: boundedExecutions.items,
       pendingApprovals: pendingApprovals.items,
       importCarriedApprovals: importCarriedApprovals.items,
       approvalLedger: {
@@ -114,10 +95,7 @@ function projectStatus(
       assumptions: assumptions.items,
       taskPlan: taskPlan.items,
     },
-    executions: boundedExecutions.items,
     disclosure: {
-      executions: boundedExecutions.omission,
-      deliveryBlockers: deliveryBlockers.omission,
       pendingApprovals: pendingApprovals.omission,
       importCarriedApprovals: importCarriedApprovals.omission,
       approvalLedgerSubjects: approvalLedgerSubjects.omission,
@@ -131,126 +109,27 @@ function projectStatus(
 type StatusData = ReturnType<typeof projectStatus>;
 function statusText(data: JsonData<StatusData>): string {
   const status = data.status;
-  const revision = status.currentRevision;
-  const plan = status.deliveryPlan;
-  const lines = [
-    `${status.slug}; phase: ${status.phase.primary}`,
-    ...(revision === null
-      ? ["Authoring revision: none"]
-      : [
-          `Authoring revision: ${revision.number} (${revision.state}); revisionId ${revision.id}`,
-          revision.state === "draft"
-            ? `Editable spec draft: ${revision.id} (${revision.authoringStage}); baseElementVersion comes from cctl spec get ${status.slug} <handle>`
-            : "Editable spec draft: none",
-        ]),
-    ...(status.nextAction?.actsNext
-      ? [
-          `Authoring acts next: ${status.nextAction.actsNext} — ${status.nextAction.instruction}`,
-        ]
-      : []),
-    ...(status.reviewHref ? [`Spec review: ${status.reviewHref}`] : []),
-    ...(plan
-      ? [
-          `Delivery attempt: ${plan.attemptId} (${plan.status}); pinned revision ${plan.pinnedRevisionId}`,
-          plan.status === "draft"
-            ? `Editable workflow: ${plan.workflowDefinition.id}; --expected-revision ${plan.workflowDefinition.revision}`
-            : "Editable workflow: none; the candidate is frozen",
-          ...(plan.status === "draft"
-            ? [
-                `Plan preview guard: --expected-draft-revision ${plan.draftRevision}`,
-              ]
-            : []),
-          `Plan acts next: ${plan.nextAct.actor} — ${plan.nextAct.command}`,
-          `Plan review: ${plan.workflowDefinition.builderHref}; semantic review ${plan.reviewStatus.state}`,
-        ]
-      : status.deliveryPlan === null
-        ? ["Delivery attempt: none"]
-        : []),
-    ...(status.phase.authoringStage
-      ? [`Authoring stage: ${status.phase.authoringStage}`]
-      : []),
-    ...(status.authoringSequence
-      ? [
-          `Remaining authoring stages: ${status.authoringSequence.stages.map((stage) => `${stage.stage} (${stage.concludedBy}${stage.requiresHumanSignOff ? "; human sign-off" : ""})`).join(" → ")}`,
-          `Next transition: ${status.authoringSequence.nextTransition.action}; consulted gates ${status.authoringSequence.nextTransition.consultedGates.map((gate) => `${gate.gate} (${gate.dial})`).join(", ") || "none"}`,
-        ]
-      : []),
-    `Criteria mapping: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} current-revision criteria (${status.coverage.percentage}%); mapping does not establish implementation or evidence`,
-    ...(status.draftHealth
-      ? [
-          `Lint findings: ${status.draftHealth.total} total, ${status.draftHealth.blocking} blocking`,
-          ...status.draftHealth.top.map(
-            (finding) => `  ${finding.elementHandle}: ${finding.message}`,
-          ),
-          `Complete lint: cctl spec lint ${status.slug}`,
-        ]
-      : []),
-    ...data.executions.map(
-      (execution) =>
-        `Execution ${execution.id}: ${execution.laneState}; ${execution.detail}${execution.actsNext ? `; acts next: ${execution.actsNext}` : ""}`,
-    ),
-    ...(status.deliveryReadiness
-      ? [
-          `Delivery review: ${status.deliveryReadiness.settled}/${status.deliveryReadiness.totalInScope} criteria settled; ${status.deliveryReadiness.approvalGranted ? "approved" : "approval not recorded"}`,
-          ...status.deliveryReadiness.blockers.map(
-            (blocker) => `  ${blocker.kind}: ${blocker.reason}`,
-          ),
-        ]
-      : []),
-    "Gates:",
-    ...gateLines(status.gates),
-    ...approvalLedgerLines(status.approvalLedger),
-    ...status.approvalLedger.subjects.map(
-      (subject) =>
-        `  ${subject.gate} ${subject.subject}: ${subject.classification}`,
-    ),
-    `Pending subject approvals: ${status.pendingApprovals.length}`,
-    ...status.pendingApprovals.map(
-      (approval) => `  ${approval.gate}: ${approval.subject}`,
-    ),
-    ...status.importCarriedApprovals.map(
-      (approval) =>
-        `Import-carried subject (no human approval): ${approval.gate} ${approval.subject}`,
-    ),
-    "revision sign-off:",
-    ...signOffLines(status.revisionSignOff),
-    ...(status.pendingBlock
-      ? [
-          `acts next: ${status.pendingBlock.actsNext} — ${status.pendingBlock.display}`,
-          ...pendingBlockLines(status.pendingBlock),
-        ]
-      : []),
-    ...(status.openComments
-      ? [
-          `Open review threads: ${status.openComments.openThreadCount} (${status.openComments.openBlockingThreadCount} blocking) on ${status.openComments.subjects.join(", ")}`,
-          `Read comments: cctl spec comments ${status.slug} --open`,
-        ]
-      : []),
-    ...status.openQuestions.map(
-      (question) => `Question ${question.handle}: ${question.text}`,
-    ),
-    ...status.assumptions.map(
-      (assumption) =>
-        `Assumption ${assumption.handle} [${assumption.disposition}]: ${assumption.text}`,
-    ),
-    ...status.taskPlan.flatMap((task) => [
-      `Task ${task.handle}: ${task.title}`,
-      `  Dependencies: ${task.dependsOn.join(", ") || "none"}; unresolved ${task.unresolvedDependsOnTaskElementIds.join(", ") || "none"}`,
-      `  Intended lane group: ${task.laneGroup ?? "not declared"}; execution lane: ${task.executionLane ?? "not declared"}`,
-      `  Touched paths: ${task.touchedPaths.join(", ") || "not declared"}`,
-      `  Criterion coverage: ${task.criterionCoverage.join(", ") || "none"}; unresolved ${task.unresolvedCriterionElementIds.join(", ") || "none"}`,
-    ]),
-  ];
-  if (data.disclosure)
-    for (const [name, omission] of Object.entries(data.disclosure)) {
-      if (!omission.truncated) continue;
-      const total =
-        omission.total.kind === "known" ? omission.total.count : null;
-      lines.push(
-        `${name}: ${omission.returned} shown; ${total === null ? "more" : total - omission.returned} omitted. Read ${name === "taskPlan" ? data.revealCommands.show : data.revealCommands.status}.`,
-      );
-    }
-  return `${lines.join("\n")}\n`;
+  return quoteLiteralText(
+    [
+      status.slug + "; phase: " + status.phase.primary,
+      ...(status.currentRevision
+        ? [
+            "Authoring revision: " +
+              status.currentRevision.number +
+              " (" +
+              status.currentRevision.state +
+              ", " +
+              status.currentRevision.authoringStage +
+              ")",
+          ]
+        : ["Authoring revision: none"]),
+      ...gateLines(status.gates),
+      ...approvalLedgerLines(status.approvalLedger),
+      ...(status.pendingBlock ? [status.pendingBlock.instruction] : []),
+      ...signOffLines(status.revisionSignOff),
+      ...(status.nextAction ? [status.nextAction.instruction] : []),
+    ].join("\n") + "\n",
+  );
 }
 
 const statusRun = (full: boolean) =>
@@ -307,14 +186,6 @@ const summary = runner({
         counts: view.counts,
         pendingApprovalCount: view.pendingApprovalCount,
         approvalState: view.approvalState,
-        delivery: {
-          allWaived: view.delivery.allWaived,
-          deliveredCount: view.delivery.deliveredCount,
-          provenCount: view.delivery.provenCount,
-          totalInScope: view.delivery.totalInScope,
-          deliveredExternallyCount:
-            view.delivery.deliveredExternallyCriterionIds.length,
-        },
         linkedWork: view.linkedWork,
         imported: view.imported,
         reveal: invocation(specShowCommand, {

@@ -18,75 +18,6 @@ import type {
   ValidationWorkflowRef,
 } from "@/lib/workflows/validation-fix/types";
 
-export interface CriterionOutcome {
-  criterionId: string;
-  criterionHandle: string;
-  outcome: string;
-  reason?: string;
-  automated?: string[];
-}
-
-export interface CandidateValidationFact {
-  validationRef: string;
-  validatedSha: string;
-  validatedTreeHash: string;
-  commandIdentity: string;
-  outcome: "pass" | "fail";
-}
-
-export interface DeliveryGateEvaluateInput {
-  workflowExecutionId?: string;
-  specExecutionId?: string;
-  readOnly?: boolean;
-  preparedSha: string;
-  expectedTargetSha: string;
-  projectPath: string;
-  candidateValidation?: CandidateValidationFact;
-}
-
-/**
- * Where the halted run's human remedy lives: the owning spec's Studio page.
- * Set on every spec-linked delivery-gate refusal so halt surfaces can deep
- * link to the spec's Controls view (`?el=delivery`).
- */
-export interface DeliveryGateSpecPresentation {
-  specSlug: string;
-  specName: string;
-  projectName: string;
-}
-
-export type DeliveryGateEvaluation =
-  | {
-      status: "pass";
-      satisfied: CriterionOutcome[];
-      deferred: string[];
-    }
-  | {
-      status: "refused";
-      unmet: CriterionOutcome[];
-      satisfied?: CriterionOutcome[];
-      instruction: string;
-      /**
-       * Present only when the refusal is the delivery gate waiting on a human
-       * delivery approval — the one refusal a Studio approval clears.
-       */
-      refusalCode?: "approval_required";
-      spec?: DeliveryGateSpecPresentation;
-    };
-
-export interface DeliveryGateEvaluator {
-  evaluate(input: DeliveryGateEvaluateInput): Promise<DeliveryGateEvaluation>;
-}
-
-export interface DeliveryGateHaltReason {
-  type: "delivery_gate_failed";
-  unmet: CriterionOutcome[];
-  instruction: string;
-  /** See {@link DeliveryGateEvaluation}'s refused branch. */
-  refusalCode?: "approval_required";
-  spec?: DeliveryGateSpecPresentation;
-}
-
 /**
  * The conflict resolver could not run to a verdict: the turn failed on the
  * backend (quota, transport), was aborted, timed out, or produced nothing
@@ -102,9 +33,7 @@ export interface ResolutionInfrastructureHaltReason {
 }
 
 /** Every machine-readable refusal a merge run can terminate with. */
-export type MergeHaltReason =
-  | DeliveryGateHaltReason
-  | ResolutionInfrastructureHaltReason;
+export type MergeHaltReason = ResolutionInfrastructureHaltReason;
 
 /**
  * Compile-level drift guard (do not export): the merge-domain interface above
@@ -324,15 +253,8 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Skip completion bookkeeping while retaining session delivery exclusion. */
   skipMarkMerged: boolean;
 
-  /** Workflow execution linkage used by the injected delivery gate. */
-  executionId: string | null;
-  specExecutionId: string | null;
-
   /** Workflow attribution stamped on graph-owned validation ledger rows. */
   validationWorkflow: ValidationWorkflowRef | null;
-
-  /** Validation result for the candidate prepared by this merge job. */
-  candidateValidation: CandidateValidationFact | null;
 
   /** Machine-readable refusal emitted when a terminal state carries one. */
   haltReason: MergeHaltReason | null;
@@ -388,15 +310,8 @@ export interface MergeInput {
   /** Defaults to true; graph fan-in passes false so it doesn't finalize the session. */
   finalizeSessionOnPublish?: boolean;
   skipMarkMerged?: boolean;
-  /** Workflow execution linkage for delivery-gate evaluation. */
-  executionId?: string;
-  specExecutionId?: string;
   /** Workflow attribution for validation accounting; independent of delivery. */
   validationWorkflow?: ValidationWorkflowRef;
-  /** This completed merge closes the workflow's final publish join. */
-  finalPublish?: boolean;
-  /** Persisted validation fact supplied to the delivery-gate evaluator. */
-  candidateValidation?: CandidateValidationFact;
 }
 
 /** Events the merge machine can receive. */
@@ -420,7 +335,6 @@ export interface MergeOutput {
   expectedTargetSha: string | null;
   parkedRef: string | null;
   refreshWarning: string | null;
-  candidateValidation: CandidateValidationFact | null;
   haltReason: MergeHaltReason | null;
   /**
    * Phase to retain on the terminal job record. Null for terminal statuses

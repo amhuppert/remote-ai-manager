@@ -65,8 +65,13 @@ import {
   type CollaborationSessionContextCapture,
 } from "./session-context";
 import { isAlignmentEligibleContext } from "@/lib/conversation-core/contributions/alignment-gate";
-import { type IdleRuntimeRelease } from "@/lib/workflows/conversation/manager";
-import { releaseIdleConversationRuntime as defaultReleaseIdleConversationRuntime } from "@/lib/workflows/conversation/lifecycle";
+type IdleRuntimeRelease = "released" | "not_hosted" | "busy";
+import { releaseCoreIdleRuntime } from "@/lib/supervision/handles";
+const defaultReleaseIdleConversationRuntime = (
+  _projectPath: string,
+  _sessionName: string,
+  conversationId: string,
+) => releaseCoreIdleRuntime(conversationId);
 import { getSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
 import type {
   CaptureActiveCharterInput,
@@ -1243,8 +1248,11 @@ const defaultDeps: CollaborationManagerDeps = {
       { kind: "collaboration_claim" },
       work,
     );
-    return held.kind === "not_core"
-      ? { kind: "ran", value: await work() }
+    return held.kind === "not_core" || held.kind === "not_ready"
+      ? {
+          kind: "busy",
+          reason: "The conversation core is not ready for this conversation",
+        }
       : held;
   },
   conversationReleased(input) {

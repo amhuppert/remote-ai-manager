@@ -9,11 +9,6 @@ vi.mock("@/lib/logging", () => ({
     error: vi.fn(),
   }),
 }));
-
-import {
-  createSpecDeliveryRepo,
-  type SpecDeliveryRepo,
-} from "@/lib/state-store/spec-delivery-repo";
 import {
   createSpecReviewRepo,
   type SpecReviewRepo,
@@ -33,12 +28,9 @@ import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
 
 import {
-  buildPinnedSpecDocument,
-  buildContextSpecDocument,
   compareCanonicalSpecBundles,
   decodeCanonicalSpecBundle,
   loadSpecExportState,
-  pinnedSpecDocumentPath,
   renderCanonicalBundle,
   renderVerifiedCanonicalBundle,
   verifyExportState,
@@ -64,7 +56,6 @@ const CITATION_CAPTURED_AT = "2026-07-18T16:05:00.000Z";
 let db: Db;
 let specs: SpecsRepo;
 let review: SpecReviewRepo;
-let delivery: SpecDeliveryRepo;
 let exportDeps: Parameters<typeof loadSpecExportState>[0];
 let specId: string;
 let revisionId: string;
@@ -98,16 +89,11 @@ beforeEach(async () => {
   db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
   specs = createSpecsRepo(db, createWriteQueue());
   review = createSpecReviewRepo(db);
-  delivery = createSpecDeliveryRepo(db);
   const events = createSpecEventsRepo(db);
   exportDeps = {
     specs,
     review,
-    delivery,
     events,
-    async observeLinkedWorkflow() {
-      return { kind: "missing" as const };
-    },
   };
   specId = "spec-export";
   revisionId = "revision-export-1";
@@ -475,7 +461,6 @@ describe("canonical spec export and verification", () => {
       basis: "import" as const,
       approval_id: null,
       revision_id: revisionId,
-      execution_id: null,
       actor_json: stableStringify({
         kind: "agent",
         conversationId: "conversation-export",
@@ -1584,7 +1569,6 @@ describe("canonical spec export and verification", () => {
             basis,
             approval_id: approvalId,
             revision_id: revisionId,
-            execution_id: null,
             actor_json: stableStringify({ kind: "human" }),
             created_at: CREATED_AT,
           },
@@ -1610,7 +1594,6 @@ describe("canonical spec export and verification", () => {
       basis: "human_approval" as const,
       approval_id: "approval-1",
       revision_id: revisionId,
-      execution_id: null,
       actor_json: stableStringify({ kind: "human" }),
       created_at: CREATED_AT,
     };
@@ -1691,7 +1674,6 @@ describe("canonical spec export and verification", () => {
           basis: "human_approval",
           approval_id: "approval-1",
           revision_id: secondRevisionId,
-          execution_id: null,
           actor_json: stableStringify({ kind: "human" }),
           created_at: CREATED_AT,
         },
@@ -1719,7 +1701,6 @@ describe("canonical spec export and verification", () => {
           basis: "import",
           approval_id: null,
           revision_id: revisionId,
-          execution_id: null,
           actor_json: stableStringify({ kind: "system" }),
           created_at: CREATED_AT,
         },
@@ -2364,7 +2345,6 @@ describe("canonical spec export and verification", () => {
           basis: "import",
           approval_id: null,
           revision_id: revisionId,
-          execution_id: null,
           actor_json: JSON.stringify({
             kind: "agent",
             conversationId: "conversation-export",
@@ -3014,7 +2994,6 @@ describe("canonical spec export and verification", () => {
     const reviewing = createReviewService({
       specs,
       review,
-      delivery,
       links: createSpecLinksRepo(db),
       events: createSpecEventsPublisher({
         appendInTransaction: specEvents.appendInTransaction,
@@ -3307,138 +3286,4 @@ describe("canonical spec export and verification", () => {
  * Its contract is that it renders the PINNED snapshot through the one canonical
  * revision renderer — a mid-run amendment moves live spec state, never this.
  */
-describe("pinned spec document", () => {
-  it("excerpts covered criteria, their requirements and traced decisions from the pinned revision", async () => {
-    const state = await loadSpecExportState(exportDeps, specId);
-    const pinned = state.revisions[0]?.snapshot;
-    if (!pinned) throw new Error("Missing fixture revision");
-    const original = pinned.elements.find(
-      (row) => row.element.id === "criterion-1",
-    );
-    if (!original) throw new Error("Missing fixture criterion");
-    const decisions = ["covered", "unrelated"].map((scope, index) => ({
-      element: {
-        ...original.element,
-        id: `decision-${scope}`,
-        kind: "decision" as const,
-        parentElementId: null,
-        number: index + 1,
-      },
-      version: {
-        ...original.version,
-        elementId: `decision-${scope}`,
-        position: 5 + index,
-        payload: {
-          kind: "decision" as const,
-          title: `${scope} decision`,
-          chosenApproach: `${scope} approach`,
-          reason: "reason",
-          rejectedAlternatives: [],
-          tracedRequirementElementIds:
-            scope === "covered" ? ["requirement-1"] : [],
-        },
-      },
-    }));
-    const snapshot = {
-      ...pinned,
-      elements: [...pinned.elements, ...decisions],
-    };
-    const document = buildContextSpecDocument(
-      state.spec,
-      snapshot,
-      "context-export",
-      ["criterion-1"],
-    );
-    expect(document.relativePath).toBe(
-      ".cc/graph-workflow-docs/spec/portable-spec/context-export.md",
-    );
-    expect(document.contents).toContain("The export is deterministic.");
-    expect(document.contents).toContain(
-      "The exported revision nests criteria under their requirements.",
-    );
-    expect(document.contents).toContain("covered approach");
-    expect(document.contents).not.toContain("unrelated approach");
-    const empty = buildContextSpecDocument(
-      state.spec,
-      snapshot,
-      "context-wiring",
-      [],
-    );
-    expect(empty.contents).not.toContain("The export is deterministic.");
-    expect(empty.contents).toContain(
-      "No spec criteria are covered by this context",
-    );
-  });
-  it("renders the pinned revision at the reserved worktree-relative path", async () => {
-    const spec = (await specs.findById(specId))!;
-    const pinned = (await specs.getRevisionSnapshot(revisionId))!;
-
-    const document = buildPinnedSpecDocument(spec, pinned);
-
-    expect(document.relativePath).toBe(
-      ".cc/graph-workflow-docs/spec/portable-spec.md",
-    );
-    expect(document.relativePath).toBe(pinnedSpecDocumentPath("portable-spec"));
-    expect(document.contents).toContain("The export is deterministic.");
-    expect(document.contents).toContain("<!-- element:requirement-1 -->");
-    expect(document.contents).toContain("- Revision: 1");
-    expect(document.description).toContain("portable-spec");
-    expect(document.description).toContain("revision 1");
-    expect(document.readWhen.length).toBeGreaterThan(0);
-
-    // Deterministic: the seed writes it once, every lane materializes the same
-    // bytes, and `spec verify` compares them.
-    expect(buildPinnedSpecDocument(spec, pinned)).toEqual(document);
-  });
-
-  it("uses the same renderer as the canonical bundle's revision markdown", async () => {
-    const spec = (await specs.findById(specId))!;
-    const pinned = (await specs.getRevisionSnapshot(revisionId))!;
-    const bundle = renderCanonicalBundle(
-      await loadSpecExportState(exportDeps, specId),
-    );
-
-    expect(buildPinnedSpecDocument(spec, pinned).contents).toBe(
-      bundle.markdownFiles[0]!.content,
-    );
-  });
-
-  it("stays on the pinned revision when the spec is amended mid-run", async () => {
-    const spec = (await specs.findById(specId))!;
-    const pinned = (await specs.getRevisionSnapshot(revisionId))!;
-    const before = buildPinnedSpecDocument(spec, pinned);
-
-    // Mid-run amendment: a new draft revision changes the requirement text.
-    await specs.createDraftFromBase({
-      id: "revision-export-2",
-      specId,
-      baseRevisionId: revisionId,
-      authoringStage: "plan",
-      createdAt: "2026-07-19T10:00:00.000Z",
-    });
-    const draftVersion = (await specs.findElementVersion(
-      "revision-export-2",
-      "requirement-1",
-    ))!;
-    await specs.updateDraftElement({
-      revisionId: "revision-export-2",
-      elementId: "requirement-1",
-      expectedElementVersion: draftVersion.elementVersion,
-      payload: {
-        kind: "requirement",
-        statement: "The export is amended.",
-        priority: "must",
-        risk: "high",
-      },
-      updatedAt: "2026-07-19T10:01:00.000Z",
-    });
-
-    const after = buildPinnedSpecDocument(
-      (await specs.findById(specId))!,
-      (await specs.getRevisionSnapshot(revisionId))!,
-    );
-
-    expect(after).toEqual(before);
-    expect(after.contents).not.toContain("The export is amended.");
-  });
-});
+describe("pinned spec document", () => {});

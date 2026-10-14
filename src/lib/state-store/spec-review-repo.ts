@@ -34,12 +34,6 @@ export interface SpecReviewRepo {
   findGateAdmissionById(id: string): SpecGateAdmissionRow | null;
   findGateAdmissionsByRevision(revisionId: string): SpecGateAdmissionRow[];
   findGateAdmissionsBySpecId(specId: string): SpecGateAdmissionRow[];
-  hasValidHumanGateApproval(input: {
-    specId: string;
-    revisionId: string;
-    executionId: string;
-    gate: SpecGateAdmissionRow["gate"];
-  }): boolean;
   insertQuestion(
     question: SpecQuestionRow,
   ): AttentionInsertOutcome<SpecQuestionRow>;
@@ -208,10 +202,10 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
 
   const insertGateAdmissionStmt = db.prepare(
     `INSERT INTO spec_gate_admissions (
-       id, spec_id, gate, basis, approval_id, revision_id, execution_id,
+       id, spec_id, gate, basis, approval_id, revision_id,
        actor_json, created_at
      ) VALUES (
-       @id, @spec_id, @gate, @basis, @approval_id, @revision_id, @execution_id,
+       @id, @spec_id, @gate, @basis, @approval_id, @revision_id,
        @actor_json, @created_at
      )`,
   );
@@ -230,20 +224,6 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
     `SELECT * FROM spec_gate_admissions
      WHERE spec_id = ?
      ORDER BY created_at ASC, id ASC`,
-  );
-  const hasValidHumanGateApprovalStmt = db.prepare(
-    `SELECT 1
-       FROM spec_gate_admissions admission
-       JOIN spec_approvals approval ON approval.id = admission.approval_id
-      WHERE admission.spec_id = @spec_id
-        AND admission.revision_id = @revision_id
-        AND admission.execution_id = @execution_id
-        AND admission.gate = @gate
-        AND admission.basis = 'human_approval'
-        AND approval.spec_id = admission.spec_id
-        AND approval.revision_id = admission.revision_id
-        AND approval.validity = 'valid'
-      LIMIT 1`,
   );
 
   const insertQuestionStmt = db.prepare(
@@ -549,21 +529,6 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
           `spec:${specId}`,
           () => findGateAdmissionsBySpecStmt.all(specId),
         ),
-      );
-    },
-    hasValidHumanGateApproval(input) {
-      const identifier = `${input.specId}:${input.revisionId}:${input.executionId}:${input.gate}`;
-      return timed(
-        "has_valid_human_gate_approval",
-        "spec_gate_admission",
-        identifier,
-        () =>
-          hasValidHumanGateApprovalStmt.get({
-            spec_id: input.specId,
-            revision_id: input.revisionId,
-            execution_id: input.executionId,
-            gate: input.gate,
-          }) !== undefined,
       );
     },
     insertQuestion(question) {

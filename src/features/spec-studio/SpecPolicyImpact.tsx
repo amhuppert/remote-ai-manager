@@ -123,19 +123,7 @@ export function policyChangeImpact(
     // still bound the draft's lifecycle, so they close the list under the same
     // proposed dials.
     remainingLifecycle:
-      sequence === null
-        ? []
-        : [
-            ...sequence.stages.map(({ gate, dial }) => ({ gate, dial })),
-            {
-              gate: "execution_start" as const,
-              dial: resolveDial(proposedPolicy, "execution_start"),
-            },
-            {
-              gate: "delivery" as const,
-              dial: resolveDial(proposedPolicy, "delivery"),
-            },
-          ],
+      sequence?.stages.map(({ gate, dial }) => ({ gate, dial })) ?? [],
   };
 }
 

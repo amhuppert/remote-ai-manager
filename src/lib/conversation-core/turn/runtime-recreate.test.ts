@@ -1,4 +1,4 @@
-import { runtimeConfigurationFixture } from "@/lib/workflows/conversation/testing/runtime-configuration-fixture";
+import { runtimeConfigurationFixture } from "@/lib/conversation-core/testing/runtime-configuration-fixture";
 import { describe, expect, it } from "vitest";
 import { shouldRecreateRuntime } from "./runtime-recreate";
 

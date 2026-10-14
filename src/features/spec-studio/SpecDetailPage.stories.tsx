@@ -8,7 +8,6 @@ import {
   specQueries,
   type SpecDetailView,
 } from "@/lib/specs/queries";
-import { elementHandleInSnapshot } from "@/lib/specs/revision-handles";
 import type {
   SpecAuthoringStage,
   SpecRevision,
@@ -22,11 +21,6 @@ import {
   draftReviewFixture,
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
-import {
-  pendingReaffirmationReview,
-  reviewView,
-} from "./delivery-plan-review.fixtures";
-import { deliveryDashboardFixture } from "./SpecDeliveryScope.fixtures";
 import { SpecDetailContent } from "./SpecDetailPage";
 
 type SpecDetailContentProps = ComponentProps<typeof SpecDetailContent>;
@@ -39,109 +33,32 @@ function createStoryQueryClient(
     defaultOptions: {
       queries: {
         retry: false,
-        staleTime: Number.POSITIVE_INFINITY,
+        staleTime: Infinity,
         refetchOnWindowFocus: false,
       },
       mutations: { retry: false },
     },
   });
-  const currentRevisionId =
-    detail.currentRevision?.revision.id ??
-    detail.currentApprovedRevision?.revision.id ??
-    "story-revision";
+  client.setQueryData(
+    specQueries.detail(projectName, detail.spec.slug).queryKey,
+    detail,
+  );
   client.setQueryData(
     specQueries.lint(projectName, detail.spec.slug).queryKey,
-    { revisionId: currentRevisionId, findings: [] },
+    {
+      revisionId: detail.currentRevision?.revision.id ?? "story-revision",
+      findings: [],
+    },
   );
   client.setQueryData(
     specQueries.integrity(projectName, detail.spec.slug).queryKey,
     {
       ok: true,
-      checkedRevisionIds: detail.revisions
-        .filter(({ state }) => state === "approved")
-        .map(({ id }) => id),
+      checkedRevisionIds: [],
       mismatches: [],
       consistencyFindings: [],
     },
   );
-  const phase = detail.status.phase.primary;
-  const deliveryPlan =
-    phase === "approved" || phase === "executing" || phase === "delivered"
-      ? reviewView({
-          attempt: {
-            status: phase === "approved" ? "approved" : "launched",
-            launchedExecutionId: detail.executions.at(-1)?.id ?? null,
-          },
-          approval: {
-            snapshotId: "snapshot-2",
-            candidateId: "candidate-2",
-            candidateHash: "sha256:candidate-2",
-            approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
-            approvedBy: { kind: "human" },
-          },
-        })
-      : null;
-  if (deliveryPlan && detail.currentApprovedRevision) {
-    deliveryPlan.attempt.pinnedRevisionId =
-      detail.currentApprovedRevision.revision.id;
-    deliveryPlan.document.binding.dispositions =
-      detail.currentApprovedRevision.elements
-        .filter((entry) => entry.element.kind === "criterion")
-        .map((entry) => ({
-          criterionElementId: entry.element.id,
-          disposition: "in_scope",
-          deliveredByExecutionId: null,
-        }));
-  }
-  client.setQueryData(
-    specQueries.planReview(projectName, detail.spec.slug).queryKey,
-    deliveryPlan,
-  );
-
-  const dashboard = deliveryDashboardFixture();
-  client.setQueryData(
-    specQueries.delta(projectName, detail.spec.slug).queryKey,
-    dashboard.projection,
-  );
-
-  const snapshots = [
-    detail.currentApprovedRevision,
-    ...detail.executionRevisionSnapshots,
-  ].filter((snapshot): snapshot is SpecRevisionSnapshot => snapshot !== null);
-  for (const snapshot of snapshots) {
-    for (const entry of snapshot.elements) {
-      if (entry.version.payload.kind !== "criterion") continue;
-      const handle = elementHandleInSnapshot(snapshot, entry.element.id);
-      if (handle === null) continue;
-      client.setQueryData(
-        specQueries.element(
-          projectName,
-          detail.spec.slug,
-          handle,
-          undefined,
-          snapshot.revision.id,
-        ).queryKey,
-        {
-          specId: detail.spec.id,
-          slug: detail.spec.slug,
-          revision: snapshot.revision,
-          handle,
-          element: entry,
-          approvals: [],
-          evidenceState: [
-            {
-              criterionElementId: entry.element.id,
-              handle,
-              evidence: [],
-              verdicts: [],
-              waiver: null,
-            },
-          ],
-          referenceState: null,
-        },
-      );
-    }
-  }
   return client;
 }
 
@@ -149,29 +66,13 @@ function StoryQueryBoundary({
   detail,
   projectName,
   children,
-  needsReaffirmation = false,
 }: {
   detail: SpecDetailView;
   projectName: string;
   children: ReactNode;
-  needsReaffirmation?: boolean;
 }): React.JSX.Element {
   const [queryClient] = useState(() => {
     const client = createStoryQueryClient(detail, projectName);
-    if (needsReaffirmation) {
-      const review = pendingReaffirmationReview();
-      review.attempt.pinnedRevisionId =
-        detail.currentApprovedRevision?.revision.id ??
-        review.attempt.pinnedRevisionId;
-      client.setQueryData(
-        specQueries.planReview(projectName, detail.spec.slug).queryKey,
-        review,
-      );
-      client.setQueryData(
-        specQueries.deliveryReview(projectName, detail.spec.slug).queryKey,
-        null,
-      );
-    }
     return client;
   });
   return (
@@ -410,48 +311,10 @@ function authoringDetail(base: SpecDetailView): SpecDetailView {
     baseRevision: requirementsSnapshot,
     currentRevision: designSnapshot,
     currentApprovedRevision: requirementsSnapshot,
-    executionRevisionSnapshots: [],
     approvals: [],
     status: {
       ...base.status,
       phase: { primary: "draft", authoringStage: "design" },
-    },
-  });
-}
-
-/**
- * A requirements draft opened over the approved revision an execution runs
- * against: the phase stays `executing`, and the draft rides as its authoring
- * facet.
- */
-function withOpenDraft(detail: SpecDetailView): SpecDetailView {
-  const approved = detail.currentApprovedRevision;
-  if (approved === null) return detail;
-  const draftRevision = revisionFor(
-    approved.revision,
-    approved.revision.number + 1,
-    "requirements",
-    "draft",
-  );
-  const draft = snapshotFor(
-    approved,
-    { ...draftRevision, basedOnRevisionId: approved.revision.id },
-    true,
-  );
-  const revisions = [...detail.revisions, draft.revision];
-  return parsedDetail({
-    ...detail,
-    revisions,
-    draftReview: draftReviewFixture(revisions, [approved, draft]),
-    baseRevision: approved,
-    currentRevision: draft,
-    status: {
-      ...detail.status,
-      phase: {
-        primary: "executing",
-        authoringFacet: "draft",
-        authoringStage: "requirements",
-      },
     },
   });
 }
@@ -651,15 +514,8 @@ function withOverflowingStructureRail(detail: SpecDetailView): SpecDetailView {
       detail.currentApprovedRevision === null
         ? null
         : { ...detail.currentApprovedRevision, elements },
-    executionRevisionSnapshots: detail.executionRevisionSnapshots.map(
-      (executionSnapshot) =>
-        executionSnapshot.revision.id === snapshot.revision.id
-          ? { ...executionSnapshot, elements }
-          : executionSnapshot,
-    ),
     status: {
       ...detail.status,
-      coverage: { coveredCriteria: 1, totalCriteria: 15, percentage: 7 },
     },
   });
 }
@@ -667,11 +523,7 @@ function withOverflowingStructureRail(detail: SpecDetailView): SpecDetailView {
 function detailFor(
   phase: SpecDetailView["status"]["phase"]["primary"],
 ): SpecDetailView {
-  const base = withProse(
-    specControlsDetailFixture(
-      phase === "executing" || phase === "delivered" ? "running" : "none",
-    ),
-  );
+  const base = withProse(specControlsDetailFixture());
   if (phase === "draft") return authoringDetail(base);
   const snapshot = base.currentRevision;
   if (snapshot === null) return parsedDetail(base);
@@ -695,25 +547,7 @@ function detailFor(
     status: {
       ...base.status,
       phase: { primary: phase },
-      delivery:
-        phase === "delivered"
-          ? {
-              allWaived: false,
-              deliveredCount: 1,
-              provenCount: 1,
-              deliveredExternallyCriterionIds: [],
-              totalInScope: 1,
-            }
-          : base.status.delivery,
     },
-    executions:
-      phase === "delivered"
-        ? base.executions.map((execution) => ({
-            ...execution,
-            state: "delivered" as const,
-            deliveredAt: SPEC_CONTROLS_FIXTURE_NOW,
-          }))
-        : base.executions,
   });
 }
 
@@ -746,19 +580,6 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Approved: Story = {};
-
-export const NeedsReaffirmation: Story = {
-  args: { view: "delivery" },
-  render: (args) => (
-    <StoryQueryBoundary
-      detail={args.detail}
-      projectName={args.projectName}
-      needsReaffirmation
-    >
-      <AddressBarHarness {...args} />
-    </StoryQueryBoundary>
-  ),
-};
 
 export const ExpandedStructureRail: Story = {
   args: {
@@ -901,14 +722,6 @@ export const DraftUnderReview: Story = {
   },
 };
 
-export const ExecutingWithReview: Story = {
-  args: { detail: withOpenDraft(detailFor("executing")) },
-};
-
-export const Delivered: Story = {
-  args: { detail: detailFor("delivered") },
-};
-
 export const Exploratory: Story = {
   args: {
     detail: parsedDetail({
@@ -937,7 +750,7 @@ export const JustCreated: Story = {
         ...detail,
         draftReview: { ...detail.draftReview, snapshot: sectionsOnly },
         currentRevision: sectionsOnly,
-        elementStatuses: { requirements: [], tasks: [] },
+        elementStatuses: { requirements: [] },
       });
     })(),
   },
@@ -949,24 +762,6 @@ export const Abandoned: Story = {
 
 export const History: Story = {
   args: { view: "history" },
-};
-
-export const ActiveDelivery: Story = {
-  args: {
-    view: "delivery",
-    detail: {
-      ...detailFor("executing"),
-      revisions: deliveryDashboardFixture().detail.revisions,
-      status: {
-        ...detailFor("executing").status,
-        coverage: deliveryDashboardFixture().detail.status.coverage,
-        delivery: deliveryDashboardFixture().detail.status.delivery,
-      },
-      currentRevision: deliveryDashboardFixture().detail.currentRevision,
-      currentApprovedRevision:
-        deliveryDashboardFixture().detail.currentApprovedRevision,
-    },
-  },
 };
 
 export const GatePolicy: Story = {
@@ -990,24 +785,4 @@ export const QuestionsAndAssumptionsMobile: Story = {
 
 export const RequirementsReader: Story = {
   args: { view: "requirements", detail: detailFor("approved") },
-};
-
-/** A run parked on the delivery gate: the banner names the pending delivery
- *  approval and links it, and the phase CTA targets the approval control
- *  with the ?el=delivery deep link (F15/F16). */
-export const ExecutingApprovalNeeded: Story = {
-  args: {
-    detail: (() => {
-      const detail = detailFor("executing");
-      return parsedDetail({
-        ...detail,
-        status: {
-          ...detail.status,
-          pendingApprovals: [
-            { gate: "delivery" as const, subject: "delivery", elementId: null },
-          ],
-        },
-      });
-    })(),
-  },
 };

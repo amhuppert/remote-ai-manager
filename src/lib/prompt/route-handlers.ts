@@ -16,7 +16,6 @@ import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/
 import {
   getSession as defaultGetSession,
   getProjectConversation as defaultGetProjectConversation,
-  getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
   clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches,
 } from "@/lib/state-store";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
@@ -67,8 +66,6 @@ import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { RunPromptRequest } from "@/lib/prompt/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 import {
   admitCoreCollaboration,
   promptCoreConversation,
@@ -81,38 +78,6 @@ const logger = createLogger("prompt");
 const DEFAULT_NEGOTIATION_ROUNDS = 3;
 
 const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD = "major" as const;
-
-/**
- * A managed conversation is chat-open while a context of an execution that
- * still holds the session's lease is parked `awaiting_approval` on this
- * conversation with no recorded decision; the moment a decision lands the
- * managed 403 applies again.
- *
- * Tenure comes from the one contract rather than a set mirroring the gate's:
- * chat exists to settle a gate, and a gate on a run that can never continue has
- * nothing left to settle.
- */
-function hasUndecidedApprovalGate(
-  execution: GraphWorkflowExecution | null,
-  conversationId: string,
-): boolean {
-  if (!execution) return false;
-  if (
-    !holdsActionableGate(
-      execution.status,
-      execution.haltReason,
-      execution.abandonment,
-    )
-  ) {
-    return false;
-  }
-  return Object.values(execution.contextStates).some(
-    (contextState) =>
-      contextState.status === "awaiting_approval" &&
-      contextState.pendingApproval?.conversationId === conversationId &&
-      contextState.pendingApproval.decision === null,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -129,10 +94,6 @@ export interface PromptRouteDeps {
     sessionName: string,
     conversationId: string,
   ) => Promise<ConversationState | null>;
-  getActiveGraphWorkflowExecution: (
-    projectPath: string,
-    sessionName: string,
-  ) => Promise<GraphWorkflowExecution | null>;
   isConversationBusy: (
     projectPath: string,
     sessionName: string,
@@ -181,7 +142,6 @@ const defaultDeps: PromptRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,
-  getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
   isConversationBusy: defaultIsConversationBusy,
   admitConversationTurn: (scope) =>
     admitConversationTurn(defaultMutateConversation, scope),
@@ -498,7 +458,7 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
 
     const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
     if (!resolved.ok) return resolved.response;
-    const { projectPath, session } = resolved.value;
+    const { projectPath } = resolved.value;
 
     const conversation = await deps.getConversation(
       projectPath,
@@ -509,35 +469,18 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       return notFound("Conversation not found");
     }
 
-    // The open-approval-gate exception belongs to the old engine's iteration
-    // conversations; a conversation the core runs (a run's seat) is refused by
-    // the core itself, below.
+    // Historical role rows remain readable; run seats enforce their own admission.
     if (
-      conversation.role === "iteration" &&
+      conversation.role !== null &&
       !deps.coreConversations.owns(conversationId)
     ) {
-      const activeExecution = await deps.getActiveGraphWorkflowExecution(
-        projectPath,
-        sessionName,
+      return NextResponse.json(
+        {
+          error: "This historical conversation is read-only",
+          code: "MANAGED_CONVERSATION",
+        },
+        { status: 403 },
       );
-      const gateOpen = hasUndecidedApprovalGate(
-        activeExecution,
-        conversationId,
-      );
-      if (!gateOpen) {
-        return NextResponse.json(
-          {
-            error: "Managed workflow conversations are not user-interactive",
-            code: "MANAGED_CONVERSATION",
-          } satisfies ApiError,
-          { status: 403 },
-        );
-      }
-      logger.info("gate.chat_admitted", {
-        projectPath,
-        sessionName,
-        conversationId,
-      });
     }
 
     // A conversation held by a long-running non-prompt turn (Collaboration
@@ -554,7 +497,7 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       );
     }
 
-    if (deps.coreConversations.owns(conversationId)) {
+    {
       let coreBody: RunPromptRequest;
       try {
         coreBody = runPromptRequestSchema.parse(await request.json());
@@ -589,157 +532,6 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
         body: coreBody,
       });
     }
-
-    if (deps.isConversationBusy(projectPath, sessionName, conversationId)) {
-      return NextResponse.json(
-        {
-          error: "Conversation is busy — a prompt is already running",
-          code: "CONVERSATION_BUSY",
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    let body: RunPromptRequest;
-    try {
-      body = runPromptRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Either prompt text or at least one image is required",
-        } satisfies ApiError,
-        { status: 400 },
-      );
-    }
-
-    const trimmedPrompt = body.prompt.trim();
-    const commandRefusal = await commandRequestRefusal(
-      trimmedPrompt,
-      body.backend ?? conversation.agentBackend,
-    );
-    if (commandRefusal) return commandRefusal;
-    if (hasCollabPrefix(trimmedPrompt)) {
-      return startCollaborationFromPrompt({
-        name,
-        projectPath,
-        sessionName,
-        conversationId,
-        body,
-        trimmedPrompt,
-      });
-    }
-
-    // Admission is the moment the turn generation moves — before the transcript
-    // or the provider sees anything — so a collaboration that later tries to
-    // reclaim this conversation can tell that a turn happened even if the
-    // conversation is idle again by then.
-    const admission = await deps.admitConversationTurn({
-      projectPath,
-      storeSessionName: sessionName,
-      conversationId,
-    });
-    if (admission.kind === "refuse") {
-      return NextResponse.json(
-        {
-          error: `Conversation is held by a running collaboration (workflow "${admission.owner.workflowId}")`,
-          code: "CONVERSATION_OWNED",
-        } satisfies ApiError,
-        { status: 409 },
-      );
-    }
-
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const emit = (event: string, data: unknown) => {
-          try {
-            controller.enqueue(
-              encoder.encode(
-                `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-              ),
-            );
-          } catch {
-            // Client disconnected
-          }
-        };
-
-        try {
-          await deps.executePromptStream(
-            projectPath,
-            session,
-            body.prompt.trim(),
-            emit,
-            conversationId,
-            body.modelSelection,
-            body.images,
-            {
-              backend: body.backend,
-              inputOrigin:
-                body.documentFeedback || body.notepadFeedback
-                  ? "generated"
-                  : "user",
-              onAccepted: async () => {
-                await deps.clearConversationPendingPromptTextIfMatches(
-                  projectPath,
-                  sessionName,
-                  conversationId,
-                  body.submittedPendingPromptText ?? body.prompt,
-                );
-              },
-              ...(body.documentFeedback
-                ? { documentFeedback: body.documentFeedback }
-                : {}),
-              ...(body.notepadFeedback
-                ? { notepadFeedback: [body.notepadFeedback] }
-                : {}),
-            },
-          );
-        } catch (err) {
-          if (err instanceof BackendAdmissionError) {
-            emit("error", { message: err.message, code: err.code });
-            emit("done", {});
-            return;
-          }
-          if (err instanceof BackendMismatchError) {
-            emit("error", { message: err.message, code: "BACKEND_MISMATCH" });
-            emit("done", {});
-            return;
-          }
-          if (err instanceof ModelSelectionValidationError) {
-            emit("error", {
-              message: err.message,
-              code: err.code,
-              modelId: err.modelId,
-              ...(err.parameterId !== undefined
-                ? { parameterId: err.parameterId }
-                : {}),
-            });
-            emit("done", {});
-            return;
-          }
-          const msg = err instanceof Error ? err.message : "Prompt failed";
-          emit("error", { message: msg });
-          emit("done", {});
-        } finally {
-          try {
-            controller.close();
-          } catch {
-            // Already closed
-          }
-        }
-      },
-      cancel() {
-        // No-op: let execution continue in background
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
   }
 
   return { POST, conversationPOST };

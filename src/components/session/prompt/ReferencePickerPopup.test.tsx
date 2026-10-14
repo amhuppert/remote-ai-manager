@@ -105,10 +105,7 @@ function notepadItem(
 
 const idle = { isLoading: false, isError: false, error: null } as const;
 
-import type { ExecutionReferenceItem } from "@/lib/workflow-graph/references";
-
 interface RenderOptions {
-  executions?: ExecutionReferenceItem[];
   trigger?: PickerTrigger;
   query?: string;
   files?: { path: string }[];
@@ -134,12 +131,6 @@ function renderPicker(options: RenderOptions = {}) {
     useSpecs: () => ({ data: options.specs ?? [SPEC], ...idle }),
     useFiles: () => ({
       data: { items: options.files ?? [{ path: "src/lib/prompt.ts" }] },
-      ...idle,
-    }),
-    useExecutions: (query) => ({
-      data: (options.executions ?? []).filter((item) =>
-        item.title.toLowerCase().includes(query.toLowerCase()),
-      ),
       ...idle,
     }),
     useNotepads: () => ({
@@ -191,35 +182,6 @@ function rowNames(): string[] {
 }
 
 describe("ReferencePickerPopup", () => {
-  it("searches executions through the shared abbreviated scope grammar and inserts the exact run", () => {
-    const { ref, onSelect } = renderPicker({
-      query: "exec: Capture",
-      executions: [
-        {
-          projectName: "alpha",
-          sessionName: "release",
-          executionId: "run-past",
-          title: "Capture delivery",
-          status: "completed",
-          startedAt: "2026-09-10T00:00:00Z",
-        },
-      ],
-    });
-    expect(
-      screen.getByRole("button", { name: "Executions (1)" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    press(ref, { key: "Enter" });
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "reference",
-        type: "execution",
-        attrs: expect.objectContaining({
-          "execution-id": "run-past",
-          "session-name": "release",
-        }),
-      }),
-    );
-  });
   it("opens on the scope its trigger preselects", () => {
     renderPicker({ trigger: "!" });
 
@@ -352,7 +314,6 @@ describe("ReferencePickerPopup", () => {
       useTickets: () => ({ data: [ticket({ id: "t1" })], ...idle }),
       useSpecs: () => ({ data: [], ...idle }),
       useFiles: () => ({ data: { items: [] }, ...idle }),
-      useExecutions: () => ({ data: [], ...idle }),
       useNotepads: () => ({ data: [], ...idle }),
     });
     const onComplete = vi.fn();
@@ -517,7 +478,6 @@ describe("ReferencePickerPopup", () => {
       useTickets: () => ({ data: [ticket({ id: "t1" })], ...idle }),
       useSpecs: () => ({ data: [], ...idle }),
       useFiles: () => ({ data: { items: [] }, ...idle }),
-      useExecutions: () => ({ data: [], ...idle }),
       useNotepads: () => ({ data: [], ...idle }),
     });
     render(
@@ -554,7 +514,6 @@ describe("ReferencePickerPopup", () => {
       useTickets: () => ({ data: [], ...idle }),
       useSpecs: () => failing,
       useFiles: () => ({ data: { items: [] }, ...idle }),
-      useExecutions: () => ({ data: [], ...idle }),
       useNotepads: () => ({ data: [], ...idle }),
     });
     render(

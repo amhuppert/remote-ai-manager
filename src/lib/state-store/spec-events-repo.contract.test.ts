@@ -114,7 +114,6 @@ function authoringRequest(
       gate,
       scope,
       subject,
-      executionId: null,
       active: true,
     }),
   });
@@ -254,7 +253,11 @@ describe("spec-events-repo durability contract", () => {
       eventInput("spec-changed", "2026-07-18T13:01:00.000Z", 2),
     );
     const third = repo.append(
-      eventInput("spec-evidence-changed", "2026-07-18T13:02:00.000Z", 3),
+      eventInput(
+        "spec-assumption-citations-mutated",
+        "2026-07-18T13:02:00.000Z",
+        3,
+      ),
     );
 
     const events = repo.findBySpecId(SPEC_ID);
@@ -367,7 +370,6 @@ describe("spec-events-repo durability contract", () => {
         gate: "requirements",
         scope: null,
         subject: "R1",
-        executionId: null,
       },
     ]);
   });
@@ -408,57 +410,6 @@ describe("spec-events-repo durability contract", () => {
       repo.listOpenApprovalRequests(SPEC_ID).map((row) => row.attentionId),
     ).toEqual(["a2"]);
     expect(repo.findBySpecId(SPEC_ID)).toHaveLength(3);
-  });
-
-  it("keys a per-run request by its execution, so the next run's ask is a request of its own", () => {
-    const request = (executionId: string, attentionId: string) =>
-      repo.appendInTransaction({
-        spec_id: SPEC_ID,
-        occurred_at: "2026-07-18T13:05:00.000Z",
-        event_type: "spec-attention-changed",
-        actor_json: stableStringify({ kind: "agent", conversationId: "c-1" }),
-        payload_json: stableStringify({
-          kind: "approval-requested",
-          attentionId,
-          revisionId: "revision-1",
-          gate: "delivery",
-          subject: "delivery",
-          executionId,
-          active: true,
-        }),
-      });
-
-    request("execution-1", "attention-run-1");
-    request("execution-2", "attention-run-2");
-
-    const key = (executionId: string) =>
-      ({
-        kind: "execution",
-        specId: SPEC_ID,
-        revisionId: "revision-1",
-        gate: "delivery",
-        subject: "delivery",
-        executionId,
-      }) as const;
-    expect(repo.findApprovalRequest(key("execution-1"))).toEqual({
-      attentionId: "attention-run-1",
-    });
-    expect(repo.findApprovalRequest(key("execution-2"))).toEqual({
-      attentionId: "attention-run-2",
-    });
-    expect(repo.findApprovalRequest(key("execution-3"))).toBeNull();
-    // A per-run ask predates request scope, so the run alone identifies it and
-    // an authoring key must never reach it.
-    expect(
-      repo.findApprovalRequest({
-        kind: "authoring",
-        specId: SPEC_ID,
-        revisionId: "revision-1",
-        gate: "delivery",
-        scope: "gate",
-        subject: null,
-      }),
-    ).toBeNull();
   });
 
   it("composes appendInTransaction atomically with a service mutation", () => {

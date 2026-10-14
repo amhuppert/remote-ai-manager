@@ -119,7 +119,6 @@ export default function ConversationTabStrip({
           branchName: conversation.branchName,
           worktreePath: conversation.worktreePath,
           archived: conversation.archived ?? false,
-          approvalGatePending: conversation.pendingApproval !== null,
         },
         {
           onOpenConversation: () => onActivate(conversation.id),

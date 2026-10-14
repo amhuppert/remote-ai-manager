@@ -28,28 +28,11 @@ export const LATER_STAGE_RATIONALE =
 
 /** Why a delivery plan cannot be authored inside an evergreen revision. */
 export const PLAN_IN_EVERGREEN_RATIONALE =
-  "delivery plans bind a settled design; authoring one earlier would shape the design around its own execution";
+  "legacy Plan revisions and task elements remain read-only history; requirements and design are the authoring contract";
 
 /** Why an element the revision carries cannot be moved to another parent. */
 export const PARENT_IMMUTABLE_RATIONALE =
   "containment is identity: a moved element would retroactively change what every frozen revision contained";
-
-/**
- * Why a seed charter cannot be proposed or signed off. The charter is not
- * documentation of the plan — it is the text every lane agent is governed by —
- * so a stub that survives sign-off is frozen into the signed candidate and read
- * by every implementer and validator of the run (#98).
- */
-export const CHARTER_UNAUTHORED_RATIONALE =
-  "the charter is the governance every implementer and validator reads, and a seed stub would freeze into the signed candidate (#98)";
-
-/**
- * Why a claimed criterion has to be reachable on every path. A guard that can
- * skip the only claiming context turns an accountability claim into a promise
- * the run may never be asked to keep.
- */
-export const CRITERION_MUST_RUN_RATIONALE =
-  "a claimed criterion must be covered on every path so a skipped branch can never waive it silently";
 
 /** Why an approval refuses once the draft moved under the reviewer. */
 export const STALE_REVIEW_RATIONALE =

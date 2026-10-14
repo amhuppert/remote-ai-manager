@@ -8,9 +8,9 @@ CC (Command Center) is a web control plane for managing parallel AI coding-agent
 - **Session lifecycle** — creates, monitors, and deletes worktree-backed sessions through normal or optimistic creation
 - **Backend-neutral agent execution** — registered Claude and Codex descriptors provide conversation/task facets, capabilities, continuity, and failure policy
 - **Live observability** — lossless backend transcript envelopes, rendered conversation messages, costs/usage when available, and computed git diffs
-- **Real-time updates** — typed conversation, ticket, job, notification, workflow, and dev-server events over one SSE connection
+- **Real-time updates** — typed conversation, ticket, job, notification, run, and dev-server events over one SSE connection
 - **Background jobs** — durable merge, commit, and conflict-resolution history with user notifications
-- **Graph workflows** — declarative multi-context execution with task graphs, validation, retries, gates, and circuit breakers
+- **Runs** — owned execution contexts with implementer/reviewer seats, checks, human approval, workspace isolation and amendments
 - **Dev server automation** — per-session spawning, liveness polling, and remote URLs
 - **Voice input** — Whisper-based prompt transcription
 

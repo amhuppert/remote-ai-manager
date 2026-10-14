@@ -172,15 +172,7 @@ path a project conversation can reach, derive the scope ref instead.
 | `conversation-cost-settlement` | `conversation.cost_settled` | A late cost settlement landed: `costUsdDelta`, the new `totalCostUsd`, `appliedTo` (`actor` when a hosted machine absorbed it, `row` when the conversation row was written directly) and `published`. Emitted by `src/lib/conversations/cost-settlement.ts` after the row or actor update and the `conversation-usage-updated` SSE publish |
 | `workflows.primitives.agent-call.facade` | `agent_call.facade.structured_output_repair_attempted` / `_succeeded` / `_failed` (**warn**) | A schema-invalid result being re-asked. All three carry `attempt`, `issuePaths`, and `initialCostUsd` / `initialInputTokens` / `initialOutputTokens` — the cost of the call being repaired. The two terminal events add `repairDurationMs` plus the `repair*` token and cost fields, so a repair's share of the turn is one line's arithmetic. `repairDurationMs` is measured by the facade around its own dispatch: `AgentTaskResult.usage` reports tokens and cost but no elapsed time, so a task run's duration exists nowhere else |
 | `conversation-checkpoints` | `checkpoint.*` | The manual-checkpoint lifecycle, all under one module name and correlated by `operationId` (plus `attemptId` once a delivery is bound). Admission: `checkpoint.route.start_admitted` / `.start_refused`, `checkpoint.admitted` / `.recovery_admitted` / `.admission_refused` / `.admission_held`. Build: `checkpoint.source.captured` (boundary and hash of the snapshot the build is bound to), `checkpoint.generation.pass` (one per model call — envelope folds, repairs and the working-state passes, with `kind`, `outcome`, `inputBytes` and nullable counters), `checkpoint.generation.completed` / `.failed`, `checkpoint.build.started` / `.cancelled` / `.failed` / `.error`. Retirement: `checkpoint.frozen`, `checkpoint.runtime_closed`, `checkpoint.ready`. Delivery: `checkpoint.delivery.bound` / `.accepted` / `.not_sent` / `.unresolved`. Operator actions and repair: `checkpoint.route.cancel_settled` / `.cancel_refused` / `.reconcile_settled` / `.reconcile_refused`, `checkpoint.reconcile.*`, `checkpoint.restart.*`. Publication: `checkpoint.event.publish_failed` / `.receipt_read_failed`. Fields are identifiers, hashes, byte counts and codes only — never seed or source text, image bytes, private reasoning, or a raw provider reference. A failure reports the structural cause (`cause`, `failureKind`, `at`) and describes a thrown error through `checkpointErrorFields` from `conversation-checkpoints/diagnostics.ts` (`errorKind` / `errorCode` / `errorChars`); the exception message itself is never a field, and `src/lib/conversation-checkpoints/diagnostics.arch.test.ts` enforces that over every `checkpoint.*` call site — including publication, where `publishEventBestEffort` takes a `describeError` projection because its own default field is the exception message |
-| `graph-workflow-validate-route` / `workflow-graph` | `workflow.validate.refused` | **info**: a `workflow validate`, `create` or `replace` refusal, once per distinct issue code (#80 design 3.10). `code`, `recordId` when the issue names a record, `definitionId` when the request addresses a definition, `conversationId`, read from the caller's `x-cc-conversation-id` header (these routes take no `conversationId` path segment, so the ambient trace has none) and `null` for a caller outside any conversation. Emitted by `src/lib/workflow-graph/validate-route-handlers.ts` and `src/lib/workflows/definition-route-handlers.ts`; the managed edit and delete refusals are deliberately NOT counted here. Fields built by `src/lib/workflow-graph/planning-telemetry.ts` |
-| `workflow-graph` | `workflow.replace.server_fields_merged` | **info**: a managed replace filled server-owned fields the submitted plan omitted. `definitionId`, `fields[]` naming the merged paths (`/origin`, `/approvalRequired`, `/lockedRegions`), `conversationId` (`null` outside a conversation). Absent when the merge filled nothing, and withheld when the merged document is then refused or lost to a stale token. Emitted by `src/lib/workflows/definition-route-handlers.ts` |
-| `specs.delivery-plan` | `spec.plan.preflight` | **info**: one per evaluation of the delivery-plan draft-health projection. `slug`, `surface` (`validate`, `status` or `propose`; a Builder sign-off reports `propose`, because it evaluates the same gate), `blocking` (findings at `blocks_propose`) and `codes[]` (the distinct rule ids). `blocking` and `codes` disagree by design — one rule tripping six times is one code and six blockers. Emitted by `src/lib/specs/delivery-plan-service.ts` |
-| `specs.delivery-plan` | `spec.plan.propose.accepted` | **info**: coverage when `spec plan propose` is accepted — the review request under a human execution-start dial, or the freeze it performs under Notify/Off. A human sign-off does not emit it. `slug`, `covered` (selected criteria a stable authored source claims), `selected`, `contexts` (the definition's execution contexts). Emitted by `src/lib/specs/delivery-plan-service.ts` |
-| `specs.delivery-plan` / `specs.execution-start-attachment` | `spec.plan.attempt.transition` | **info**: one per recorded delivery-plan attempt act — open, sign-off (draft to approved), park, reopen, launch, abandon (including the abandon that retires a launched attempt). `slug`, `from` (`none` for a freshly opened attempt), `to`, `actor` (the actor's KIND only). Emitted by `src/lib/specs/delivery-plan-service.ts` and, for the launch a real spec execution start records, by `src/lib/specs/execution-start-attachment.ts` |
 | `runs` | `runs.template_launched` / `runs.template_launch_refused` (**warn**) | A run launched from a saved template: `runId`, `templateId`, `tier`, `revision`, `owner` (`caller` for an agent, `existing` or `new` for a person's choice) and `contexts`. A refusal carries `status`, `code` (the response's own; null when it has none, as for a malformed body or a failed authentication) and the template's `tier` and `templateId` once the request body has been read, which an authentication or identity refusal precedes. Emitted by `src/lib/runs/route-handlers.ts`, beside the `runs.launched` every launch logs |
-| `workflow-graph` | `graph-workflow.start.documents_validated` | **debug**: the combined definition and launch seeded documents passed path and UTF-8 size checks before reservation. Fields: `projectPath`, `sessionName`, `count`, `bytes`; document contents are never logged |
-| `specs.delivery-plan` | `specs.delivery-plan.review_lookup_failed` | **warn**: advisory review unavailable; propose and sign-off remain available. Fields: `workflowDefinitionId`, `error` |
-| `specs.delivery-gate-v2` | `specs.delivery-gate-v2.failure_details_unavailable` | **warn**: frozen coverage failure details could not be loaded; outcome certification remains authoritative. Fields: `workflowExecutionId`, `error` |
 
 ### Config
 
@@ -263,7 +255,6 @@ A few `*.timing` events are direct `info` logs rather than `timed()` spans (`sta
 | `file-scanner` | `file-scanner.scan.complete` | `rootPath`, `fileCount`, `truncated`, `durationMs` |
 | `worktree` | `worktree.create.complete` / `worktree.remove.complete` | `laneId`, `worktreePath`, `branchName`, `status`, `durationMs` |
 | `diff` | `diff.compute.complete` | `worktreePath`, `fileCount`, `durationMs` |
-| `workflow-storage` | `workflow-storage.list` / `.get` / `.create` / `.update` / `.delete` `.complete` | `workflowId` (where applicable), `workflowCount`/`found`/`revision`/`deleted`, `durationMs` |
 | `sessions.lifecycle-gate` | `session.lifecycle_gate.timing` | `projectPath`, `sessionName` (present only when the call names exactly one session), `sessionCount`, `durationMs`, `waitMs`, `holdMs`. Covers `runExclusive` / `runExclusiveMany`, measured from enqueue to release |
 | `sessions.lifecycle-gate` | `session.lifecycle_project_deletion.timing` | `projectPath`, `durationMs`, `waitMs`, `holdMs` — the project-deletion arm of the same gate |
 | `runtime` | `runtime.event_loop.stall` | `lagMs`, `consecutiveTicks`, `intervalMs`, `thresholdMs` — see below |
@@ -414,7 +405,6 @@ Publish through `events/publication.ts` (`publishEvent`, an injected `PublishFn`
 | `message-queued` | Queued via `streamInput()` into running conversation |
 | `job-status` | Background job state change |
 | `notification-created` / `notification-updated` | Notification lifecycle |
-| `graph-workflow-status` / `-context-status` / `-task-status` / `-validation-result` / `-circuit-breaker` / `-shared-documents-updated` / `-pending-halt-reason` / `-merge-status` / `-batch-scheduled` / `-lane-status` / `-join-status` | Graph workflow events |
 | `dev-server-status` | Dev server lifecycle/health |
 | `conversation-checkpoint-updated` | Durable checkpoint phase change. Published by the repository decorator in `conversation-checkpoints/publication.ts`, so the frame always follows the commit it describes; the body is the same public receipt `GET /checkpoints/<id>` returns, and that GET stays the authority after a reconnect |
 
@@ -435,59 +425,6 @@ Every API route wrapped with `withTracing()`. TraceId links debug entries for on
 
 Background entrypoints (jobs, workflow execution, backend turns, SSE publication) call `runAsTrace(action, fn, inherit?)` so all `timed()` calls during the unit of work share a `traceId` for hotspot aggregation.
 
-## Workflow Execution Logs (`workflow-logs/{executionId}/`)
+## Archived graph workflow logs
 
-Per-execution structured logs for graph workflow forensics. Separate from `logs/global.log`, they capture orchestration decisions. Validator progress streams into `transcripts/{conversationId}.jsonl`; the validation review artifact links that lane conversation.
-
-```
-workflow-logs/<executionId>/
-├── _manifest.json                       # Entry point: metadata, definition, context summaries
-├── lifecycle.jsonl                       # Execution events (start/pause/resume/halt/complete)
-├── decisions.jsonl                       # Cross-cutting decisions (retry, circuit breaker)
-└── contexts/<contextId>/
-    ├── iterations.jsonl                  # Iteration lifecycle
-    ├── tasks.jsonl                       # Task events (completion, reopening, agent-added, validation)
-    ├── validation.jsonl                  # Validator invocations, results, remediation
-    ├── validators/<assignmentId>/        # Validator prompt (.md) and parsed response (.json)
-    └── prompts/                          # Implementer iteration-<n>.md prompts
-```
-
-### Investigation order
-
-1. `_manifest.json` — status, halt reason, summaries, full definition
-2. `lifecycle.jsonl` — when started/paused/resumed/halted
-3. `decisions.jsonl` — scheduling, retry, circuit-breaker triggers
-4. `contexts/<id>/` — drill-down into iterations / tasks / validation / prompts
-
-### Key events by file
-
-| File | Events |
-|---|---|
-| `lifecycle.jsonl` | `execution.started`/`resumed`/`paused`/`aborted`/`completed`/`halted`; `shared_document.created`/`updated` |
-| `decisions.jsonl` | `context.scheduled`, `iteration.retryable_error_recovery`, `max_iterations.reached` |
-| `iterations.jsonl` | `iteration.started`/`prompt_sent`/`agent_turn_completed`/`follow_up_sent`/`follow_up_skipped`/`completed` |
-| `tasks.jsonl` | `task.completion_attempted`/`validation_passed`/`validation_failed`/`added_by_agent`/`reopened` |
-| `validation.jsonl` | `task_validator.started`, `context_validator.started`, `validator.invoked`/`result_parsed`/`remediation_applied` |
-
-Shared schema: `{ timestamp, event, executionId, ...data }`.
-
-### jq queries
-
-```bash
-jq 'select(.event == "validator.result_parsed" and .kind == "fail")' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/validation.jsonl'
-jq 'select(.event | test("circuit_breaker|retry"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
-jq 'select(.event == "task.reopened")' 'workflow-logs/EXECUTION_ID/contexts/CONTEXT_ID/tasks.jsonl'
-jq 'select(.event | test("retry|implementer"))' 'workflow-logs/EXECUTION_ID/decisions.jsonl'
-```
-
-### Design
-
-- **Fire-and-forget** — log write failures never affect execution
-- **AI-optimized split** — separate files per concern; agents load only what's relevant
-- **Full prompt capture** — every prompt + validator response stored verbatim
-- **Parse-path tracking** — validator responses record which parse path succeeded (`structured_output`/`raw_json`/`fenced_json_block`/`fenced_json_block_fallback`)
-
-### Implementation
-
-- `createExecutionLogger()` in `src/lib/workflow-graph/execution-logger.ts` — factory
-- `registerExecutionLogger()` / `getExecutionLogger()` — global registry (Map keyed by executionId)
+Retired `workflow-logs/` and `workflow-docs/` remain historical evidence in the config directory and the offline-cutover backup. The active run engine publishes through the run event and supervision logging boundaries.

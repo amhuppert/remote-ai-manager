@@ -32,26 +32,16 @@ const summary: SpecSummaryView = {
     citationHash: "0".repeat(64),
     proposedAt: null,
     approvedAt: null,
-    externalDelivery: null,
     createdAt: TIMESTAMP,
   },
   counts: { requirements: 11, criteria: 16, decisions: 4, tasks: 13 },
   pendingApprovalCount: 6,
   approvalState: "pending",
-  delivery: {
-    allWaived: false,
-    deliveredCount: 7,
-    provenCount: 7,
-    deliveredExternallyCriterionIds: [],
-    totalInScope: 12,
-  },
   imported: false,
   linkedWork: {
     tickets: 2,
     conversations: 1,
     sessions: 0,
-    workflowExecutions: 1,
-    mergeJobs: 0,
   },
 };
 
@@ -107,7 +97,6 @@ function element(
         }),
       },
     ],
-    evidenceState: [],
     referenceState: {
       observedRevision: 3,
       observedPayloadHash: "revision-3-r3-hash",

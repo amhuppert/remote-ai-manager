@@ -393,7 +393,6 @@ function detailPayload(
       assumptionCitations: [],
     },
     currentApprovedRevision: null,
-    executionRevisionSnapshots: [],
     approvals: [
       {
         id: "approval-requirement-1",
@@ -437,8 +436,6 @@ function detailPayload(
       },
     ],
     executions: [],
-    criterionDispositions: [],
-    waivers: [],
     linkedTickets: [
       {
         projectName: "command-center",
@@ -846,12 +843,9 @@ describe("Spec Studio detail routes", () => {
       baseRevision: null,
       currentRevision: null,
       currentApprovedRevision: null,
-      executionRevisionSnapshots: [],
       approvals: [],
       comments: [],
       executions: [],
-      criterionDispositions: [],
-      waivers: [],
       linkedTickets: [],
       elementStatuses: { requirements: [], tasks: [] },
       status: {
@@ -864,13 +858,6 @@ describe("Spec Studio detail routes", () => {
         approvalLedger: ledgerOf([]),
         openQuestions: [],
         coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
-        delivery: {
-          allWaived: false,
-          deliveredCount: 0,
-          provenCount: 0,
-          deliveredExternallyCriterionIds: [],
-          totalInScope: 0,
-        },
         imported: false,
       },
       importRecord: null,

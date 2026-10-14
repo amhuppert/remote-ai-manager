@@ -123,7 +123,7 @@ If a project needs both a two-worker and an eight-worker resource profile, regis
 
 ## Merge-Gate Ordering
 
-`validation.preMerge` and `validation.laneMerge` are ordered lists of registered names. Use order to preserve dependencies, normally format → lint → typecheck → test/build. `laneMerge` may be a cheaper subset; when omitted, it inherits `preMerge`.
+`validation.preMerge` is an ordered list of registered names. Use order to preserve dependencies, normally format → lint → typecheck → test/build.
 
 ## Key Rules
 

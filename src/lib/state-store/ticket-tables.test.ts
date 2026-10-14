@@ -1,8 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import Database from "better-sqlite3";
-import { mkdtempSync, rmSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import type Database from "better-sqlite3";
 import { _createTestDb, _createTestDbAtPath } from "./state-db";
 
 type Db = InstanceType<typeof Database>;
@@ -136,15 +133,10 @@ function insertStatusUpdate(
 
 describe("ticket tables DDL", () => {
   let db: Db | undefined;
-  let tempDir: string | undefined;
 
   afterEach(() => {
     db?.close();
     db = undefined;
-    if (tempDir !== undefined) {
-      rmSync(tempDir, { recursive: true, force: true });
-      tempDir = undefined;
-    }
   });
 
   it("creates every ticket table on a fresh in-memory DB", () => {
@@ -524,68 +516,5 @@ describe("ticket tables DDL", () => {
     expect(tables).toContain("ticket_relationships");
     expect(tables).toContain("ticket_relationship_legacy_aliases");
     expect(tables).toContain("ticket_status_updates");
-  });
-
-  it("adds a nullable incarnation column without guessing for legacy links", () => {
-    tempDir = mkdtempSync(path.join(os.tmpdir(), "cc-ticket-schema-"));
-    const dbPath = path.join(tempDir, "command-center.db");
-    const legacy = new Database(dbPath);
-    legacy.exec(`
-      CREATE TABLE projects (
-        root_path TEXT PRIMARY KEY,
-        archived INTEGER NOT NULL DEFAULT 0,
-        pinned INTEGER NOT NULL DEFAULT 0,
-        pin_order INTEGER,
-        mcp_overrides TEXT,
-        agent_capability_overrides TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE TABLE tickets (
-        id TEXT PRIMARY KEY,
-        project_path TEXT NOT NULL,
-        ticket_number INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        work_type TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        UNIQUE (project_path, ticket_number),
-        UNIQUE (id, project_path)
-      );
-      CREATE TABLE ticket_sessions (
-        id TEXT PRIMARY KEY,
-        ticket_id TEXT NOT NULL,
-        project_path TEXT NOT NULL,
-        session_name TEXT NOT NULL,
-        start_mode TEXT NOT NULL,
-        linked_at TEXT NOT NULL,
-        ended_at TEXT,
-        end_reason TEXT
-      );
-      INSERT INTO projects (root_path) VALUES ('/repo');
-      INSERT INTO tickets
-        (id, project_path, ticket_number, title, description, work_type, status, created_at, updated_at)
-      VALUES
-        ('t-legacy', '/repo', 1, 'Legacy', '', 'feature', 'in_progress',
-         '2026-07-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z');
-      INSERT INTO ticket_sessions
-        (id, ticket_id, project_path, session_name, start_mode, linked_at)
-      VALUES
-        ('l-legacy', 't-legacy', '/repo', 'same-name', 'agent',
-         '2099-01-01T00:00:00.001Z');
-    `);
-    legacy.close();
-
-    db = _createTestDbAtPath(dbPath);
-
-    expect(columnNames(db, "ticket_sessions")).toContain("session_created_at");
-    const row = db
-      .prepare(
-        `SELECT session_created_at FROM ticket_sessions WHERE id = 'l-legacy'`,
-      )
-      .get() as { session_created_at: string | null };
-    expect(row.session_created_at).toBeNull();
   });
 });

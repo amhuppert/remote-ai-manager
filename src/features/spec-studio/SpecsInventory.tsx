@@ -33,8 +33,6 @@ const logger = createClientLogger("spec-studio-inventory");
 const phaseFilters = [
   "draft",
   "approved",
-  "executing",
-  "delivered",
   "abandoned",
 ] as const satisfies readonly SpecPhasePrimary[];
 
@@ -42,17 +40,13 @@ export type SpecPhaseFilter = "all" | SpecPhasePrimary;
 
 const phaseAccent: Record<SpecPhasePrimary, string> = {
   abandoned: "bg-red",
-  executing: "bg-cyan",
   draft: "bg-text-tertiary",
-  delivered: "bg-green",
   approved: "bg-green",
 };
 
 const phaseText: Record<SpecPhasePrimary, string> = {
   abandoned: "text-red",
-  executing: "text-cyan",
   draft: "text-text-tertiary",
-  delivered: "text-green",
   approved: "text-green",
 };
 
@@ -246,17 +240,8 @@ function SpecInventoryRow({
   item: SpecSummaryView;
   projectName: string;
 }): React.JSX.Element {
-  const { spec, phase, delivery, linkedWork } = item;
+  const { spec, phase, linkedWork } = item;
   const href = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(spec.slug)}`;
-  // Any landed delivery gets the tally, not just a partial one: an import's
-  // criteria are delivered on external testimony, and a row that showed the
-  // count only while it was incomplete would go silent exactly when the whole
-  // scope rests on that testimony.
-  const showsDeliveryTally = delivery.deliveredCount > 0;
-  const executionLabels = [
-    countLabel(linkedWork.workflowExecutions, "workflow"),
-    countLabel(linkedWork.mergeJobs, "merge job"),
-  ].filter((label): label is string => label !== null);
   const linkedLabels = [
     countLabel(linkedWork.tickets, "ticket"),
     countLabel(linkedWork.conversations, "conversation"),
@@ -374,33 +359,6 @@ function SpecInventoryRow({
           </StatusChip>
         ) : (
           <span className="text-[0.7rem] text-text-tertiary">Complete</span>
-        )}
-      </div>
-
-      <div
-        role="cell"
-        className="min-w-0 text-[0.7rem] text-text-secondary max-768:col-start-2 max-768:py-xs"
-      >
-        <span
-          aria-hidden="true"
-          className="mr-xs hidden text-text-tertiary max-768:inline"
-        >
-          Execution
-        </span>
-        <span className="block max-768:inline">
-          {executionLabels.length > 0
-            ? executionLabels.join(" · ")
-            : "Not started"}
-        </span>
-        {showsDeliveryTally && (
-          <span className="mt-xs block text-green max-768:mt-0 max-768:ml-xs max-768:inline">
-            {delivery.deliveredCount}/{delivery.totalInScope} delivered
-          </span>
-        )}
-        {delivery.allWaived && (
-          <span className="mt-xs block text-amber max-768:mt-0 max-768:ml-xs max-768:inline">
-            All delivery waived
-          </span>
         )}
       </div>
 

@@ -459,9 +459,7 @@ function elementDisplayName(view: SpecElementGetResponse): string {
 
 const PHASE_LABELS: Record<SpecPhaseProjection["primary"], string> = {
   abandoned: "Abandoned",
-  executing: "Executing",
   draft: "Draft",
-  delivered: "Delivered",
   approved: "Approved",
 };
 
@@ -484,10 +482,7 @@ export function specPhaseTone(
 ): StatusChipTone {
   switch (phase) {
     case "approved":
-    case "delivered":
       return "green";
-    case "executing":
-      return "cyan";
     case "abandoned":
       return "red";
     case "draft":

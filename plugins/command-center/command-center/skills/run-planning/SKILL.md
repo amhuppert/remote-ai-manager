@@ -7,7 +7,7 @@ description: Plan, launch and steer supervised runs (`cctl run`). Use when deleg
 
 A **run** is supervised agent work in your session. Each **context** in it has an implementer seat that does the work, optional checks and reviewer seats that judge it, and an accepted result that later contexts receive. The conversation that launches a run **owns** it: the run reports to you, and you answer its questions and clear its halts until it succeeds or you cancel it. A run never fails on its own; it halts and waits.
 
-New delegated or multi-context work uses runs. Managed spec delivery still uses graph workflows (`cctl workflow` and the graph-workflow-planning skill).
+
 
 This file carries the ordinary path: choose the launch, write what each seat needs, check, launch, steer. Read a reference only when the run needs it:
 

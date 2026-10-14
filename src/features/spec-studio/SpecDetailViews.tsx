@@ -1,31 +1,15 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { type ReactNode } from "react";
 
 import { parseElementHandle } from "@/lib/specs/handles";
-import {
-  specQueries,
-  type SpecDetailView,
-  type SpecElementGetResponse,
-} from "@/lib/specs/queries";
-import type {
-  SpecEvidenceRow,
-  SpecProofVerdictRow,
-  SpecRevisionSnapshot,
-  SpecWaiverRow,
-} from "@/lib/specs/schemas";
-import { useSpecLintQuery, useSpecPlanReviewQuery } from "@/lib/specs/queries";
+import { type SpecDetailView } from "@/lib/specs/queries";
+import { useSpecLintQuery } from "@/lib/specs/queries";
 
 import SpecControlsPanel, { SpecGatePolicyPanel } from "./SpecControls";
-import SpecCriterionEvidence from "./SpecCriterionEvidence";
-import SpecDeliveryBridge from "./SpecDeliveryBridge";
-import SpecDeliveryReviewPanel from "./SpecDeliveryReviewPanel";
-import SpecDeliveryDeltaPanel from "./SpecDeliveryDeltaPanel";
 import { SpecElementReader } from "./SpecElementReader";
 import SpecHistoryPanel from "./SpecHistoryPanel";
 import SpecLintSummary from "./SpecLintSummary";
-import SpecPostLaunchCapture from "./SpecPostLaunchCapture";
 import SpecQuestionsAssumptionsPanel, {
   blockingAssumptionIdsFromLint,
 } from "./SpecQuestionsAssumptions";
@@ -35,7 +19,6 @@ export type DetailView =
   | "overview"
   | "requirements"
   | "design"
-  | "delivery"
   | "gate-policy"
   | "history";
 
@@ -43,7 +26,6 @@ const views: ReadonlyArray<{ view: DetailView; label: string }> = [
   { view: "overview", label: "Overview" },
   { view: "requirements", label: "Requirements" },
   { view: "design", label: "Design" },
-  { view: "delivery", label: "Delivery" },
   { view: "gate-policy", label: "Gate policy" },
   { view: "history", label: "History" },
 ];
@@ -122,32 +104,12 @@ export default function SpecDetailViews({
           onReviewComplete={onReviewComplete}
         />
       )}
-      {view === "delivery" && (
-        <div className="mt-lg grid gap-xl">
-          <SurfaceIntro
-            title="Delivery"
-            description="Review acceptance, choose how to finish the work, and approve delivery."
-          />
-          <SpecDeliveryDeltaPanel
-            plan={
-              <SpecDeliveryBridge detail={detail} projectName={projectName} />
-            }
-            detail={detail}
-            projectName={projectName}
-            slug={detail.spec.slug}
-          />
-          <SpecDeliveryReviewPanel
-            projectName={projectName}
-            slug={detail.spec.slug}
-          />
-          <SpecPostLaunchCapture detail={detail} projectName={projectName} />
-        </div>
-      )}
+
       {view === "gate-policy" && (
         <div className="mt-lg grid gap-xl">
           <SurfaceIntro
             title="Gate policy"
-            description="Set the review requirements for authoring, execution, and delivery."
+            description="Set the review requirements for requirements and design."
           />
           <SpecGatePolicyPanel detail={detail} projectName={projectName} />
         </div>
@@ -156,7 +118,7 @@ export default function SpecDetailViews({
         <div className="mx-auto mt-lg max-w-[1000px]">
           <SurfaceIntro
             title="History"
-            description="Revision, approval, withdrawn attempt, delivery candidate, and execution history."
+            description="Revision, approval, and withdrawn draft history."
           />
           <SpecHistoryPanel
             detail={detail}
@@ -183,49 +145,6 @@ function RequirementsSurface({
   onReviewComplete?: (message: string) => void;
 }): React.JSX.Element {
   const lint = useSpecLintQuery(projectName, detail.spec.slug);
-  const plan = useSpecPlanReviewQuery(projectName, detail.spec.slug);
-  const snapshot = detail.currentRevision ?? detail.currentApprovedRevision;
-  const criteria = useMemo(() => criterionDescriptors(snapshot), [snapshot]);
-  const evidence = useQueries({
-    queries: criteria.map((criterion) => ({
-      ...specQueries.element(
-        projectName,
-        detail.spec.slug,
-        criterion.handle,
-        undefined,
-        snapshot?.revision.id,
-      ),
-      enabled: snapshot !== null,
-    })),
-  });
-  const proofById = new Map(
-    criteria.map((criterion, index) => [
-      criterion.elementId,
-      elementProof(evidence[index]?.data),
-    ]),
-  );
-  const activeExecution = detail.executions.find(
-    (execution) =>
-      execution.revisionId === snapshot?.revision.id &&
-      (execution.state === "definition_review" ||
-        execution.state === "running"),
-  );
-  const dispositions = new Map(
-    detail.criterionDispositions
-      .filter(
-        (row) =>
-          activeExecution !== undefined &&
-          row.execution_id === activeExecution.id,
-      )
-      .map((row) => [row.criterion_element_id, row]),
-  );
-  const claims = new Map(
-    (plan.data?.criteria ?? []).map((criterion) => [
-      criterion.criterionElementId,
-      criterion.accountabilitySourceIds,
-    ]),
-  );
-
   return (
     <div className="mt-lg grid gap-xl">
       {draftReviewView(detail) === "requirements" && (
@@ -247,37 +166,6 @@ function RequirementsSurface({
         detail={detail}
         kind="requirements"
         projectName={projectName}
-        criterionEvidence={(criterion) => {
-          if (criterion.version.payload.kind !== "criterion") return null;
-          const proof = proofById.get(criterion.element.id);
-          const disposition = dispositions.get(criterion.element.id);
-          const owners = claims.get(criterion.element.id) ?? [];
-          return (
-            <div className="grid gap-xs">
-              <SpecCriterionEvidence
-                revisionApproved={snapshot?.revision.state === "approved"}
-                disposition={disposition?.disposition ?? null}
-                evidence={(proof?.evidence ?? []).map((record) => record.id)}
-                currentVerdictCount={
-                  proof?.verdicts.filter((verdict) => verdict.stale_at === null)
-                    .length ?? 0
-                }
-                waiverCurrent={proof?.waiver?.stale === 0}
-                validationKinds={
-                  criterion.version.payload.validationStrategy.kinds
-                }
-                validationNote={
-                  criterion.version.payload.validationStrategy.note
-                }
-              />
-              {owners.length > 0 && (
-                <p className="m-0 font-mono text-[0.68rem] text-text-tertiary">
-                  Owned by workflow {owners.join(", ")}
-                </p>
-              )}
-            </div>
-          );
-        }}
       />
       <div id="attention-register" className="mx-auto w-full max-w-[1100px]">
         <SpecQuestionsAssumptionsPanel
@@ -365,63 +253,10 @@ function SurfaceIntro({
   );
 }
 
-interface CriterionDescriptor {
-  elementId: string;
-  handle: string;
-}
-
-function criterionDescriptors(
-  snapshot: SpecRevisionSnapshot | null,
-): CriterionDescriptor[] {
-  if (snapshot === null) return [];
-  const requirements = new Map(
-    snapshot.elements.flatMap((entry) =>
-      entry.version.payload.kind === "requirement" &&
-      entry.element.number !== null
-        ? [[entry.element.id, `R${entry.element.number}`] as const]
-        : [],
-    ),
-  );
-  return snapshot.elements.flatMap((entry) => {
-    if (
-      entry.version.payload.kind !== "criterion" ||
-      entry.element.number === null ||
-      entry.element.parentElementId === null
-    ) {
-      return [];
-    }
-    const parent = requirements.get(entry.element.parentElementId);
-    return parent
-      ? [
-          {
-            elementId: entry.element.id,
-            handle: `${parent}.${entry.element.number}`,
-          },
-        ]
-      : [];
-  });
-}
-
-function elementProof(data: SpecElementGetResponse | undefined): {
-  evidence: SpecEvidenceRow[];
-  verdicts: SpecProofVerdictRow[];
-  waiver: SpecWaiverRow | null;
-} | null {
-  if (!data || !("evidenceState" in data)) return null;
-  return data.evidenceState[0] ?? null;
-}
-
 export function initialDetailViewForDeepLink(
   rawHandle: string | null,
   slug: string | undefined,
 ): DetailView {
-  if (
-    rawHandle === "execution_start" ||
-    rawHandle === "delivery" ||
-    rawHandle === "launch"
-  ) {
-    return "delivery";
-  }
   if (rawHandle === null || slug === undefined) return "overview";
   try {
     const kind = parseElementHandle(rawHandle, slug).kind;

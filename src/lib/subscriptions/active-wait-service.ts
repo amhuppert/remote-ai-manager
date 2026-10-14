@@ -219,11 +219,7 @@ export function createActiveWaitService(
           );
           baselineConsumed =
             prior !== null && ["accepted", "superseded"].includes(prior.state);
-          if (
-            baselineConsumed &&
-            prior &&
-            !(wait.source.kind === "workflow" && read.resumable === true)
-          ) {
+          if (baselineConsumed && prior) {
             if (await deps.repo.settle(wait.id, "source_terminal", prior, at)) {
               report.settled++;
               deps.onChange?.(wait.recipient);
@@ -495,7 +491,6 @@ export function createActiveWaitService(
           baseline.fact.occurrenceId,
         );
         if (
-          parsed.source.kind !== "workflow" &&
           baseline.fact.outcome !== null &&
           !["accepted", "superseded"].includes(terminalReceipt?.state ?? "")
         ) {
@@ -514,9 +509,7 @@ export function createActiveWaitService(
         const consumed =
           terminalReceipt !== null &&
           ["accepted", "superseded"].includes(terminalReceipt.state);
-        const resumable =
-          parsed.source.kind === "workflow" && baseline.resumable === true;
-        if (consumed && !resumable)
+        if (consumed)
           throw new ActiveWaitRegistrationError(
             "ACTIVE_WAIT_SOURCE_FINAL",
             "This source's terminal result was already consumed and it cannot produce another result. Inspect its inbox evidence or register a different operation.",

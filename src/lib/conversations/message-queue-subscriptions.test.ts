@@ -348,7 +348,6 @@ describe("subscription queue admission", () => {
         subscriptionWakeHold({
           conversation: makeConversationState(overrides),
           sessionArchived: false,
-          execution: null,
         }),
       ).not.toBeNull();
     },
@@ -359,7 +358,6 @@ describe("subscription queue admission", () => {
       subscriptionWakeHold({
         conversation: makeConversationState(),
         sessionArchived: true,
-        execution: null,
       }),
     ).not.toBeNull();
   });

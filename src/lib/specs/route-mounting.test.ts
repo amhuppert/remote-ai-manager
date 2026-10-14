@@ -3,24 +3,14 @@ import { describe, expect, it } from "vitest";
 import { GET as projectSearchGET } from "@/app/api/specs/[name]/-/search/route";
 import { GET as inventoryGET } from "@/app/api/specs/[name]/route";
 import { GET as commentsGET } from "@/app/api/specs/[name]/[slug]/comments/route";
-import { GET as deltaGET } from "@/app/api/specs/[name]/[slug]/delta/route";
 import { GET as diffGET } from "@/app/api/specs/[name]/[slug]/diff/route";
 import { GET as editContextGET } from "@/app/api/specs/[name]/[slug]/edit-context/route";
 import { GET as outlineGET } from "@/app/api/specs/[name]/[slug]/outline/route";
-import { GET as planGET } from "@/app/api/specs/[name]/[slug]/plan/route";
-import { GET as planDiffGET } from "@/app/api/specs/[name]/[slug]/plan/diff/route";
-import { GET as planReviewGET } from "@/app/api/specs/[name]/[slug]/plan/review/route";
-import { GET as planAttemptPreviewGET } from "@/app/api/specs/[name]/[slug]/plan-preview/route";
 import {
   specCommentsGET,
-  specDeltaGET,
   specDiffGET,
   specEditContextGET,
   specOutlineGET,
-  specPlanAttemptPreviewGET,
-  specPlanDiffGET,
-  specPlanGET,
-  specPlanReviewGET,
   specProjectSearchGET,
   specsInventoryGET,
 } from "@/lib/specs/route-handlers";
@@ -57,25 +47,5 @@ describe("spec API route mounting", () => {
 
   it("mounts the semantic diff the reviewer changelog reads", () => {
     expect(diffGET).toBe(specDiffGET);
-  });
-
-  it("mounts the delivery-delta projection the CLI and Studio panel both read", () => {
-    expect(deltaGET).toBe(specDeltaGET);
-  });
-
-  it("mounts the delivery-plan attempt read behind `cctl spec plan get/status`", () => {
-    expect(planGET).toBe(specPlanGET);
-  });
-
-  it("mounts the delivery-plan review projection the Studio attempt surface reads", () => {
-    expect(planReviewGET).toBe(specPlanReviewGET);
-  });
-
-  it("mounts the snapshot-to-snapshot plan diff the Studio review surface reads", () => {
-    expect(planDiffGET).toBe(specPlanDiffGET);
-  });
-
-  it("mounts the delivery-plan attempt preview behind `cctl spec plan preview --stage`", () => {
-    expect(planAttemptPreviewGET).toBe(specPlanAttemptPreviewGET);
   });
 });

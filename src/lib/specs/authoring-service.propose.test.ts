@@ -28,16 +28,9 @@ import {
   type ApprovalRequestPort,
   type AuthoringService,
 } from "./authoring-service";
-import {
-  serializeSubjectFingerprint,
-  subjectFingerprint,
-  type ApprovalSubject,
-} from "./approval-applicability";
 import { assumptionCitationSnapshot } from "./attention-records";
 import { createSpecEventsPublisher } from "./events";
 import type { ApprovalRequestReceipt, ReviewResult } from "./review-service";
-import { toDiffCitations, toDiffRows } from "./revision-diff-projections";
-import type { SpecGate } from "./schemas";
 import {
   PROPOSAL_NOTES_MAX_CHARACTERS,
   oversizedProposalNotesRefusal,
@@ -61,7 +54,7 @@ let approvalRequestResponder: ApprovalRequestPort["requestApproval"];
 
 /** The shape the review service answers a durably filed gate ask with. */
 function filedReceipt(
-  gate: SpecGate,
+  gate: "requirements" | "design",
   revisionId: string,
   fields: Partial<ApprovalRequestReceipt> = {},
 ): ReviewResult<ApprovalRequestReceipt> {
@@ -150,7 +143,7 @@ async function createSpec(
     actor: ACTOR,
   });
   db.prepare(
-    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+    "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
   ).run(created.draft.id);
   await specs.updateGatePolicy({
     specId: created.spec.id,
@@ -158,23 +151,6 @@ async function createSpec(
     updatedAt: "2026-07-18T13:00:00.500Z",
   });
   return created;
-}
-
-/** The fingerprint the review service records for a content approval. */
-async function serializedFingerprint(
-  revisionId: string,
-  subject: ApprovalSubject,
-): Promise<string> {
-  const snapshot = await specs.getRevisionSnapshot(revisionId);
-  if (snapshot === null) throw new Error(`missing snapshot ${revisionId}`);
-  const fingerprint = subjectFingerprint(toDiffRows(snapshot), subject, {
-    citationContractVersion: snapshot.revision.citationContractVersion,
-    citations: toDiffCitations(snapshot),
-  });
-  if (fingerprint === null) {
-    throw new Error(`revision ${revisionId} does not carry the subject`);
-  }
-  return serializeSubjectFingerprint(fingerprint);
 }
 
 async function addCleanContent(specId: string, revisionId: string) {
@@ -197,23 +173,22 @@ async function addCleanContent(specId: string, revisionId: string) {
     actor: ACTOR,
   });
   db.prepare(
-    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+    "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
   ).run(revisionId);
   await service.upsertDraftElement({
     specId,
     revisionId,
-    elementId: "task-1",
-    kind: "task",
+    elementId: "decision-1",
+    kind: "decision",
     parentElementId: null,
     position: 2,
     payload: {
-      kind: "task",
+      kind: "decision",
       title: "Implement transition",
-      instructions: "Implement the server predicate.",
+      chosenApproach: "Use the server predicate",
+      rejectedAlternatives: [],
+      reason: "A decision records the approach.",
       tracedRequirementElementIds: ["requirement-1"],
-      tracedDecisionElementIds: [],
-      coveredCriterionElementIds: ["criterion-1"],
-      dependsOnTaskElementIds: [],
     },
     baseElementVersion: null,
     actor: ACTOR,
@@ -244,7 +219,7 @@ describe("AuthoringService propose transaction", () => {
   it("records a review request under a Gate dial and leaves the revision an editable draft", async () => {
     const created = await createSpec("contract-bearing");
     await addCleanContent(created.spec.id, created.draft.id);
-    const notes = "## Ready for review\n\nR1 and its plan are complete.";
+    const notes = "## Ready for review\n\nR1 and its design are complete.";
 
     const result = await service.proposeRevision({
       specId: created.spec.id,
@@ -269,7 +244,7 @@ describe("AuthoringService propose transaction", () => {
     ]);
     expect(approvalRequestCalls.map(({ gate }) => gate)).toEqual([
       "requirements",
-      "plan",
+      "design",
     ]);
     expect(result.approvalRequests.map(({ outcome }) => outcome)).toEqual([
       "filed",
@@ -287,7 +262,7 @@ describe("AuthoringService propose transaction", () => {
           classification: "added",
         }),
         expect.objectContaining({
-          elementId: "task-1",
+          elementId: "decision-1",
           classification: "added",
         }),
       ]),
@@ -311,18 +286,17 @@ describe("AuthoringService propose transaction", () => {
     await service.upsertDraftElement({
       specId: created.spec.id,
       revisionId: created.draft.id,
-      elementId: "task-1",
-      kind: "task",
+      elementId: "decision-1",
+      kind: "decision",
       parentElementId: null,
       position: 2,
       payload: {
-        kind: "task",
+        kind: "decision",
         title: "Implement transition",
-        instructions: "Implement the server predicate and its refusal.",
+        chosenApproach: "Implement the server predicate and its refusal.",
+        rejectedAlternatives: [],
+        reason: "A decision records the approach.",
         tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
       },
       baseElementVersion: 1,
       actor: ACTOR,
@@ -334,10 +308,10 @@ describe("AuthoringService propose transaction", () => {
       state: "draft",
     });
     expect(
-      snapshot?.elements.find(({ element }) => element.id === "task-1")?.version
-        .payload,
+      snapshot?.elements.find(({ element }) => element.id === "decision-1")
+        ?.version.payload,
     ).toMatchObject({
-      instructions: "Implement the server predicate and its refusal.",
+      chosenApproach: "Implement the server predicate and its refusal.",
     });
   });
 
@@ -358,7 +332,7 @@ describe("AuthoringService propose transaction", () => {
     });
 
     if (!result.ok) throw new Error("expected successful proposal");
-    // The draft is pinned at the plan stage, but its requirement is new since
+    // The draft is pinned at the design stage, but its requirement is new since
     // the governance baseline, so requirements is consulted too — and it is
     // what a human acts on first.
     expect(result.pendingBlock?.gates).toEqual([
@@ -376,20 +350,20 @@ describe("AuthoringService propose transaction", () => {
         importCarriedSubjects: [],
       },
       {
-        gate: "plan",
+        gate: "design",
         dial: "gate",
         state: "pending",
         applicability: {
           reason: "current_stage",
           governanceBaseRevisionId: null,
         },
-        subjects: ["plan"],
+        subjects: ["D1"],
         importCarriedSubjects: [],
       },
     ]);
     expect(result.pendingBlock?.outstandingSubjects).toEqual([
       { gate: "requirements", subject: "R1", elementId: "requirement-1" },
-      { gate: "plan", subject: "plan", elementId: null },
+      { gate: "design", subject: "D1", elementId: "decision-1" },
     ]);
     expect(result.pendingBlock?.signOff).toMatchObject({
       revisionId: created.draft.id,
@@ -532,53 +506,6 @@ describe("AuthoringService propose transaction", () => {
     ).toBeNull();
   });
 
-  it("refuses a plan containing a task that covers no criterion", async () => {
-    const created = await createSpec("contract-bearing");
-    await addCleanContent(created.spec.id, created.draft.id);
-    await service.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      elementId: "task-2",
-      kind: "task",
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task",
-        title: "Prepare implementation",
-        instructions: "Prepare the implementation surface.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: [],
-        dependsOnTaskElementIds: [],
-      },
-      baseElementVersion: null,
-      actor: ACTOR,
-    });
-
-    const panel = await service.lintDraft(created.spec.id, created.draft.id);
-    expect(panel).toContainEqual({
-      ruleId: "9.3.task-without-criterion",
-      severity: "blocks_propose",
-      elementHandle: "T2",
-      message: "T2 covers no acceptance criterion.",
-    });
-
-    const result = await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: ACTOR,
-    });
-
-    expect(result).toEqual({
-      ok: false,
-      refusal: expect.objectContaining({
-        code: "lint_blocked",
-        findings: panel,
-      }),
-    });
-    expect((await specs.findRevision(created.draft.id))?.state).toBe("draft");
-  });
-
   it("absorbs all Notify/Off propose gates into policy sign-off with admissions and zero approvals", async () => {
     const created = await createSpec("exploratory");
     await addCleanContent(created.spec.id, created.draft.id);
@@ -619,7 +546,7 @@ describe("AuthoringService propose transaction", () => {
         )
         .all(),
     ).toEqual([
-      { gate: "plan", basis: "notify_policy" },
+      { gate: "design", basis: "notify_policy" },
       { gate: "requirements", basis: "notify_policy" },
     ]);
   });
@@ -669,159 +596,6 @@ describe("AuthoringService propose transaction", () => {
     });
     expect(admissionCount()).toEqual({ count: 0 });
     expect(proposeEvents(created.spec.id)).toEqual([]);
-  });
-
-  /**
-   * A draft is edited in place while it is reviewed, so whether an approval
-   * still counts is decided at read time from the fingerprint it recorded.
-   * The review request therefore rewrites no approval row and publishes no
-   * validity change.
-   */
-  it("leaves every approval row as granted when a changed amendment is proposed", async () => {
-    const created = await createSpec("exploratory");
-    await addCleanContent(created.spec.id, created.draft.id);
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
-    ).run(created.draft.id);
-    await service.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      elementId: "decision-1",
-      kind: "decision",
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "decision",
-        title: "Transition ownership",
-        chosenApproach: "The server owns transitions.",
-        rejectedAlternatives: [],
-        reason: "The gate cannot depend on prompt etiquette.",
-        tracedRequirementElementIds: ["requirement-1"],
-      },
-      baseElementVersion: null,
-      actor: ACTOR,
-    });
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
-    ).run(created.draft.id);
-    const initial = await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      actor: ACTOR,
-    });
-    if (!initial.ok) throw new Error("initial revision should be approved");
-
-    for (const approval of [
-      {
-        id: "approval-requirement",
-        subject_kind: "requirement" as const,
-        element_id: "requirement-1",
-      },
-      {
-        id: "approval-decision",
-        subject_kind: "decision" as const,
-        element_id: "decision-1",
-      },
-      {
-        id: "approval-plan",
-        subject_kind: "plan" as const,
-        element_id: null,
-      },
-    ]) {
-      review.saveApproval({
-        ...approval,
-        spec_id: created.spec.id,
-        revision_id: created.draft.id,
-        subject_fingerprint_json: await serializedFingerprint(
-          created.draft.id,
-          {
-            subjectKind: approval.subject_kind,
-            elementId: approval.element_id,
-          },
-        ),
-        approver: "alex",
-        granted_at: "2026-07-18T13:30:00.000Z",
-        validity: "valid",
-      });
-    }
-
-    const { revision: amendment } = await service.openAmendment({
-      specId: created.spec.id,
-      actor: ACTOR,
-    });
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
-    ).run(amendment.id);
-    await service.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elementId: "requirement-1",
-      kind: "requirement",
-      parentElementId: null,
-      position: 0,
-      payload: {
-        kind: "requirement",
-        statement: "The transition and refusal are server-enforced.",
-        priority: "must",
-        risk: "high",
-      },
-      baseElementVersion: 1,
-      actor: ACTOR,
-    });
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
-    ).run(amendment.id);
-    await service.removeDraftElement({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elementId: "decision-1",
-      baseElementVersion: 1,
-      actor: ACTOR,
-    });
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
-    ).run(amendment.id);
-    await service.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elementId: "task-1",
-      kind: "task",
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "task",
-        title: "Implement transition",
-        instructions: "Implement the server predicate.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
-      },
-      baseElementVersion: null,
-      reintroduceHistorical: true,
-      actor: ACTOR,
-    });
-
-    const proposed = await service.proposeRevision({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      actor: ACTOR,
-    });
-    expect(proposed.ok).toBe(true);
-    expect(
-      review
-        .findApprovalsBySpecId(created.spec.id)
-        .map(({ id, validity }) => ({ id, validity })),
-    ).toEqual([
-      { id: "approval-decision", validity: "valid" },
-      { id: "approval-plan", validity: "valid" },
-      { id: "approval-requirement", validity: "valid" },
-    ]);
-    expect(
-      events
-        .findBySpecId(created.spec.id)
-        .filter((row) => row.event_type === "spec-approval-changed"),
-    ).toEqual([]);
   });
 
   /**
@@ -1009,8 +783,8 @@ describe("propose approval-request coordinator", () => {
     });
 
     if (!result.ok) throw new Error("expected successful proposal");
-    // The plan-stage draft authors a new requirement, so requirements is
-    // consulted alongside plan and each pending gate owes its own ask.
+    // The design-stage draft authors a new requirement, so requirements is
+    // consulted alongside design and each pending gate owes its own ask.
     expect(approvalRequestCalls).toEqual([
       {
         specId: created.spec.id,
@@ -1021,7 +795,7 @@ describe("propose approval-request coordinator", () => {
       {
         specId: created.spec.id,
         revisionId: created.draft.id,
-        gate: "plan",
+        gate: "design",
         actor: ACTOR,
       },
     ]);
@@ -1031,7 +805,7 @@ describe("propose approval-request coordinator", () => {
         outcome: "filed",
         attentionId: "attention-requirements",
       },
-      { gate: "plan", outcome: "filed", attentionId: "attention-plan" },
+      { gate: "design", outcome: "filed", attentionId: "attention-design" },
     ]);
   });
 
@@ -1066,7 +840,7 @@ describe("propose approval-request coordinator", () => {
         attentionId: "attention-stable",
       },
       {
-        gate: "plan",
+        gate: "design",
         outcome: "already-filed",
         attentionId: "attention-stable",
       },
@@ -1092,7 +866,7 @@ describe("propose approval-request coordinator", () => {
     expect(approvalRequestCalls).toEqual([]);
     expect(result.approvalRequests).toEqual([
       { gate: "requirements", outcome: "not-needed", attentionId: null },
-      { gate: "plan", outcome: "not-needed", attentionId: null },
+      { gate: "design", outcome: "not-needed", attentionId: null },
     ]);
   });
 
@@ -1135,7 +909,7 @@ describe("propose approval-request coordinator", () => {
     if (!result.ok) throw new Error("expected successful proposal");
     expect(result.approvalRequests).toEqual([
       { gate: "requirements", outcome: "not-needed", attentionId: null },
-      { gate: "plan", outcome: "not-needed", attentionId: null },
+      { gate: "design", outcome: "not-needed", attentionId: null },
     ]);
   });
 
@@ -1163,9 +937,9 @@ describe("propose approval-request coordinator", () => {
         attentionId: "attention-requirements",
       },
       {
-        gate: "plan",
+        gate: "design",
         outcome: "delivery-uncertain",
-        attentionId: "attention-plan",
+        attentionId: "attention-design",
       },
     ]);
   });
@@ -1186,7 +960,7 @@ describe("propose approval-request coordinator", () => {
     expect(result.revision.state).toBe("draft");
     expect(result.approvalRequests).toEqual([
       { gate: "requirements", outcome: "not-filed", attentionId: null },
-      { gate: "plan", outcome: "not-filed", attentionId: null },
+      { gate: "design", outcome: "not-filed", attentionId: null },
     ]);
     // The review request is durable whatever the coordinator managed.
     expect(proposeEvents(created.spec.id)).toEqual([
@@ -1216,7 +990,7 @@ describe("propose approval-request coordinator", () => {
     if (!result.ok) throw new Error("expected successful proposal");
     expect(result.approvalRequests).toEqual([
       { gate: "requirements", outcome: "not-filed", attentionId: null },
-      { gate: "plan", outcome: "not-filed", attentionId: null },
+      { gate: "design", outcome: "not-filed", attentionId: null },
     ]);
   });
 });

@@ -265,18 +265,10 @@ vi.mock("@/lib/notifications/queries", () => ({
   useNotificationsQuery: () => ({ data: undefined }),
 }));
 
-vi.mock("@/lib/workflows/queries", () => ({
+vi.mock("@/lib/collaboration/queries", () => ({
   useCollaborationListQuery: () => ({
     data: testCollaborationEnvelopes,
     isPending: false,
-  }),
-  useWorkflowDefinitionQuery: () => ({ data: undefined }),
-  useGraphWorkflowExecutionQuery: () => ({ data: null, isPending: false }),
-  // No execution here means no approval gate stands, so the scoped change-set
-  // query is never enabled; a quiet stub keeps the workspace renderable.
-  useGraphWorkflowApprovalSnapshotQuery: () => ({
-    data: undefined,
-    error: null,
   }),
 }));
 
@@ -358,7 +350,7 @@ vi.mock("@/lib/git/mutations", () => ({
   },
 }));
 
-vi.mock("@/lib/workflows/mutations", () => ({
+vi.mock("@/lib/collaboration/mutations", () => ({
   useCollaborationStartMutation: () => ({
     mutate: collaborationStartMutateMock,
     isPending: false,
@@ -454,7 +446,6 @@ const baseSession: SessionState = {
   source: "cc" as const,
   creationMode: "normal" as const,
   tddEnabled: true,
-  graphWorkflowExecution: null,
   referenceDocuments: [],
 };
 

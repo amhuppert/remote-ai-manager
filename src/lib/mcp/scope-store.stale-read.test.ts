@@ -44,7 +44,6 @@ function seedState(): ManagerState {
             tddEnabled: false,
             targetBranch: "main",
             parentSessionName: null,
-            graphWorkflowExecution: null,
             referenceDocuments: [],
           },
         },

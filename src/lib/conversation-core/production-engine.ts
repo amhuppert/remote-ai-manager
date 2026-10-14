@@ -167,7 +167,6 @@ export async function createProductionTurnRuntime(options: {
           void recordConversationCostSettlement(identity, settlement, {
             mutateConversation: deps.effects.mutateConversation,
             // The core hosts no actor: the row is the only total to fold into.
-            applyToHostedActor: () => ({ applied: false }),
             publish: publishEvent,
             appendTranscriptEntryOnce: (conversationId, entry) =>
               deps.transcript.safeAppendTranscriptEntryOnce(

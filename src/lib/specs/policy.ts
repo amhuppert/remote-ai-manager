@@ -18,22 +18,16 @@ const PRESET_DIALS: Record<
     requirements: "gate",
     design: "gate",
     plan: "gate",
-    execution_start: "gate",
-    delivery: "gate",
   },
   exploratory: {
     requirements: "notify",
     design: "notify",
     plan: "notify",
-    execution_start: "notify",
-    delivery: "gate",
   },
   "fast-path": {
     requirements: COMBINED_APPROVAL_DIAL,
     design: COMBINED_APPROVAL_DIAL,
     plan: COMBINED_APPROVAL_DIAL,
-    execution_start: "notify",
-    delivery: "gate",
   },
 };
 
@@ -43,9 +37,6 @@ export function resolveDial(
 ): ResolvedGateDial {
   const resolved =
     policy.overrides?.[gate] ?? PRESET_DIALS[policy.preset][gate];
-  if (gate === "delivery" && resolved === "off") {
-    return "notify";
-  }
 
   return resolved;
 }
@@ -91,13 +82,7 @@ export function isExploratoryShippingRefused(policy: SpecGatePolicy): boolean {
   return policy.preset === "exploratory";
 }
 
-const POLICY_GATES: SpecGate[] = [
-  "requirements",
-  "design",
-  "plan",
-  "execution_start",
-  "delivery",
-];
+const POLICY_GATES: SpecGate[] = ["requirements", "design", "plan"];
 
 function dialStrength(dial: ResolvedGateDial): number {
   switch (dial) {

@@ -129,10 +129,7 @@ export async function executeOptimisticWorkflow(
     });
 
     if (!merge.ok) {
-      const reason =
-        typeof merge.error === "string"
-          ? merge.error
-          : `${merge.error.reason} ${merge.error.instruction}`;
+      const reason = merge.error;
       logger.warn("optimistic.merge_dispatch_refused", {
         projectName,
         sessionName: session.sessionName,

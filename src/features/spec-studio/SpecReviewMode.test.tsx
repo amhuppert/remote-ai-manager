@@ -10,7 +10,7 @@ import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
 import {
   draftReviewFixture,
-  importedDeliveredSpecDetailFixture,
+  importedSpecDetailFixture,
   specControlsDetailFixture,
   subjectFingerprintFixture,
 } from "./SpecControls.fixtures";
@@ -2087,7 +2087,7 @@ describe("reviewAttentionCount", () => {
    * act to perform (R9.7).
    */
   it("is zero for a fully-disposed delivered import", () => {
-    expect(reviewAttentionCount(importedDeliveredSpecDetailFixture())).toBe(0);
+    expect(reviewAttentionCount(importedSpecDetailFixture())).toBe(0);
   });
 
   it("counts what the open draft still owes a reviewer", () => {

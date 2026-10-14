@@ -22,7 +22,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import type { ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
+import type { RunningTurnDescription as ActiveConversationTurnDescription } from "@/lib/conversation-core/interactive-turns";
 
 import { runCcWithHost } from "../testing/domain-runtime";
 import type { CliEnv, CliHost } from "../transport";

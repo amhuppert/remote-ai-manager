@@ -1,14 +1,8 @@
 import type Database from "better-sqlite3";
 import type { Logger } from "@/lib/logging";
 import type { readConfig } from "../config/loader";
-import type { ConversationMachineSnapshotsRepo } from "./conversation-machine-snapshots-repo";
 import type { ConversationsRepo } from "./conversations-repo";
 import type { DocumentCommentsRepo } from "./document-comments-repo";
-import type { GraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
-import type { GraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
-import type { GraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
-import type { GraphWorkflowResultDeliveriesRepo } from "./graph-workflow-result-deliveries-repo";
-import type { GraphWorkflowPendingArtifactsRepo } from "./graph-workflow-pending-artifacts-repo";
 import type { ProjectConversationsRepo } from "./project-conversations-repo";
 import type { ProjectsRepo } from "./projects-repo";
 import type { ReferenceDocumentsRepo } from "./reference-documents-repo";
@@ -24,15 +18,9 @@ export interface AllRepos {
   sessions: SessionsRepo;
   conversations: ConversationsRepo;
   projectConversations: ProjectConversationsRepo;
-  conversationMachineSnapshots: ConversationMachineSnapshotsRepo;
   referenceDocuments: ReferenceDocumentsRepo;
   sessionMarkdownDocuments: SessionMarkdownDocumentsRepo;
   documentComments: DocumentCommentsRepo;
-  graphWorkflowEvents: GraphWorkflowEventsRepo;
-  graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
-  graphWorkflowExecutions: GraphWorkflowExecutionsRepo;
-  graphWorkflowResultDeliveries: GraphWorkflowResultDeliveriesRepo;
-  graphWorkflowPendingArtifacts: GraphWorkflowPendingArtifactsRepo;
   notifications: NotificationsRepo;
 }
 

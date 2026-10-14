@@ -9,12 +9,9 @@
  * `commitChanges`.
  */
 
-import { randomUUID } from "node:crypto";
 import { fromPromise } from "xstate";
 import type { PerRepoConfig } from "@/lib/config/schemas";
 import { createLogger } from "@/lib/logging";
-import { defaultGitClient } from "@/lib/git/client";
-import type { CandidateValidationFact } from "@/lib/jobs/schemas";
 import { getValidationService } from "@/lib/validation/singleton";
 import type {
   ValidationService,
@@ -111,7 +108,7 @@ export interface RunValidationInput {
   targetBranch?: string;
   timeoutMs: number;
 }
-export type RunValidationOutput = CandidateValidationFact | null;
+export type RunValidationOutput = null;
 
 // ============================================================
 // Merge/commit validation outcome mapping
@@ -176,8 +173,6 @@ export interface MergeValidationDeps {
     message: string,
     options?: { skipHooks?: boolean },
   ): Promise<{ hash: string }>;
-  resolveGitObject(worktreePath: string, ref: string): Promise<string>;
-  createValidationRef(): string;
 }
 
 interface SelectedValidationCommand {
@@ -398,27 +393,7 @@ export async function performMergeValidation(
     sessionName: input.sessionName,
   });
 
-  const [validatedSha, validatedTreeHash] = await Promise.all([
-    deps.resolveGitObject(input.worktreePath, "HEAD"),
-    deps.resolveGitObject(input.worktreePath, "HEAD^{tree}"),
-  ]);
-  const fact: CandidateValidationFact = {
-    validationRef: deps.createValidationRef(),
-    validatedSha,
-    validatedTreeHash,
-    commandIdentity: selection.map(({ identity }) => identity).join("+"),
-    outcome: "pass",
-  };
-  logger.info("validation_fix.candidate_fact_created", {
-    projectPath: input.projectPath,
-    sessionName: input.sessionName,
-    validationRef: fact.validationRef,
-    validatedSha: fact.validatedSha,
-    validatedTreeHash: fact.validatedTreeHash,
-    commandIdentity: fact.commandIdentity,
-    outcome: fact.outcome,
-  });
-  return fact;
+  return null;
 }
 
 export interface FixValidationInput {
@@ -505,22 +480,10 @@ export const runValidation = createRunValidationActor(async () => {
     },
     hasUncommittedChanges,
     commitChanges,
-    async resolveGitObject(worktreePath, ref) {
-      const { stdout } = await defaultGitClient.git(
-        ["rev-parse", ref],
-        worktreePath,
-      );
-      const resolved = stdout.trim();
-      if (!resolved) {
-        throw new Error(`git rev-parse ${ref} returned empty output`);
-      }
-      return resolved;
-    },
-    createValidationRef: randomUUID,
   };
 });
 
-/** Fix validation errors via the conversation actor. */
+/** Fix validation errors through the conversation core. */
 export const fixValidation = fromPromise<
   FixValidationOutput,
   FixValidationInput

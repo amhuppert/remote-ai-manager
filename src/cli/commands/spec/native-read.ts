@@ -9,7 +9,6 @@ import {
 import { z } from "zod";
 import { draftHealth } from "@/lib/specs/draft-health";
 import { formatElementHandle, parseElementHandle } from "@/lib/specs/handles";
-import { specMeasuresReportSchema } from "@/lib/specs/measures";
 import {
   specCommentsViewSchema,
   specCommentViewSchema,
@@ -33,7 +32,6 @@ import type {
   specGetSpec,
   specLintSpec,
   specListSpec,
-  specMeasuresSpec,
   specSearchSpec,
   specSectionGetSpec,
 } from "./native-definitions";
@@ -68,18 +66,6 @@ export const listHandler: Read<typeof specListSpec> = {
       specs.length
         ? `${specs.map((item) => `${item.spec.slug}  ${item.phase.primary}  ${item.spec.name}`).join("\n")}\n`
         : "no specs\n",
-  }),
-};
-
-export const measuresHandler: Read<typeof specMeasuresSpec> = {
-  run: runner({
-    run: ({ app }: Input<typeof specMeasuresSpec>) =>
-      readSpecJson(
-        app,
-        (context) =>
-          `/api/projects/${encodePathSegment(context.project)}/spec-measures`,
-        specMeasuresReportSchema,
-      ),
   }),
 };
 

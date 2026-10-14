@@ -16,7 +16,6 @@ const PUSH_TRIGGERS = [
   "specApprovalRequested",
   "specApprovalGranted",
   "specPolicyAdmitted",
-  "planRepair",
 ] as const;
 
 export function NotificationsSection({

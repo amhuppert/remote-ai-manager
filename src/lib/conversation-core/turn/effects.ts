@@ -112,22 +112,3 @@ export interface ConversationDurableEffects {
     error: string;
   }): Promise<void>;
 }
-
-export const ephemeralConversationEffects = {
-  recordRuntimeLossNotice: async () => false,
-  prepareRuntimeLossNotice: async () => ({
-    block: null,
-    async onInputAccepted() {},
-    async finish() {},
-  }),
-  notifyRuntimeCleanup: async () => {},
-  mutateConversation: async () => {},
-  createReferenceDocument: async () => ({}),
-  confirmQueuedDelivery: async () => 0,
-  markQueuedPending: async () => {},
-  markQueuedFailed: async () => {},
-  markQueuedUncertain: async () => {},
-  recordNotepadDeliveries: async () => {},
-  recordMemoryIndexDeliveries: async () => {},
-  resetMemoryIndexDelivery: async () => {},
-} satisfies ConversationDurableEffects;

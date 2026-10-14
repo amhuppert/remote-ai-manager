@@ -34,11 +34,6 @@ export interface ConversationRowMenuTarget {
   branchName?: string | null;
   worktreePath: string;
   archived: boolean;
-  /**
-   * True while a human-approval gate is pending — the row must stay visible
-   * and actionable in Needs Input, so the archive affordance is withheld.
-   */
-  approvalGatePending: boolean;
 }
 
 /**
@@ -169,17 +164,15 @@ export function buildConversationRowMenuItems(
           },
         ]
       : []),
-    ...(target.approvalGatePending
-      ? []
-      : [
-          {
-            kind: "item" as const,
-            label: target.archived
-              ? "Unarchive conversation"
-              : "Archive conversation",
-            onSelect: handlers.onToggleArchived,
-          },
-        ]),
+    ...[
+      {
+        kind: "item" as const,
+        label: target.archived
+          ? "Unarchive conversation"
+          : "Archive conversation",
+        onSelect: handlers.onToggleArchived,
+      },
+    ],
     ...(isSession && handlers.onArchiveOthers
       ? [
           {

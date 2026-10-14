@@ -4,14 +4,6 @@ import {
 } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { specControlsDetailFixture } from "@/features/spec-studio/SpecControls.fixtures";
-import {
-  createWorkflowExecution,
-  createResolvedWorkflowDefinition,
-  createWorkflowDefinition,
-  createWorkflowLayout,
-  makeValidatorCohort,
-  makeSeededValidatorCohort,
-} from "@/lib/workflow-graph/test-fixtures";
 import { toPublicConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { checkpointForkOriginFixture } from "@/lib/conversation-checkpoints/testing/fork-origin-fixture";
@@ -30,19 +22,6 @@ export function checkpointForkStoryFetch(
   state: ForkStoryState = "ready",
 ): typeof fetch {
   const detail = specControlsDetailFixture();
-  const working = createResolvedWorkflowDefinition();
-  working.executionContexts[0]!.contextValidator = makeSeededValidatorCohort();
-  const execution = createWorkflowExecution({
-    workingDefinition: working,
-    launchDocument: {
-      name: "Checkpoint delivery",
-      description: null,
-      definition: createWorkflowDefinition({
-        workflowConfig: { contextValidator: makeValidatorCohort() },
-      }),
-      layout: createWorkflowLayout(),
-    },
-  });
   const response = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -113,7 +92,6 @@ export function checkpointForkStoryFetch(
             counts: { requirements: 1, criteria: 1, decisions: 0, tasks: 1 },
             pendingApprovalCount: 0,
             approvalState: "complete",
-            delivery: detail.status.delivery,
             linkedWork: {
               tickets: 0,
               conversations: 0,
@@ -132,21 +110,6 @@ export function checkpointForkStoryFetch(
         questions: [],
         assumptions: [],
       });
-    if (url.pathname === "/api/live-references/executions")
-      return response({
-        items: [
-          {
-            projectName: target.projectName,
-            sessionName: "implement-auth",
-            executionId: execution.id,
-            title: "Checkpoint delivery",
-            status: execution.status,
-            startedAt: execution.startedAt,
-          },
-        ],
-      });
-    if (url.pathname.includes("/graph-workflow/executions/"))
-      return response({ execution });
     if (url.pathname.endsWith("/fork") && init?.method === "POST") {
       if (state === "pending") return new Promise<Response>(() => {});
       if (state === "failed")

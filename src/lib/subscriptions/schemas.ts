@@ -15,7 +15,6 @@ export const subscriptionSourceRefSchema = z
       "notepad",
       "ticket",
       "spec",
-      "workflow",
       "validation",
       "git_job",
       "conversation",

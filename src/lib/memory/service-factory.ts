@@ -17,11 +17,7 @@ import {
   withWriteQueue,
   withWriteQueueSync,
 } from "@/lib/state-store/write-queue";
-import { resolveBoundSpecExecution } from "@/lib/specs/execution-service";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
-import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { getTicketsRepo } from "@/lib/tickets/storage-production";
-import { findLaneBindingForConversation } from "@/lib/workflow-graph/lane-binding";
 import {
   createMemoryContributionGate,
   createMemoryPolicyResolver,
@@ -111,18 +107,6 @@ export function getMemoryPolicyResolver(): MemoryPolicyResolver {
   return getGlobalSingleton("__cc_memory_policy_resolver", () =>
     createMemoryPolicyResolver({
       readConfig,
-      async findContextPolicy(ref) {
-        const execution = await getStateStore().getGraphWorkflowExecutionById(
-          ref.projectPath,
-          ref.sessionName,
-          ref.executionId,
-        );
-        return (
-          execution?.workingDefinition.executionContexts.find(
-            (context) => context.id === ref.contextId,
-          )?.memory ?? null
-        );
-      },
     }),
   );
 }
@@ -160,15 +144,6 @@ export function getMemoryContributionGate(): MemoryContributionGate {
           };
         }
         return null;
-      },
-      async findLaneBinding(ref) {
-        const execution = await getStateStore().getActiveGraphWorkflowExecution(
-          ref.projectPath,
-          ref.sessionName,
-        );
-        return execution === null
-          ? null
-          : findLaneBindingForConversation(execution, ref.conversationId);
       },
     }),
   );
@@ -234,9 +209,6 @@ export function getMemoryIndexComposer(): MemoryIndexComposer {
  */
 export function getMemoryIndexContextProvider(): MemoryIndexContextProvider {
   return getGlobalSingleton("__cc_memory_index_context_provider", () => {
-    const db = getStateDb();
-    const bindingRepo = createSpecExecutionBindingRepo(db);
-    const deliveryRepo = createSpecDeliveryRepo(db);
     const telemetry = getMemoryTelemetryService();
     return createMemoryIndexContextProvider({
       composer: getMemoryIndexComposer(),
@@ -258,15 +230,6 @@ export function getMemoryIndexContextProvider(): MemoryIndexContextProvider {
           sessionName,
         );
         return ticket?.id ?? null;
-      },
-      async findBoundSpecId(workflowExecutionId) {
-        // The typed spec↔graph binding is the one authority for "which spec
-        // is this run delivering"; the same resolver the spec lifecycle uses.
-        const execution = resolveBoundSpecExecution(
-          { bindingRepo, deliveryRepo },
-          workflowExecutionId,
-        );
-        return execution?.spec_id ?? null;
       },
       async readBudget() {
         return resolveMemoryIndexBudget(await readConfig());

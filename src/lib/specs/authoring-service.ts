@@ -31,8 +31,6 @@ import {
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { stableStringify } from "@/lib/shared/stable-stringify";
-
-import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 
 import type {
@@ -48,7 +46,6 @@ import {
   prepareApprovalRequestRetirement,
   type SpecApprovalRequestsClosedNotice,
 } from "./attention-records";
-import { markWaiversStaleAtSignOffInTransaction } from "./waiver-staleness";
 import type { ApprovalLedger } from "./approval-ledger";
 import {
   authoringReviewProjection,
@@ -68,7 +65,6 @@ import {
 } from "./element-write-guard";
 import { specSlugSchema } from "./handles";
 import { lint, type LintFinding } from "./lint";
-import type { SpecMeasureEventPayload } from "./measures";
 import { authoringApprovalsCollapseIntoSignOff, resolveDial } from "./policy";
 import { oversizedProposalNotesRefusal } from "./proposal-notes";
 import {
@@ -484,12 +480,6 @@ export interface AuthoringServiceDeps {
   review: SpecReviewRepo;
   links: Pick<SpecLinksRepo, "findBySpecId">;
   events: SpecEventsPublisher;
-  /**
-   * R14.5 at the absorbed sign-off: a propose that auto-approves under
-   * Notify/Off dials is a revision approval, so waivers whose criterion
-   * changed must go stale in the same transaction.
-   */
-  waivers?: Pick<SpecDeliveryRepo, "findWaiversBySpecId" | "saveWaiver">;
   /**
    * The open approval requests a revision-ending act must retire with it. A
    * withdrawn revision that keeps its asks open leaves a Needs You entry no
@@ -1142,6 +1132,7 @@ async function fileProposalApprovalRequests(
   });
   const outcomes: SpecProposeApprovalRequest[] = [];
   for (const gate of input.gateAsk.consulted) {
+    if (gate === "plan") continue;
     if (input.gateAsk.collapsed || !input.gateAsk.pending.has(gate)) {
       outcomes.push(notNeeded(gate));
       continue;
@@ -1248,7 +1239,6 @@ export function createAuthoringService(
     actor: ActorProvenance,
     occurredAt: string,
     kind: string,
-    measureEvents: SpecMeasureEventPayload[] = [],
     /**
      * The proposal's disposition document, on the propose event alone. Omitted
      * rather than written as null when there is none, so a payload written
@@ -1264,7 +1254,6 @@ export function createAuthoringService(
         kind,
         revisionId,
         ...(notes === undefined ? {} : { notes }),
-        ...(measureEvents.length === 0 ? {} : { measureEvents }),
       },
       sseEvent: {
         type: "spec-revision-changed",
@@ -1681,25 +1670,6 @@ export function createAuthoringService(
             toDiffRows(snapshot),
             toCitationDiffContext(loaded.reviewBaseSnapshot, snapshot),
           );
-          const changedIntentElementIds = diff.classifications
-            .filter(
-              ({ kind, classification }) =>
-                (kind === "requirement" || kind === "criterion") &&
-                classification !== "unchanged",
-            )
-            .map(({ elementId }) => elementId)
-            .sort();
-          const revisionMeasureEvents: SpecMeasureEventPayload[] =
-            loaded.reviewBaseSnapshot?.revision.state === "approved"
-              ? [
-                  {
-                    kind: "post-approval-revision-created",
-                    revisionId: revision.id,
-                    nonTrivial: diff.changeList.length > 0,
-                    changedIntentElementIds,
-                  },
-                ]
-              : [];
 
           const proposeGates = consultedAuthoringGates(
             revision.authoringStage,
@@ -1778,7 +1748,6 @@ export function createAuthoringService(
                 basis: dial === "notify" ? "notify_policy" : "off_policy",
                 approval_id: null,
                 revision_id: revision.id,
-                execution_id: null,
                 actor_json: stableStringify(parsed.actor),
                 created_at: occurredAt,
               });
@@ -1794,24 +1763,9 @@ export function createAuthoringService(
                   basis: "notify_policy",
                   admissionId,
                   revisionId: revision.id,
-                  executionId: null,
                   occurredAt,
                 });
               }
-            }
-            if (deps.waivers !== undefined) {
-              stalePrepared.push(
-                ...markWaiversStaleAtSignOffInTransaction({
-                  spec,
-                  approvedRevisionId: revision.id,
-                  getSnapshot: (targetRevisionId) =>
-                    repo.getRevisionSnapshot(targetRevisionId),
-                  waivers: deps.waivers,
-                  events: deps.events,
-                  actor: parsed.actor,
-                  occurredAt,
-                }),
-              );
             }
           }
 
@@ -1825,9 +1779,6 @@ export function createAuthoringService(
             importBaselineCitationState: loaded.importBaselineCitationState,
             approvals: deps.review.findApprovalsBySpecId(spec.id),
             admissions: deps.review.findGateAdmissionsByRevision(revision.id),
-            // A propose speaks for the authoring gates; the execution-scoped
-            // ones are per-run and no run exists at this transition.
-            currentExecution: null,
             revisionNumberById: new Map(
               repo
                 .listRevisions(spec.id)
@@ -1847,18 +1798,6 @@ export function createAuthoringService(
               parsed.actor,
               occurredAt,
               absorbsSignOff ? "approved" : "proposed",
-              absorbsSignOff
-                ? [
-                    ...revisionMeasureEvents,
-                    {
-                      kind: "review-action",
-                      action: "sign_off",
-                      reviewAttemptId: revision.id,
-                      activeStartedAt: occurredAt,
-                      revisionId: revision.id,
-                    },
-                  ]
-                : revisionMeasureEvents,
               parsed.notes,
             ),
             ...stalePrepared,
@@ -2544,7 +2483,7 @@ export function createAuthoringService(
                     "Design is the final evergreen authoring stage.",
                   ],
                   instruction:
-                    "Propose the design stage when it is ready for review, then run `cctl spec plan open <slug>` after sign-off.",
+                    "Propose the design stage when it is ready for review.",
                 }
               : decision.refusal;
             deps.events.appendDurableInTransaction({
@@ -2586,7 +2525,6 @@ export function createAuthoringService(
             basis,
             approval_id: null,
             revision_id: checkpoint.id,
-            execution_id: null,
             actor_json: stableStringify(parsed.actor),
             created_at: occurredAt,
           });
@@ -2629,7 +2567,6 @@ export function createAuthoringService(
                   basis,
                   admissionId,
                   revisionId: revision.id,
-                  executionId: null,
                   occurredAt,
                 } satisfies SpecPolicyAdmissionNotice)
               : null;

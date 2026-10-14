@@ -4,11 +4,7 @@ import { conversationsPageHref } from "@/lib/conversations/hrefs";
 export function activeConversationNeedsAttention(
   row: ActiveConversation,
 ): boolean {
-  return (
-    row.status === "waiting_for_input" ||
-    row.unread ||
-    row.pendingApproval !== null
-  );
+  return row.status === "waiting_for_input" || row.unread;
 }
 
 export function activeConversationContextLabel(

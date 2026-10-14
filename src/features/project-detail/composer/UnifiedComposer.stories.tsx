@@ -52,7 +52,6 @@ const sessions: SessionListItem[] = [
     promptCount: 3,
     derivedLastActivityAt: "2026-01-01T00:00:00Z",
     collabContribution: null,
-    hasActiveGraphWorkflow: false,
   },
 ];
 

@@ -38,10 +38,6 @@ const element = {
   description: "Related content element handle in this spec",
   value: { kind: "string", minLength: 1 },
 } as const;
-const execution = {
-  description: "Workflow execution id (not the internal spec execution row id)",
-  value: { kind: "string", minLength: 1 },
-} as const;
 
 export const specCreateSpec = {
   path: "spec create",
@@ -260,7 +256,7 @@ export const specAdvanceSpec = {
   path: "spec advance",
   summary: "Advance concluded requirements into design",
   description:
-    "Bind the current revision and expected requirements stage. Design is the final evergreen stage; delivery planning follows sign-off.",
+    "Bind the current revision and expected requirements stage. Design is the final authoring stage.",
   requires: "cc",
   effects: "write",
   args: [slug],
@@ -609,13 +605,7 @@ export const specRequestApprovalSpec = {
       description: "Gate to route for human review",
       value: {
         kind: "enum",
-        values: [
-          "requirements",
-          "design",
-          "plan",
-          "execution_start",
-          "delivery",
-        ],
+        values: ["requirements", "design"],
       },
       required: true,
     },
@@ -640,87 +630,6 @@ export const specRequestApprovalCommand = ccCommands.defineCommand(
     }),
   },
 );
-
-export const specStartSpec = {
-  path: "spec start",
-  summary: "Launch the approved delivery candidate with ordinary inputs",
-  description:
-    "The mandatory file holds ordinary launch parameter values, or {} when none are needed. It never supplies an execution graph: the approved candidate is the graph. Requires a concrete session. Start-check performs input and identity checks without launch.",
-  related: [
-    {
-      path: "spec capture",
-      description: "Record discovered work during execution",
-    },
-    {
-      path: "spec abandon",
-      description: "Retire an execution whose pinned scope is obsolete",
-    },
-  ],
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: {
-    park: {
-      description:
-        "Park the candidate for prelaunch review without creating an execution",
-      value: { kind: "boolean" },
-    },
-  },
-  payload: { maxBytes: bytes(1024 * 1024), validatePath: "spec start-check" },
-} as const;
-export const specStartCommand = ccCommands.defineCommand(specStartSpec, {
-  examples: [
-    {
-      args: { slug: "native-sdd" },
-      file: ".cc/temp/request.json",
-      why: "Launch the approved delivery candidate with ordinary inputs",
-    },
-  ],
-  handler: async () => ({
-    default: (await import("./native-write-delivery")).startHandler,
-  }),
-});
-
-export const specCaptureSpec = {
-  path: "spec capture",
-  summary: "Capture discovered work without changing pinned scope",
-  description:
-    "The task file omits kind. A blocking reason abandons the run and opens a replacement attempt; otherwise discovery is queued for a later plan. The receipt states which path occurred.",
-  related: [
-    {
-      path: "spec plan open",
-      description: "Open a later delivery attempt for queued discoveries",
-    },
-    {
-      path: "spec abandon",
-      description: "Retire a blocking run before replacement",
-    },
-  ],
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: {
-    execution,
-    "blocking-reason": {
-      ...prose,
-      description:
-        "Durable reason to abandon this run and open its replacement",
-    },
-  },
-  payload: { maxBytes: bytes(1024 * 1024), validatePath: "spec capture-check" },
-} as const;
-export const specCaptureCommand = ccCommands.defineCommand(specCaptureSpec, {
-  examples: [
-    {
-      args: { slug: "native-sdd" },
-      file: ".cc/temp/request.json",
-      why: "Capture discovered work without changing pinned scope",
-    },
-  ],
-  handler: async () => ({
-    default: (await import("./native-write-delivery")).captureHandler,
-  }),
-});
 
 export const specRenameSpec = {
   path: "spec rename",
@@ -754,154 +663,6 @@ export const specRenameCommand = ccCommands.defineCommand(specRenameSpec, {
   }),
 });
 
-export const specAbandonSpec = {
-  path: "spec abandon",
-  summary: "Abandon one workflow execution or request spec retirement",
-  description:
-    "Execution ids are the workflow ids from start. Retiring a whole spec is human-only; the CLI preserves the server refusal.",
-  related: [
-    {
-      path: "workflow live abort",
-      description: "Recover an execution retirement that did not finish",
-    },
-  ],
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: { execution, reason },
-} as const;
-export const specAbandonCommand = ccCommands.defineCommand(specAbandonSpec, {
-  examples: [
-    {
-      args: { slug: "native-sdd" },
-      flags: { execution: "workflow-one", reason: "Scope superseded" },
-      why: "Abandon one workflow execution or request spec retirement",
-    },
-  ],
-  handler: async () => ({
-    default: (await import("./native-write-scalar")).abandonHandler,
-  }),
-});
-
-export const specPlanOpenSpec = {
-  path: "spec plan open",
-  summary: "Open a delta-seeded delivery attempt",
-  description:
-    "The server pins the approved revision and returns its coverage ledger, draft revision, and next actor.",
-  related: [
-    {
-      path: "workflow validate",
-      description: "Validate the authored managed workflow document",
-    },
-    {
-      path: "workflow replace",
-      description: "Replace the managed draft graph",
-    },
-  ],
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: {},
-} as const;
-export const specPlanOpenCommand = ccCommands.defineCommand(specPlanOpenSpec, {
-  examples: [
-    {
-      args: { slug: "native-sdd" },
-      why: "Open a delta-seeded delivery attempt",
-    },
-  ],
-  handler: async () => ({
-    default: (await import("./native-write-delivery")).planOpenHandler,
-  }),
-});
-
-export const specPlanProposeSpec = {
-  path: "spec plan propose",
-  summary: "Ask for review of the delivery plan draft",
-  description:
-    "Checks the draft against the sign-off gate. When execution start needs a human, nothing changes: the human reviews the draft and signs it off in Builder. Under Notify or Off it freezes and signs the launch envelope, and the receipt names the candidate id and hash that launch binds to.",
-  related: [
-    {
-      path: "spec plan status",
-      description: "Read who acts next and the Builder review link",
-    },
-    {
-      path: "spec start",
-      description: "Launch the signed candidate with input parameters",
-    },
-  ],
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: {},
-} as const;
-export const specPlanProposeCommand = ccCommands.defineCommand(
-  specPlanProposeSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        why: "Ask for review of the delivery plan draft",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-write-delivery")).planProposeHandler,
-    }),
-  },
-);
-
-export const specPlanReopenSpec = {
-  path: "spec plan reopen",
-  summary: "Reopen delivery planning and invalidate candidate approval",
-  description:
-    "The server records the reason and returns the new draft revision and approval ledger.",
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: { reason },
-} as const;
-export const specPlanReopenCommand = ccCommands.defineCommand(
-  specPlanReopenSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        flags: { reason: "Coverage needs correction" },
-        why: "Reopen delivery planning and invalidate candidate approval",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-write-delivery")).planReopenHandler,
-    }),
-  },
-);
-
-export const specPlanAbandonSpec = {
-  path: "spec plan abandon",
-  summary: "Retire a delivery attempt before launch",
-  description:
-    "Record why the unlaunched attempt is retired. A fresh plan open pins the current approved revision.",
-  requires: "cc",
-  effects: "write",
-  args: [slug],
-  flags: { reason },
-} as const;
-export const specPlanAbandonCommand = ccCommands.defineCommand(
-  specPlanAbandonSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        flags: { reason: "Pinned scope is superseded" },
-        why: "Retire a delivery attempt before launch",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-write-delivery")).planAbandonHandler,
-    }),
-  },
-);
-
 export const specWriteCommands = [
   specCreateCommand,
   specImportCommand,
@@ -922,14 +683,7 @@ export const specWriteCommands = [
   specAttentionCiteCommand,
   specAttentionUnciteCommand,
   specRequestApprovalCommand,
-  specStartCommand,
-  specCaptureCommand,
   specRenameCommand,
-  specAbandonCommand,
-  specPlanOpenCommand,
-  specPlanProposeCommand,
-  specPlanReopenCommand,
-  specPlanAbandonCommand,
 ] as const;
 export const specWriteGroups = [
   defineGroup({
@@ -937,11 +691,5 @@ export const specWriteGroups = [
     summary: "Maintain questions, assumptions, and draft citations",
     description:
       "Preserve record and citation versions while editing durable attention records.",
-  }),
-  defineGroup({
-    path: "spec plan",
-    summary: "Author and review delivery candidates",
-    description:
-      "Open, propose, inspect, and explicitly retire or reopen managed delivery attempts.",
   }),
 ] as const;

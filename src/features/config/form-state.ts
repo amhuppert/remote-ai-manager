@@ -1,14 +1,11 @@
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
-import type { WorkflowDefaults } from "@/lib/config/schemas";
+import type {} from "@/lib/config/schemas";
 
 export type FieldPath = string;
-
-export type WorkflowDefaultsBlock = keyof WorkflowDefaults;
 
 // Re-exported from the cascade resolver — the form renders against the SAME
 // object the server treats as "no config anywhere", so the settings page can
 // never drift from what absent config actually means.
-export { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 export function deepGet(obj: unknown, path: FieldPath): unknown {
   const keys = path.split(".");
@@ -110,10 +107,8 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "maxConcurrentQueries",
   "validation.concurrencyLimit",
   "validation.defaultTimeoutMs",
-  "preMergeTimeoutMs",
   "idleQuerySessionTtlMs",
   "tailscaleEnabled",
-  "graphWorkflowLaunchesFrozen",
   "pushNotification.enabled",
   "pushNotification.provider",
   "pushNotification.serverUrl",
@@ -126,7 +121,6 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "pushNotification.triggers.specApprovalRequested",
   "pushNotification.triggers.specApprovalGranted",
   "pushNotification.triggers.specPolicyAdmitted",
-  "pushNotification.triggers.planRepair",
   "compaction.backend",
   "compaction.conversationModelSelection",
   "compaction.messageModelSelection",
@@ -135,15 +129,4 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "conversationNaming.backend",
   "conversationNaming.modelSelection",
   "conversationNaming.timeoutMs",
-  "workflowDefaults.implementer",
-  "workflowDefaults.collaboration",
-  "workflowDefaults.contextValidator",
-  "workflowDefaults.scriptValidator",
-  "workflowDefaults.askUserQuestions",
-  "workflowDefaults.iterationPolicy",
-  "workflowDefaults.circuitBreaker",
-  "workflowDefaults.mutability",
-  "workflowDefaults.planRepair",
-  "workflowDefaults.agentValidation",
-  "workflowDefaults.laneMergeValidation",
 ];

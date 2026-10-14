@@ -222,14 +222,11 @@ const activeResponse: ActiveConversationsResponse = {
       worktreePath: "/repos/proj",
       lastActivitySummary: null,
       unread: true,
-      pendingApproval: null,
       backgroundActivity: null,
       open: true,
     },
   ],
-  graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
-  specExecutions: [],
 };
 
 describe("optimistic lifecycle updates", () => {

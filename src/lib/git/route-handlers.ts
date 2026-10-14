@@ -9,10 +9,7 @@ import {
   sessionBackgroundWork as defaultSessionBackgroundWork,
 } from "@/lib/supervision/handles";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
-import {
-  getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
-  getSession as defaultGetSession,
-} from "@/lib/state-store";
+import { getSession as defaultGetSession } from "@/lib/state-store";
 import { computeDiff as defaultComputeDiff } from "./diff";
 import { resolveMergeTarget as defaultResolveMergeTarget } from "./merge-target";
 import {
@@ -54,10 +51,7 @@ import {
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { evaluateMergeInitiation } from "@/lib/workflows/merge/initiation";
-import { getProductionWorkflowComposition } from "@/lib/workflows/production";
-import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
 import { createLogger, withTracing } from "@/lib/logging";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { getStateDb } from "@/lib/state-store/store";
@@ -71,30 +65,11 @@ type RouteContext = {
 };
 
 export interface GitRouteDeps {
-  getMergePolicy(): Pick<
-    WorkflowComposition,
-    "mergeAssociation" | "deliveryGate"
-  >;
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  /**
-   * The delivery gate reads tenure, not status, so the halt reason and
-   * abandonment travel with it: a status alone cannot separate a resumable halt
-   * (still holding the lease) from a non-resumable or abandoned one, which holds
-   * nothing and must not block the merge. `definitionApproval` rides along
-   * because the refusal names the canonical remedy, and a run parked awaiting a
-   * definition decision is cleared by approving it, not by completing it.
-   */
-  getActiveGraphWorkflowExecution(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<Pick<
-    GraphWorkflowExecution,
-    "id" | "status" | "haltReason" | "abandonment" | "definitionApproval"
-  > | null>;
   /** The session's runs that have not finished; a merge waits for every one. */
   currentRuns(projectPath: string, sessionName: string): readonly CurrentRun[];
   /** The session's conversations whose background work custody holds between turns; a merge waits for each. */
@@ -139,13 +114,9 @@ export interface GitRouteDeps {
     expectedTargetSha?: string;
     parkedRef?: string;
     resolutionContext?: string;
-    executionId?: string;
-    specExecutionId?: string;
-    finalPublish?: boolean;
     /** Carried forward from the job a re-entry resumes; see the land handler. */
     finalizeSessionOnPublish?: boolean;
     skipMarkMerged?: boolean;
-    candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   dispatchResolveConflictsJob(params: {
     projectPath: string;
@@ -159,13 +130,9 @@ export interface GitRouteDeps {
     conflictFiles?: string[];
     targetBranch?: string;
     resolutionContext?: string;
-    executionId?: string;
-    specExecutionId?: string;
-    finalPublish?: boolean;
     /** Carried forward from the conflicted job this retry resumes. */
     finalizeSessionOnPublish?: boolean;
     skipMarkMerged?: boolean;
-    candidateValidation?: BackgroundJob["candidateValidation"];
   }): MergeDispatchResult;
   getJob(projectPath: string, sessionName: string): BackgroundJob | undefined;
   /**
@@ -187,10 +154,8 @@ export interface GitRouteDeps {
 
 function defaultDeps(): GitRouteDeps {
   return {
-    getMergePolicy: getProductionWorkflowComposition,
     resolveProjectPath: defaultResolveProjectPath,
     getSession: defaultGetSession,
-    getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
     currentRuns: defaultCurrentRuns,
     sessionBackgroundWork: defaultSessionBackgroundWork,
     computeDiff: defaultComputeDiff,
@@ -231,16 +196,7 @@ function jobDispatchConflict(code: string): Response {
  * instruction) the client already knows how to surface.
  */
 function mergeDispatchErrorResponse(error: MergeDispatchError): Response {
-  if (typeof error === "string") return jobDispatchConflict(error);
-  return NextResponse.json(
-    {
-      error: error.reason,
-      code: error.code,
-      unmetConditions: [error.reason],
-      instruction: error.instruction,
-    },
-    { status: 409 },
-  );
+  return jobDispatchConflict(error);
 }
 
 function jobAccepted(
@@ -555,17 +511,13 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     if (!r.ok) return r.response;
     const { projectPath, projectName, sessionName, session } = r.value;
 
-    const policy = deps.getMergePolicy();
     const admission = await evaluateMergeInitiation({
       projectPath,
       projectName,
       sessionName,
       surface: "merge-route",
-      readActiveExecution: deps.getActiveGraphWorkflowExecution,
       readCurrentRuns: deps.currentRuns,
       readBackgroundWork: deps.sessionBackgroundWork,
-      association: policy.mergeAssociation,
-      gate: policy.deliveryGate,
     });
     if (!admission.admitted) {
       const { refusal } = admission;
@@ -574,20 +526,9 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
           error: refusal.message,
           code: refusal.code,
           details:
-            refusal.code === "GRAPH_WORKFLOW_ACTIVE"
-              ? {
-                  executionId: refusal.executionId,
-                  status: refusal.status,
-                  remedy: refusal.remedy,
-                }
-              : refusal.code === "RUN_CURRENT"
-                ? { runId: refusal.runId, progress: refusal.progress }
-                : refusal.code === "BACKGROUND_WORK_RUNNING"
-                  ? { conversationId: refusal.conversationId }
-                  : {
-                      reviewUrl: refusal.reviewUrl,
-                      blockers: refusal.blockers,
-                    },
+            refusal.code === "RUN_CURRENT"
+              ? { runId: refusal.runId, progress: refusal.progress }
+              : { conversationId: refusal.conversationId },
         } satisfies ApiError,
         { status: 409 },
       );
@@ -687,9 +628,6 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       conflictFiles: priorJob?.conflictFiles,
       targetBranch,
       resolutionContext: priorJob?.resolutionContext,
-      executionId: priorJob?.executionId,
-      specExecutionId: priorJob?.specExecutionId,
-      finalPublish: priorJob?.finalPublish,
       // Whether the publish finishes the session is the RESUMED merge's fact,
       // not this route's assumption: a conflicted graph lane merge retried here
       // is still the workflow's own work, and calling it session-finalizing
@@ -697,7 +635,6 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       // delivery gate at the workflow's own Current run.
       finalizeSessionOnPublish: priorJob?.finalizeSessionOnPublish,
       skipMarkMerged: priorJob?.skipMarkMerged,
-      candidateValidation: priorJob?.candidateValidation,
     });
 
     if (!result.ok) return mergeDispatchErrorResponse(result.error);
@@ -811,14 +748,10 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
       expectedTargetSha,
       parkedRef,
       resolutionContext: job.resolutionContext,
-      executionId: job.executionId,
-      specExecutionId: job.specExecutionId,
-      finalPublish: job.finalPublish,
       // Landing continues the parked merge, so it inherits that merge's own
       // finalization fact rather than assuming the session ends here.
       finalizeSessionOnPublish: job.finalizeSessionOnPublish,
       skipMarkMerged: job.skipMarkMerged,
-      candidateValidation: job.candidateValidation,
     });
 
     if (!result.ok) return mergeDispatchErrorResponse(result.error);

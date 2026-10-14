@@ -10,7 +10,6 @@ import {
   specAttentionMutationReceiptSchema,
   specApprovalRequestScopeSchema,
   specAssumptionDispositionSchema,
-  specGateSchema,
   specGatePolicySchema,
   specReviewRecordMutatedEventPayloadSchema,
   specSupersedeAssumptionPayloadSchema,
@@ -33,7 +32,6 @@ import {
   type SpecRevisionSnapshot,
   type SpecSupersedeAssumptionPayload,
 } from "@/lib/specs/schemas";
-import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type {
   OpenApprovalRequest,
   SpecEventsRepo,
@@ -66,12 +64,7 @@ import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
-import {
-  currentExecution,
-  latestRevision,
-  validateApprovalRequest,
-  EXECUTION_SCOPED_GATES,
-} from "./gate-projection";
+import { latestRevision, validateApprovalRequest } from "./gate-projection";
 import {
   authoringReviewProjection,
   type AuthoringReviewProjection,
@@ -102,7 +95,6 @@ import {
 import type { SpecPolicyChangeResult } from "./view-schemas";
 
 export type { SpecPolicyChangeResult };
-import { markWaiversStaleAtSignOffInTransaction } from "./waiver-staleness";
 
 const logger = createLogger("specs.review-service");
 
@@ -237,17 +229,6 @@ export interface CombinedSignOffOutcome {
   subjectApprovals: SpecApprovalRow[];
 }
 
-export const grantGateApprovalInputSchema = reviewIdentitySchema
-  .extend({
-    executionId: z.string().min(1),
-    gate: z.enum(["delivery", "execution_start"]),
-    approver: z.string().min(1),
-  })
-  .strict();
-export type GrantGateApprovalInput = z.infer<
-  typeof grantGateApprovalInputSchema
->;
-
 export const openQuestionInputSchema = z
   .object({
     specId: z.string().min(1),
@@ -283,7 +264,7 @@ export type ProposeAssumptionInput = z.infer<
 
 export const requestApprovalInputSchema = reviewIdentitySchema
   .extend({
-    gate: specGateSchema,
+    gate: z.enum(["requirements", "design"]),
     /**
      * Omitted, the request is for the gate as a whole — the ask a gate with a
      * dozen outstanding subjects has to be able to make, and the only ask that
@@ -526,9 +507,6 @@ export interface ReviewService {
   approveRemainingAndSignOff(
     input: ApproveRemainingAndSignOffInput,
   ): Promise<ReviewResult<CombinedSignOffOutcome>>;
-  grantGateApproval(
-    input: GrantGateApprovalInput,
-  ): Promise<ReviewResult<SpecApprovalRow>>;
   /** Discards the open draft; nothing it held is approved. */
   withdraw(input: WithdrawDraftInput): Promise<ReviewResult<SpecRevision>>;
   bulkApprove(
@@ -646,13 +624,6 @@ export interface SpecReviewNotifier {
 export interface ReviewServiceDeps {
   specs: SpecsRepo;
   review: SpecReviewRepo;
-  delivery: Pick<
-    SpecDeliveryRepo,
-    | "findExecutionById"
-    | "findExecutionsBySpecId"
-    | "findWaiversBySpecId"
-    | "saveWaiver"
-  >;
   links: Pick<SpecLinksRepo, "findBySpecId">;
   events: SpecEventsPublisher;
   /**
@@ -1173,28 +1144,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       .map((request) => request.attentionId);
   }
 
-  /**
-   * A per-run gate admits the run as a whole, so its grant answers every ask
-   * filed at that gate for that run — including one filed under an element
-   * handle, which is a pointer at what blocked the run rather than a separate
-   * approval. Requests written before runs entered request identity carry no
-   * execution id and belong to the only run that could have opened them.
-   */
-  function requestsSatisfiedByRunGate(
-    specId: string,
-    gate: SpecGate,
-    executionId: string,
-  ): string[] {
-    return deps.attention
-      .listOpenApprovalRequests(specId)
-      .filter(
-        (request) =>
-          request.gate === gate &&
-          (request.executionId === executionId || request.executionId === null),
-      )
-      .map((request) => request.attentionId);
-  }
-
   function appendEvent(
     spec: Spec,
     revisionId: string,
@@ -1207,36 +1156,13 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       | "spec-review-revision-signed-off",
     kind: string,
     subjectId?: string,
-    activeStartedAt?: string,
+    _activeStartedAt?: string,
   ): PreparedSpecEventPublication {
     const approvalChanged =
       durableEventType === "spec-review-item-approved" ||
       durableEventType === "spec-review-item-unapproved";
     const revisionChanged =
       durableEventType === "spec-review-revision-signed-off";
-    const action =
-      durableEventType === "spec-review-commented"
-        ? ("comment" as const)
-        : durableEventType === "spec-review-item-approved"
-          ? ("approve_item" as const)
-          : durableEventType === "spec-review-item-unapproved"
-            ? ("unapprove_item" as const)
-            : ("sign_off" as const);
-    const measuredActiveStartedAt =
-      activeStartedAt !== undefined &&
-      Date.parse(activeStartedAt) <= Date.parse(occurredAt)
-        ? activeStartedAt
-        : occurredAt;
-    if (
-      activeStartedAt !== undefined &&
-      measuredActiveStartedAt !== activeStartedAt
-    ) {
-      logger.warn("specs.review.active_span_invalid", {
-        revisionId,
-        activeStartedAt,
-        occurredAt,
-      });
-    }
     return deps.events.appendInTransaction({
       actor,
       durableEventType,
@@ -1244,16 +1170,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         kind,
         revisionId,
         ...(subjectId === undefined ? {} : { subjectId }),
-        measureEvents: [
-          {
-            kind: "review-action",
-            action,
-            reviewAttemptId: revisionId,
-            activeStartedAt: measuredActiveStartedAt,
-            ...(subjectId === undefined ? {} : { subjectId }),
-            revisionId,
-          },
-        ],
       },
       sseEvent: approvalChanged
         ? {
@@ -1508,28 +1424,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     subject: z.infer<typeof bulkApprovalSubjectSchema>,
     actor: ActorProvenance,
   ): TransitionRefusal | null {
-    if (subject.subjectKind === "plan") {
-      if (revision.authoringStage !== "plan") {
-        return {
-          code: "stage_blocked",
-          unmetConditions: [
-            "The execution plan can be approved only on a plan-stage revision.",
-          ],
-          instruction:
-            "Complete requirements and design authoring before approving the execution plan.",
-        };
-      }
-      if (revision.state !== "draft") {
-        return {
-          code: "gate_blocked",
-          unmetConditions: [
-            "The execution plan can be approved only on the open draft.",
-          ],
-          instruction: "Open an amendment to change approved content.",
-        };
-      }
-      const decision = humanRequired(actor);
-      return decision !== null && !decision.ok ? decision.refusal : null;
+    if (revision.authoringStage === "plan" || subject.subjectKind === "plan") {
+      return {
+        code: "stage_blocked",
+        unmetConditions: ["Legacy Plan revisions and tasks are read-only."],
+        instruction: "Open a design amendment.",
+      };
     }
     const decision = approveElement({
       actor,
@@ -1866,16 +1766,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       revisionId: parsed.revisionId,
       approvedAt: occurredAt,
     });
-    const stalePrepared = markWaiversStaleAtSignOffInTransaction({
-      spec: target.spec,
-      approvedRevisionId: parsed.revisionId,
-      getSnapshot: (targetRevisionId) =>
-        repo.getRevisionSnapshot(targetRevisionId),
-      waivers: deps.delivery,
-      events: deps.events,
-      actor: parsed.actor,
-      occurredAt,
-    });
+    const stalePrepared: PreparedSpecEventPublication[] = [];
     const existingAdmissions = deps.review.findGateAdmissionsByRevision(
       parsed.revisionId,
     );
@@ -1900,7 +1791,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         basis,
         approval_id: approval?.id ?? null,
         revision_id: parsed.revisionId,
-        execution_id: null,
         actor_json: stableStringify(parsed.actor),
         created_at: occurredAt,
       });
@@ -1916,7 +1806,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           basis,
           admissionId,
           revisionId: parsed.revisionId,
-          executionId: null,
           occurredAt,
         });
       }
@@ -2002,9 +1891,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       importBaselineCitationState: loaded.importBaselineCitationState,
       approvals: deps.review.findApprovalsBySpecId(spec.id),
       admissions: deps.review.findGateAdmissionsBySpecId(spec.id),
-      currentExecution: currentExecution(
-        deps.delivery.findExecutionsBySpecId(spec.id),
-      ),
       revisionNumberById: new Map(
         revisions.map((revision) => [revision.id, revision.number]),
       ),
@@ -3967,9 +3853,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           const current = latestRevision(revisions);
           const snapshot =
             current === null ? null : repo.getRevisionSnapshot(current.id);
-          const run = currentExecution(
-            deps.delivery.findExecutionsBySpecId(target.spec.id),
-          );
           const approvals = deps.review.findApprovalsBySpecId(target.spec.id);
           const loaded =
             snapshot === null
@@ -3994,7 +3877,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               admissions: deps.review.findGateAdmissionsBySpecId(
                 target.spec.id,
               ),
-              currentExecution: run,
               revisionNumberById: new Map(
                 revisions.map((revision) => [revision.id, revision.number]),
               ),
@@ -4010,12 +3892,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             requestedRevisionId: target.revision.id,
             currentRevisionId: current?.id ?? null,
             snapshot,
-            executionSnapshot:
-              run === null
-                ? null
-                : run.revision_id === snapshot?.revision.id
-                  ? snapshot
-                  : repo.getRevisionSnapshot(run.revision_id),
             approvals,
             applies,
             gate: parsed.gate,
@@ -4039,32 +3915,16 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           // gate auto-fire (which names the pin) and the CLI (which names the
           // latest revision) converge on one durable ask under an open
           // amendment instead of opening two Needs You entries.
-          const executionScoped =
-            EXECUTION_SCOPED_GATES.has(parsed.gate) && run !== null;
-          const requestExecutionId = executionScoped ? run.id : null;
-          const identityRevisionId = executionScoped
-            ? run.revision_id
-            : target.revision.id;
-          const existing = deps.attention.findApprovalRequest(
-            executionScoped
-              ? {
-                  kind: "execution",
-                  specId: target.spec.id,
-                  revisionId: identityRevisionId,
-                  gate: parsed.gate,
-                  subject: request.subject,
-                  executionId: run.id,
-                }
-              : {
-                  kind: "authoring",
-                  specId: target.spec.id,
-                  revisionId: identityRevisionId,
-                  gate: parsed.gate,
-                  scope: request.scope,
-                  // A gate ask is one ask however its subject list moves.
-                  subject: request.scope === "gate" ? null : request.subject,
-                },
-          );
+          const identityRevisionId = target.revision.id;
+          const existing = deps.attention.findApprovalRequest({
+            kind: "authoring",
+            specId: target.spec.id,
+            revisionId: identityRevisionId,
+            gate: parsed.gate,
+            scope: request.scope,
+            // A gate ask is one ask however its subject list moves.
+            subject: request.scope === "gate" ? null : request.subject,
+          });
           const noticeFor = (
             attentionId: string,
           ): SpecApprovalRequestNotice => ({
@@ -4113,19 +3973,16 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           // covers every subject at its gate, an item ask covers its own
           // subject alone — because a legacy ask about another subject is work
           // a human still owes and would otherwise vanish unanswered.
-          const retired = executionScoped
-            ? []
-            : deps.attention
-                .listOpenApprovalRequests(target.spec.id)
-                .filter(
-                  (candidate) =>
-                    candidate.scope === null &&
-                    candidate.executionId === null &&
-                    candidate.gate === parsed.gate &&
-                    candidate.revisionId === identityRevisionId &&
-                    (request.scope === "gate" ||
-                      candidate.subject === request.subject),
-                );
+          const retired = deps.attention
+            .listOpenApprovalRequests(target.spec.id)
+            .filter(
+              (candidate) =>
+                candidate.scope === null &&
+                candidate.gate === parsed.gate &&
+                candidate.revisionId === identityRevisionId &&
+                (request.scope === "gate" ||
+                  candidate.subject === request.subject),
+            );
           retiredAttentionIds = retired.map(
             (candidate) => candidate.attentionId,
           );
@@ -4167,7 +4024,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                   gate: value.gate,
                   scope: value.scope,
                   subject: value.subject,
-                  executionId: requestExecutionId,
                   active: true,
                 },
                 sseEvent: {
@@ -4707,172 +4563,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           );
         }
       }
-      return transaction.result;
-    },
-
-    async grantGateApproval(input) {
-      const parsed = grantGateApprovalInputSchema.parse(input);
-      const humanRefusal = humanRequired(parsed.actor);
-      if (humanRefusal !== null) return humanRefusal;
-      const occurredAt = now();
-      let grantedNotice: SpecApprovalGrantNotice | null = null;
-      const transaction = await deps.specs.transaction(
-        "specs.review.grant_gate_approval",
-        (repo) => {
-          const target = requireReviewTarget(
-            repo,
-            parsed.specId,
-            parsed.revisionId,
-          );
-          if (target === null) {
-            return {
-              result: refused(
-                "not_found",
-                ["Review target not found."],
-                "Refresh Spec Studio.",
-              ) as ReviewResult<SpecApprovalRow>,
-              prepared: [],
-            };
-          }
-          if (target.revision.state !== "approved") {
-            return {
-              result: refused(
-                "gate_blocked",
-                [
-                  `The ${parsed.gate === "delivery" ? "delivery" : "execution-start"} gate admits only executions pinned to an approved revision.`,
-                ],
-                "Sign off the revision before approving this gate.",
-              ) as ReviewResult<SpecApprovalRow>,
-              prepared: [],
-            };
-          }
-          const execution = deps.delivery.findExecutionById(parsed.executionId);
-          if (execution === null) {
-            return {
-              result: refused(
-                "not_found",
-                [`Execution ${parsed.executionId} was not found.`],
-                "Refresh Spec Studio and select an existing execution.",
-              ) as ReviewResult<SpecApprovalRow>,
-              prepared: [],
-            };
-          }
-          if (
-            execution.spec_id !== parsed.specId ||
-            execution.revision_id !== parsed.revisionId
-          ) {
-            return {
-              result: refused(
-                "validation",
-                [
-                  "The execution does not belong to this spec's pinned revision.",
-                ],
-                "Select the execution pinned to this approved revision.",
-              ) as ReviewResult<SpecApprovalRow>,
-              prepared: [],
-            };
-          }
-          const existingAdmission = deps.review
-            .findGateAdmissionsByRevision(parsed.revisionId)
-            .find(
-              (admission) =>
-                admission.gate === parsed.gate &&
-                admission.execution_id === parsed.executionId &&
-                admission.basis === "human_approval",
-            );
-          if (existingAdmission !== undefined) {
-            const existingApproval = deps.review
-              .findApprovalsBySpecId(parsed.specId)
-              .find(
-                (approval) => approval.id === existingAdmission.approval_id,
-              );
-            if (existingApproval !== undefined) {
-              // Re-fire the grant notice so any approval request re-opened
-              // after the original grant still clears; the notifier dedupes
-              // per request, so already-cleared requests stay single-row.
-              grantedNotice = grantNoticeFor(target.spec, {
-                approvalId: existingApproval.id,
-                satisfiedAttentionIds: requestsSatisfiedByRunGate(
-                  parsed.specId,
-                  parsed.gate,
-                  parsed.executionId,
-                ),
-                occurredAt,
-              });
-              return {
-                result: {
-                  ok: true,
-                  value: existingApproval,
-                } as ReviewResult<SpecApprovalRow>,
-                prepared: [],
-              };
-            }
-          }
-          const approval: SpecApprovalRow = {
-            id: newId("approval"),
-            spec_id: parsed.specId,
-            subject_kind: "revision",
-            element_id: null,
-            revision_id: parsed.revisionId,
-            approver: parsed.approver,
-            granted_at: occurredAt,
-            validity: "valid",
-            subject_fingerprint_json: null,
-          };
-          deps.review.saveApproval(approval);
-          deps.review.insertGateAdmission({
-            id: newId("admission"),
-            spec_id: parsed.specId,
-            gate: parsed.gate,
-            basis: "human_approval",
-            approval_id: approval.id,
-            revision_id: parsed.revisionId,
-            execution_id: parsed.executionId,
-            actor_json: stableStringify(parsed.actor),
-            created_at: occurredAt,
-          });
-          grantedNotice = grantNoticeFor(target.spec, {
-            approvalId: approval.id,
-            satisfiedAttentionIds: requestsSatisfiedByRunGate(
-              parsed.specId,
-              parsed.gate,
-              parsed.executionId,
-            ),
-            occurredAt,
-          });
-          return {
-            result: {
-              ok: true,
-              value: approval,
-            } as ReviewResult<SpecApprovalRow>,
-            prepared: [
-              appendEvent(
-                target.spec,
-                parsed.revisionId,
-                parsed.actor,
-                occurredAt,
-                "spec-review-item-approved",
-                parsed.gate === "delivery"
-                  ? "delivery-approval-granted"
-                  : "execution-start-approval-granted",
-                parsed.executionId,
-                parsed.activeStartedAt,
-              ),
-            ],
-          };
-        },
-      );
-      publishAll(transaction.prepared);
-      if (transaction.result.ok && grantedNotice !== null) {
-        deps.notifier?.approvalGranted(grantedNotice);
-      }
-      logger.info("specs.review.gate_approval.complete", {
-        specId: parsed.specId,
-        revisionId: parsed.revisionId,
-        executionId: parsed.executionId,
-        gate: parsed.gate,
-        ok: transaction.result.ok,
-      });
       return transaction.result;
     },
 

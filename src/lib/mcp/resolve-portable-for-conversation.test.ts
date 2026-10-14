@@ -2,37 +2,8 @@ import { sessionConversationTarget } from "@/lib/conversations/conversation-targ
 import { describe, expect, it, vi } from "vitest";
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
-import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 
 import { createResolvePortableForConversation } from "./resolve-portable-for-conversation";
-
-const TRANSIENT_PORTABLE: PortableMcpConfig = {
-  servers: [
-    {
-      id: "transient-tool",
-      transport: "streamable-http",
-      url: "https://example.test/graph",
-      headers: {},
-    },
-  ],
-};
-
-const RESOLVED_PORTABLE: PortableMcpConfig = {
-  servers: [
-    {
-      id: "transient-tool",
-      transport: "streamable-http",
-      url: "https://example.test/graph",
-      headers: {},
-    },
-    {
-      id: "gateway-alpha",
-      transport: "streamable-http",
-      url: "https://example.test/session",
-      headers: {},
-    },
-  ],
-};
 
 const FALLBACK_PORTABLE: PortableMcpConfig = {
   servers: [
@@ -46,43 +17,12 @@ const FALLBACK_PORTABLE: PortableMcpConfig = {
 };
 
 describe("createResolvePortableForConversation", () => {
-  it("forwards conversation runtime tooling as transientPortableMcp to the composer", async () => {
-    const compose = vi.fn().mockResolvedValue(RESOLVED_PORTABLE);
-    const tooling: ConversationToolingOverrides = {
-      portableMcp: TRANSIENT_PORTABLE,
-    };
-
-    const resolve = createResolvePortableForConversation({
-      composePortableForConversation: compose,
-      getSessionWorktreePath: async () => "/path/to/session",
-      getConversationTooling: () => tooling,
-    });
-
-    const result = await resolve({
-      projectPath: "/path/to/project",
-      target: sessionConversationTarget("demo", "session-a", "conv-1"),
-      backend: "claude",
-    });
-
-    expect(compose).toHaveBeenCalledWith(
-      expect.objectContaining({
-        backend: "claude",
-        projectPath: "/path/to/project",
-        target: sessionConversationTarget("demo", "session-a", "conv-1"),
-        worktreePath: "/path/to/session",
-        transientPortableMcp: TRANSIENT_PORTABLE,
-      }),
-    );
-    expect(result.portable).toBe(RESOLVED_PORTABLE);
-  });
-
   it("omits transientPortableMcp when no conversation tooling is registered", async () => {
     const compose = vi.fn().mockResolvedValue(FALLBACK_PORTABLE);
 
     const resolve = createResolvePortableForConversation({
       composePortableForConversation: compose,
       getSessionWorktreePath: async () => "/path/to/session",
-      getConversationTooling: () => undefined,
     });
 
     await resolve({
@@ -102,7 +42,6 @@ describe("createResolvePortableForConversation", () => {
     const resolve = createResolvePortableForConversation({
       composePortableForConversation: compose,
       getSessionWorktreePath: async () => undefined,
-      getConversationTooling: () => undefined,
     });
 
     await resolve({

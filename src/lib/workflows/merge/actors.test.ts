@@ -190,8 +190,6 @@ function makePublishDeps(
       overrides.runSessionLifecycleOperation ??
       ((_projectPath, _sessionName, operation) => operation()),
     setSessionFinished: overrides.setSessionFinished ?? vi.fn(async () => {}),
-    getActiveGraphWorkflowExecution:
-      overrides.getActiveGraphWorkflowExecution ?? vi.fn(async () => null),
     currentRuns: overrides.currentRuns ?? (() => []),
     backgroundWork: overrides.backgroundWork ?? (() => []),
     reconcileTicketSessionLifecycle:
@@ -208,84 +206,6 @@ function makePublishDeps(
 }
 
 describe("runPublish", () => {
-  it("does not publish a session while its graph workflow still owns unfinished work", async () => {
-    const publish = vi.fn(async () => ({
-      kind: "published" as const,
-      mergeHash: "merge-abc",
-    }));
-    const setFinished = vi.fn(async () => {});
-    const deps = makePublishDeps({
-      publishPreparedMerge: publish,
-      setSessionFinished: setFinished,
-      getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue({
-        id: "execution-1",
-        status: "running",
-      }),
-    });
-
-    const out = await runPublish(deps, basePublishInput);
-
-    expect(out).toEqual({
-      status: "failed",
-      error:
-        "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
-    });
-    expect(publish).not.toHaveBeenCalled();
-    expect(setFinished).not.toHaveBeenCalled();
-  });
-
-  /**
-   * The route's check is advisory: it runs before the job, before the lock, and
-   * the answer can be stale by the time the publish happens. This is the
-   * authoritative one — it reads inside the project lock, which is the only
-   * window in which "no run holds the lease" stays true through the publish.
-   */
-  it("re-reads the lease inside the project lock, refusing when a run took it after the route check", async () => {
-    const publish = vi.fn(async () => ({
-      kind: "published" as const,
-      mergeHash: "merge-abc",
-    }));
-    const events: string[] = [];
-    // Answers what the route saw first, then what is true under the lock.
-    const getActiveGraphWorkflowExecution = vi
-      .fn()
-      .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => {
-        events.push("in-lock-read");
-        return {
-          id: "execution-late",
-          status: "running",
-          haltReason: null,
-          abandonment: null,
-          definitionApproval: null,
-        };
-      });
-    const deps = makePublishDeps({
-      publishPreparedMerge: publish,
-      getActiveGraphWorkflowExecution,
-      acquireProjectLock: vi.fn(() => {
-        events.push("lock-acquired");
-        return () => events.push("lock-released");
-      }),
-    });
-
-    // The advisory read the route would have made: clear.
-    expect(await deps.getActiveGraphWorkflowExecution("/proj", "feature")).toBe(
-      null,
-    );
-
-    const out = await runPublish(deps, basePublishInput);
-
-    expect(out).toEqual({
-      status: "failed",
-      error:
-        "Graph workflow execution execution-late is running. Complete or abort it before merging this session.",
-    });
-    expect(publish).not.toHaveBeenCalled();
-    // Order is the point: the deciding read happens after the lock is held.
-    expect(events).toEqual(["lock-acquired", "in-lock-read", "lock-released"]);
-  });
-
   it("does not finish a session one of whose runs has not finished, deciding inside the project lock", async () => {
     const publish = vi.fn(async () => ({
       kind: "published" as const,
@@ -358,30 +278,6 @@ describe("runPublish", () => {
       `background:${basePublishInput.projectPath}:${basePublishInput.sessionName}`,
       "lock-released",
     ]);
-  });
-
-  it("allows graph-owned lane merges that do not finalize the session", async () => {
-    const publish = vi.fn(async () => ({
-      kind: "published" as const,
-      mergeHash: "merge-abc",
-    }));
-    const getActiveGraphWorkflowExecution = vi.fn().mockResolvedValue({
-      id: "execution-1",
-      status: "running",
-    });
-    const deps = makePublishDeps({
-      publishPreparedMerge: publish,
-      getActiveGraphWorkflowExecution,
-    });
-
-    const out = await runPublish(deps, {
-      ...basePublishInput,
-      finalizeSession: false,
-    });
-
-    expect(out).toEqual({ status: "completed", mergeHash: "merge-abc" });
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(getActiveGraphWorkflowExecution).not.toHaveBeenCalled();
   });
 
   it("returns ready-to-land without acquiring the lock when target is dirty", async () => {
@@ -646,20 +542,6 @@ describe("runPublish", () => {
     },
   );
 
-  it("keeps the delivery guard when completion bookkeeping is skipped", async () => {
-    const deps = makePublishDeps({
-      getActiveGraphWorkflowExecution: vi
-        .fn()
-        .mockResolvedValue({ id: "active", status: "running" }),
-    });
-    const out = await runPublish(deps, {
-      ...basePublishInput,
-      skipMarkMerged: true,
-    });
-    expect(out.status).toBe("failed");
-    expect(deps.publishPreparedMerge).not.toHaveBeenCalled();
-  });
-
   it("reports a published merge with a warning when session ancestry cannot be recorded", async () => {
     const deps = makePublishDeps({
       recordPublishedMerge: vi.fn(async () => {
@@ -884,26 +766,6 @@ describe("runPublish", () => {
       expect(setFinished).not.toHaveBeenCalled();
       expect(stopAll).not.toHaveBeenCalled();
       expect(retarget).not.toHaveBeenCalled();
-    });
-
-    it("still refuses to finish a session whose graph workflow owns unfinished work", async () => {
-      const setFinished = vi.fn(async () => {});
-      const deps = makePublishDeps({
-        setSessionFinished: setFinished,
-        getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue({
-          id: "execution-1",
-          status: "running",
-        }),
-      });
-
-      const out = await runPublish(deps, upToDateInput);
-
-      expect(out).toEqual({
-        status: "failed",
-        error:
-          "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
-      });
-      expect(setFinished).not.toHaveBeenCalled();
     });
   });
 });

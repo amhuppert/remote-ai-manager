@@ -3,7 +3,7 @@ import { resolveCompactionConfig } from "@/lib/config/cascade";
 import { publishEvent } from "@/lib/events/publication";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
-import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
+import { coreTaskLane } from "@/lib/supervision/handles";
 import { getContextArtifactsRepo } from "./repo-production";
 import { createCompactionService, type CompactionService } from "./service";
 
@@ -13,7 +13,8 @@ let defaultService: CompactionService | null = null;
 
 export function getCompactionService(): CompactionService {
   defaultService ??= createCompactionService({
-    executeTaskRun: executeWorkflowTaskRun,
+    executeTaskRun: async (input) => (await coreTaskLane())(input),
+    taskLane: coreTaskLane,
     readEntries: readTranscriptEntriesWithSeq,
     repo: getContextArtifactsRepo(),
     resolveConfig: async (projectPath) =>

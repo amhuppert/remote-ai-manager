@@ -25,16 +25,9 @@ export const devServerConfigSchema = z.object({
 });
 export type DevServerConfig = z.infer<typeof devServerConfigSchema>;
 
-export const devServerTargetRefSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("session") }).strict(),
-  z
-    .object({
-      kind: z.literal("workflow-context"),
-      executionId: z.string().trim().min(1),
-      contextId: z.string().trim().min(1),
-    })
-    .strict(),
-]);
+export const devServerTargetRefSchema = z
+  .object({ kind: z.literal("session") })
+  .strict();
 export type DevServerTargetRef = z.infer<typeof devServerTargetRefSchema>;
 
 const devServerStatusSchema = z.enum([

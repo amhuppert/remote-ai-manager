@@ -2,7 +2,6 @@ import type { SubscriptionRecipient } from "@/lib/subscriptions/schemas";
 import type { NotepadDeliveryRecord } from "@/lib/notepads/accepted-context";
 import type { PreparedSubscriptionBriefing } from "@/lib/subscriptions/service";
 import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
-import { createRequiredInputReceipt } from "./required-input-receipt";
 
 export interface PassiveSubscriptionContextDependencies {
   prepareBriefing(input: {
@@ -29,35 +28,6 @@ export const productionPassiveSubscriptionDependencies: PassiveSubscriptionConte
       await followAcceptedNotepadContext(recipient, references);
     },
   };
-
-export function prepareAcceptedNotepadReferences(
-  deps: PassiveSubscriptionContextDependencies | undefined,
-  recipient: SubscriptionRecipient,
-  references: readonly NotepadDeliveryRecord[],
-  ownReceipt: (finish: () => Promise<void>) => void,
-) {
-  const enabled =
-    references.length > 0 &&
-    deps?.recordAcceptedNotepadReferences !== undefined;
-  let finalized = false;
-  const receipt = createRequiredInputReceipt(async () => {
-    if (!references.length) return;
-    await deps?.recordAcceptedNotepadReferences?.(recipient, references);
-  });
-  const finish = () => {
-    finalized = true;
-    return receipt.finish();
-  };
-  if (enabled) ownReceipt(finish);
-  return {
-    ...receipt,
-    finish,
-    markDispatched() {
-      if (enabled && finalized)
-        throw new Error("Accepted notepad reference input already finalized");
-    },
-  };
-}
 
 /** A briefing one input carries (the passive briefing, or the runtime-recovery reminder). */
 export interface InputBriefing {

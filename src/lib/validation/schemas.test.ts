@@ -265,18 +265,15 @@ describe("repoValidationConfigSchema", () => {
 
     expect(Object.keys(parsed.commands)).toEqual(["lint", "test-unit"]);
     expect(parsed.preMerge).toEqual([]);
-    expect(parsed.laneMerge).toBeUndefined();
   });
 
-  it("keeps preMerge order and an optional laneMerge list", () => {
+  it("keeps preMerge order", () => {
     const parsed = repoValidationConfigSchema.parse({
       commands,
       preMerge: ["test-unit", "lint"],
-      laneMerge: ["lint"],
     });
 
     expect(parsed.preMerge).toEqual(["test-unit", "lint"]);
-    expect(parsed.laneMerge).toEqual(["lint"]);
   });
 
   it.each([["Test"], ["test_unit"], ["-lint"], ["lint-"], [""]])(
@@ -302,22 +299,6 @@ describe("repoValidationConfigSchema", () => {
       expect.objectContaining({
         path: ["preMerge", 0],
         message: expect.stringContaining("typecheck"),
-      }),
-    );
-  });
-
-  it("rejects a laneMerge entry that names no registered command", () => {
-    const result = repoValidationConfigSchema.safeParse({
-      commands,
-      laneMerge: ["format"],
-    });
-
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.issues).toContainEqual(
-      expect.objectContaining({
-        path: ["laneMerge", 0],
-        message: expect.stringContaining("format"),
       }),
     );
   });

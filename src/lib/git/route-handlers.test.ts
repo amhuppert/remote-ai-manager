@@ -35,18 +35,9 @@ function makeJob(overrides: Partial<BackgroundJob> = {}): BackgroundJob {
     preparedSha: "prepared-sha",
     expectedTargetSha: "target-sha",
     resolutionContext: "intent notes",
-    executionId: "workflow-execution-1",
-    finalPublish: true,
     // Every merge-family dispatch stamps this, so a job a re-entry route reads
     // back carries it too.
     finalizeSessionOnPublish: true,
-    candidateValidation: {
-      validationRef: "validation-1",
-      validatedSha: "validated-sha",
-      validatedTreeHash: "validated-tree",
-      commandIdentity: "./validate.sh",
-      outcome: "pass",
-    },
     ...overrides,
   };
 }
@@ -69,17 +60,8 @@ function makeJobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     preparedSha: "prepared-sha",
     expectedTargetSha: "target-sha",
     resolutionContext: "intent notes",
-    executionId: "workflow-execution-1",
-    finalPublish: true,
     finalizeSessionOnPublish: false,
     skipMarkMerged: true,
-    candidateValidation: {
-      validationRef: "validation-1",
-      validatedSha: "validated-sha",
-      validatedTreeHash: "validated-tree",
-      commandIdentity: "./validate.sh",
-      outcome: "pass",
-    },
     ...overrides,
   });
 }
@@ -98,17 +80,8 @@ function postRequest(body: unknown): Request {
 
 function makeDeps(overrides: Partial<GitRouteDeps> = {}): GitRouteDeps {
   return {
-    getMergePolicy: () => ({
-      mergeAssociation: { resolve: () => ({ kind: "none" }) },
-      deliveryGate: {
-        async evaluate() {
-          throw new Error("An unassociated merge cannot reach the gate");
-        },
-      },
-    }),
     resolveProjectPath: vi.fn().mockResolvedValue("/repo"),
     getSession: vi.fn().mockResolvedValue(makeSession()),
-    getActiveGraphWorkflowExecution: vi.fn().mockResolvedValue(null),
     currentRuns: () => [],
     sessionBackgroundWork: () => [],
     computeDiff: vi.fn().mockResolvedValue(EMPTY_DIFF),
@@ -359,132 +332,6 @@ describe("commitSession", () => {
 });
 
 describe("mergeSession", () => {
-  it("uses the injected delivery association to refuse an ambiguous merge", async () => {
-    const deps = makeDeps();
-    const handlers = createGitRouteHandlers({
-      ...deps,
-      getMergePolicy: () => ({
-        mergeAssociation: {
-          resolve: () => ({
-            kind: "refused" as const,
-            reason: "Ambiguous delivery association.",
-            instruction: "Choose the delivery execution.",
-          }),
-        },
-        deliveryGate: {
-          async evaluate() {
-            throw new Error("An ambiguous association cannot reach the gate");
-          },
-        },
-      }),
-    });
-
-    const response = await handlers.mergeSession(
-      postRequest({ autoResolve: true }),
-      routeContext(sessionParams),
-    );
-
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({
-      code: "SPEC_DELIVERY_REVIEW_REQUIRED",
-      details: { blockers: ["Ambiguous delivery association."] },
-    });
-    expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
-  });
-
-  /**
-   * Session delivery follows the lease (R13). The route's advisory check is the
-   * first of two — the publish actor repeats it under the project lock — so what
-   * it must get right is exactly which runs block and what act clears them.
-   *
-   * The blockers below are the runs that still hold the session's lease; each
-   * one names the canonical remedy for its own state, because a refusal that
-   * tells an operator to "complete" a halted run names an act that state does
-   * not admit.
-   */
-  const RESUMABLE_HALT = {
-    type: "circuit_breaker",
-    contextId: "context-implement",
-    condition: "retry_exhaustion",
-    summary: null,
-  } as const;
-  const NON_RESUMABLE_HALT = {
-    type: "recovery_error",
-    message: "unrecoverable",
-  } as const;
-
-  /**
-   * Exactly the record the gate reads, taken from the dependency signature —
-   * every lease-relevant field is spelled out on every row. A partial fixture
-   * would let `abandonment: undefined` read as "abandoned" and quietly turn a
-   * blocking case green.
-   */
-  type DeliveryRecord = NonNullable<
-    Awaited<ReturnType<GitRouteDeps["getActiveGraphWorkflowExecution"]>>
-  >;
-
-  function activeRecord(
-    overrides: Partial<DeliveryRecord> & Pick<DeliveryRecord, "status">,
-  ): DeliveryRecord {
-    return {
-      id: "execution-1",
-      haltReason: null,
-      abandonment: null,
-      definitionApproval: null,
-      ...overrides,
-    };
-  }
-
-  const blockers = [
-    {
-      label: "running",
-      execution: activeRecord({ status: "running" }),
-      remedy: "inspect_or_pause",
-      sentence: "Complete or abort it before merging this session.",
-    },
-    {
-      label: "resumably halted",
-      execution: activeRecord({
-        status: "halted",
-        haltReason: RESUMABLE_HALT,
-      }),
-      remedy: "resume_or_abandon",
-      sentence: "Resume or abandon it before merging this session.",
-    },
-  ] as const;
-
-  for (const blocker of blockers) {
-    it(`refuses the merge while a ${blocker.label} execution holds the lease, naming its remedy`, async () => {
-      const dispatchMergeJob = vi
-        .fn()
-        .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
-      const deps = makeDeps({
-        dispatchMergeJob,
-        getActiveGraphWorkflowExecution: vi
-          .fn()
-          .mockResolvedValue(blocker.execution),
-      });
-      const handlers = createGitRouteHandlers(deps);
-
-      const res = await handlers.mergeSession(
-        postRequest({ autoResolve: true }),
-        routeContext(sessionParams),
-      );
-
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({
-        error: `Graph workflow execution execution-1 is ${blocker.execution.status}. ${blocker.sentence}`,
-        code: "GRAPH_WORKFLOW_ACTIVE",
-        details: {
-          executionId: "execution-1",
-          status: blocker.execution.status,
-          remedy: blocker.remedy,
-        },
-      });
-      expect(dispatchMergeJob).not.toHaveBeenCalled();
-    });
-  }
-
   it("refuses the merge while one of the session's runs has not finished, naming the run", async () => {
     const dispatchMergeJob = vi
       .fn()
@@ -541,98 +388,6 @@ describe("mergeSession", () => {
       error: expect.stringContaining('conversation "Suite runner"'),
     });
     expect(dispatchMergeJob).not.toHaveBeenCalled();
-  });
-
-  /**
-   * History never blocks delivery (R13.2), including the halts a status-only
-   * gate refused forever with no act available to clear them.
-   */
-  const historical = [
-    { label: "completed", execution: activeRecord({ status: "completed" }) },
-    { label: "aborted", execution: activeRecord({ status: "aborted" }) },
-    {
-      label: "non-resumably halted",
-      execution: activeRecord({
-        status: "halted",
-        haltReason: NON_RESUMABLE_HALT,
-      }),
-    },
-    {
-      label: "abandoned resumable halt",
-      execution: activeRecord({
-        status: "halted",
-        haltReason: RESUMABLE_HALT,
-        abandonment: {
-          abandonedAt: "2026-01-02T00:00:00Z",
-          actor: { kind: "human" },
-          reason: "superseded",
-        },
-      }),
-    },
-  ] as const;
-
-  for (const run of historical) {
-    it(`admits the merge once the ${run.label} execution has released the lease`, async () => {
-      const dispatchMergeJob = vi
-        .fn()
-        .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
-      const handlers = createGitRouteHandlers(
-        makeDeps({
-          dispatchMergeJob,
-          getActiveGraphWorkflowExecution: vi
-            .fn()
-            .mockResolvedValue(run.execution),
-        }),
-      );
-
-      const res = await handlers.mergeSession(
-        postRequest({ autoResolve: true }),
-        routeContext(sessionParams),
-      );
-
-      expect(res.status).toBe(202);
-      expect(dispatchMergeJob).toHaveBeenCalled();
-    });
-  }
-
-  it("admits the merge after the blocking halted run is abandoned", async () => {
-    // R13.1 end to end: the same run, before and after the abandon act.
-    const halted = activeRecord({
-      status: "halted",
-      haltReason: RESUMABLE_HALT,
-    });
-    const dispatchMergeJob = vi
-      .fn()
-      .mockReturnValue({ ok: true, value: { jobId: "job-2" } });
-    const getActiveGraphWorkflowExecution = vi
-      .fn()
-      .mockResolvedValueOnce(halted)
-      .mockResolvedValueOnce({
-        ...halted,
-        abandonment: {
-          abandonedAt: "2026-01-02T00:00:00Z",
-          actor: { kind: "human" },
-          reason: "superseded",
-        },
-      });
-    const handlers = createGitRouteHandlers(
-      makeDeps({ dispatchMergeJob, getActiveGraphWorkflowExecution }),
-    );
-
-    const refused = await handlers.mergeSession(
-      postRequest({ autoResolve: true }),
-      routeContext(sessionParams),
-    );
-    expect(refused.status).toBe(409);
-    expect((await refused.json()).details.executionId).toBe("execution-1");
-    expect(dispatchMergeJob).not.toHaveBeenCalled();
-
-    const admitted = await handlers.mergeSession(
-      postRequest({ autoResolve: true }),
-      routeContext(sessionParams),
-    );
-    expect(admitted.status).toBe(202);
-    expect(dispatchMergeJob).toHaveBeenCalledTimes(1);
   });
 
   it("400s on an invalid body", async () => {
@@ -698,32 +453,6 @@ describe("mergeSession", () => {
       code: "JOB_ALREADY_RUNNING",
     });
   });
-
-  it("renders a merge-association refusal with the structured refusal envelope", async () => {
-    const reason =
-      "Session hosts spec execution spec-exec-1 in definition review; the delivery gate cannot evaluate it.";
-    const instruction =
-      "Start the execution or abandon it in Spec Studio, then retry the merge.";
-    const handlers = createGitRouteHandlers(
-      makeDeps({
-        dispatchMergeJob: vi.fn().mockReturnValue({
-          ok: false,
-          error: { code: "MERGE_ASSOCIATION_REFUSED", reason, instruction },
-        }),
-      }),
-    );
-    const res = await handlers.mergeSession(
-      postRequest({ autoResolve: false }),
-      routeContext(sessionParams),
-    );
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: reason,
-      code: "MERGE_ASSOCIATION_REFUSED",
-      unmetConditions: [reason],
-      instruction,
-    });
-  });
 });
 
 describe("resolveSessionConflicts", () => {
@@ -768,16 +497,7 @@ describe("resolveSessionConflicts", () => {
       conflictFiles: undefined,
       targetBranch: "main",
       resolutionContext: "intent notes",
-      executionId: "workflow-execution-1",
-      finalPublish: true,
       finalizeSessionOnPublish: true,
-      candidateValidation: {
-        validationRef: "validation-1",
-        validatedSha: "validated-sha",
-        validatedTreeHash: "validated-tree",
-        commandIdentity: "./validate.sh",
-        outcome: "pass",
-      },
     });
   });
 
@@ -995,15 +715,6 @@ describe("landSession", () => {
         expectedTargetSha: "target-sha",
         parkedRef: "refs/cc-merges/job-1",
         resolutionContext: "intent notes",
-        executionId: "workflow-execution-1",
-        finalPublish: true,
-        candidateValidation: {
-          validationRef: "validation-1",
-          validatedSha: "validated-sha",
-          validatedTreeHash: "validated-tree",
-          commandIdentity: "./validate.sh",
-          outcome: "pass",
-        },
         finalizeSessionOnPublish: true,
       }),
     );
@@ -1051,8 +762,6 @@ describe("landSession", () => {
         expectedTargetSha: "target-sha",
         parkedRef: "refs/cc-merges/job-persisted",
         resolutionContext: "intent notes",
-        executionId: "workflow-execution-1",
-        finalPublish: true,
         finalizeSessionOnPublish: false,
         skipMarkMerged: true,
       }),

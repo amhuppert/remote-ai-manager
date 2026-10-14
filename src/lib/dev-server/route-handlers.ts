@@ -258,7 +258,7 @@ export function createDevServerRouteHandlers(
         logger.warn("dev-server.target.rejected", {
           projectName: input.projectName,
           sessionName: input.sessionName,
-          targetKind: "workflow-context",
+          targetKind: "session",
           executionId: null,
           contextId: null,
           code: error.code,

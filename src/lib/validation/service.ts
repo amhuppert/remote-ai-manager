@@ -40,7 +40,6 @@ import {
   type ValidationRunSource,
   type ValidationRunStatus,
   type ValidationScope,
-  type ValidationWorkflowRole,
 } from "./schemas";
 import { resolveValidationExecution } from "./command-resolution";
 import { resolveSubmissionCost } from "./cost-resolution";
@@ -71,19 +70,6 @@ export interface ValidationCallerRef {
   projectPath: string;
   sessionName?: string | null;
   conversationId?: string | null;
-  /**
-   * Workflow identity claimed by the caller's environment. Never
-   * authoritative: it is verified against server-side graph state, and any
-   * mismatch fails closed. `role` is optional because the lane env carries
-   * only execution/context ids (CC_WORKFLOW_EXECUTION_ID/CONTEXT_ID); a
-   * claimed role is cross-checked when present, and the authoritative role
-   * always comes from the resolved lane.
-   */
-  claimedWorkflow?: {
-    executionId: string;
-    contextId: string;
-    role?: ValidationWorkflowRole;
-  } | null;
 }
 
 interface ResolvedCallerTarget {
@@ -96,15 +82,6 @@ interface ResolvedCallerTarget {
 export type ResolvedValidationCaller =
   | ({ kind: "project" } & ResolvedCallerTarget)
   | ({ kind: "session" } & ResolvedCallerTarget)
-  | ({ kind: "graph_lane" } & ResolvedCallerTarget & {
-        executionId: string;
-        contextId: string;
-        role: ValidationWorkflowRole;
-        /** Seed-time policy snapshot, expanded and role-selected. */
-        allowedCommands: readonly string[];
-        /** The context's script-gate selection, for the honest skip message. */
-        scriptGateCommands: readonly string[];
-      })
   | ({ kind: "run_seat" } & ResolvedCallerTarget & {
         contextId: string;
         role: "implementer" | "reviewer";
@@ -387,27 +364,7 @@ function policySkip(
       fields: { role: resolved.role, contextId: resolved.contextId },
     };
   }
-  if (
-    resolved.kind !== "graph_lane" ||
-    resolved.allowedCommands.includes(commandName)
-  )
-    return null;
-  const roleLabel =
-    resolved.role === "implementer" ? "implementer" : "context validator";
-  const handledByScriptGate = resolved.scriptGateCommands.includes(commandName);
-  // Only claim another component handles it when that is true.
-  const policyMessage = handledByScriptGate
-    ? `Skipped "${commandName}": it is disabled for the ${roleLabel} in context "${resolved.contextId}". Do not run it in this execution context; it is handled by the script validator.`
-    : `Skipped "${commandName}": workflow policy disables it for the ${roleLabel} in context "${resolved.contextId}". Do not attempt to run it by other means.`;
-  return {
-    message: `${policyMessage} A frozen role selection includes commands registered at launch or the last role live edit; later registration alone does not grant access. An authorized workflow live edit can update the selection.`,
-    fields: {
-      role: resolved.role,
-      executionId: resolved.executionId,
-      contextId: resolved.contextId,
-      handledByScriptGate,
-    },
-  };
+  return null;
 }
 
 export function createValidationService(
@@ -1106,11 +1063,9 @@ export function createValidationService(
       worktreePath: resolved.worktreePath,
       sessionName: resolved.sessionName,
       conversationId: request.caller.conversationId ?? null,
-      workflowExecutionId:
-        resolved.kind === "graph_lane" ? resolved.executionId : null,
-      workflowContextId:
-        resolved.kind === "graph_lane" ? resolved.contextId : null,
-      workflowRole: resolved.kind === "graph_lane" ? resolved.role : null,
+      workflowExecutionId: null,
+      workflowContextId: null,
+      workflowRole: null,
       requestedScope: execution.requestedScope,
       effectiveScope: execution.effectiveScope,
       scopedPathCount: execution.scopePaths.length,
@@ -1126,7 +1081,7 @@ export function createValidationService(
       sessionName: resolved.sessionName ?? "",
       branchName: resolved.branchName ?? "",
       ...(resolved.targetBranch ? { targetBranch: resolved.targetBranch } : {}),
-      ...(resolved.kind === "graph_lane" || resolved.kind === "run_seat"
+      ...(resolved.kind === "run_seat"
         ? { contextId: resolved.contextId }
         : {}),
       requestedScope: execution.requestedScope,
@@ -1271,7 +1226,7 @@ export function createValidationService(
             : ("native" as const),
         timeoutMs: command.timeoutMs ?? null,
         enabled:
-          (resolved.kind !== "graph_lane" && resolved.kind !== "run_seat") ||
+          resolved.kind !== "run_seat" ||
           resolved.allowedCommands.includes(name),
       }),
     );

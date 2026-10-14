@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createActor, fromPromise, toPromise } from "xstate";
 import { mergeMachine } from "./machine";
-import type { DeliveryGateEvaluator, MergeInput } from "./types";
+import type { MergeInput } from "./types";
 import type {
   AbortMergeCleanupInput,
   AbortMergeCleanupOutput,
@@ -26,7 +26,7 @@ import type {
   DiscardParkedRefInput,
   DiscardParkedRefOutput,
 } from "./actors";
-import { createDeliveryGateActor } from "./actors";
+import {} from "./actors";
 import type {
   CheckUncommittedInput,
   CheckUncommittedOutput,
@@ -231,7 +231,6 @@ type ActorOverrides = {
   prepare?: ReturnType<typeof mockPrepare>;
   publish?: ReturnType<typeof mockPublish>;
   discardParkedRef?: ReturnType<typeof mockDiscardParkedRef>;
-  deliveryGateEvaluator?: DeliveryGateEvaluator;
 };
 
 function createTestMachine(overrides: ActorOverrides = {}) {
@@ -303,13 +302,6 @@ function createTestMachine(overrides: ActorOverrides = {}) {
       discardParkedRef:
         overrides.discardParkedRef ??
         mockDiscardParkedRef(async () => undefined),
-      deliveryGate: createDeliveryGateActor(
-        overrides.deliveryGateEvaluator ?? {
-          async evaluate() {
-            throw new Error("Unexpected delivery gate evaluation");
-          },
-        },
-      ),
     },
   });
 }
@@ -319,265 +311,6 @@ function createTestMachine(overrides: ActorOverrides = {}) {
 // ============================================================
 
 describe("mergeMachine", () => {
-  describe("delivery gate", () => {
-    it("surfaces delivery review before touching the worktree or running validation", async () => {
-      const sequence: string[] = [];
-      const machine = createTestMachine({
-        getCurrentBranch: mockGetCurrentBranch(async () => {
-          sequence.push("worktree");
-          return { branch: defaultInput.branchName };
-        }),
-        runValidation: mockRunValidation(async () => {
-          sequence.push("validation");
-          return null;
-        }),
-        deliveryGateEvaluator: {
-          async evaluate() {
-            sequence.push("review");
-            return {
-              status: "refused",
-              unmet: [],
-              refusalCode: "approval_required",
-              instruction: "Review delivery.",
-            };
-          },
-        },
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-      const output = await toPromise(actor);
-      expect(sequence).toEqual(["review"]);
-      expect(output.haltReason).toMatchObject({
-        type: "delivery_gate_failed",
-        refusalCode: "approval_required",
-      });
-      expect(output.preparedSha).toBeNull();
-    });
-    it("evaluates the initially prepared candidate before publishing", async () => {
-      const sequence: string[] = [];
-      const evaluated: Parameters<DeliveryGateEvaluator["evaluate"]>[0][] = [];
-      const candidateValidation = {
-        validationRef: "validation-initial",
-        validatedSha: "validated-sha",
-        validatedTreeHash: "validated-tree",
-        commandIdentity: "./validate.sh",
-        outcome: "pass" as const,
-      };
-      const machine = createTestMachine({
-        runValidation: mockRunValidation(async () => candidateValidation),
-        prepare: mockPrepare(async () => ({
-          status: "prepared",
-          preparedSha: "prepared-initial",
-          expectedTargetSha: "target-initial",
-          parkedRef: "refs/cc-merges/initial",
-        })),
-        deliveryGateEvaluator: {
-          async evaluate(input) {
-            sequence.push("gate");
-            evaluated.push(input);
-            return { status: "pass", satisfied: [], deferred: [] };
-          },
-        },
-        publish: mockPublish(async () => {
-          sequence.push("publish");
-          return { status: "completed", mergeHash: "merge-abc" };
-        }),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("completed");
-      expect(sequence).toEqual(["gate", "gate", "publish"]);
-      expect(evaluated).toEqual([
-        {
-          workflowExecutionId: "workflow-execution-1",
-          preparedSha: "",
-          expectedTargetSha: "",
-          projectPath: defaultInput.projectPath,
-        },
-        {
-          workflowExecutionId: "workflow-execution-1",
-          preparedSha: "prepared-initial",
-          expectedTargetSha: "target-initial",
-          projectPath: defaultInput.projectPath,
-          candidateValidation,
-        },
-      ]);
-    });
-
-    it("re-evaluates a newly prepared candidate after a publish CAS loss", async () => {
-      let prepareCall = 0;
-      let publishCall = 0;
-      const evaluatedShas: string[] = [];
-      const machine = createTestMachine({
-        prepare: mockPrepare(async () => {
-          prepareCall += 1;
-          return {
-            status: "prepared",
-            preparedSha: `prepared-${prepareCall}`,
-            expectedTargetSha: `target-${prepareCall}`,
-            parkedRef: `refs/cc-merges/${prepareCall}`,
-          };
-        }),
-        deliveryGateEvaluator: {
-          async evaluate(input) {
-            evaluatedShas.push(input.preparedSha);
-            return { status: "pass", satisfied: [], deferred: [] };
-          },
-        },
-        publish: mockPublish(async () => {
-          publishCall += 1;
-          if (publishCall === 1) {
-            return { status: "cas-lost", actualTargetSha: "target-moved" };
-          }
-          return { status: "completed", mergeHash: "merge-after-retry" };
-        }),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("completed");
-      expect(evaluatedShas).toEqual(["", "prepared-1", "prepared-2"]);
-      expect(publishCall).toBe(2);
-    });
-
-    it("parks the prepared candidate and terminates with a typed halt reason on refusal", async () => {
-      let publishCall = 0;
-      const states: string[] = [];
-      const unmet = [
-        {
-          criterionId: "criterion-1",
-          criterionHandle: "R1.1",
-          outcome: "unmet",
-          reason: "No current proof",
-        },
-      ];
-      const machine = createTestMachine({
-        deliveryGateEvaluator: {
-          async evaluate(input) {
-            if (!input.preparedSha)
-              return { status: "pass", satisfied: [], deferred: [] };
-            return {
-              status: "refused",
-              unmet,
-              instruction: "Record fresh proof and re-dispatch the merge.",
-            };
-          },
-        },
-        publish: mockPublish(async () => {
-          publishCall += 1;
-          return { status: "completed", mergeHash: "must-not-publish" };
-        }),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.subscribe((snapshot) => states.push(String(snapshot.value)));
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("failed");
-      expect(states).toContain("deliveryGateFailed");
-      expect(publishCall).toBe(0);
-      expect(output.preparedSha).toBe("prepared-sha");
-      expect(output.parkedRef).toBe("refs/cc-merges/test");
-      expect(output.haltReason).toEqual({
-        type: "delivery_gate_failed",
-        unmet,
-        instruction: "Record fresh proof and re-dispatch the merge.",
-      });
-      expect(output.error).toContain("R1.1: No current proof");
-      expect(output.error).toContain(
-        "Record fresh proof and re-dispatch the merge.",
-      );
-    });
-
-    it("carries the approval-required presentation into the halt reason instead of the unmet-criteria template", async () => {
-      const unmet = [
-        {
-          criterionId: "spec-execution-1:gate:1",
-          criterionHandle: "audit-log",
-          outcome: "gate_blocked",
-          reason: "The delivery gate requires human approval.",
-        },
-      ];
-      const spec = {
-        specSlug: "audit-log",
-        specName: "Audit Log",
-        projectName: "command-center",
-      };
-      const machine = createTestMachine({
-        deliveryGateEvaluator: {
-          async evaluate() {
-            return {
-              status: "refused",
-              unmet,
-              instruction: "Approve delivery in Spec Studio, then resume.",
-              refusalCode: "approval_required",
-              spec,
-            };
-          },
-        },
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("failed");
-      expect(output.haltReason).toEqual({
-        type: "delivery_gate_failed",
-        unmet,
-        instruction: "Approve delivery in Spec Studio, then resume.",
-        refusalCode: "approval_required",
-        spec,
-      });
-      // A sign-off wait is not an unmet-criteria failure: the error line says
-      // what the run is waiting on rather than listing pseudo-criteria.
-      expect(output.error).toBe(
-        "Delivery gate is waiting on human delivery approval. Approve delivery in Spec Studio, then resume.",
-      );
-    });
-
-    it("publishes unchanged without invoking the evaluator when executionId is absent", async () => {
-      let evaluateCall = 0;
-      let publishCall = 0;
-      const machine = createTestMachine({
-        deliveryGateEvaluator: {
-          async evaluate() {
-            evaluateCall += 1;
-            return { status: "pass", satisfied: [], deferred: [] };
-          },
-        },
-        publish: mockPublish(async () => {
-          publishCall += 1;
-          return { status: "completed", mergeHash: "merge-abc" };
-        }),
-      });
-      const actor = createActor(machine, { input: defaultInput });
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("completed");
-      expect(evaluateCall).toBe(0);
-      expect(publishCall).toBe(1);
-    });
-  });
-
   describe("validation mode", () => {
     it("skips only validation while preserving conflict resolution, commit, prepare, and publish", async () => {
       let resolutionCalls = 0;
@@ -694,78 +427,6 @@ describe("mergeMachine", () => {
           upToDate: true,
         },
       ]);
-    });
-
-    it("still evaluates the delivery gate, with the target tip as the candidate", async () => {
-      const evaluated: Parameters<DeliveryGateEvaluator["evaluate"]>[0][] = [];
-      const machine = createTestMachine({
-        prepare: upToDatePrepare,
-        deliveryGateEvaluator: {
-          async evaluate(input) {
-            evaluated.push(input);
-            return { status: "pass", satisfied: [], deferred: [] };
-          },
-        },
-        publish: mockPublish(async () => ({ status: "up-to-date" })),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("completed");
-      expect(evaluated).toEqual([
-        {
-          workflowExecutionId: "workflow-execution-1",
-          preparedSha: "",
-          expectedTargetSha: "",
-          projectPath: defaultInput.projectPath,
-        },
-        {
-          workflowExecutionId: "workflow-execution-1",
-          preparedSha: "target-tip",
-          expectedTargetSha: "target-tip",
-          projectPath: defaultInput.projectPath,
-        },
-      ]);
-    });
-
-    it("refuses to finish the session when the gate refuses the no-op", async () => {
-      let publishCalls = 0;
-      const machine = createTestMachine({
-        prepare: upToDatePrepare,
-        deliveryGateEvaluator: {
-          async evaluate() {
-            return {
-              status: "refused",
-              unmet: [
-                {
-                  criterionId: "criterion-1",
-                  criterionHandle: "R1.1",
-                  outcome: "unmet",
-                },
-              ],
-              instruction: "Record fresh proof and re-dispatch the merge.",
-            };
-          },
-        },
-        publish: mockPublish(async () => {
-          publishCalls += 1;
-          return { status: "up-to-date" };
-        }),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-
-      const output = await toPromise(actor);
-
-      expect(output.status).toBe("failed");
-      expect(output.mergeHash).toBeNull();
-      expect(publishCalls).toBe(0);
     });
 
     it("leaves a graph lane's no-op merge without session finalization", async () => {
@@ -1560,7 +1221,7 @@ describe("mergeMachine", () => {
       expect(states).not.toContain("fixingValidation");
       expect(fixCallCount).toBe(0);
       expect(output.error).toContain("timed out");
-      expect(output.error).toContain("preMergeTimeoutMs");
+      expect(output.error).toContain("validation.commands timeoutMs");
     });
 
     it("stops retrying when a timeout occurs during revalidation", async () => {
@@ -1597,7 +1258,7 @@ describe("mergeMachine", () => {
       // revalidation must not trigger a second fix even though retries remain.
       expect(fixCallCount).toBe(1);
       expect(states.filter((s) => s === "fixingValidation")).toHaveLength(1);
-      expect(output.error).toContain("preMergeTimeoutMs");
+      expect(output.error).toContain("validation.commands timeoutMs");
     });
   });
 
@@ -2446,51 +2107,6 @@ describe("mergeMachine", () => {
       const output = await toPromise(actor);
       expect(output.status).toBe("completed");
       expect(output.mergeHash).toBe("merge-landed");
-    });
-
-    it("stops at the CAS retry rather than re-publishing what the operator stopped", async () => {
-      // The in-flight publish could not be recalled, but losing CAS makes the
-      // run recallable again: re-preparing and publishing minutes after the
-      // operator was told the job would stop lands a merge nobody wants.
-      let publishCall = 0;
-      let publishStarted = false;
-      let loseCas!: () => void;
-      const casLost = new Promise<void>((resolve) => {
-        loseCas = resolve;
-      });
-      const machine = createTestMachine({
-        deliveryGateEvaluator: {
-          async evaluate() {
-            return { status: "pass", satisfied: [], deferred: [] };
-          },
-        },
-        publish: mockPublish(async () => {
-          publishCall += 1;
-          publishStarted = true;
-          if (publishCall === 1) {
-            await casLost;
-            return { status: "cas-lost", actualTargetSha: "target-moved" };
-          }
-          return { status: "completed", mergeHash: "must-not-land" };
-        }),
-      });
-      const actor = createActor(machine, {
-        input: { ...defaultInput, executionId: "workflow-execution-1" },
-      });
-      actor.start();
-
-      const deadline = Date.now() + 1_000;
-      while (!publishStarted) {
-        if (Date.now() > deadline) throw new Error("publish never started");
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
-      actor.send({ type: "ABORT" });
-      loseCas();
-
-      const output = await toPromise(actor);
-      expect(output.status).toBe("failed");
-      expect(output.error).toContain("Aborted by operator");
-      expect(publishCall).toBe(1);
     });
 
     it("still fails with the operator's reason when the cleanup itself fails", async () => {

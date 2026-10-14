@@ -79,7 +79,6 @@ function makeSession(conversation: ConversationState): SessionState {
     source: "cc",
     creationMode: "normal",
     tddEnabled: true,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
   };
 }
@@ -120,7 +119,6 @@ function makeSlices(
       cumulativeImageCount: 3,
     },
     prompt: {
-      approvalGate: null,
       handleSendPrompt: vi.fn(async () => {}),
       handlePromptTextChange: vi.fn(),
       canStop: false,
@@ -278,7 +276,6 @@ describe("useSessionPageViewProps", () => {
     const { result } = renderViewProps();
     const slot = result.current.promptInputSlotProps;
     expect(slot.isWorkflowManagedConversation).toBe(false);
-    expect(slot.approvalGate).toBeNull();
     expect(slot.agentBackend).toBe("claude");
     // Composer sub-bundle carries backend/model selection + collab + voice.
     expect(slot.promptComposerProps.selectedBackend).toBe("claude");

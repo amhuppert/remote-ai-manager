@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
 import { PlusIcon } from "@/components/icons";
 import SessionOverview, { SessionOverviewPending } from "./SessionOverview";
-import { GraphWorkflowLauncher } from "./GraphWorkflowCard";
 import { SessionRunsCard } from "@/components/runs/RunCards";
 
 const conversations = [
@@ -132,22 +131,6 @@ const meta = {
     ),
     workspaceTools: <WorkspaceTools />,
     runs: <SessionRunsCard runs={[]} hrefOf={() => "#"} />,
-    workflow: (
-      <GraphWorkflowLauncher
-        projectName="active-recall"
-        sessionName={session.sessionName}
-        definitions={[
-          {
-            id: "delivery",
-            name: "Feature delivery",
-            revision: 3,
-            tier: "project",
-          },
-          { id: "review", name: "Code review", revision: 2, tier: "global" },
-        ]}
-        onRun={fn()}
-      />
-    ),
   },
   render: function Demo(args) {
     const [rows, setRows] = useState(args.conversations);

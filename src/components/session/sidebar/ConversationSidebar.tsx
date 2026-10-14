@@ -45,8 +45,6 @@ import {
 } from "@/lib/conversations/mutations";
 import { copyConversationRefToClipboard } from "@/lib/conversations/copy-conversation-ref";
 import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
-import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
-import { useApprovalScopedChanges } from "@/hooks/use-approval-scoped-changes";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useDismissNotificationMutation } from "@/lib/notifications/mutations";
 import {
@@ -87,9 +85,7 @@ import {
   buildConversationRowMenuItems,
   type ConversationRowMenuItem,
 } from "@/components/session/sidebar/conversation-row-menu";
-import PeekPopover, {
-  type PeekApprovalGate,
-} from "@/components/session/sidebar/PeekPopover";
+import PeekPopover from "@/components/session/sidebar/PeekPopover";
 import { SubscriptionWakeRail } from "@/components/subscriptions/SubscriptionWakeRail";
 import ActiveWorkSection from "@/components/session/sidebar/ActiveWorkSection";
 import type {
@@ -99,9 +95,7 @@ import type {
 } from "@/components/session/sidebar/active-work";
 import {
   adaptCollaborations,
-  adaptGraphWorkflows,
   adaptRuns,
-  adaptSpecExecutions,
   adaptStoreJobs,
   deriveNotificationOutcomes,
 } from "@/components/session/sidebar/active-work-adapters";
@@ -283,7 +277,7 @@ function ConversationSidebar({
   const sidebarFilter = useSidebarFilter();
   const [selectedProject, setProjectFilter] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
-  const [includeGraphWorkflows, setIncludeGraphWorkflows] = useState(false);
+  const [includeRoleHistory, setIncludeRoleHistory] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -303,17 +297,9 @@ function ConversationSidebar({
     () => (clientStateReady ? (activeData?.conversations ?? []) : []),
     [activeData, clientStateReady],
   );
-  const activeGraphWorkflows = useMemo(
-    () => (clientStateReady ? (activeData?.graphWorkflowExecutions ?? []) : []),
-    [activeData, clientStateReady],
-  );
   const activeCollaborations = useMemo(
     () =>
       clientStateReady ? (activeData?.activeCollaborationExecutions ?? []) : [],
-    [activeData, clientStateReady],
-  );
-  const activeSpecExecutions = useMemo(
-    () => (clientStateReady ? (activeData?.specExecutions ?? []) : []),
     [activeData, clientStateReady],
   );
   const activeRunsQuery = useActiveRunsQuery();
@@ -339,20 +325,11 @@ function ConversationSidebar({
   const activeWorkItems = useMemo(
     () => [
       ...adaptStoreJobs(storeJobs),
-      ...adaptGraphWorkflows(activeGraphWorkflows),
       ...adaptCollaborations(activeCollaborations),
-      ...adaptSpecExecutions(activeSpecExecutions),
       ...adaptRuns(activeRuns),
       ...notificationOutcomes.needsAction,
     ],
-    [
-      storeJobs,
-      activeGraphWorkflows,
-      activeCollaborations,
-      activeSpecExecutions,
-      activeRuns,
-      notificationOutcomes,
-    ],
+    [storeJobs, activeCollaborations, activeRuns, notificationOutcomes],
   );
   const attentionItems = notificationOutcomes.attention;
 
@@ -624,42 +601,6 @@ function ConversationSidebar({
     peekProjectName,
     peekSessionName,
   );
-  const peekResolveApprovalMutation = useResolveApprovalMutation(
-    peekProjectName,
-    peekSessionName,
-  );
-
-  // The peek offers live Approve/Reject, so it is fed the SAME frozen
-  // owned-path artifact the workspace panel renders — through the same hook, so
-  // the two approval surfaces cannot drift apart (R15.2).
-  const peekScopedChanges = useApprovalScopedChanges(
-    peekProjectName,
-    peekSessionName,
-    peekConversation?.pendingApproval ?? null,
-  );
-
-  const peekApprovalGate = ((): PeekApprovalGate | null => {
-    const standing = peekConversation?.pendingApproval ?? null;
-    if (standing === null) return null;
-    const contextId = standing.contextId;
-    return {
-      isSubmitting: peekResolveApprovalMutation.isPending,
-      scopedChanges: peekScopedChanges,
-      // The standing payload carries the suspension flag — the active
-      // execution list omits halted executions, so it cannot be derived here.
-      executionSuspended: standing.executionSuspended,
-      onApprove: () => {
-        peekResolveApprovalMutation.mutate({ contextId, decision: "approve" });
-      },
-      onReject: (message: string) => {
-        peekResolveApprovalMutation.mutate({
-          contextId,
-          decision: "reject",
-          message,
-        });
-      },
-    };
-  })();
 
   // Returns the fork promise so the triggering control (MessageActions' Fork
   // button inside the peek) can render its in-flight pending state.
@@ -709,9 +650,9 @@ function ConversationSidebar({
       filterSidebarScope(activeRows, {
         project: null,
         includeArchived,
-        includeGraphWorkflows,
+        includeRoleHistory,
       }),
-    [activeRows, includeArchived, includeGraphWorkflows],
+    [activeRows, includeArchived, includeRoleHistory],
   );
   const projectRows = useMemo(
     () =>
@@ -745,7 +686,7 @@ function ConversationSidebar({
         query: sidebarFilter,
         project: projectFilter,
         includeArchived,
-        includeGraphWorkflows,
+        includeRoleHistory,
         filter: activeListFilter,
         sessionScope,
         expandedKeys,
@@ -756,7 +697,7 @@ function ConversationSidebar({
       sidebarFilter,
       projectFilter,
       includeArchived,
-      includeGraphWorkflows,
+      includeRoleHistory,
       activeListFilter,
       sessionScope,
       expandedKeys,
@@ -803,7 +744,6 @@ function ConversationSidebar({
           branchName: isSession ? row.branchName : null,
           worktreePath: row.worktreePath,
           archived,
-          approvalGatePending: row.pendingApproval !== null,
         },
         {
           onOpenConversation: () => {
@@ -1148,11 +1088,11 @@ function ConversationSidebar({
                   );
                   logger.debug("sidebar.project_filter", { project: value });
                 }}
-                includeGraphWorkflows={includeGraphWorkflows}
-                onGraphWorkflowsChange={(value) => {
-                  setIncludeGraphWorkflows(value);
+                includeRoleHistory={includeRoleHistory}
+                onRoleHistoryChange={(value) => {
+                  setIncludeRoleHistory(value);
                   logger.debug("sidebar.workflows_filter", {
-                    includeGraphWorkflows: value,
+                    includeRoleHistory: value,
                   });
                 }}
                 includeArchived={includeArchived}
@@ -1361,7 +1301,6 @@ function ConversationSidebar({
             });
           }}
           onFork={handlePeekFork}
-          approvalGate={peekApprovalGate}
         />
       )}
       <ConfirmDialog

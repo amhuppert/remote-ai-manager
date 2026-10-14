@@ -155,7 +155,6 @@ const session: SessionListItem = {
   promptCount: 1,
   derivedLastActivityAt: ts,
   collabContribution: null,
-  hasActiveGraphWorkflow: false,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

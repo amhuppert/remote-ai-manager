@@ -43,7 +43,6 @@ const defaultConfig: GlobalConfig = {
     },
   },
   maxConcurrentQueries: 3,
-  preMergeTimeoutMs: 300_000,
   validation: {
     concurrencyLimit: 8,
     defaultTimeoutMs: 600_000,
@@ -70,7 +69,6 @@ const notificationConfig = {
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
-    planRepair: true,
   },
 };
 
@@ -103,7 +101,6 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   branchPrefix: "feat",
   maxTurns: 50,
   maxConcurrentQueries: 5,
-  preMergeTimeoutMs: 600_000,
   idleQuerySessionTtlMs: 1_800_000,
   validation: {
     concurrencyLimit: 6,
@@ -111,25 +108,6 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   },
   tailscaleEnabled: false,
   pushNotification: notificationConfig,
-  workflowDefaults: {
-    contextValidator: {
-      enabled: true,
-      assignments: [
-        {
-          id: "general",
-          profile: { tier: "builtin", id: "general-reviewer" },
-          authority: "blocking",
-          agent: {
-            backend: "codex",
-            modelSelection: {
-              modelId: "gpt-5.4",
-              parameters: { reasoning: "medium", fast: "false" },
-            },
-          },
-        },
-      ],
-    },
-  },
 };
 
 const fullyConfiguredConfig: GlobalConfig = {
@@ -161,7 +139,6 @@ const fullyConfiguredConfig: GlobalConfig = {
   branchPrefix: "feat",
   maxTurns: 50,
   maxConcurrentQueries: 5,
-  preMergeTimeoutMs: 600_000,
   idleQuerySessionTtlMs: 1_800_000,
   validation: {
     concurrencyLimit: 6,
@@ -169,69 +146,6 @@ const fullyConfiguredConfig: GlobalConfig = {
   },
   tailscaleEnabled: false,
   pushNotification: notificationConfig,
-  workflowDefaults: {
-    implementer: {
-      id: "implementer",
-      profile: { tier: "builtin", id: "general-implementer" },
-      agent: {
-        backend: "claude",
-        modelSelection: {
-          modelId: "opus",
-          parameters: { effort: "medium" },
-        },
-      },
-    },
-    contextValidator: {
-      enabled: true,
-      assignments: [
-        {
-          id: "general",
-          profile: { tier: "builtin", id: "general-reviewer" },
-          authority: "blocking",
-          agent: {
-            backend: "codex",
-            modelSelection: {
-              modelId: "gpt-5.4",
-              parameters: { reasoning: "medium", fast: "false" },
-            },
-          },
-        },
-      ],
-    },
-    scriptValidator: { commands: [] },
-    humanApprovalGate: { enabled: false },
-    askUserQuestions: { enabled: false },
-    iterationPolicy: {
-      maxIterations: 20,
-    },
-    circuitBreaker: { consecutiveFailureThreshold: 3 },
-    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
-    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
-    collaboration: {
-      enabled: false,
-      secondAgent: {
-        backend: "claude",
-        modelSelection: {
-          modelId: "sonnet",
-          parameters: { effort: "medium" },
-        },
-      },
-      negotiationRounds: 3,
-      autonomousResolutionThreshold: "minor",
-    },
-    agentValidation: {
-      implementer: { mode: "all", except: [] },
-      contextValidator: { mode: "only", commands: [] },
-    },
-    laneMergeValidation: {
-      strategy: "final-only",
-      commands: { mode: "project" },
-    },
-    memory: {
-      implementer: { read: "ambient", contribute: "on" },
-      validator: { read: "off", contribute: "off" },
-    },
-  },
   compaction: {
     backend: "claude",
     conversationModelSelection: {

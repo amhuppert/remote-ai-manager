@@ -10,18 +10,12 @@ import { createLogger, withTracing } from "@/lib/logging";
 import {
   getArchivedProjects as defaultGetArchivedProjects,
   listAllProjectConversations as defaultListAllProjectConversations,
-  listActiveGraphWorkflowExecutions as defaultListActiveGraphWorkflowExecutions,
   listSessionConversationListItems as defaultListSessionConversationListItems,
   type SessionConversationListItem,
 } from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
-import {
-  listActiveSpecExecutionsForFeed as defaultListActiveSpecExecutions,
-  type ActiveSpecExecutionFeedItem,
-} from "@/lib/specs/active-executions";
 import { truncate } from "@/lib/shared/truncate";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/prompt/transcript";
-import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import type {
   ActiveConversation,
   ActiveConversationForkedFrom,
@@ -36,21 +30,6 @@ import type {
   ConversationStatus,
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
-import type {
-  GraphWorkflowCleanupStatusValue,
-  GraphWorkflowMergeStatusValue,
-} from "@/lib/workflow-graph/event-schemas";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionJoinKind,
-  GraphWorkflowExecutionJoinStatus,
-  GraphWorkflowHaltReason,
-} from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
-import {
-  holdsActionableGate,
-  holdsExecutionLease,
-} from "@/lib/workflow-graph/lifecycle-classifier";
 import type { ApiError } from "@/lib/api/errors";
 
 const logger = createLogger("active-conversations.route");
@@ -69,16 +48,6 @@ export interface ActiveConversationsRouteDeps {
   listProjectConversations(): Promise<
     { projectPath: string; conversation: ConversationState }[]
   >;
-  /**
-   * Every active graph-workflow execution across all sessions, keyed by
-   * `${projectPath}\u0000${sessionName}`. Read once up front so the
-   * per-session loop never point-looks-up the (now decoupled) execution.
-   */
-  listActiveGraphWorkflowExecutions(): Promise<
-    Map<string, GraphWorkflowExecution>
-  >;
-  /** Every spec execution in definition_review or running, across all specs. */
-  listActiveSpecExecutions(): Promise<ActiveSpecExecutionFeedItem[]>;
   /**
    * Live background-task snapshot for a conversation, read synchronously from
    * the in-memory channel. Deliberately not persisted: background tasks are
@@ -102,66 +71,10 @@ const defaultDeps: ActiveConversationsRouteDeps = {
   getProjectDisplayName: defaultGetProjectDisplayName,
   readLastAssistantContent: defaultReadLastAssistantContent,
   listProjectConversations: defaultListAllProjectConversations,
-  listActiveGraphWorkflowExecutions: defaultListActiveGraphWorkflowExecutions,
-  listActiveSpecExecutions: defaultListActiveSpecExecutions,
   getBackgroundActivity: (conversationId) =>
     getBackgroundActivityChannel().get(conversationId),
   holdsCustody: coreHoldsCustody,
 };
-
-/** Map key for {@link ActiveConversationsRouteDeps.listActiveGraphWorkflowExecutions}. */
-function executionKey(projectPath: string, sessionName: string): string {
-  return `${projectPath}\u0000${sessionName}`;
-}
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface ActiveGraphWorkflowContextMergeProgress {
-  contextId: string;
-  branchName: string | null;
-  mergeStatus: GraphWorkflowMergeStatusValue;
-  cleanupStatus: GraphWorkflowCleanupStatusValue;
-  lastMergeError: string | null;
-}
-
-export interface ActiveGraphWorkflowJoinProgress {
-  joinId: string;
-  kind: GraphWorkflowExecutionJoinKind;
-  contextId: string | null;
-  targetLaneId: string;
-  sourceLaneIds: string[];
-  mergedSourceLaneIds: string[];
-  status: GraphWorkflowExecutionJoinStatus;
-}
-
-export interface ActiveGraphWorkflowFinalPublishProgress {
-  joinId: string;
-  targetLaneId: string;
-  sourceLaneIds: string[];
-  mergedSourceLaneIds: string[];
-  status: GraphWorkflowExecutionJoinStatus;
-}
-
-export interface ActiveGraphWorkflowExecution {
-  executionId: string;
-  status: GraphWorkflowStatus;
-  projectName: string;
-  projectPath: string;
-  sessionName: string;
-  activeContextIds: string[];
-  activeContextTitles: string[];
-  activeBatchIds: string[];
-  pendingHaltReason: GraphWorkflowHaltReason | null;
-  contextMergeProgress: ActiveGraphWorkflowContextMergeProgress[];
-  activeJoinIds: string[];
-  joinProgress: ActiveGraphWorkflowJoinProgress[];
-  finalPublishState: ActiveGraphWorkflowFinalPublishProgress | null;
-  completedContexts: number;
-  totalContexts: number;
-  startedAt: string;
-}
 
 export interface ActiveCollaborationExecution {
   workflowId: string;
@@ -239,77 +152,6 @@ const ACTIVE_STATUSES: ReadonlySet<ConversationStatus> = new Set([
   "awaiting",
   "waiting_for_input",
 ]);
-
-// "Active" for the ambient signal is lease tenure, read through the one
-// authority. The status set this replaces treated every `halted` run as active,
-// so a non-resumable or abandoned halt kept advertising itself as live work
-// forever — a status set cannot see halt resumability or abandonment, the two
-// facts that decide a halted run's tenure.
-
-interface PendingApprovalStanding {
-  contextId: string;
-  contextTitle: string | null;
-  requestedAt: string;
-  workflowName: string | null;
-  executionSuspended: boolean;
-  enveloped: boolean;
-  tasksCompleted: number | null;
-  tasksTotal: number | null;
-}
-
-/**
- * Map conversationId → gate standing for a session's persisted execution.
- * An entry exists when the execution still holds the session's lease and a
- * context is parked `awaiting_approval` with no recorded decision. Derived
- * purely from execution state so standing is independent of
- * `conversation.status`.
- *
- * Tenure, not a status set, is the test: an approval can only be acted on by a
- * run that can still continue. The set this replaces kept a non-resumably
- * halted or abandoned gate in the Needs-Input feed forever — asking for a
- * decision that would change nothing, with no act available to clear it — while
- * dropping a `pending` run's gate, which is live work.
- */
-function buildPendingApprovalStandings(
-  execution: GraphWorkflowExecution | null,
-): Map<string, PendingApprovalStanding> {
-  const standings = new Map<string, PendingApprovalStanding>();
-  if (!execution) return standings;
-  if (
-    !holdsActionableGate(
-      execution.status,
-      execution.haltReason,
-      execution.abandonment,
-    )
-  ) {
-    return standings;
-  }
-  const executionSuspended =
-    execution.status === "paused" || execution.status === "halted";
-  for (const contextState of Object.values(execution.contextStates)) {
-    if (contextState.status !== "awaiting_approval") continue;
-    const record = contextState.pendingApproval;
-    if (!record || record.decision !== null) continue;
-    const context = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === contextState.contextId,
-    );
-    standings.set(record.conversationId, {
-      contextId: contextState.contextId,
-      contextTitle: context?.title ?? null,
-      requestedAt: record.requestedAt,
-      // The display name lives on the stored definition record only; the
-      // assembly is synchronous over state, so no name is available here.
-      workflowName: null,
-      executionSuspended,
-      // From the PARKED record's frozen scope, never the context's live
-      // placement — placement is editable while the gate stands (R15.2).
-      enveloped: record.approvalScope.kind !== "whole_tree",
-      tasksCompleted: contextState.completedTaskCount,
-      tasksTotal: contextState.totalTaskCount,
-    });
-  }
-  return standings;
-}
 
 interface PendingQuestionFields {
   pendingQuestion: string | null;
@@ -494,24 +336,13 @@ export function createActiveConversationsRouteHandlers(
       const sidebar = params?.get("view") === "sidebar";
       const includeArchived =
         sidebar && params?.get("includeArchived") === "true";
-      const [
-        sessionItems,
-        archivedProjects,
-        projectConversations,
-        activeExecutions,
-        allSpecExecutions,
-      ] = await Promise.all([
-        deps.listSessionConversationListItems(),
-        deps.getArchivedProjects(),
-        deps.listProjectConversations(),
-        deps.listActiveGraphWorkflowExecutions(),
-        deps.listActiveSpecExecutions(),
-      ]);
-      const specExecutions = allSpecExecutions.filter(
-        (execution) => !archivedProjects.has(execution.projectPath),
-      );
+      const [sessionItems, archivedProjects, projectConversations] =
+        await Promise.all([
+          deps.listSessionConversationListItems(),
+          deps.getArchivedProjects(),
+          deps.listProjectConversations(),
+        ]);
       const conversations: ActiveConversation[] = [];
-      const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
       const activeCollaborationExecutions: ActiveCollaborationExecution[] = [];
 
       const transcriptTasks: Array<{
@@ -600,25 +431,15 @@ export function createActiveConversationsRouteHandlers(
             });
           }
 
-          const activeExecution =
-            activeExecutions.get(
-              executionKey(projectPath, session.sessionName),
-            ) ?? null;
-
-          const pendingApprovalStandings =
-            buildPendingApprovalStandings(activeExecution);
-
           for (const convo of convos) {
             if (convo.archived && !includeArchived) continue;
-            const pendingApproval =
-              pendingApprovalStandings.get(convo.id) ?? null;
             const hasPendingQuestion =
               convo.status === "waiting_for_input" &&
               convo.pendingQuestionId !== null;
             // Human-input rows bypass the role filter so workflow-managed lane
             // conversations surface while a question or approval is pending.
             // Archival above remains authoritative.
-            if (!sidebar && !pendingApproval && !hasPendingQuestion) {
+            if (!sidebar && !hasPendingQuestion) {
               if (!ACTIVE_STATUSES.has(convo.status)) continue;
               if (convo.role === "iteration" || convo.role === "validator")
                 continue;
@@ -671,7 +492,6 @@ export function createActiveConversationsRouteHandlers(
                 lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
               ),
               unread: convo.unread === true,
-              pendingApproval,
               backgroundActivity: deps.getBackgroundActivity(convo.id),
               custody: deps.holdsCustody?.(convo.id) ?? false,
               // Already redacted by the store's list-item projection: the
@@ -679,114 +499,8 @@ export function createActiveConversationsRouteHandlers(
               redactedProfileSnapshot: convo.redactedProfileSnapshot,
             });
           }
-
-          // Collect active graph workflow executions
-          const exec = activeExecution;
-          if (
-            exec &&
-            holdsExecutionLease(exec.status, exec.haltReason, exec.abandonment)
-          ) {
-            const index = createExecutionIndex(exec.workingDefinition, exec);
-            const activeContextIds = [...exec.activeContextIds];
-            const activeContextTitles = activeContextIds.map((id) => {
-              const context = index.contextById.get(id);
-              return context?.title ?? id;
-            });
-
-            const seenBatches = new Set<string>();
-            const activeBatchIds: string[] = [];
-            for (const contextId of activeContextIds) {
-              const batchId = exec.contextStates[contextId]?.batchId;
-              if (batchId && !seenBatches.has(batchId)) {
-                seenBatches.add(batchId);
-                activeBatchIds.push(batchId);
-              }
-            }
-
-            const contextMergeProgress: ActiveGraphWorkflowContextMergeProgress[] =
-              [];
-            for (const contextId of activeContextIds) {
-              const state = exec.contextStates[contextId];
-              if (!state) continue;
-              if (
-                state.mergeStatus === "not-applicable" &&
-                state.cleanupStatus === "not-applicable" &&
-                state.lastMergeError === null
-              ) {
-                continue;
-              }
-              contextMergeProgress.push({
-                contextId,
-                branchName: state.branchName,
-                mergeStatus: state.mergeStatus,
-                cleanupStatus: state.cleanupStatus,
-                lastMergeError: state.lastMergeError,
-              });
-            }
-
-            const completedContexts = Object.values(exec.contextStates).filter(
-              (cs) => cs.status === "completed",
-            ).length;
-
-            const joinValues = Object.values(exec.joins ?? {});
-            const activeJoins = joinValues
-              .filter((j) => j.status === "pending" || j.status === "running")
-              .sort((a, b) => a.joinId.localeCompare(b.joinId));
-            const activeJoinIds = activeJoins.map((j) => j.joinId);
-            const joinProgress: ActiveGraphWorkflowJoinProgress[] =
-              activeJoins.map((j) => ({
-                joinId: j.joinId,
-                kind: j.kind,
-                contextId: j.contextId,
-                targetLaneId: j.targetLaneId,
-                sourceLaneIds: [...j.sourceLaneIds],
-                mergedSourceLaneIds: [...j.mergedSourceLaneIds],
-                status: j.status,
-              }));
-            const finalPublishJoin = activeJoins.find(
-              (j) => j.kind === "final_publish",
-            );
-            const finalPublishState: ActiveGraphWorkflowFinalPublishProgress | null =
-              finalPublishJoin
-                ? {
-                    joinId: finalPublishJoin.joinId,
-                    targetLaneId: finalPublishJoin.targetLaneId,
-                    sourceLaneIds: [...finalPublishJoin.sourceLaneIds],
-                    mergedSourceLaneIds: [
-                      ...finalPublishJoin.mergedSourceLaneIds,
-                    ],
-                    status: finalPublishJoin.status,
-                  }
-                : null;
-
-            graphWorkflowExecutions.push({
-              executionId: exec.id,
-              status: exec.status,
-              projectName,
-              projectPath,
-              sessionName: session.sessionName,
-              activeContextIds,
-              activeContextTitles,
-              activeBatchIds,
-              pendingHaltReason: exec.pendingHaltReason,
-              contextMergeProgress,
-              activeJoinIds,
-              joinProgress,
-              finalPublishState,
-              completedContexts,
-              totalContexts: exec.workingDefinition.executionContexts.length,
-              startedAt: exec.startedAt,
-            });
-          }
         }
       }
-
-      logger.debug("graph_workflows.active_pass.complete", {
-        executionCount: graphWorkflowExecutions.length,
-        haltedExecutionCount: graphWorkflowExecutions.filter(
-          (execution) => execution.status === "halted",
-        ).length,
-      });
 
       // Project-conversation pass: session-less conversations across all
       // projects. Visibility mirrors the lifecycle rules — non-archived
@@ -851,7 +565,6 @@ export function createActiveConversationsRouteHandlers(
             lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
           ),
           unread: conversation.unread === true,
-          pendingApproval: null,
           backgroundActivity: deps.getBackgroundActivity(conversation.id),
           custody: deps.holdsCustody?.(conversation.id) ?? false,
           // The project walk reads whole rows, so redaction happens here.
@@ -880,9 +593,7 @@ export function createActiveConversationsRouteHandlers(
 
       return NextResponse.json({
         conversations,
-        graphWorkflowExecutions,
         activeCollaborationExecutions,
-        specExecutions,
       });
     } catch (err) {
       const message =

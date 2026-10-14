@@ -8,8 +8,6 @@ vi.mock("@/lib/logging", () => ({
     error: vi.fn(),
   }),
 }));
-
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -22,7 +20,6 @@ import {
   type SpecsRepo,
 } from "@/lib/state-store/specs-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -59,7 +56,6 @@ let db: Db;
 let specs: SpecsRepo;
 let review: SpecReviewRepo;
 let links: SpecLinksRepo;
-let delivery: SpecDeliveryRepo;
 let events: SpecEventsRepo;
 let service: AuthoringService;
 let idSequence: number;
@@ -75,7 +71,6 @@ beforeEach(() => {
   specs = createSpecsRepo(db, createWriteQueue());
   review = createSpecReviewRepo(db);
   links = createSpecLinksRepo(db);
-  delivery = createSpecDeliveryRepo(db);
   events = createSpecEventsRepo(db);
   service = createAuthoringService({
     specs,
@@ -949,79 +944,5 @@ describe("historical element reintroduction (ticket #42)", () => {
     expect(applies.orphanBranch).toBe(false);
     // The same machinery still carries an approval down the approved line.
     expect(applies.approvedAncestor).toBe(true);
-  });
-
-  it("leaves evidence and waivers pinned to the revision they were recorded against", async () => {
-    const world = await orphanThroughDiscardedDraft(async (revisionId) => {
-      await service.upsertDraftElement({
-        specId,
-        revisionId,
-        elementId: "criterion-orphaned",
-        kind: "criterion",
-        parentElementId: KEPT_ID,
-        payload: criterion("Proven once, on a revision that ended."),
-        baseElementVersion: null,
-        actor: ACTOR,
-      });
-    });
-    delivery.insertEvidence({
-      id: "evidence-on-attempt",
-      spec_id: world.specId,
-      criterion_element_id: "criterion-orphaned",
-      revision_id: world.attempt.id,
-      kind: "test_run",
-      ref_json: JSON.stringify({ type: "git_object", objectId: "sha" }),
-      evaluated_state_json: JSON.stringify({ outcome: "pass" }),
-      producer_json: JSON.stringify(ACTOR),
-      execution_id: null,
-      source_event_id: null,
-      created_at: "2026-07-31T10:02:30.000Z",
-    });
-    delivery.saveWaiver({
-      id: "waiver-on-attempt",
-      spec_id: world.specId,
-      criterion_element_id: "criterion-orphaned",
-      revision_id: world.attempt.id,
-      reason: "Human accepted the residual risk on the attempt.",
-      waived_at: "2026-07-31T10:02:40.000Z",
-      stale: 0,
-    });
-
-    await service.upsertDraftElement({
-      specId: world.specId,
-      revisionId: world.followUp.id,
-      elementId: "criterion-orphaned",
-      kind: "criterion",
-      parentElementId: KEPT_ID,
-      payload: criterion("Restored, and unproven on this revision."),
-      baseElementVersion: null,
-      reintroduceHistorical: true,
-      actor: ACTOR,
-    });
-
-    expect(
-      delivery.findEvidenceByCriterionRevision(
-        "criterion-orphaned",
-        world.attempt.id,
-      ),
-    ).toHaveLength(1);
-    expect(
-      delivery.findEvidenceByCriterionRevision(
-        "criterion-orphaned",
-        world.followUp.id,
-      ),
-    ).toEqual([]);
-    expect(
-      delivery.findWaiverForCriterionRevision(
-        "criterion-orphaned",
-        world.attempt.id,
-      ),
-    ).toMatchObject({ id: "waiver-on-attempt" });
-    expect(
-      delivery.findWaiverForCriterionRevision(
-        "criterion-orphaned",
-        world.followUp.id,
-      ),
-    ).toBeNull();
   });
 });

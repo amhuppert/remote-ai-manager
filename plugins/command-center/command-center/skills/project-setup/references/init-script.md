@@ -26,7 +26,7 @@
 | `PROJECT_ROOT` | `/home/user/repos/my-project` | Absolute path to the original project root |
 | `CLAUDE_PROJECT_DIR` | `/home/user/repos/my-project` | Same as `PROJECT_ROOT` |
 | `WORKTREE_PATH` | `/home/user/repos/my-project/.worktrees/my-session` | Absolute path to the session worktree |
-| `PARENT_WORKTREE_PATH` | `/home/user/repos/my-project/.worktrees/parent-session` | Worktree this one was branched from — the source session's worktree, or `PROJECT_ROOT` when created off the main branch. (For graph-workflow parallel contexts, this is the session worktree each lane branches from.) |
+| `PARENT_WORKTREE_PATH` | `/home/user/repos/my-project/.worktrees/parent-session` | Worktree this one was branched from — the source session's worktree, or `PROJECT_ROOT` when created off the main branch. (For parallel run contexts, this is the session worktree each lane branches from.) |
 | `SESSION_NAME` | `my-session` | Session identifier |
 | `BRANCH_NAME` | `csm/my-session` | Git branch created for this session |
 

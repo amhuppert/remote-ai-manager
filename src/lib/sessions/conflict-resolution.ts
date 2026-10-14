@@ -5,7 +5,7 @@ import { conflictEntrySchema } from "../jobs/schemas";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { assertNever } from "../shared/assert-never";
 import { createLogger } from "../logging";
-import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
+import { runConversationTask as defaultExecuteWorkflowTaskRun } from "@/lib/supervision/handles";
 import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   AgentTurnDispatch,

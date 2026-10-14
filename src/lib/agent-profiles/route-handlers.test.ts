@@ -93,10 +93,7 @@ function buildDeps(): AgentProfileRouteDeps {
 beforeEach(async () => {
   configDir = await mkdtemp(path.join(tmpdir(), "cc-agent-profile-routes-"));
   savedReferences = {
-    definitions: [],
-    templates: [],
     runTemplates: [],
-    workflowDefaults: false,
   };
   library = createAgentProfileLibraryService({
     storage: createAgentProfileStorage({ resolveConfigDir: () => configDir }),
@@ -954,25 +951,7 @@ describe("agent profile routes — no instruction text outside the authorized ge
 
 describe("agent profile routes — deletion preview (R15.1)", () => {
   const HOLDERS: AgentProfileSavedReferences = {
-    definitions: [
-      {
-        scope: { kind: "project", projectPath: ALPHA_PATH },
-        id: "wf-1",
-        name: "Alpha Delivery",
-        contextId: "context-implement",
-        dormant: true,
-      },
-    ],
-    templates: [
-      {
-        scope: { kind: "global" },
-        id: "tpl-1",
-        name: "Shared Template",
-        dormant: false,
-      },
-    ],
     runTemplates: [],
-    workflowDefaults: true,
   };
 
   it("answers a GET with the report shape a delete would return, having changed nothing", async () => {

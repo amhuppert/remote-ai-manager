@@ -15,36 +15,18 @@ import {
   CONVERSATION_IDENTITY_HEADER,
   encodeConversationIdentity,
 } from "@/lib/agent-gateway/conversation-identity";
-import {
-  LANE_IDENTITY_HEADER,
-  encodeLaneIdentity,
-} from "@/lib/agent-gateway/lane-identity";
 const logger = createLogger("cli.shared");
 
 export type CliEnv = Record<string, string | undefined>;
 
 export interface CliPrincipalIdentity {
   conversation?: string;
-  lane?: string;
 }
 
 /** Caller identity comes only from the environment, independently of CLI target flags. */
 export function resolveCliPrincipalIdentity(env: CliEnv): CliPrincipalIdentity {
   const conversationId = env[CONVERSATION_IDENTITY_ENV_VAR];
   const sessionName = readSessionEnv(env);
-  const executionId = env["CC_WORKFLOW_EXECUTION_ID"];
-  const contextId = env["CC_WORKFLOW_CONTEXT_ID"];
-  const laneConversationId = env["CC_CONVERSATION_ID"];
-  if (executionId || contextId) {
-    return {
-      lane: encodeLaneIdentity({
-        laneKind: "implementer",
-        executionId: executionId ?? "",
-        contextId: contextId ?? "",
-        conversationId: laneConversationId ?? "",
-      }),
-    };
-  }
   return conversationId && sessionName
     ? {
         conversation: encodeConversationIdentity({
@@ -172,18 +154,6 @@ export interface ProjectConversationContext extends ProjectContext {
  */
 export interface ConversationTargetContext extends ProjectContext {
   target: ConversationTarget;
-}
-
-/**
- * Resolved session + graph-workflow lane identity, for the `cctl workflow`
- * lane verbs (task complete/add, shared-doc upsert, collab request). The lane's
- * execution + context come from the env CC injects at spawn
- * (`CC_WORKFLOW_EXECUTION_ID` / `CC_WORKFLOW_CONTEXT_ID`, doc 01 §2) — there is
- * no flag override; these identify the one lane the conversation runs.
- */
-export interface LaneContext extends SessionContext {
-  executionId: string;
-  contextId: string;
 }
 
 /**
@@ -442,9 +412,6 @@ function buildRequestInit(params: CliRequestParams): FetchInit {
           [CONVERSATION_IDENTITY_HEADER]: params.principalIdentity.conversation,
         }
       : {}),
-    ...(params.principalIdentity?.lane
-      ? { [LANE_IDENTITY_HEADER]: params.principalIdentity.lane }
-      : {}),
   };
   if (params.token !== null)
     headers["authorization"] = `Bearer ${params.token}`;
@@ -587,7 +554,6 @@ export async function cliRequest(
       path: params.path,
       hasConversationCapability:
         params.principalIdentity.conversation !== undefined,
-      hasLaneCapability: params.principalIdentity.lane !== undefined,
     });
   }
 

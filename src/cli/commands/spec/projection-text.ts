@@ -72,10 +72,8 @@ function gateLine(
  * so a policy admission is not read as a human approval.
  */
 function admissionText(admission: JsonData<SpecGatePriorAdmission>): string {
-  const run =
-    admission.executionId === null ? "" : ` for run ${admission.executionId}`;
   const actor = admission.actor === null ? "" : ` by ${admission.actor.kind}`;
-  return `admitted on rev ${admission.revisionNumber}${run}${actor} (basis ${admission.basis})`;
+  return `admitted on rev ${admission.revisionNumber}${actor} (basis ${admission.basis})`;
 }
 
 /**

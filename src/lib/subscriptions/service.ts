@@ -158,13 +158,7 @@ function canReconcile(
   subscription: ConversationSubscription,
   at: string,
 ): boolean {
-  const workflowWait =
-    subscription.source.kind === "workflow" && subscription.mode === "active";
-  return (
-    subscription.status === "following" &&
-    (workflowWait ||
-      (isLive(subscription, at) && subscription.mode === "passive"))
-  );
+  return isLive(subscription, at) && subscription.mode === "passive";
 }
 /** Source strings cannot manufacture a delimiter or a new privileged prompt block. */
 function quote(value: unknown): string {

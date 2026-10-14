@@ -9,7 +9,6 @@ import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
 import { mcpOverridesSchema } from "@/lib/mcp/schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentCapabilityOverridesSchema } from "@/lib/agent-capabilities/schemas";
-import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
   sessionCreationModeSchema,
   sessionSourceSchema,
@@ -46,7 +45,6 @@ export const sessionStateSchema = z.object({
   tddEnabled: z.boolean().default(true),
   targetBranch: z.string().default("main"),
   parentSessionName: z.string().nullable().default(null),
-  graphWorkflowExecution: graphWorkflowExecutionSchema.nullable().default(null),
   referenceDocuments: z.array(referenceDocumentSchema).default([]),
   // Workflow envelope durable persistence for the workflow primitive layer.
   // Stored as opaque records here to avoid pulling primitive-layer schemas into

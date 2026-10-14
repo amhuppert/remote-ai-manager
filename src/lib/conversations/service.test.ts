@@ -234,7 +234,6 @@ function makeSessionWith(
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
     ...overrides,
   };
@@ -263,7 +262,6 @@ async function seedSession(
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,
-            graphWorkflowExecution: null,
             referenceDocuments: [],
             ...sessionOverrides,
           },

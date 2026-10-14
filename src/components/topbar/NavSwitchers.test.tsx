@@ -56,7 +56,6 @@ function makeSession(
     promptCount: 1,
     derivedLastActivityAt: minutesAgo(600),
     collabContribution: null,
-    hasActiveGraphWorkflow: false,
     spawnedFrom: null,
     ...overrides,
   };
@@ -184,7 +183,6 @@ beforeEach(() => {
   api.json("GET", "/api/runs/active", []);
   api.json("GET", "/api/conversations/active", {
     conversations: [],
-    graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
   });
   api.json("GET", "/api/projects", PROJECTS);

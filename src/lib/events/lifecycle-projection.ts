@@ -20,11 +20,6 @@
 import type { SSEEvent, ScopedStatusEvent } from "@/lib/api/sse-events";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
-import type {
-  GraphWorkflowContextStatusEvent,
-  GraphWorkflowStatusEvent,
-  GraphWorkflowTaskStatusEvent,
-} from "@/lib/workflow-graph/event-schemas";
 import { createLogger } from "@/lib/logging";
 import { assertNever } from "@/lib/shared/assert-never";
 import type { StatusBusLifecycleStatus } from "./status-bus";
@@ -35,9 +30,6 @@ export const LIFECYCLE_EVENT_TYPES = [
   "conversation-status",
   "ask-question",
   "job-status",
-  "graph-workflow-status",
-  "graph-workflow-context-status",
-  "graph-workflow-task-status",
   "dev-server-status",
   "debug-mode-status",
   "debug-log-received",
@@ -67,9 +59,6 @@ export type LifecycleSSEEvent = Extract<SSEEvent, { type: LifecycleEventType }>;
 export type LifecycleScope =
   | "conversation"
   | "debug"
-  | "graph_workflow"
-  | "graph_workflow_context"
-  | "graph_workflow_task"
   | "merge_job"
   | "notification"
   | "collaboration"
@@ -123,67 +112,6 @@ function mapJobStatus(
   }
 }
 
-function mapGraphWorkflowStatus(
-  status: GraphWorkflowStatusEvent["workflowStatus"],
-): StatusBusLifecycleStatus {
-  switch (status) {
-    case "pending":
-    case "running":
-      return "running";
-    case "paused":
-    case "halted":
-      return "paused";
-    case "completed":
-      return "completed";
-    case "aborted":
-      return "failed";
-    default:
-      return assertNever(status);
-  }
-}
-
-function mapContextStatus(
-  status: GraphWorkflowContextStatusEvent["status"],
-): StatusBusLifecycleStatus {
-  switch (status) {
-    case "pending":
-    case "ready":
-    case "running":
-      return "running";
-    case "halted":
-    case "awaiting_approval":
-    case "awaiting_user_input":
-      return "paused";
-    case "completed":
-    // A skipped context is settled with nothing (D4 R4): it owes no work, so
-    // the lifecycle bus — whose four states answer "is anything still
-    // outstanding here" — reads it as settled. The routing detail lives on the
-    // context-skipped event, not on this coarse projection.
-    case "skipped":
-      return "completed";
-    default:
-      return assertNever(status);
-  }
-}
-
-function mapTaskStatus(
-  status: GraphWorkflowTaskStatusEvent["status"],
-): StatusBusLifecycleStatus {
-  switch (status) {
-    case "pending":
-    case "running":
-      return "running";
-    case "interrupted":
-      return "paused";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    default:
-      return assertNever(status);
-  }
-}
-
 function mapDevServerStatus(
   status: DevServerStatusEvent["status"],
 ): StatusBusLifecycleStatus {
@@ -203,9 +131,6 @@ function mapDevServerStatus(
 const SCOPED_STATUS_RECOGNIZED_SCOPES: ReadonlySet<LifecycleScope> = new Set([
   "conversation",
   "debug",
-  "graph_workflow",
-  "graph_workflow_context",
-  "graph_workflow_task",
   "merge_job",
   "notification",
   "collaboration",
@@ -258,24 +183,6 @@ export function projectLifecycle(event: SSEEvent): LifecycleProjection | null {
         scope: "merge_job",
         scopeId: event.jobId,
         status: mapJobStatus(event.status),
-      };
-    case "graph-workflow-status":
-      return {
-        scope: "graph_workflow",
-        scopeId: event.executionId,
-        status: mapGraphWorkflowStatus(event.workflowStatus),
-      };
-    case "graph-workflow-context-status":
-      return {
-        scope: "graph_workflow_context",
-        scopeId: `${event.executionId}/${event.contextId}`,
-        status: mapContextStatus(event.status),
-      };
-    case "graph-workflow-task-status":
-      return {
-        scope: "graph_workflow_task",
-        scopeId: `${event.executionId}/${event.taskId}`,
-        status: mapTaskStatus(event.status),
       };
     case "dev-server-status":
       return {

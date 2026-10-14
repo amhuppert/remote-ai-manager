@@ -31,13 +31,6 @@ export const mutateSession = defaultStore.mutateSession;
 export const mutateConversation = defaultStore.mutateConversation;
 export const createSessionConversation = defaultStore.createSessionConversation;
 export const mutateProjectConversation = defaultStore.mutateProjectConversation;
-export const getConversationMachineSnapshot =
-  defaultStore.getConversationMachineSnapshot;
-export const upsertConversationMachineSnapshot =
-  defaultStore.upsertConversationMachineSnapshot;
-export const deleteConversationMachineSnapshot =
-  defaultStore.deleteConversationMachineSnapshot;
-export type { ConversationSnapshotOwner } from "./conversation-machine-snapshots-repo";
 export const getProjectSessionListItems =
   defaultStore.getProjectSessionListItems;
 export const getSession = defaultStore.getSession;
@@ -100,50 +93,10 @@ export const setProjectConversationOpen =
 export const setProjectPinned = defaultStore.setProjectPinned;
 export const setSessionSpawnedFrom = defaultStore.setSessionSpawnedFrom;
 export const addPlcSpawnedSessionIds = defaultStore.addPlcSpawnedSessionIds;
-export const mutateActiveGraphWorkflowExecution =
-  defaultStore.mutateActiveGraphWorkflowExecution;
-export const reserveActiveGraphWorkflowExecution =
-  defaultStore.reserveActiveGraphWorkflowExecution;
-export const clearGraphWorkflowPendingArtifacts =
-  defaultStore.clearGraphWorkflowPendingArtifacts;
-export const archiveActiveGraphWorkflowExecution =
-  defaultStore.archiveActiveGraphWorkflowExecution;
 export const mutateSessionWorkflowLanes =
   defaultStore.mutateSessionWorkflowLanes;
 export const mutateSessionWorkflowEnvelopes =
   defaultStore.mutateSessionWorkflowEnvelopes;
-export const settleGraphWorkflowResultDeliveryFallback =
-  defaultStore.settleGraphWorkflowResultDeliveryFallback;
-export const commitGraphWorkflowMissingOriginFallback =
-  defaultStore.commitGraphWorkflowMissingOriginFallback;
-export const markGraphWorkflowResultEffectDelivered =
-  defaultStore.markGraphWorkflowResultEffectDelivered;
-export const getGraphWorkflowResultDelivery =
-  defaultStore.getGraphWorkflowResultDelivery;
-export const listPendingGraphWorkflowResultEffects =
-  defaultStore.listPendingGraphWorkflowResultEffects;
-export const getGraphWorkflowEventsTail =
-  defaultStore.getGraphWorkflowEventsTail;
-export const getGraphWorkflowEventsPage =
-  defaultStore.getGraphWorkflowEventsPage;
-export const findLatestGraphWorkflowContextEvent =
-  defaultStore.findLatestGraphWorkflowContextEvent;
-export const getActiveGraphWorkflowExecution =
-  defaultStore.getActiveGraphWorkflowExecution;
-export const getArchivedGraphWorkflowExecutionById =
-  defaultStore.getArchivedGraphWorkflowExecutionById;
-export const getGraphWorkflowExecutionById =
-  defaultStore.getGraphWorkflowExecutionById;
-export const getGraphWorkflowBoundaryResultAfter =
-  defaultStore.getGraphWorkflowBoundaryResultAfter;
-export const getGraphWorkflowPendingArtifacts =
-  defaultStore.getGraphWorkflowPendingArtifacts;
-export const listActiveGraphWorkflowExecutions =
-  defaultStore.listActiveGraphWorkflowExecutions;
-export const findGraphWorkflowExecutionById =
-  defaultStore.findGraphWorkflowExecutionById;
-export const listArchivedGraphWorkflowExecutions =
-  defaultStore.listArchivedGraphWorkflowExecutions;
 export const createReferenceDocument = defaultStore.createReferenceDocument;
 export const deleteReferenceDocument = defaultStore.deleteReferenceDocument;
 export const upsertSessionMarkdownDocuments =

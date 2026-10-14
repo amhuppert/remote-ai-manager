@@ -27,34 +27,16 @@ const { parseRow, readMany, readOne, timed } = createSpecRepoHelpers(
  * is waiting on shrinks as approvals land, so keying on it would move the
  * request's identity under the human who is already looking at it.
  *
- * `executionId` is what a per-run gate adds to that identity. Successive runs
- * pin the same approved revision, so without it a second run's ask reads as a
- * repeat of the first and no human is ever told. Revision-scoped gates pass
- * null and match the requests that carry none.
  */
-export type ApprovalRequestKey =
-  | {
-      /**
-       * Per-run gates admit the run as a whole and predate request scope, so
-       * their identity stays (spec, gate, subject, run) and matches requests
-       * recorded with or without a scope.
-       */
-      kind: "execution";
-      specId: string;
-      revisionId: string;
-      gate: string;
-      subject: string;
-      executionId: string;
-    }
-  | {
-      kind: "authoring";
-      specId: string;
-      revisionId: string;
-      gate: string;
-      scope: SpecApprovalRequestScope;
-      /** Null for a gate-scoped ask, whose identity excludes the subject. */
-      subject: string | null;
-    };
+export type ApprovalRequestKey = {
+  kind: "authoring";
+  specId: string;
+  revisionId: string;
+  gate: string;
+  scope: SpecApprovalRequestScope;
+  /** Null for a gate-scoped ask, whose identity excludes the subject. */
+  subject: string | null;
+};
 
 /** One durable approval request that has not been retired. */
 export interface OpenApprovalRequest {
@@ -64,7 +46,6 @@ export interface OpenApprovalRequest {
   /** Null on requests recorded before request scope existed. */
   scope: SpecApprovalRequestScope | null;
   subject: string;
-  executionId: string | null;
 }
 
 export interface SpecEventsRepo {
@@ -113,19 +94,6 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
      WHERE spec_id = @spec_id
        AND event_type = 'spec-attention-changed'
        AND json_extract(payload_json, '$.kind') = 'approval-requested'`;
-  // Execution-scoped requests are identified by (spec, gate, subject,
-  // execution) alone: rows persisted before revision canonicalization may
-  // carry a non-pinned revisionId, and the run — not the revision — owns a
-  // per-run gate's identity.
-  const findExecutionRequestStmt = db.prepare(
-    `${requestSelect}
-       AND json_extract(payload_json, '$.gate') = @gate
-       AND json_extract(payload_json, '$.subject') = @subject
-       AND json_extract(payload_json, '$.executionId') = @execution_id
-       AND ${notRetiredClause}
-     ORDER BY id ASC
-     LIMIT 1`,
-  );
   // Matching `scope` exactly is also what keeps a pre-boundary request (which
   // carries none) from being reused as a scoped one.
   const findAuthoringRequestStmt = db.prepare(
@@ -134,7 +102,6 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
        AND json_extract(payload_json, '$.gate') = @gate
        AND json_extract(payload_json, '$.scope') = @scope
        AND (@subject IS NULL OR json_extract(payload_json, '$.subject') = @subject)
-       AND json_extract(payload_json, '$.executionId') IS NULL
        AND ${notRetiredClause}
      ORDER BY id ASC
      LIMIT 1`,
@@ -144,8 +111,7 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
             json_extract(payload_json, '$.revisionId') AS revision_id,
             json_extract(payload_json, '$.gate') AS gate,
             json_extract(payload_json, '$.scope') AS scope,
-            json_extract(payload_json, '$.subject') AS subject,
-            json_extract(payload_json, '$.executionId') AS execution_id
+            json_extract(payload_json, '$.subject') AS subject
      FROM spec_events
      WHERE spec_id = @spec_id
        AND event_type = 'spec-attention-changed'
@@ -162,7 +128,6 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
     gate: z.string().min(1),
     scope: specApprovalRequestScopeSchema.nullable(),
     subject: z.string().min(1),
-    execution_id: z.string().min(1).nullable(),
   });
 
   function appendInTransaction(event: SpecEventInput): SpecEventRow {
@@ -204,21 +169,13 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
       );
     },
     findApprovalRequest(key) {
-      const raw: unknown =
-        key.kind === "execution"
-          ? findExecutionRequestStmt.get({
-              spec_id: key.specId,
-              gate: key.gate,
-              subject: key.subject,
-              execution_id: key.executionId,
-            })
-          : findAuthoringRequestStmt.get({
-              spec_id: key.specId,
-              revision_id: key.revisionId,
-              gate: key.gate,
-              scope: key.scope,
-              subject: key.subject,
-            });
+      const raw: unknown = findAuthoringRequestStmt.get({
+        spec_id: key.specId,
+        revision_id: key.revisionId,
+        gate: key.gate,
+        scope: key.scope,
+        subject: key.subject,
+      });
       if (raw === undefined) return null;
       const parsed = attentionIdRowSchema.safeParse(raw);
       return parsed.success ? { attentionId: parsed.data.attention_id } : null;
@@ -236,7 +193,6 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
           gate: row.gate,
           scope: row.scope,
           subject: row.subject,
-          executionId: row.execution_id,
         })),
       );
     },

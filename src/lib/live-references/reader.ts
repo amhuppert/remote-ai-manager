@@ -7,11 +7,6 @@ import {
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { resolveDisplayLabel } from "@/lib/conversations/display-label";
 import { quoteAgentCommandArgument } from "@/lib/tickets/command-arguments";
-import { buildExecutionReadCommand } from "@/lib/workflow-graph/references";
-import { deriveExecutionGates } from "@/lib/workflow-graph/execution-gates";
-import { deriveExecutionStatusSummary } from "@/lib/workflow-graph/execution-status-summary";
-import { originFallbackName } from "@/lib/workflow-graph/execution-origin";
-import { awaitsDefinitionApproval } from "@/lib/workflow-graph/lifecycle-classifier";
 import type { LiveReferenceReader } from "./service";
 import type { LiveReferenceSummary } from "./schemas";
 
@@ -27,14 +22,6 @@ const conversationStates = {
   running: { status: "Running", tone: "cyan" },
   awaiting: { status: "Awaiting", tone: "amber" },
   waiting_for_input: { status: "Waiting for input", tone: "amber" },
-} as const;
-const executionStates = {
-  pending: { status: "Pending", tone: "neutral" },
-  running: { status: "Running", tone: "cyan" },
-  paused: { status: "Paused", tone: "amber" },
-  halted: { status: "Halted", tone: "red" },
-  completed: { status: "Completed", tone: "green" },
-  aborted: { status: "Aborted", tone: "neutral" },
 } as const;
 
 export const liveReferenceReader: LiveReferenceReader = {
@@ -93,45 +80,6 @@ export const liveReferenceReader: LiveReferenceReader = {
         ],
       };
     }
-    const { getGraphWorkflowExecutionById } = await import("@/lib/state-store");
-    const execution = await getGraphWorkflowExecutionById(
-      projectPath,
-      target.sessionName,
-      target.id,
-    );
-    if (!execution) return null;
-    const gates = deriveExecutionGates(execution);
-    const pendingDefinition = awaitsDefinitionApproval(
-      execution.status,
-      execution.definitionApproval,
-    );
-    const activity = deriveExecutionStatusSummary(execution)
-      .map((part) => part.text)
-      .join("");
-    return {
-      title:
-        execution.launchDocument?.name ?? originFallbackName(execution.origin),
-      identity: execution.id,
-      ...executionStates[execution.status],
-      href: `/projects/${encodeURIComponent(target.projectName)}/${encodeURIComponent(target.sessionName)}/workflow?execution=${encodeURIComponent(target.id)}`,
-      readCommand: buildExecutionReadCommand(
-        target.projectName,
-        target.sessionName,
-        target.id,
-      ),
-      attentionCount: gates.length + (pendingDefinition ? 1 : 0),
-      details: [
-        { label: "Project", value: target.projectName },
-        { label: "Session", value: target.sessionName },
-        { label: "Activity", value: activity },
-        ...(pendingDefinition
-          ? [{ label: "Awaiting you", value: "Definition approval" }]
-          : []),
-        ...gates.map((gate) => ({
-          label: "Awaiting you",
-          value: `${gate.contextTitle} · ${gate.detail}`,
-        })),
-      ],
-    };
+    return null;
   },
 };

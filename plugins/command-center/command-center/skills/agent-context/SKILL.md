@@ -46,7 +46,7 @@ CC provides a command-line tool, **`cctl`**, on your `PATH` for session actions:
 
 Run `cctl validate list` to inspect the project's registered command names, declared costs, native/fallback changed support, caller policy, and current capacity. Run one with `cctl validate run <name>`; every run blocks until its verdict. Scope defaults to changed, `--scope full` requests full evidence, and full-only commands fall back automatically. Add `--queue-if-busy` when the turn should join the strict FIFO queue instead of using fail-fast admission. Use values after `--` only to narrow a native changed command whose registration permits paths.
 
-Every validation execution shares one server-owned global cost budget across all projects, sessions, conversations, graph workflows, and merge flows. A capacity refusal reports systemic capacity or an older queued request, not a validation-tool error. Decide whether queueing fits the turn; never respond by invoking the registered tool, package alias, or wrapper directly. A declared cost above the machine limit is a configuration error that must be fixed rather than queued.
+Every validation execution shares one server-owned global cost budget across all projects, sessions, conversations, runs, and merge flows. A capacity refusal reports systemic capacity or an older queued request, not a validation-tool error. Decide whether queueing fits the turn; never respond by invoking the registered tool, package alias, or wrapper directly. A declared cost above the machine limit is a configuration error that must be fixed rather than queued.
 
 ### Dev-server commands
 
@@ -86,7 +86,7 @@ Runs after CC creates your worktree. Typically installs dependencies. If the ini
 
 ### Validation Registry (`validation`)
 
-Projects register named executable wrappers in `validation.commands`, each with a required fixed cost and optional timeout, description, and path-scoping policy. `validation.preMerge` is the ordered selection for Smart Merge and Smart Commit. `validation.laneMerge` can select a cheaper ordered graph lane-merge profile and otherwise inherits `preMerge`.
+Projects register named executable wrappers in `validation.commands`, each with a required fixed cost and optional timeout, description, and path-scoping policy. `validation.preMerge` is the ordered selection for Smart Merge and Smart Commit.
 
 All callers, including merge workflows and graph script gates, submit those names through the same ValidationService and global budget. Wrapper paths resolve from the canonical project root and execute with the target worktree as `cwd`, so an unmerged session cannot exercise edits to its own registry or wrappers through `cctl validate`.
 

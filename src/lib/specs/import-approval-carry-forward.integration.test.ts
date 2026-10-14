@@ -4,7 +4,6 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -173,7 +172,6 @@ async function statusProjection(spec: Spec, revisionId: string) {
       importBaselineCitationState: loaded.importBaselineCitationState,
       approvals: harness.review.findApprovalsBySpecId(spec.id),
       admissions: harness.review.findGateAdmissionsBySpecId(spec.id),
-      currentExecution: null,
       revisionNumberById: new Map(
         revisions.map((candidate) => [candidate.id, candidate.number]),
       ),
@@ -222,7 +220,6 @@ beforeEach(() => {
     reviewing: createReviewService({
       ...deps,
       attention: specEvents,
-      delivery: createSpecDeliveryRepo(fixture.db),
     }),
   };
 });

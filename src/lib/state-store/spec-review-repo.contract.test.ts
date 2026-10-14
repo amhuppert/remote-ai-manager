@@ -31,7 +31,6 @@ type Db = InstanceType<typeof Database>;
 const SPEC_ID = "spec-review-maximal";
 const ELEMENT_ID = "requirement-review-maximal";
 const REVISION_ID = "revision-review-maximal";
-const EXECUTION_ID = "execution-review-maximal";
 const SECOND_REVISION_ID = "revision-review-maximal-2";
 const FOREIGN_SPEC_ID = "spec-review-foreign";
 const FOREIGN_REVISION_ID = "revision-review-foreign";
@@ -86,26 +85,6 @@ function seedReviewParents(): void {
     "2026-07-18T08:03:00.000Z",
     "2026-07-18T08:04:00.000Z",
     "2026-07-18T08:02:30.000Z",
-  );
-  db.prepare(
-    `INSERT INTO spec_executions (
-       id, spec_id, revision_id, scope_json, state, workflow_definition_id,
-       workflow_execution_id, session_name, delivered_at, abandoned_reason,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    EXECUTION_ID,
-    SPEC_ID,
-    REVISION_ID,
-    '{"taskElementIds":["task-7"]}',
-    "running",
-    "workflow-definition-review-maximal",
-    "workflow-execution-review-maximal",
-    "native-sdd-review",
-    null,
-    null,
-    "2026-07-18T08:05:00.000Z",
-    "2026-07-18T08:06:00.000Z",
   );
 }
 
@@ -175,11 +154,10 @@ function maximalGateAdmission(): SpecGateAdmissionRow {
   return specGateAdmissionRowSchema.parse({
     id: "admission-review-maximal",
     spec_id: SPEC_ID,
-    gate: "execution_start",
+    gate: "design",
     basis: "human_approval",
     approval_id: "approval-review-maximal",
     revision_id: REVISION_ID,
-    execution_id: EXECUTION_ID,
     actor_json: JSON.stringify({
       kind: "human",
       accountId: "account-review-maximal",
@@ -651,7 +629,6 @@ describe("spec-review-repo durability contract", () => {
       gate: "design",
       basis: "import",
       approval_id: null,
-      execution_id: null,
       actor_json: JSON.stringify({
         kind: "agent",
         conversationId: "conversation-import",
@@ -672,7 +649,6 @@ describe("spec-review-repo durability contract", () => {
       gate: "requirements",
       approval_id: null,
       revision_id: SECOND_REVISION_ID,
-      execution_id: null,
       created_at: "2026-07-18T10:00:00.000Z",
     });
     const foreign = specGateAdmissionRowSchema.parse({
@@ -682,7 +658,6 @@ describe("spec-review-repo durability contract", () => {
       gate: "design",
       approval_id: null,
       revision_id: FOREIGN_REVISION_ID,
-      execution_id: null,
       created_at: "2026-07-18T08:59:00.000Z",
     });
     repo.insertGateAdmission(maximalGateAdmission());

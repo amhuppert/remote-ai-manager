@@ -41,6 +41,8 @@ import type { Supervision, SupervisedSeatWorkplace } from "./supervision";
 
 export const SUPERVISION_KEY = "__cc_run_supervision";
 export const CORE_TURN_RUNTIME_KEY = "__cc_core_turn_runtime";
+/** Installed by startup composition; loads the engine without exposing its production graph. */
+export const CORE_TURN_RUNTIME_LOADER_KEY = "__cc_core_turn_runtime_loader";
 /** The core's turn engine once loaded, for readers that cannot wait on its load. */
 export const CORE_TURN_RUNTIME_READY_KEY = "__cc_core_turn_runtime_ready";
 
@@ -55,6 +57,41 @@ export function composedSupervision(): Supervision | undefined {
 
 export function loadedCoreTurnRuntime(): Promise<CoreTurnRuntime> | undefined {
   return getGlobalValue<Promise<CoreTurnRuntime>>(CORE_TURN_RUNTIME_KEY);
+}
+
+/** A new lane for one sequence of tasks that acts on no conversation. */
+export async function coreTaskLane(): Promise<
+  import("@/lib/conversation-core/task-turns").TaskLane
+> {
+  const load = getGlobalValue<() => Promise<CoreTurnRuntime>>(
+    CORE_TURN_RUNTIME_LOADER_KEY,
+  );
+  const runtime = loadedCoreTurnRuntime() ?? load?.();
+  if (runtime === undefined)
+    throw new Error("The conversation core is not running");
+  return (await runtime).taskLane();
+}
+
+/** Runs a task on its durable conversation through the core. */
+export async function runConversationTask(
+  input: import("@/lib/conversation-core/turn/execute-workflow-task-run").ExecuteWorkflowTaskRunInput,
+): Promise<import("@/lib/conversation-core/turn/turn-result").TaskRunResult> {
+  if (input.binding.kind !== "durable")
+    throw new Error("A conversation task requires a durable binding");
+  const { taskTurnRequestSchema } =
+    await import("@/lib/conversation-core/turn/turn-spec");
+  const { toTaskRunResult } =
+    await import("@/lib/conversation-core/turn/turn-result");
+  const outcome = await runCoreTask({
+    conversationId: input.binding.address.target.conversationId,
+    turn: taskTurnRequestSchema
+      .strip()
+      .parse({ ...input, promptText: input.prompt }),
+    ...(input.signal !== undefined ? { signal: input.signal } : {}),
+  });
+  return toTaskRunResult(outcome, input.outputFormat, {
+    structuredOutputTextField: input.structuredOutputTextField,
+  });
 }
 
 /** Stops a core conversation's turn; `settled` once that turn has ended. Queued notices still run. */
@@ -117,10 +154,11 @@ export async function holdCoreConversationWhileIdle<T>(
   | { kind: "ran"; value: T }
   | { kind: "busy"; reason: string }
   | { kind: "not_core" }
+  | { kind: "not_ready" }
 > {
   const supervision = composedSupervision();
-  if (supervision === undefined || !coreOwnsConversation(conversationId))
-    return { kind: "not_core" };
+  if (supervision === undefined) return { kind: "not_ready" };
+  if (!coreOwnsConversation(conversationId)) return { kind: "not_core" };
   const held = await supervision.core.whileIdle(conversationId, work, holder, {
     holds: "claim",
   });

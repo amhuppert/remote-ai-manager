@@ -32,8 +32,8 @@ describe("module seam ratchet", () => {
     );
   });
   it("catches production wiring through an intermediate module", () => {
-    const core = "src/lib/workflows/conversation/manager.ts";
-    const production = "src/lib/workflows/production.ts";
+    const core = "src/lib/conversation-core/executor.ts";
+    const production = "src/lib/supervision/production.ts";
     expect(
       coreBoundaryViolations(
         new Map([

@@ -5,7 +5,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiCallError } from "@/lib/api/errors";
 import { conversationKeys } from "@/lib/conversations/query-keys";
-import { collaborationKeys } from "@/lib/workflows/query-keys";
+import { collaborationKeys } from "@/lib/collaboration/query-keys";
 import { useCollaborationStore } from "@/stores/collaboration.store";
 import { createPeekReplySubmitter } from "./use-peek-reply";
 import { usePeekReply } from "./use-peek-reply";

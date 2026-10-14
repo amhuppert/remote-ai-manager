@@ -166,26 +166,6 @@ const SESSION_CALLER: ResolvedValidationCaller = {
   targetBranch: "main",
 };
 
-function laneCaller(
-  overrides: Partial<
-    Extract<ResolvedValidationCaller, { kind: "graph_lane" }>
-  > = {},
-): ResolvedValidationCaller {
-  return {
-    kind: "graph_lane",
-    worktreePath: "/projects/app/.worktrees/s1.api",
-    sessionName: "s1",
-    branchName: "csm/s1-api",
-    targetBranch: "csm/s1",
-    executionId: "exec-1",
-    contextId: "api",
-    role: "context_validator",
-    allowedCommands: [],
-    scriptGateCommands: [],
-    ...overrides,
-  };
-}
-
 function seatCaller(
   overrides: Partial<
     Extract<ResolvedValidationCaller, { kind: "run_seat" }>
@@ -347,7 +327,7 @@ afterEach(() => {
 
 describe("service-owned listing", () => {
   it("resolves caller policy and reports global capacity without exposing executables", async () => {
-    resolved = laneCaller({
+    resolved = seatCaller({
       role: "implementer",
       allowedCommands: ["typecheck"],
     });
@@ -402,60 +382,6 @@ describe("service-owned listing", () => {
       },
     ]);
     expect(listed.commands[0]).not.toHaveProperty("command");
-  });
-});
-
-describe("policy gate before admission", () => {
-  it("returns skipped_by_policy with zero scheduler or runner involvement", async () => {
-    resolved = laneCaller({ role: "context_validator", allowedCommands: [] });
-
-    const submission = await service.submit(request({ commandName: "test" }));
-
-    expect(submission.kind).toBe("not_started");
-    if (submission.kind !== "not_started") return;
-    expect(submission.result.kind).toBe("skipped_by_policy");
-    // The runner dependency was never invoked and no ledger row exists: the
-    // no-op consumed no capacity and no queue position.
-    expect(runner.spawns).toHaveLength(0);
-    expect(repo.findStaleActive()).toHaveLength(0);
-    expect(phases()).toEqual(["requested", "policy_skipped"]);
-  });
-
-  it("claims script-gate coverage only when the command is in that context's selection", async () => {
-    resolved = laneCaller({ scriptGateCommands: ["test"] });
-    const covered = await service.submit(request({ commandName: "test" }));
-    expect(covered.kind).toBe("not_started");
-    if (covered.kind !== "not_started") return;
-    if (covered.result.kind !== "skipped_by_policy") return;
-    expect(covered.result.message).toContain("handled by the script validator");
-
-    resolved = laneCaller({ scriptGateCommands: [] });
-    const uncovered = await service.submit(request({ commandName: "format" }));
-    expect(uncovered.kind).toBe("not_started");
-    if (uncovered.kind !== "not_started") return;
-    if (uncovered.result.kind !== "skipped_by_policy") return;
-    expect(uncovered.result.message).toContain("workflow policy disables it");
-    expect(uncovered.result.message).not.toContain("script validator");
-  });
-
-  it("admits an allowed command for a lane caller with lane env identity", async () => {
-    resolved = laneCaller({
-      role: "implementer",
-      allowedCommands: ["test", "typecheck"],
-    });
-
-    const submission = await service.submit(
-      request({ commandName: "typecheck" }),
-    );
-
-    expect(submission.kind).toBe("accepted");
-    const params = runner.spawns[0];
-    expect(params?.contextId).toBe("api");
-    expect(params?.worktreePath).toBe("/projects/app/.worktrees/s1.api");
-    const row = repo.findById("run-1");
-    expect(row?.workflowExecutionId).toBe("exec-1");
-    expect(row?.workflowContextId).toBe("api");
-    expect(row?.workflowRole).toBe("implementer");
   });
 });
 

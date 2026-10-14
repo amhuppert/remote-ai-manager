@@ -6,10 +6,8 @@ import { consultedAuthoringGates } from "@/lib/specs/authoring-gates";
 import type { SpecAuthoringStage, SpecRevision } from "@/lib/specs/schemas";
 import {
   specDetailViewSchema,
-  specExecutionViewSchema,
   specGateAdmissionViewSchema,
   type DraftReviewView,
-  type SpecExecutionView,
   type SpecGateAdmissionView,
   type SpecRevisionSnapshotView,
 } from "@/lib/specs/view-schemas";
@@ -22,10 +20,6 @@ const EMPTY_CITATION_DIFF = {
   baseCitations: [],
   draftCitations: [],
 };
-
-/** The dense fixture's prior delivered run predates the current run. */
-const PRIOR_RUN_CREATED_AT = "2026-07-17T09:00:00.000Z";
-const PRIOR_RUN_DELIVERED_AT = "2026-07-17T18:00:00.000Z";
 
 /**
  * A policy-basis gate admission (Notify/Off dial) as the detail response
@@ -45,51 +39,8 @@ export function policyAdmissionViewFixture(
     approvalId: null,
     revisionId: "revision-1",
     revisionNumber: 1,
-    executionId: null,
     actor: { kind: "agent", conversationId: "conversation-1" },
     createdAt: SPEC_CONTROLS_FIXTURE_NOW,
-    ...overrides,
-  });
-}
-
-/**
- * A run in the shape the detail response carries it — scope already parsed,
- * revision number alongside the revision id. Parsed through the response
- * schema for the same reason `policyAdmissionViewFixture` is.
- */
-export function executionViewFixture(
-  overrides: Partial<SpecExecutionView> = {},
-): SpecExecutionView {
-  return specExecutionViewSchema.parse({
-    id: "execution-1",
-    specId: "spec-1",
-    revisionId: "revision-1",
-    revisionNumber: 1,
-    state: "running",
-    workflowSeedSource: {
-      kind: "spec_delivery",
-      specSlug: "spec-1",
-      candidateId: "launch-1",
-    },
-    workflowExecutionId: null,
-    scope: {
-      selectedTaskIds: ["task-1"],
-      selectedCriterionIds: ["criterion-1"],
-      exclusionDispositions: [],
-    },
-    sessionName: "native-sdd-run",
-    deliveredAt: null,
-    abandonedReason: null,
-    createdAt: SPEC_CONTROLS_FIXTURE_NOW,
-    updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
-    deliveryProjection: [
-      {
-        criterionElementId: "criterion-1",
-        handle: "R1.1",
-        deliveryState: "awaiting_outcome",
-        verdict: null,
-      },
-    ],
     ...overrides,
   });
 }
@@ -157,9 +108,7 @@ export function draftReviewFixture(
   };
 }
 
-export function specControlsDetailFixture(
-  executionState: "none" | "definition_review" | "running" = "none",
-): SpecDetailView {
+export function specControlsDetailFixture(): SpecDetailView {
   const revision = {
     id: "revision-1",
     specId: "spec-1",
@@ -170,7 +119,6 @@ export function specControlsDetailFixture(
     contentHash: "revision-hash",
     proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
     approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
-    externalDelivery: null,
     citationContractVersion: 2 as const,
     citationVersion: 1,
     citationHash: EMPTY_CITATION_HASH,
@@ -255,16 +203,6 @@ export function specControlsDetailFixture(
       },
     },
   ];
-  const executions =
-    executionState === "none"
-      ? []
-      : [
-          executionViewFixture({
-            revisionId: revision.id,
-            revisionNumber: revision.number,
-            state: executionState,
-          }),
-        ];
 
   return {
     spec: {
@@ -286,13 +224,10 @@ export function specControlsDetailFixture(
     baseRevision: null,
     currentRevision: { revision, elements, assumptionCitations: [] },
     currentApprovedRevision: { revision, elements, assumptionCitations: [] },
-    executionRevisionSnapshots: [
-      { revision, elements, assumptionCitations: [] },
-    ],
     approvals: [],
     comments: [],
     linkedTickets: [],
-    elementStatuses: { requirements: [], tasks: [] },
+    elementStatuses: { requirements: [] },
     status: {
       currentRevision: {
         id: revision.id,
@@ -304,19 +239,7 @@ export function specControlsDetailFixture(
       slug: "native-sdd",
       imported: false,
       openComments: null,
-      phase: { primary: executionState === "none" ? "approved" : "executing" },
-      executions: executions.map((execution) => ({
-        id: execution.id,
-        state: execution.state,
-        workflowSeedSource: execution.workflowSeedSource,
-        workflowExecutionId: execution.workflowExecutionId,
-        workflowStatus:
-          execution.workflowExecutionId === null
-            ? null
-            : execution.state === "running"
-              ? ("running" as const)
-              : ("pending" as const),
-      })),
+      phase: { primary: "approved" },
       gates: [],
       // The fixture spec's current revision is approved, so no draft is open.
       authoringSequence: null,
@@ -340,42 +263,16 @@ export function specControlsDetailFixture(
         counts: [],
         top: [],
       },
-      coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
-      delivery: {
-        allWaived: false,
-        deliveredCount: 0,
-        provenCount: 0,
-        deliveredExternallyCriterionIds: [],
-        totalInScope: 1,
-      },
     },
     questions: [],
     assumptions: [],
-    executions,
-    criterionDispositions:
-      executionState === "none"
-        ? []
-        : [
-            {
-              execution_id: "execution-1",
-              criterion_element_id: "criterion-1",
-              disposition: "in_scope",
-              waiver_id: null,
-              delivered_by_execution_id: null,
-              created_at: SPEC_CONTROLS_FIXTURE_NOW,
-              updated_at: SPEC_CONTROLS_FIXTURE_NOW,
-            },
-          ],
-    waivers: [],
     gateAdmissions: [],
     importRecord: null,
   };
 }
 
-export function denseSpecControlsDetailFixture(
-  executionState: "none" | "definition_review" | "running",
-): SpecDetailView {
-  const detail = specControlsDetailFixture(executionState);
+export function denseSpecControlsDetailFixture(): SpecDetailView {
+  const detail = specControlsDetailFixture();
   const snapshot = detail.currentApprovedRevision;
   if (snapshot === null) throw new Error("Approved fixture missing");
   const criterion = snapshot.elements.find(
@@ -391,7 +288,7 @@ export function denseSpecControlsDetailFixture(
     throw new Error("Dense execution fixture sources missing");
   }
 
-  const criterionNumbers = executionState === "none" ? [2] : [2, 3, 4];
+  const criterionNumbers = [2, 3, 4];
   const additionalCriteria = criterionNumbers.map((number) => ({
     element: {
       ...criterion.element,
@@ -427,187 +324,8 @@ export function denseSpecControlsDetailFixture(
     },
   };
   snapshot.elements.push(...additionalCriteria, taskTwo);
-  detail.status.coverage = {
-    coveredCriteria: criterionNumbers.length + 1,
-    totalCriteria: criterionNumbers.length + 1,
-    percentage: 100,
-  };
 
-  if (executionState === "none") return detail;
-  const execution = detail.executions[0];
-  const sourceDisposition = detail.criterionDispositions[0];
-  if (execution === undefined || sourceDisposition === undefined) {
-    throw new Error("Execution fixture missing");
-  }
-  execution.scope = {
-    selectedTaskIds: ["task-1", "task-2"],
-    selectedCriterionIds: ["criterion-1", "criterion-2", "criterion-4"],
-    exclusionDispositions: [
-      { criterionId: "criterion-3", disposition: "deferred" },
-    ],
-  };
-  // One populated row per delivery state the running merge gate can host:
-  // a graph verdict, a human waiver, and a validated external delivery.
-  execution.deliveryProjection = [
-    {
-      criterionElementId: "criterion-1",
-      handle: "R1.1",
-      deliveryState: "verdict_recorded",
-      verdict: null,
-    },
-    {
-      criterionElementId: "criterion-2",
-      handle: "R1.2",
-      deliveryState: "waived",
-      verdict: null,
-    },
-    {
-      criterionElementId: "criterion-4",
-      handle: "R1.4",
-      deliveryState: "delivered_elsewhere",
-      verdict: null,
-    },
-  ];
-  detail.criterionDispositions = [
-    {
-      ...sourceDisposition,
-      criterion_element_id: "criterion-1",
-      disposition: "in_scope",
-    },
-    {
-      ...sourceDisposition,
-      criterion_element_id: "criterion-2",
-      disposition: "waived",
-      waiver_id: "waiver-2",
-    },
-    {
-      ...sourceDisposition,
-      criterion_element_id: "criterion-3",
-      disposition: "deferred",
-    },
-    {
-      ...sourceDisposition,
-      criterion_element_id: "criterion-4",
-      disposition: "delivered_elsewhere",
-      delivered_by_execution_id: "execution-prior",
-    },
-    // The prior run's own self-delivery disposition: the gate's prior-run
-    // rule (`isEarlierMergedDelivery`) requires the earlier execution to have
-    // marked the criterion delivered by itself, so the current run's
-    // delivered_elsewhere row is only production-reachable with this row
-    // alongside it.
-    {
-      ...sourceDisposition,
-      execution_id: "execution-prior",
-      criterion_element_id: "criterion-4",
-      disposition: "in_scope",
-      delivered_by_execution_id: "execution-prior",
-      created_at: PRIOR_RUN_CREATED_AT,
-      updated_at: PRIOR_RUN_DELIVERED_AT,
-    },
-  ];
-  detail.waivers = [
-    {
-      id: "waiver-2",
-      spec_id: detail.spec.id,
-      criterion_element_id: "criterion-2",
-      revision_id: snapshot.revision.id,
-      reason: "Equivalent proof accepted by Alex.",
-      waived_at: SPEC_CONTROLS_FIXTURE_NOW,
-      stale: 0,
-    },
-  ];
-  detail.executions.push(
-    executionViewFixture({
-      ...execution,
-      id: "execution-prior",
-      state: "delivered",
-      scope: {
-        selectedTaskIds: ["task-1"],
-        selectedCriterionIds: ["criterion-4"],
-        exclusionDispositions: [],
-      },
-      // Strictly earlier than the current run: `isEarlierMergedDelivery`
-      // rejects a "prior" run created at — or delivered after — the current
-      // run's creation, so identical timestamps encode an impossible state.
-      createdAt: PRIOR_RUN_CREATED_AT,
-      updatedAt: PRIOR_RUN_DELIVERED_AT,
-      deliveredAt: PRIOR_RUN_DELIVERED_AT,
-      deliveryProjection: [
-        {
-          criterionElementId: "criterion-4",
-          handle: "R1.4",
-          deliveryState: "delivered",
-          verdict: null,
-        },
-      ],
-    }),
-  );
-  detail.status.delivery = {
-    allWaived: false,
-    deliveredCount: 1,
-    provenCount: 1,
-    deliveredExternallyCriterionIds: [],
-    totalInScope: 3,
-  };
   return detail;
-}
-
-/**
- * Delivery already approved by a human while graph outcomes are still pending. The
- * admission is complete — a real approval id and the human actor — because
- * production's human grant always persists both; a basis-only mutation is a
- * state the live route cannot emit. Lives here (not in a story file) and is
- * re-parsed through the full response schema so the fixture tests guard it.
- */
-export function approvedAwaitingProofSpecControlsDetailFixture(): SpecDetailView {
-  const detail = denseSpecControlsDetailFixture("running");
-  const run = detail.executions[0];
-  if (run === undefined) throw new Error("Running execution fixture missing");
-  run.deliveryProjection = [
-    {
-      criterionElementId: "criterion-1",
-      handle: "R1.1",
-      deliveryState: "verdict_recorded",
-      verdict: null,
-    },
-    {
-      criterionElementId: "criterion-2",
-      handle: "R1.2",
-      deliveryState: "awaiting_outcome",
-      verdict: null,
-    },
-    {
-      criterionElementId: "criterion-4",
-      handle: "R1.4",
-      deliveryState: "awaiting_outcome",
-      verdict: null,
-    },
-  ];
-  // The human kept every current-run criterion in scope; the prior run's own
-  // self-delivery disposition survives untouched, as it would in production.
-  detail.criterionDispositions = detail.criterionDispositions.map((row) =>
-    row.execution_id === run.id
-      ? {
-          ...row,
-          disposition: "in_scope" as const,
-          waiver_id: null,
-          delivered_by_execution_id: null,
-        }
-      : row,
-  );
-  detail.waivers = [];
-  detail.gateAdmissions = [
-    policyAdmissionViewFixture({
-      id: "admission-delivery-1",
-      gate: "delivery",
-      basis: "human_approval",
-      approvalId: "approval-delivery-1",
-      executionId: run.id,
-      actor: { kind: "human" },
-    }),
-  ];
-  return specDetailViewSchema.parse(detail);
 }
 
 /**
@@ -618,7 +336,7 @@ export function approvedAwaitingProofSpecControlsDetailFixture(): SpecDetailView
  * and a fixture that invented one would let a surface pass a human sign-off
  * the import never performed.
  */
-export function importedDeliveredSpecDetailFixture(): SpecDetailView {
+export function importedSpecDetailFixture(): SpecDetailView {
   const detail = specControlsDetailFixture();
   const snapshot = detail.currentApprovedRevision;
   if (snapshot === null) throw new Error("Approved fixture missing");
@@ -781,14 +499,7 @@ export function importedDeliveredSpecDetailFixture(): SpecDetailView {
     },
   ];
   detail.status.imported = true;
-  detail.status.phase = { primary: "delivered" };
-  detail.status.delivery = {
-    allWaived: false,
-    deliveredCount: 1,
-    provenCount: 0,
-    deliveredExternallyCriterionIds: ["criterion-1"],
-    totalInScope: 1,
-  };
+  detail.status.phase = { primary: "approved" };
   return specDetailViewSchema.parse(detail);
 }
 
@@ -804,7 +515,7 @@ const AMENDMENT_APPROVED_AT = "2026-07-19T09:30:00.000Z";
  * instead of the revision's own admission credits the import with a human act.
  */
 export function importedThenAmendedSpecDetailFixture(): SpecDetailView {
-  const detail = importedDeliveredSpecDetailFixture();
+  const detail = importedSpecDetailFixture();
   const imported = detail.currentApprovedRevision;
   if (imported === null) throw new Error("Imported fixture missing");
   const amendment = {
@@ -827,7 +538,6 @@ export function importedThenAmendedSpecDetailFixture(): SpecDetailView {
   detail.baseRevision = imported;
   detail.currentRevision = amendment;
   detail.currentApprovedRevision = amendment;
-  detail.executionRevisionSnapshots = [amendment];
   detail.approvals = [
     {
       id: "approval-design-2",
@@ -880,7 +590,6 @@ export function draftingSpecControlsDetailFixture(
       basedOnRevisionId: approved.revision.id,
       proposedAt: null,
       approvedAt: null,
-      externalDelivery: null,
     },
     elements: approved.elements,
     assumptionCitations: approved.assumptionCitations,

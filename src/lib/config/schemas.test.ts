@@ -394,14 +394,12 @@ describe("validation config composition", () => {
       },
     },
     preMerge: ["lint", "test"],
-    laneMerge: ["test"],
   };
 
   it("perRepoConfigSchema parses a CommandCenter.json validation registry", () => {
     const parsed = perRepoConfigSchema.parse({ validation: registry });
 
     expect(parsed.validation?.preMerge).toEqual(["lint", "test"]);
-    expect(parsed.validation?.laneMerge).toEqual(["test"]);
     expect(parsed.validation?.commands.test?.pathArgs).toBe("paths");
     expect(parsed.validation?.commands.lint?.pathArgs).toBe("forbid");
   });

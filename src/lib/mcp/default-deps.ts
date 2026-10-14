@@ -23,7 +23,6 @@ import {
   createMcpRuntimeApplyService,
   type McpRuntimeApplyService,
 } from "./runtime-apply";
-import { getConversationTooling } from "@/lib/workflows/conversation/lifecycle";
 import {
   conversationTargetStoreSessionName,
   projectConversationTarget,
@@ -160,12 +159,6 @@ const defaultResolvePortableForConversation =
         sessionName,
       );
       return session?.worktreePath;
-    },
-    getConversationTooling(input) {
-      return getConversationTooling({
-        projectPath: input.projectPath,
-        target: input.target,
-      });
     },
   });
 

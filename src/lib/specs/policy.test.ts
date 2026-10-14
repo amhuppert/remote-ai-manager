@@ -12,13 +12,7 @@ import {
 } from "./policy";
 import { resolvedGateDialSchema } from "./schemas";
 
-const gates: SpecGate[] = [
-  "requirements",
-  "design",
-  "plan",
-  "execution_start",
-  "delivery",
-];
+const gates: SpecGate[] = ["requirements", "design", "plan"];
 
 const presetMatrix: Record<
   SpecGatePreset,
@@ -28,22 +22,16 @@ const presetMatrix: Record<
     requirements: "gate",
     design: "gate",
     plan: "gate",
-    execution_start: "gate",
-    delivery: "gate",
   },
   exploratory: {
     requirements: "notify",
     design: "notify",
     plan: "notify",
-    execution_start: "notify",
-    delivery: "gate",
   },
   "fast-path": {
     requirements: COMBINED_APPROVAL_DIAL,
     design: COMBINED_APPROVAL_DIAL,
     plan: COMBINED_APPROVAL_DIAL,
-    execution_start: "notify",
-    delivery: "gate",
   },
 };
 
@@ -71,20 +59,6 @@ describe("spec gate policy", () => {
     },
   );
 
-  it("changes only the overridden dial without leaving the preset", () => {
-    const policy: SpecGatePolicy = {
-      preset: "fast-path",
-      overrides: { plan: "notify" },
-    };
-
-    expect(resolveDial(policy, "requirements")).toBe(COMBINED_APPROVAL_DIAL);
-    expect(resolveDial(policy, "design")).toBe(COMBINED_APPROVAL_DIAL);
-    expect(resolveDial(policy, "plan")).toBe("notify");
-    expect(resolveDial(policy, "execution_start")).toBe("notify");
-    expect(resolveDial(policy, "delivery")).toBe("gate");
-    expect(policy.preset).toBe("fast-path");
-  });
-
   it("ignores the retired Plan dial for active collapse while retaining it for legacy Plan review", () => {
     const policy: SpecGatePolicy = {
       preset: "fast-path",
@@ -93,27 +67,6 @@ describe("spec gate policy", () => {
 
     expect(authoringApprovalsCollapseIntoSignOff(policy)).toBe(true);
     expect(authoringApprovalsCollapseIntoSignOff(policy, "plan")).toBe(false);
-  });
-
-  it.each<SpecGatePreset>(["contract-bearing", "exploratory", "fast-path"])(
-    "floors a delivery off override at notify for %s",
-    (preset) => {
-      expect(
-        resolveDial({ preset, overrides: { delivery: "off" } }, "delivery"),
-      ).toBe("notify");
-    },
-  );
-
-  it("allows the delivery gate to be lowered to notify", () => {
-    expect(
-      resolveDial(
-        {
-          preset: "contract-bearing",
-          overrides: { delivery: "notify" },
-        },
-        "delivery",
-      ),
-    ).toBe("notify");
   });
 
   it("allows off on a gate outside the delivery floor", () => {

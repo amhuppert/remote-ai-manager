@@ -30,8 +30,7 @@ locality); domain terms name the concepts the code is about.
   domain operation; the operation takes a `ConversationTarget` (or a
   `ConversationScopeRef`) and never forks by scope. Ask, answer and abort are the
   shape to copy: `registerAskBatchAfterRoleGate`, `deliverAnswers` and `abortTurn`
-  are the scope-invariant cores, and only the session adapters carry the
-  graph-lane divert, which is session-only by spec non-goal. The message queue is
+  are the scope-invariant cores, and the adapters resolve the caller's scope before entering the same core command. The message queue is
   the same shape: `enqueueQueuedMessage` and `cancelQueuedMessage`
   (`src/lib/prompt/queue-operations.ts`) hold the guards, the enqueue-then-drain
   ordering, and the cancellation semantics for both scopes, and each adapter
@@ -73,7 +72,7 @@ locality); domain terms name the concepts the code is about.
   `__project__` sentinel has no public field to occupy.
   `conversationTargetStoreSessionName` / `targetFromStoreSessionName` are the
   only sanctioned crossings into and out of the sentinel, for the session-keyed
-  state-store / runtime / lock / actor APIs that serve both scopes through one
+  state-store / runtime / lock APIs that serve both scopes through one
   storage key. `refuseProjectSentinelSessionParam` (in
   `src/lib/shared/route-resolution.ts`) refuses the sentinel in a public session
   route position with a 400 naming the project route, and
@@ -141,12 +140,9 @@ locality); domain terms name the concepts the code is about.
 
   Server-side, the same ref is the DIAGNOSTIC identity of a turn. Structured-log
   fields are a public identity surface, and the project turn path is handed the
-  store key at every stage (`sdk-driver` → conversation `manager` → turn
-  resource acquisition → `actor-implementations` →
-  `with-runtime-replacement-retry`, plus `transcript` and the message queue), so
-  each derives one `scopeRef` and spreads it instead of logging a session name.
-  Startup rehydration, the workflow task-run entrypoint, and state-store read
-  timing are the project-reachable stages outside the turn. Modules under this
+  store key at every stage of core admission, resource acquisition, transcript
+  writing and queue delivery. Hosted tasks and state-store read timing are the
+  project-reachable stages outside the turn. Modules under this
   rule take their `Logger` through deps so a test can read what they emitted;
   `.kiro/steering/logs.md` holds the rule and the stage tables.
 
@@ -203,10 +199,9 @@ locality); domain terms name the concepts the code is about.
   wire adapter and lifecycle projection are private implementation details of
   `src/lib/events/publication.ts`.
 
-- **Conversation lifecycle** — the deep Module that owns conversation turn
-  submission, completion, persistence, and attached-workflow cancellation. Its
-  interface exposes domain operations and projections; XState actors, events,
-  and state topology remain private implementation details.
+- **Conversation lifecycle** — `conversation-core/` owns admitted turns, runtime
+  continuity, cancellation and durable settlement, composed by `supervision/`.
+  Consumers use semantic core commands rather than backend or actor internals.
 
 - **Continuation disposition** — the adapter-owned `retain | clear` decision
   returned with a backend turn result. It is derived from normalized failure
@@ -224,13 +219,8 @@ locality); domain terms name the concepts the code is about.
 
 - **Lifecycle projection** — the events Module that maps only authoritative
   lifecycle events onto scoped in-process status. Child context/task activity
-  cannot overwrite a graph execution's lifecycle.
+  cannot overwrite its parent run's lifecycle.
 
-- **Graph validation session ref** — the provider-neutral identity envelope for
-  a validation lane. `refKind` assigns ownership: conversation refs name a
-  stable Command Center conversation, while backend refs remain opaque handles.
-  `workflowConversationId` is the explicit navigation identity and is never
-  inferred from provider type.
 
 - **Validation review artifact** — a review link whose `kind` states its owner:
   `conversation` names a Command Center conversation; `response` names a
@@ -292,11 +282,8 @@ locality); domain terms name the concepts the code is about.
   inherits the originating conversation's stored snapshot verbatim, and each
   lane's stored rendered block is appended to its governing instructions at the
   `callPrimitive` seam. Collab config has no post-start edit surface, so the
-  snapshots are fixed at start by construction. Workflow assignments resolve through
-  `src/lib/workflow-graph/seed-assignment-snapshots.ts` at execution start,
-  after config resolution. It snapshots implementers and every validator
-  assignment, including dormant cohorts and frozen loop templates; later
-  turns replay those stored instructions without consulting the library.
+  snapshots are fixed at start by construction. Run seats freeze their assigned
+  profile at admission and replay it without consulting the library.
 
 - **Configuration cascade rule** — `cascadeSettings`
   (`src/lib/config/settings-cascade.ts`, import-free so the server and the
@@ -330,7 +317,7 @@ locality); domain terms name the concepts the code is about.
   exception to the service boundary is the agent-profile deletion report,
   whose composition reads storage through
   `run-templates/profile-references.ts` to list the run templates that name a
-  profile, beside the graph workflow holders it keeps until deploy 2.
+  profile.
 - **Run template editor** — the person's surface for a template's settings
   and text (`/projects/<p>/<s>/runs/templates`, its `[tier]/[id]` editor,
   `features/runs/template-model.ts`). Its draft is the authored document: an
@@ -427,11 +414,8 @@ locality); domain terms name the concepts the code is about.
   (`conversation`, `implementer`, `validator`) a `read` of `off | linked-only |
   ambient` and a `contribute` of `on | off`, each half resolving independently
   through the configuration cascade. Ordinary conversations read
-  `memory.conversations` in global settings; workflow lanes read the per-role
-  snapshot frozen on their execution context at seed time
-  (`workflowDefaults.memory` → `workflowConfig.memory` → the context's
-  `memory`, with provenance; `null` on the definition edit ops is the reset),
-  falling back to the global role default when the row predates the snapshot.
+  `memory.conversations` in global settings; role conversations read file-only
+  `memory.roles.implementer` and `memory.roles.validator`.
   Shipped: conversations and implementers ambient+on, validators off+off.
   Read governs only what arrives unasked — the retrieval verbs are never gated
   — and is enforced by the per-turn index provider through its required

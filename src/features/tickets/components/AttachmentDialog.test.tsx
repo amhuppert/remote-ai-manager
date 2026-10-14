@@ -134,7 +134,6 @@ function installFetch(
               promptCount: 4,
               derivedLastActivityAt: "2026-07-11T10:00:00.000Z",
               collabContribution: null,
-              hasActiveGraphWorkflow: false,
               spawnedFrom: null,
             },
           ],

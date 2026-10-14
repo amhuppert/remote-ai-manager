@@ -33,13 +33,8 @@ import {
 } from "@/lib/prompt-editor/spec-reference-contract";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import { assembleSpecCommentThreads } from "@/lib/specs/comment-threads";
-import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import { parseElementHandle, toDeepLinkElementId } from "@/lib/specs/handles";
-import {
-  useSpecDetailQuery,
-  useSpecPlanReviewQuery,
-  type SpecDetailView,
-} from "@/lib/specs/queries";
+import { useSpecDetailQuery, type SpecDetailView } from "@/lib/specs/queries";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import { formatTicketIdentifier } from "@/lib/tickets/references";
 import type {
@@ -50,14 +45,11 @@ import type {
   SpecRevisionElement,
 } from "@/lib/specs/schemas";
 import { specCommentRowSchema } from "@/lib/specs/schemas";
-import type { RequirementStatus, TaskWorkStatus } from "@/lib/specs/phase";
+import type { RequirementStatus } from "@/lib/specs/phase";
 import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import { cn } from "@/lib/ui/cn";
 
-import {
-  deliveryPlanReadyForSignOff,
-  revisionAdmittedByImport,
-} from "./presentation";
+import { revisionAdmittedByImport } from "./presentation";
 import SpecCommentThreadList, {
   type SpecCommentThreadListHandle,
 } from "./SpecCommentThreadList";
@@ -313,15 +305,12 @@ export function SpecDetailContent({
     [commentThreads, overviewReviewHostAvailable, snapshot],
   );
   const railGroups = snapshot === null ? [] : buildRailGroups(detail);
-  const planReviewQuery = useSpecPlanReviewQuery(projectName, detail.spec.slug);
   const statePresentation = detailStatePresentation(
     detail.status.phase.primary,
     detail.status.pendingApprovals,
     detail.status.phase.authoringStage ??
       detail.currentRevision?.revision.authoringStage ??
       detail.currentApprovedRevision?.revision.authoringStage,
-    planReviewQuery.data,
-    detail.status.delivery,
     revisionAdmittedByImport(
       detail.gateAdmissions,
       detail.currentApprovedRevision?.revision.id,
@@ -338,9 +327,7 @@ export function SpecDetailContent({
   // A draft opened while an execution runs projects as `executing` with a
   // `draft` authoring facet, so the state-driven primary action points at
   // delivery and would otherwise leave review of the draft with no entry point.
-  const showSecondaryReviewLink =
-    detail.status.phase.primary === "executing" &&
-    detail.status.phase.authoringFacet === "draft";
+  const showSecondaryReviewLink = false;
   const specReferenceAttrs: SpecMentionAttrs = {
     projectName,
     slug: detail.spec.slug,
@@ -351,7 +338,7 @@ export function SpecDetailContent({
 
   return (
     <>
-      <SpecLifecycleLanes detail={detail} deliveryPlan={planReviewQuery.data} />
+      <SpecLifecycleLanes detail={detail} />
       <div className="px-xl pt-sm pb-3xl max-768:px-md">
         <SpecDetailViews
           detail={detail}
@@ -566,9 +553,6 @@ const bannerTextClass = {
   red: "text-red",
 } as const;
 
-const bannerApprovalsLinkClass =
-  "text-[0.68rem] text-text-secondary no-underline underline-offset-2 hover:text-text-primary hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
-
 /** The view that hosts review of the current authoring revision. */
 function authoringReviewView(
   detail: SpecDetailView,
@@ -592,30 +576,21 @@ function BannerApprovalsSummary({
   detail: SpecDetailView;
   detailHref: string;
 }): React.JSX.Element {
-  const pendingApprovals = detail.status.pendingApprovals;
-  if (pendingApprovals.some((pending) => pending.gate === "delivery")) {
-    return (
-      <Link
-        href={`${detailHref}?el=delivery`}
-        className={bannerApprovalsLinkClass}
-      >
-        Delivery approval pending — open Delivery
-      </Link>
-    );
-  }
-  const count = pendingApprovals.length;
-  if (count === 0) return <>0 pending approvals</>;
-  const plural = count === 1 ? "" : "s";
-  const executionStartPending = pendingApprovals.some(
-    (pending) => pending.gate === "execution_start",
-  );
-  const target = executionStartPending
-    ? `${detailHref}?view=delivery`
-    : `${detailHref}?view=${authoringReviewView(detail)}`;
   return (
-    <Link href={target} className={bannerApprovalsLinkClass}>
-      {count} pending approval{plural} — review
-    </Link>
+    <a
+      href={
+        detailHref +
+        "?view=" +
+        (detail.status.pendingApprovals.some(
+          ({ gate }) => gate === "requirements",
+        )
+          ? "requirements"
+          : "design")
+      }
+      className="text-amber"
+    >
+      {detail.status.pendingApprovals.length} pending approvals
+    </a>
   );
 }
 
@@ -701,42 +676,6 @@ function SpecLinkedContext({
       <NarrativeSectionHeading>Linked context</NarrativeSectionHeading>
       <div className="mt-sm grid gap-sm">
         <LinkedTicketChips tickets={detail.linkedTickets} />
-        <div className="flex flex-wrap items-center gap-sm font-mono">
-          <span className="w-[110px] shrink-0 text-[0.66rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
-            Conversations
-          </span>
-          <span className="text-[0.7rem] text-text-tertiary">none linked</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-sm font-mono">
-          <span className="w-[110px] shrink-0 text-[0.66rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
-            Executions
-          </span>
-          {detail.executions.length === 0 ? (
-            <span className="text-[0.7rem] text-text-tertiary">none yet</span>
-          ) : (
-            detail.executions.map((execution) => (
-              <span
-                key={execution.id}
-                className="inline-flex items-center gap-xs rounded-full border border-solid border-border-subtle px-sm py-2xs text-[0.7rem] text-text-secondary"
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-[6px] w-[6px] rounded-full",
-                    execution.state === "running"
-                      ? "animate-pulse-dot bg-cyan"
-                      : execution.state === "delivered"
-                        ? "bg-green"
-                        : execution.state === "abandoned"
-                          ? "bg-red"
-                          : "bg-amber",
-                  )}
-                />
-                {execution.id} · {execution.state.replaceAll("_", " ")}
-              </span>
-            ))
-          )}
-        </div>
       </div>
     </section>
   );
@@ -879,211 +818,32 @@ export function detailStatePresentation(
   phase: SpecPhasePrimary,
   pendingApprovals: SpecDetailView["status"]["pendingApprovals"],
   authoringStage?: SpecAuthoringStage,
-  deliveryPlan?: DeliveryPlanReviewView | null,
-  delivery?: SpecDetailView["status"]["delivery"],
-  /**
-   * Whether the frozen revision this banner speaks for — the current approved
-   * one — is the revision an import admitted. Asked of that revision rather
-   * than of the spec: an imported spec a human later amended is still imported,
-   * while the revision the banner names was approved here.
-   */
   frozenRevisionImported?: boolean,
 ): DetailStatePresentation {
-  if (
-    (phase === "approved" || phase === "delivered") &&
-    deliveryPlan?.attempt.status === "draft" &&
-    deliveryPlan.criteria.some(
-      ({ disposition }) => disposition === "pending_reaffirmation",
-    )
-  ) {
+  if (phase === "abandoned")
+    return {
+      tone: "red",
+      banner: "Spec abandoned",
+      description: "The spec remains readable as history.",
+      action: null,
+      view: null,
+    };
+  if (phase === "draft")
     return {
       tone: "amber",
-      banner: "Acceptance criteria need reaffirmation",
-      description:
-        "Requirements or design changed. Confirm which earlier deliveries still satisfy the criteria before signing off this plan.",
-      action: "Review criteria",
-      view: "delivery",
+      banner: pendingApprovals.length ? "Review needed" : "Draft in progress",
+      description: "Review the current requirements and design.",
+      action: "Open review",
+      view: authoringStage === "requirements" ? "requirements" : "design",
     };
-  }
-  // An imported stage is frozen on the source's word with no approval row
-  // behind it, so every banner names the admission instead of reading like a
-  // human froze it.
-  const frozenBanner = (subject: string): string =>
-    frozenRevisionImported === true
-      ? `${subject} admitted by import`
-      : `${subject} approved`;
-  switch (phase) {
-    case "draft":
-      // The draft is reviewable while the author keeps editing it, so the
-      // human act it asks for is review, hosted by its authoring stage's view.
-      return {
-        tone: "amber",
-        banner: "Draft contract",
-        description:
-          "Review and approve while the draft is open; sign-off freezes it.",
-        action: "Review changes",
-        view: authoringStage === "design" ? "design" : "requirements",
-      };
-    case "approved":
-      if (authoringStage === "requirements") {
-        return {
-          tone: "green",
-          banner: frozenBanner("Requirements"),
-          description:
-            "The requirements are frozen. Design is next; delivery planning stays locked until design is approved.",
-          action: null,
-          view: null,
-        };
-      }
-      if (authoringStage !== "design" && authoringStage !== "plan") {
-        return {
-          tone: "green",
-          banner: frozenBanner("Revision"),
-          description:
-            frozenRevisionImported === true
-              ? "The imported revision is frozen. Execution requires an approved delivery-plan candidate."
-              : "The approved revision is frozen. Execution requires an approved delivery-plan candidate.",
-          action: null,
-          view: null,
-        };
-      }
-      if (deliveryPlan === undefined) {
-        return {
-          tone: "green",
-          banner: frozenBanner("Design"),
-          description: "The design is frozen. Checking delivery-plan status.",
-          action: null,
-          view: null,
-        };
-      }
-      if (deliveryPlan === null) {
-        return {
-          tone: "green",
-          banner: frozenBanner("Design"),
-          description:
-            authoringStage === "plan"
-              ? "The legacy Plan revision remains readable as history. Open a delivery plan attempt to author the executable graph."
-              : "The design is frozen. Open a delivery plan attempt to author the executable graph.",
-          action: "Open delivery plan",
-          view: "delivery",
-        };
-      }
-      if (
-        deliveryPlan.attempt.status === "approved" ||
-        deliveryPlan.attempt.status === "parked"
-      ) {
-        // The CTA names an act, so it must land on the control that performs
-        // it. Addressing the surface alone resolved to the page a human
-        // reading the plan was already on, which read as a dead button (#7).
-        return {
-          tone: "green",
-          banner: "Ready to execute",
-          description:
-            "The approved delivery-plan candidate is the exact graph execution will launch.",
-          action: "Open delivery",
-          view: "delivery",
-        };
-      }
-      if (deliveryPlanReadyForSignOff(deliveryPlan)) {
-        return {
-          tone: "amber",
-          banner: "Delivery plan ready for sign-off",
-          description:
-            "Review the managed definition in Workflow Builder and sign it off; sign-off freezes the exact graph execution will launch.",
-          action: "Review and sign off",
-          view: "delivery",
-          href: deliveryPlan.workflowDefinition.builderHref,
-        };
-      }
-      if (deliveryPlan.attempt.status === "draft") {
-        return {
-          tone: "amber",
-          banner: "Delivery plan in draft",
-          description:
-            "Configure the managed definition and resolve its blocking findings in Workflow Builder.",
-          action: "Open delivery",
-          view: "delivery",
-        };
-      }
-      if (deliveryPlan.attempt.status === "launched") {
-        return {
-          tone: "cyan",
-          banner: "Delivery plan launched",
-          description:
-            "The approved candidate has launched; open execution for its current state.",
-          action: "Open execution",
-          view: "delivery",
-        };
-      }
-      return {
-        tone: "amber",
-        banner: "Delivery plan attempt abandoned",
-        description:
-          "Open a replacement attempt to continue delivery planning.",
-        action: "Open delivery plan",
-        view: "delivery",
-      };
-    case "executing":
-      // A run parked on the delivery gate needs its human, not its evidence:
-      // the CTA targets the pending approval control when one exists (F16).
-      if (pendingApprovals.some((pending) => pending.gate === "delivery")) {
-        return {
-          tone: "amber",
-          banner: "Delivery approval needed",
-          description:
-            "Review the delivery scope and settle acceptance before continuing merge.",
-          action: "Open delivery",
-          view: "delivery",
-        };
-      }
-      return {
-        tone: "cyan",
-        banner: "Delivery in progress",
-        description:
-          "Review acceptance and the current delivery path for the pinned revision.",
-        action: "Open delivery",
-        view: "delivery",
-      };
-    case "delivered": {
-      // `delivered` is reached either by proof taken here or by an import's
-      // external testimony, and the rollup keeps `provenCount` apart from
-      // `deliveredExternallyCriterionIds` precisely so this banner cannot
-      // report testimony as proof it never took.
-      if (
-        delivery !== undefined &&
-        delivery.deliveredExternallyCriterionIds.length > 0
-      ) {
-        const externalCount = delivery.deliveredExternallyCriterionIds.length;
-        const noun = delivery.totalInScope === 1 ? "criterion" : "criteria";
-        return {
-          tone: "green",
-          banner: "Delivered externally",
-          description:
-            delivery.provenCount === 0
-              ? `${externalCount}/${delivery.totalInScope} in-scope ${noun} delivered externally, none proven here.`
-              : `${delivery.provenCount}/${delivery.totalInScope} in-scope ${noun} proven, ${externalCount} delivered externally.`,
-          action: null,
-          view: null,
-        };
-      }
-      return {
-        tone: "green",
-        banner: "Delivery complete",
-        description:
-          "The delivered scope was verified, accepted, or had evidence waived.",
-        action: null,
-        view: null,
-      };
-    }
-    case "abandoned":
-      return {
-        tone: "red",
-        banner: "Spec abandoned",
-        description: "This contract is retained as read-only history.",
-        action: null,
-        view: null,
-      };
-  }
+  return {
+    tone: "green",
+    banner: frozenRevisionImported ? "Imported spec" : "Spec approved",
+    description:
+      "The approved revision is frozen. Open an amendment to update it.",
+    action: null,
+    view: null,
+  };
 }
 
 export function resolveRequestedDetailView(
@@ -1095,7 +855,6 @@ export function resolveRequestedDetailView(
     rawView === "overview" ||
     rawView === "requirements" ||
     rawView === "design" ||
-    rawView === "delivery" ||
     rawView === "gate-policy" ||
     rawView === "history"
   ) {
@@ -1777,11 +1536,10 @@ function buildRailItems(detail: SpecDetailView): RailItem[] {
         },
       ];
     }
-
-    const taskStatus = detail.elementStatuses.tasks.find(
-      (candidate) => candidate.elementId === entry.element.id,
-    )?.status;
-    const taskPresentation = taskStatusPresentation(taskStatus);
+    const taskPresentation = {
+      status: "Historical task",
+      statusTone: "neutral" as const,
+    };
     return [
       {
         elementId: entry.element.id,
@@ -1862,50 +1620,9 @@ function latestApprovalValidity(
 }
 
 function requirementStatusPresentation(
-  status: RequirementStatus | undefined,
+  _status: RequirementStatus | undefined,
 ): Pick<RailItem, "status" | "statusTone"> {
-  if (status?.proof === "proven") {
-    return { status: "Proven", statusTone: "green" };
-  }
-  if (status?.proof === "waived") {
-    return { status: "Waived", statusTone: "amber" };
-  }
-  if (status?.proof === "proven_and_waived") {
-    return { status: "Proven + waived", statusTone: "green" };
-  }
-  // Settled, but by an import's testimony rather than by proof taken here, so
-  // it takes neither the green proof badge nor the amber unfinished ones.
-  if (status?.proof === "delivered_externally") {
-    return { status: "Delivered externally", statusTone: "neutral" };
-  }
-  if (status?.proof === "partial") {
-    return { status: "Proof partial", statusTone: "amber" };
-  }
-  if (status?.coverage === "covered") {
-    return { status: "Covered", statusTone: "green" };
-  }
-  if (status?.coverage === "partial") {
-    return { status: "Partially covered", statusTone: "amber" };
-  }
-  return { status: "Uncovered", statusTone: "amber" };
-}
-
-function taskStatusPresentation(
-  status: TaskWorkStatus | undefined,
-): Pick<RailItem, "status" | "statusTone"> {
-  switch (status?.status) {
-    case "running":
-      return { status: "Running", statusTone: "cyan" };
-    case "completed":
-      return { status: "Completed", statusTone: "green" };
-    case "interrupted":
-      return { status: "Interrupted", statusTone: "amber" };
-    case "failed":
-      return { status: "Failed", statusTone: "red" };
-    case "pending":
-    case undefined:
-      return { status: "Pending", statusTone: "neutral" };
-  }
+  return { status: "Defined", statusTone: "neutral" };
 }
 
 export function resolveDeepLinkId(
@@ -1914,8 +1631,6 @@ export function resolveDeepLinkId(
 ): string | null {
   // Gate-name literals are persisted in notification rows forever, so this
   // mapping is permanent: ?el=delivery focuses the merge-gate panel.
-  if (rawHandle === "delivery") return "merge-gate";
-  if (rawHandle === "launch") return "delivery-plan-launch";
   if (rawHandle === null || slug === undefined) return null;
   try {
     return toDeepLinkElementId(parseElementHandle(rawHandle, slug));

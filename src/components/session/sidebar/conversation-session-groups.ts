@@ -19,7 +19,7 @@ export interface SessionGroupOptions {
   query: string;
   project: string | null;
   includeArchived: boolean;
-  includeGraphWorkflows: boolean;
+  includeRoleHistory: boolean;
   filter: SidebarListFilter;
   sessionScope: { projectName: string; sessionName: string } | null;
   expandedKeys: ReadonlySet<string>;
@@ -30,7 +30,7 @@ export function needsAttention(row: ActiveConversation): boolean {
   return (
     !row.archived &&
     !isClosedProjectConversation(row) &&
-    (row.pendingApproval !== null || row.status === "waiting_for_input")
+    row.status === "waiting_for_input"
   );
 }
 
@@ -58,14 +58,14 @@ export function filterSidebarScope(
   rows: ActiveConversation[],
   options: Pick<
     SessionGroupOptions,
-    "project" | "includeArchived" | "includeGraphWorkflows"
+    "project" | "includeArchived" | "includeRoleHistory"
   >,
 ): ActiveConversation[] {
   return rows.filter(
     (row) =>
       (options.includeArchived || !row.archived) &&
       (options.project === null || row.projectName === options.project) &&
-      (options.includeGraphWorkflows ||
+      (options.includeRoleHistory ||
         !isWorkflowLaneRole(row.role) ||
         needsAttention(row)),
   );

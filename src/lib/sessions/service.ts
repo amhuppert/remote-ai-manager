@@ -48,7 +48,13 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { executeOptimisticWorkflow } from "./optimistic";
 import { defaultOptimisticDeps } from "./optimistic-production";
-import { stopConversationActor } from "@/lib/workflows/conversation/lifecycle";
+import { retireCoreConversation } from "@/lib/supervision/handles";
+const stopConversationActor = (
+  _projectPath: string,
+  _sessionName: string,
+  conversationId: string,
+  _reason?: string,
+) => retireCoreConversation(conversationId);
 import { assertNoCurrentRun, type CurrentRun } from "@/lib/runs/session-guard";
 import {
   closeCoreBackgroundWork,
@@ -639,7 +645,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       tddEnabled: opts.tddEnabled ?? true,
       targetBranch: opts.targetBranch ?? "main",
       parentSessionName: opts.parentSessionName ?? null,
-      graphWorkflowExecution: null,
       referenceDocuments: [],
     };
 

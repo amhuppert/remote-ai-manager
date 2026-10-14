@@ -1,6 +1,5 @@
 import type { ValidationRunSource } from "@/lib/validation/schemas";
 import type { ValidationSystemSubmitRequest } from "@/lib/validation/service";
-import type { GraphWorkflowLaneMergeCommandSelector } from "@/lib/workflow-graph/config-schemas";
 
 export type MergeValidationSource = Extract<
   ValidationRunSource,
@@ -9,7 +8,7 @@ export type MergeValidationSource = Extract<
 
 export type ValidationCommandSelection =
   | { mode: "project-pre-merge" }
-  | Extract<GraphWorkflowLaneMergeCommandSelector, { mode: "only" }>;
+  | { mode: "only"; commands: string[] };
 
 export type ValidationWorkflowRef = NonNullable<
   ValidationSystemSubmitRequest["workflow"]

@@ -97,12 +97,6 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
     note: "Scrollbars + the 21-keyframe global library + tooltip/modal/toast portal positioning stay forever (catalog residual). All Markdown rendering — output, document shell, and loading fallback — is owned by the canonical Markdown module.",
   },
   {
-    path: "src/components/workflow-graph/workflow-graph.css",
-    preserved: true,
-    floor: 33,
-    note: "React Flow vendor DOM + own scrollbars + 7 graph keyframes stay bespoke forever; the JSX-authored chrome was migrated to utilities (Stage B 9.1 / B-6 graph-builder). Compact rendered Markdown is owned by the canonical Markdown module, so the former `.wb-markdown-inline*` residual (~25 selectors) is gone and the floor returns to 33.",
-  },
-  {
     path: "src/features/_root/styles/conversation.css",
     preserved: true,
     floor: 31,
@@ -236,22 +230,10 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
     note: "`.config-*` — fully migratable.",
   },
   {
-    path: "src/features/workflows-builder/styles/workflows-builder.css",
-    preserved: false,
-    floor: 0,
-    note: "`.wb-*` authored builder chrome — fully migratable (graph stays bespoke, Stage B 9.1).",
-  },
-  {
     path: "src/features/session-diff/styles/session-diff.css",
     preserved: false,
     floor: 0,
     note: "`.session-diff-*` full-page diff — fully migratable.",
-  },
-  {
-    path: "src/features/session-workflow/styles/session-workflow.css",
-    preserved: false,
-    floor: 0,
-    note: 'Single `.app[data-page="workflow"] .main` layout rule — fully migratable.',
   },
 ];
 

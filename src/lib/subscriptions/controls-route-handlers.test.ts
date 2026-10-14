@@ -146,7 +146,7 @@ describe("subscription controls HTTP", () => {
       new Request("http://test", {
         method: "POST",
         body: JSON.stringify({
-          source: { kind: "workflow", id: "workflow" },
+          source: { kind: "validation", id: "workflow" },
           reason: "Continue",
           mode: "active",
         }),

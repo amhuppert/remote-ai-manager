@@ -35,7 +35,7 @@ belong here:
   per session**; a second dispatch is refused with `JOB_ALREADY_RUNNING` (unless
   the incumbent is stale and gets force-failed first).
 - Dispatch takes the **single-flight session lock** from
-  `prompt/single-flight.ts` — the same lock graph-workflow git operations take —
+  `prompt/single-flight.ts` — the same lock workspace git operations take —
   so anything else holding it makes the dispatch fail with `SESSION_BUSY`.
 
 Work that does not want per-session exclusivity, or that has no session at all,

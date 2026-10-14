@@ -1,6 +1,3 @@
-import { createProductionSpecWorkflowComposition } from "../specs/production-workflow-composition";
-import type { MergeAssociationInput } from "../workflows/merge/association-port";
-import type { WorkflowComposition } from "../workflows/production-contracts";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +14,6 @@ import {
   getActiveJobs,
   getConflictAnalysis,
   getFinalizingSessionMergeJob,
-  runRegisteredMergeJob as runRegisteredMergeJobWithLifecycle,
   _resetForTesting,
   type AcquireSessionLockFn,
 } from "./queue";
@@ -58,8 +54,6 @@ import type {
   PrepareActorOutput,
   PublishActorInput,
   PublishActorOutput,
-  DeliveryGateActorInput,
-  DeliveryGateActorOutput,
   DiscardParkedRefInput,
   DiscardParkedRefOutput,
 } from "../workflows/merge/actors";
@@ -75,11 +69,7 @@ import type {
 } from "../workflows/validation-fix/actors";
 import { validationFixLoopError } from "../workflows/validation-fix/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
-import type {
-  BackgroundJob,
-  JobRecord,
-  JobStatusEvent,
-} from "@/lib/jobs/schemas";
+import type { BackgroundJob, JobStatusEvent } from "@/lib/jobs/schemas";
 import type { PublishFn } from "@/lib/events/publication";
 import { createJobsRepo } from "./repo";
 
@@ -125,7 +115,6 @@ const mockRunValidation = vi.fn();
 const mockFixValidation = vi.fn();
 const mockPrepareActor = vi.fn();
 const mockPublishActor = vi.fn();
-const mockDeliveryGateActor = vi.fn();
 const mockDiscardParkedRefActor = vi.fn();
 
 /** Test machine: real merge machine with mock actors */
@@ -179,9 +168,6 @@ const testMachine = mergeMachine.provide({
     ),
     publish: fromPromise<PublishActorOutput, PublishActorInput>(
       async ({ input }) => mockPublishActor(input),
-    ),
-    deliveryGate: fromPromise<DeliveryGateActorOutput, DeliveryGateActorInput>(
-      async ({ input }) => mockDeliveryGateActor(input),
     ),
     discardParkedRef: fromPromise<
       DiscardParkedRefOutput,
@@ -290,18 +276,12 @@ async function waitForJobCompletions(): Promise<void> {
   );
   pendingJobCompletions.clear();
 }
-
-let composition: WorkflowComposition;
 const dispatchMergeJob = (
   input: Parameters<typeof dispatchMergeJobWithComposition>[0],
-) => dispatchMergeJobWithComposition(input, composition);
+) => dispatchMergeJobWithComposition(input);
 const dispatchResolveConflictsJob = (
   input: Parameters<typeof dispatchResolveConflictsJobWithComposition>[0],
-) => dispatchResolveConflictsJobWithComposition(input, composition);
-const runRegisteredMergeJob = (
-  input: Parameters<typeof runRegisteredMergeJobWithLifecycle>[0],
-) =>
-  runRegisteredMergeJobWithLifecycle(input, composition.mergeDeliveryLifecycle);
+) => dispatchResolveConflictsJobWithComposition(input);
 
 const BASE_MERGE_PARAMS = {
   projectPath: "/projects/foo",
@@ -426,7 +406,6 @@ describe("background-jobs", () => {
     // against an isolated store this test can read back from.
     testDb = _createTestDb({ inMemory: true });
     _installTestDb(testDb);
-    composition = createProductionSpecWorkflowComposition();
     mergeIntentsRepo = createMergeIntentsRepo(testDb);
     notificationsRepo = createNotificationsRepo(testDb);
 
@@ -458,12 +437,6 @@ describe("background-jobs", () => {
     });
     // Default: pre-merge validation passes
     mockRunValidation.mockResolvedValue(null);
-    // Default: linked delivery gate passes
-    mockDeliveryGateActor.mockResolvedValue({
-      status: "pass" as const,
-      satisfied: [],
-      deferred: [],
-    });
     // Default: fix validation succeeds
     mockFixValidation.mockResolvedValue({ status: "fixed" as const });
     // Default: prepare actor succeeds with a parked SHA
@@ -1209,42 +1182,6 @@ describe("background-jobs", () => {
           ?.lastProgressAt,
       ).toBe(PUBLISHED_AT);
     });
-
-    it("advances lastProgressAt when a durable progress write lands", async () => {
-      const candidateValidation = {
-        validationRef: "validation-progress",
-        validatedSha: "validated-sha",
-        validatedTreeHash: "validated-tree",
-        commandIdentity: "./validate.sh",
-        outcome: "pass" as const,
-      };
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(new Date(DISPATCHED_AT));
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockRunValidation.mockImplementation(async () => {
-        vi.setSystemTime(new Date(MERGED_AT));
-        return candidateValidation;
-      });
-      // A publish that reports nothing new: only the validation proof moved.
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "abc123",
-      });
-
-      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      await waitForJobCompletions();
-
-      // The proof reached the durable record, so the progress write ran.
-      expect(
-        createJobsRepo(testDb).getJobRecord(result.value.jobId),
-      ).toMatchObject({ candidateValidation });
-      expect(
-        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName)
-          ?.lastProgressAt,
-      ).toBe(MERGED_AT);
-    });
   });
 
   // ----------------------------------------------------------
@@ -1360,48 +1297,6 @@ describe("background-jobs", () => {
         acquireSessionLock: lock.acquire,
       });
       expect(retry.ok).toBe(true);
-      await waitForJobCompletions();
-    });
-
-    it("answers the graph merge awaiting a job it closed out", async () => {
-      mockMergeMain.mockResolvedValue({
-        status: "conflicts",
-        conflictFiles: ["src/a.ts"],
-      });
-      mockResolveConflictsActor.mockImplementation(() => new Promise(() => {}));
-
-      const laneMerge = runRegisteredMergeJob({
-        machine: testMachine,
-        broadcast: mockBroadcast,
-        input: {
-          jobId: "graph-job-stalled",
-          projectPath: BASE_MERGE_PARAMS.projectPath,
-          projectName: BASE_MERGE_PARAMS.projectName,
-          sessionName: BASE_MERGE_PARAMS.sessionName,
-          worktreePath: BASE_MERGE_PARAMS.worktreePath,
-          branchName: BASE_MERGE_PARAMS.branchName,
-          message: BASE_MERGE_PARAMS.message,
-          autoResolve: true,
-          validationMode: {
-            mode: "run",
-            source: "graph_lane_merge",
-            selection: { mode: "only", commands: ["typecheck"] },
-          },
-          targetBranch: "main",
-          finalizeSessionOnPublish: false,
-          executionId: "workflow-execution-stalled",
-        },
-      });
-      await waitForJobPhase("resolving-conflicts");
-      registeredJob().lastProgressAt = new Date(
-        Date.now() - INACTIVE_MS,
-      ).toISOString();
-
-      expect(dispatchMergeJob(BASE_MERGE_PARAMS).ok).toBe(true);
-
-      // The join is waiting on this promise: a teardown that never settles it
-      // would hang the lane instead of failing it.
-      await expect(laneMerge).resolves.toMatchObject({ status: "failed" });
       await waitForJobCompletions();
     });
 
@@ -1898,291 +1793,9 @@ describe("background-jobs", () => {
   });
 
   // ----------------------------------------------------------
-  // merge association at dispatch (MA1/MA2/MA5)
-  // ----------------------------------------------------------
-  describe("merge association at dispatch", () => {
-    function completeCleanMerge(): void {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "assoc-merge-hash",
-      });
-    }
-
-    it("stamps resolved provenance durably on the job and gates the merge", async () => {
-      completeCleanMerge();
-      Object.assign(composition.mergeAssociation, {
-        resolve(input: MergeAssociationInput) {
-          return input.sessionName === "my-session"
-            ? {
-                kind: "linked",
-                executionId: "wf-exec-assoc",
-                finalPublish: true,
-              }
-            : { kind: "none" };
-        },
-      });
-
-      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      if (!result.ok) throw new Error("dispatch failed");
-      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
-      expect(record?.executionId).toBe("wf-exec-assoc");
-      expect(record?.finalPublish).toBe(true);
-      expect(mockDeliveryGateActor).toHaveBeenCalledWith(
-        expect.objectContaining({ workflowExecutionId: "wf-exec-assoc" }),
-      );
-    });
-
-    it("refuses dispatch with the resolver's refusal and creates no job", () => {
-      Object.assign(composition.mergeAssociation, {
-        resolve() {
-          return {
-            kind: "refused",
-            reason: "Session hosts 2 active spec executions",
-            instruction: "Abandon one execution, then retry the merge.",
-          };
-        },
-      });
-
-      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("expected refusal");
-      expect(result.error).toEqual({
-        code: "MERGE_ASSOCIATION_REFUSED",
-        reason: "Session hosts 2 active spec executions",
-        instruction: "Abandon one execution, then retry the merge.",
-      });
-      expect(getActiveJobs()).toHaveLength(0);
-      expect(mockAcquireSessionLock).not.toHaveBeenCalled();
-    });
-
-    it("does not consult the resolver when explicit provenance is supplied", async () => {
-      completeCleanMerge();
-      const resolve = vi.fn();
-      Object.assign(composition.mergeAssociation, { resolve });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        executionId: "wf-exec-explicit",
-        finalPublish: false,
-      });
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      expect(resolve).not.toHaveBeenCalled();
-      expect(mockDeliveryGateActor).toHaveBeenCalledWith(
-        expect.objectContaining({ workflowExecutionId: "wf-exec-explicit" }),
-      );
-    });
-
-    it("passes through unlinked when the session has no spec association", async () => {
-      completeCleanMerge();
-
-      const result = dispatchMergeJob(BASE_MERGE_PARAMS);
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      if (!result.ok) throw new Error("dispatch failed");
-      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
-      expect(record?.executionId).toBeUndefined();
-      const gateInput = mockDeliveryGateActor.mock.calls[0]?.[0] as
-        | { workflowExecutionId?: string }
-        | undefined;
-      expect(gateInput?.workflowExecutionId).toBeUndefined();
-    });
-
-    it("resolve-conflicts dispatch persists explicit provenance", async () => {
-      mockResolveConflictsActor.mockResolvedValue({
-        status: "resolved",
-        conflicts: [],
-      });
-      mockCommitChangesActor.mockResolvedValue({ hash: "resolve_hash" });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "squash_hash",
-      });
-
-      const result = dispatchResolveConflictsJob({
-        ...BASE_RESOLVE_PARAMS,
-        executionId: "wf-exec-retry",
-        finalPublish: true,
-      });
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      if (!result.ok) throw new Error("dispatch failed");
-      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
-      expect(record?.executionId).toBe("wf-exec-retry");
-      expect(record?.finalPublish).toBe(true);
-      expect(mockDeliveryGateActor).toHaveBeenCalledWith(
-        expect.objectContaining({ workflowExecutionId: "wf-exec-retry" }),
-      );
-    });
-
-    it("notifies the injected delivery lifecycle when a gated final-publish merge completes", async () => {
-      completeCleanMerge();
-      const markDelivered = vi.fn().mockResolvedValue(undefined);
-      Object.assign(composition.mergeDeliveryLifecycle, { markDelivered });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        executionId: "wf-exec-deliver",
-        finalPublish: true,
-      });
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      expect(markDelivered).toHaveBeenCalledWith(
-        "wf-exec-deliver",
-        "assoc-merge-hash",
-        undefined,
-      );
-    });
-
-    /**
-     * A final publish with nothing to land delivered the same content as one
-     * that landed a commit, so it owes the same Delivered marking; the target
-     * tip the delivery gate evaluated is the commit that carries the work.
-     */
-    it("notifies delivery with the target tip when the final publish had nothing to land", async () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPrepareActor.mockResolvedValue({
-        status: "up-to-date" as const,
-        expectedTargetSha: "target-tip",
-      });
-      mockPublishActor.mockResolvedValue({ status: "up-to-date" as const });
-      const markDelivered = vi.fn().mockResolvedValue(undefined);
-      Object.assign(composition.mergeDeliveryLifecycle, { markDelivered });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        executionId: "wf-exec-noop-deliver",
-        finalPublish: true,
-      });
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      expect(markDelivered).toHaveBeenCalledWith(
-        "wf-exec-noop-deliver",
-        "target-tip",
-        undefined,
-      );
-    });
-
-    it("does not notify delivery for a linked merge that is not the final publish", async () => {
-      completeCleanMerge();
-      const markDelivered = vi.fn().mockResolvedValue(undefined);
-      Object.assign(composition.mergeDeliveryLifecycle, { markDelivered });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        executionId: "wf-exec-not-final",
-      });
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      expect(markDelivered).not.toHaveBeenCalled();
-    });
-
-    it("resolve-conflicts dispatch falls back to the injected resolver", async () => {
-      mockResolveConflictsActor.mockResolvedValue({
-        status: "resolved",
-        conflicts: [],
-      });
-      mockCommitChangesActor.mockResolvedValue({ hash: "resolve_hash" });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "squash_hash",
-      });
-      Object.assign(composition.mergeAssociation, {
-        resolve() {
-          return {
-            kind: "linked",
-            executionId: "wf-exec-retry-resolved",
-            finalPublish: false,
-          };
-        },
-      });
-
-      const result = dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
-      expect(result.ok).toBe(true);
-      await waitForJobCompletions();
-
-      if (!result.ok) throw new Error("dispatch failed");
-      const record = createJobsRepo(testDb).getJobRecord(result.value.jobId);
-      expect(record?.executionId).toBe("wf-exec-retry-resolved");
-      expect(record?.finalPublish).toBeUndefined();
-    });
-  });
-
-  // ----------------------------------------------------------
   // getJob / getConflictAnalysis
   // ----------------------------------------------------------
   describe("getJob and getConflictAnalysis", () => {
-    it("keeps a graph merge's parked candidate registered for later land re-entry", async () => {
-      const candidateValidation = {
-        validationRef: "validation-parked-graph",
-        validatedSha: "validated-graph-sha",
-        validatedTreeHash: "validated-graph-tree",
-        commandIdentity: "./validate.sh",
-        outcome: "pass" as const,
-      };
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockRunValidation.mockResolvedValue(candidateValidation);
-      mockPublishActor.mockResolvedValue({
-        status: "ready-to-land" as const,
-        parkedRef: "refs/cc-merges/graph-job",
-        preparedSha: "prepared-sha",
-        targetWorktreePath: "/projects/foo",
-      });
-
-      const output = await runRegisteredMergeJob({
-        machine: testMachine,
-        broadcast: mockBroadcast,
-        input: {
-          jobId: "graph-job",
-          projectPath: BASE_MERGE_PARAMS.projectPath,
-          projectName: BASE_MERGE_PARAMS.projectName,
-          sessionName: BASE_MERGE_PARAMS.sessionName,
-          worktreePath: BASE_MERGE_PARAMS.worktreePath,
-          branchName: BASE_MERGE_PARAMS.branchName,
-          message: BASE_MERGE_PARAMS.message,
-          autoResolve: true,
-          validationMode: {
-            mode: "run",
-            source: "graph_lane_merge",
-            selection: { mode: "only", commands: ["typecheck"] },
-          },
-          targetBranch: "main",
-          finalizeSessionOnPublish: false,
-          executionId: "workflow-execution-parked",
-          finalPublish: true,
-        },
-      });
-
-      expect(output.status).toBe("ready-to-land");
-      expect(
-        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
-      ).toMatchObject({
-        jobId: "graph-job",
-        status: "ready-to-land",
-        preparedSha: "prepared-sha",
-        expectedTargetSha: "expected-target-sha",
-        parkedRef: "refs/cc-merges/test",
-        executionId: "workflow-execution-parked",
-        finalPublish: true,
-        candidateValidation,
-      });
-      expect(createJobsRepo(testDb).getJobRecord("graph-job")).toMatchObject({
-        executionId: "workflow-execution-parked",
-        finalPublish: true,
-        candidateValidation,
-      });
-    });
-
     /**
      * The registry dies with the process; the parked commit does not. Everything
      * a land or discard re-entry has to reconstruct — the ref, the two SHAs, the
@@ -2222,7 +1835,7 @@ describe("background-jobs", () => {
      * Whether a merge finalizes its session is a fact about the job, and the
      * launch guard is the reader that needs it: only a session-finalizing merge
      * makes a session exclusively busy. Inferring it from jobType would refuse
-     * launches during every graph lane merge — which the workflow itself runs.
+     * launches during a merge that explicitly preserves the session.
      */
     it("records that a user-driven session merge finalizes the session on publish", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
@@ -2242,47 +1855,8 @@ describe("background-jobs", () => {
       ).toMatchObject({ finalizeSessionOnPublish: true });
     });
 
-    it("records that a graph lane merge does not finalize the session", async () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "ready-to-land" as const,
-        parkedRef: "refs/cc-merges/graph-job",
-        preparedSha: "prepared-sha",
-        targetWorktreePath: "/projects/foo",
-      });
-
-      await runRegisteredMergeJob({
-        machine: testMachine,
-        broadcast: mockBroadcast,
-        input: {
-          jobId: "lane-job",
-          projectPath: BASE_MERGE_PARAMS.projectPath,
-          projectName: BASE_MERGE_PARAMS.projectName,
-          sessionName: BASE_MERGE_PARAMS.sessionName,
-          worktreePath: BASE_MERGE_PARAMS.worktreePath,
-          branchName: BASE_MERGE_PARAMS.branchName,
-          message: BASE_MERGE_PARAMS.message,
-          autoResolve: true,
-          validationMode: {
-            mode: "run",
-            source: "graph_lane_merge",
-            selection: { mode: "only", commands: ["typecheck"] },
-          },
-          targetBranch: "main",
-          finalizeSessionOnPublish: false,
-          executionId: "workflow-execution-lane",
-        },
-      });
-
-      expect(
-        getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
-      ).toMatchObject({ finalizeSessionOnPublish: false });
-    });
-
     /**
-     * The reader behind the workflow launch guard. What it must NOT do is
-     * report a graph lane merge: the engine runs those itself, so a false block
-     * there has the engine refuse its own next launch.
+     * A non-finalizing merge preserves the session for subsequent runs.
      */
     describe("getFinalizingSessionMergeJob", () => {
       it("reports a running session merge", async () => {
@@ -2311,56 +1885,6 @@ describe("background-jobs", () => {
         });
 
         finishMerge({ status: "clean", conflictFiles: [] });
-        await waitForJobCompletions();
-      });
-
-      it("reports nothing for a running graph lane merge", async () => {
-        let finishMerge!: (value: MergeMainOutput) => void;
-        mockMergeMain.mockReturnValue(
-          new Promise<MergeMainOutput>((resolve) => {
-            finishMerge = resolve;
-          }),
-        );
-        mockPublishActor.mockResolvedValue({
-          status: "completed" as const,
-          mergeHash: "abc123",
-        });
-
-        const running = runRegisteredMergeJob({
-          machine: testMachine,
-          broadcast: mockBroadcast,
-          input: {
-            jobId: "lane-job-running",
-            projectPath: BASE_MERGE_PARAMS.projectPath,
-            projectName: BASE_MERGE_PARAMS.projectName,
-            sessionName: BASE_MERGE_PARAMS.sessionName,
-            worktreePath: BASE_MERGE_PARAMS.worktreePath,
-            branchName: BASE_MERGE_PARAMS.branchName,
-            message: BASE_MERGE_PARAMS.message,
-            autoResolve: true,
-            validationMode: {
-              mode: "run",
-              source: "graph_lane_merge",
-              selection: { mode: "only", commands: ["typecheck"] },
-            },
-            targetBranch: "main",
-            finalizeSessionOnPublish: false,
-            executionId: "workflow-execution-lane-running",
-          },
-        });
-
-        expect(
-          getJob(BASE_MERGE_PARAMS.projectPath, BASE_MERGE_PARAMS.sessionName),
-        ).toMatchObject({ status: "running" });
-        expect(
-          getFinalizingSessionMergeJob(
-            BASE_MERGE_PARAMS.projectPath,
-            BASE_MERGE_PARAMS.sessionName,
-          ),
-        ).toBeNull();
-
-        finishMerge({ status: "clean", conflictFiles: [] });
-        await running;
         await waitForJobCompletions();
       });
 
@@ -2435,11 +1959,8 @@ describe("background-jobs", () => {
       });
 
       /**
-       * Re-entry is the same saga, not a new one: a graph lane merge parked as
-       * ready-to-land is still the workflow's own work when an operator lands
-       * it, so the fact has to survive the new job. Losing it here would both
-       * false-block the engine's next launch and hand the publish actor a
-       * session delivery gate to run against the workflow's own Current run.
+       * Re-entry preserves the original finalization decision. A parked
+       * non-finalizing merge must keep the session available after landing.
        */
       it("carries an explicit non-finalizing fact through a land re-entry", async () => {
         let finishPublish!: (value: PublishActorOutput) => void;
@@ -2455,12 +1976,10 @@ describe("background-jobs", () => {
           preparedSha: "prepared-sha",
           expectedTargetSha: "expected-target-sha",
           parkedRef: "refs/cc-merges/graph-parked",
-          executionId: "workflow-execution-landed",
           finalizeSessionOnPublish: false,
         });
         expect(result.ok).toBe(true);
-        // The land entry routes straight to the delivery gate and then to
-        // publish; hold the publish open so the job is observably in flight.
+        // Hold publish open so the land job is observably in flight.
         await vi.waitFor(() => {
           expect(mockPublishActor).toHaveBeenCalled();
         });
@@ -2475,8 +1994,7 @@ describe("background-jobs", () => {
           ),
         ).toBeNull();
         // The machine context reads the same decision the job record does, so
-        // the publish actor neither runs the session delivery gate nor finishes
-        // the session.
+        // the publish actor leaves the session unfinished.
         expect(mockPublishActor).toHaveBeenCalledWith(
           expect.objectContaining({ finalizeSession: false }),
         );
@@ -2500,7 +2018,6 @@ describe("background-jobs", () => {
 
         const result = dispatchResolveConflictsJob({
           ...BASE_RESOLVE_PARAMS,
-          executionId: "workflow-execution-retry",
           finalizeSessionOnPublish: false,
         });
         expect(result.ok).toBe(true);
@@ -2531,153 +2048,6 @@ describe("background-jobs", () => {
   // targetBranch threading
   // ----------------------------------------------------------
   describe("targetBranch threading", () => {
-    it("checks readiness before preparation and persists candidate validation before the publication gate", async () => {
-      const candidateValidation = {
-        validationRef: "validation-before-gate",
-        validatedSha: "validated-before-gate-sha",
-        validatedTreeHash: "validated-before-gate-tree",
-        commandIdentity: "./validate.sh",
-        outcome: "pass" as const,
-      };
-      const dispatchState: { jobId?: string } = {};
-      let durableRecordAtGate: JobRecord | null | undefined;
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockRunValidation.mockResolvedValue(candidateValidation);
-      mockDeliveryGateActor.mockImplementation(
-        async (input: DeliveryGateActorInput) => {
-          if (!input.preparedSha && !input.expectedTargetSha) {
-            expect(mockRunValidation).not.toHaveBeenCalled();
-            return { status: "pass" as const, satisfied: [], deferred: [] };
-          }
-          if (dispatchState.jobId === undefined) {
-            throw new Error(
-              "Delivery gate ran before dispatch returned the job id",
-            );
-          }
-          durableRecordAtGate = createJobsRepo(testDb).getJobRecord(
-            dispatchState.jobId,
-          );
-          return {
-            status: "pass" as const,
-            satisfied: [],
-            deferred: [],
-          };
-        },
-      );
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "landed-sha",
-      });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        executionId: "workflow-execution-before-gate",
-      });
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      dispatchState.jobId = result.value.jobId;
-
-      await waitForJobCompletions();
-
-      expect(mockDeliveryGateActor).toHaveBeenCalledTimes(2);
-      expect(mockPublishActor).toHaveBeenCalledTimes(1);
-      expect(durableRecordAtGate).toMatchObject({
-        executionId: "workflow-execution-before-gate",
-        candidateValidation,
-      });
-    });
-
-    it("publishes the typed halt reason when the delivery gate refuses a merge", async () => {
-      const haltReason = {
-        type: "delivery_gate_failed" as const,
-        unmet: [
-          {
-            criterionId: "criterion-1",
-            criterionHandle: "native-sdd/R18.4",
-            outcome: "unmet",
-            reason: "candidate proof is stale",
-          },
-        ],
-        instruction: "Re-dispatch the merge to validate the candidate again.",
-      };
-      mockDeliveryGateActor.mockResolvedValue({
-        status: "refused" as const,
-        unmet: haltReason.unmet,
-        instruction: haltReason.instruction,
-      });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        entryMode: "land",
-        preparedSha: "prepared-land-sha",
-        expectedTargetSha: "target-land-sha",
-        parkedRef: "refs/cc-merges/land",
-        executionId: "workflow-execution-land",
-      });
-      expect(result.ok).toBe(true);
-
-      await waitForJobCompletions();
-
-      expect(lastBroadcast()).toMatchObject({
-        type: "job-status",
-        status: "failed",
-        parkedRef: "refs/cc-merges/land",
-        haltReason,
-      });
-      expect(mockPublishActor).not.toHaveBeenCalled();
-    });
-
-    it("carries persisted delivery-gate fields from a land dispatch into MergeInput", async () => {
-      const candidateValidation = {
-        validationRef: "validation-land",
-        validatedSha: "validated-land-sha",
-        validatedTreeHash: "validated-land-tree",
-        commandIdentity: "./validate.sh",
-        outcome: "pass" as const,
-      };
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "landed-sha",
-      });
-
-      const result = dispatchMergeJob({
-        ...BASE_MERGE_PARAMS,
-        entryMode: "land",
-        preparedSha: "prepared-land-sha",
-        expectedTargetSha: "target-land-sha",
-        parkedRef: "refs/cc-merges/land",
-        executionId: "workflow-execution-land",
-        candidateValidation,
-        skipMarkMerged: true,
-      });
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-
-      expect(
-        createJobsRepo(testDb).getJobRecord(result.value.jobId),
-      ).toMatchObject({
-        executionId: "workflow-execution-land",
-        candidateValidation,
-        skipMarkMerged: true,
-      });
-
-      await waitForJobCompletions();
-      expect(mockPublishActor).toHaveBeenCalledWith(
-        expect.objectContaining({
-          skipMarkMerged: true,
-          finalizeSession: true,
-        }),
-      );
-
-      expect(mockDeliveryGateActor).toHaveBeenCalledWith({
-        workflowExecutionId: "workflow-execution-land",
-        preparedSha: "prepared-land-sha",
-        expectedTargetSha: "target-land-sha",
-        projectPath: BASE_MERGE_PARAMS.projectPath,
-        candidateValidation,
-      });
-    });
-
     it("dispatchMergeJob passes targetBranch to MergeInput", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
       mockPublishActor.mockResolvedValue({
@@ -2893,55 +2263,6 @@ describe("background-jobs", () => {
           commitSha: "landed-sha",
           intent: "Session renamed SessionStore to SessionRepo.",
           source: "session-merge",
-        }),
-      ]);
-    });
-
-    /**
-     * One landed commit gets one intent row, attributed to the surface that
-     * dispatched the merge. The graph join's own recording used to run beside
-     * this one and write the same SHA twice under a different source.
-     */
-    it("records a graph-owned merge's intent once, as a graph join", async () => {
-      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockPublishActor.mockResolvedValue({
-        status: "completed" as const,
-        mergeHash: "lane-sha",
-      });
-
-      await runRegisteredMergeJob({
-        machine: testMachine,
-        broadcast: mockBroadcast,
-        input: {
-          jobId: "graph-job-intent",
-          projectPath: BASE_MERGE_PARAMS.projectPath,
-          projectName: BASE_MERGE_PARAMS.projectName,
-          sessionName: BASE_MERGE_PARAMS.sessionName,
-          worktreePath: BASE_MERGE_PARAMS.worktreePath,
-          branchName: BASE_MERGE_PARAMS.branchName,
-          message: BASE_MERGE_PARAMS.message,
-          autoResolve: true,
-          validationMode: {
-            mode: "run",
-            source: "graph_lane_merge",
-            selection: { mode: "only", commands: ["typecheck"] },
-          },
-          targetBranch: "main",
-          finalizeSessionOnPublish: false,
-          resolutionContext: "Lane B rewrote the scheduler.",
-        },
-      });
-
-      expect(countMergeIntents()).toBe(1);
-      expect(
-        mergeIntentsRepo.getMergeIntents(BASE_MERGE_PARAMS.projectPath, [
-          "lane-sha",
-        ]),
-      ).toEqual([
-        expect.objectContaining({
-          commitSha: "lane-sha",
-          intent: "Lane B rewrote the scheduler.",
-          source: "graph-join",
         }),
       ]);
     });

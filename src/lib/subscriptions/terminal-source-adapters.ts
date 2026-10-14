@@ -7,23 +7,17 @@ import type {
   ActiveWaitSource,
   TerminalSourceRead,
 } from "./active-wait-schemas";
-import {
-  createWorkflowTerminalSourceReader,
-  type WorkflowSourceDeps,
-} from "./workflow-source";
 
 type TerminalSourceDeps = Pick<
   SubscriptionSourceDeps,
-  "workflows" | "archivedWorkflows" | "validations" | "jobs" | "queries"
-> &
-  Pick<WorkflowSourceDeps, "workflowEvents" | "resultDeliveries"> & {
-    now?(): string;
-  };
+  "validations" | "jobs" | "queries"
+> & {
+  now?(): string;
+};
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 /** Explicit waits inspect the durable verdict, independently of passive event cursors. */
 export function createTerminalSourceReader(deps: TerminalSourceDeps) {
   const now = deps.now ?? (() => new Date().toISOString());
-  const readWorkflowTerminal = createWorkflowTerminalSourceReader(deps);
   return async function readTerminalSource(
     recipient: SubscriptionRecipient,
     source: ActiveWaitSource,
@@ -65,6 +59,6 @@ export function createTerminalSourceReader(deps: TerminalSourceDeps) {
         fact: gitJobSourceFact(job, recipient, occurrenceId),
       };
     }
-    return readWorkflowTerminal(recipient, source);
+    return { kind: "missing" };
   };
 }

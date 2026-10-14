@@ -5,7 +5,6 @@ import { createLogger } from "@/lib/logging";
 import { timed, timedSync } from "@/lib/logging/timed";
 import { formatBareElementHandle } from "@/lib/specs/handles";
 import {
-  externalDeliverySchema,
   specAssumptionCitationRowSchema,
   specAssumptionCitationSchema,
   specAssumptionCitationSnapshotSchema,
@@ -134,22 +133,6 @@ const withdrawRevisionInputSchema = z
   .object({ revisionId: z.string().min(1) })
   .strict();
 export type WithdrawRevisionInput = z.infer<typeof withdrawRevisionInputSchema>;
-
-/**
- * Record that an imported revision's work already shipped elsewhere. It is a
- * write of its own rather than a field on revision creation because it is not
- * a lifecycle act: nothing about the revision's state changes, and the record
- * discharges no gate.
- */
-const recordExternalDeliveryInputSchema = z
-  .object({
-    revisionId: z.string().min(1),
-    externalDelivery: externalDeliverySchema,
-  })
-  .strict();
-export type RecordExternalDeliveryInput = z.infer<
-  typeof recordExternalDeliveryInputSchema
->;
 
 const createDraftElementInputSchema = z
   .object({
@@ -571,9 +554,6 @@ export interface SpecsRepo {
   withdrawAuthoringRevision(
     input: WithdrawRevisionInput,
   ): Promise<SpecRevision>;
-  recordExternalDelivery(
-    input: RecordExternalDeliveryInput,
-  ): Promise<SpecRevision>;
   getRevisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
   readRevisionCitations(revisionId: string): Promise<SpecAssumptionCitation[]>;
   replaceAssumptionDraftCitations(
@@ -624,7 +604,6 @@ export interface SpecsRepoTransaction {
   /** Freezes the draft: computes its content hash and marks it approved. */
   approveRevision(input: ApproveRevisionInput): SpecRevision;
   withdrawAuthoringRevision(input: WithdrawRevisionInput): SpecRevision;
-  recordExternalDelivery(input: RecordExternalDeliveryInput): SpecRevision;
   createDraftElement(input: CreateDraftElementInput): CreateDraftElementResult;
   updateDraftElement(input: UpdateDraftElementInput): SpecElementVersion;
   removeDraftElement(input: RemoveDraftElementInput): void;
@@ -951,11 +930,6 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
      SET state = 'withdrawn', content_hash = @content_hash
      WHERE id = @id AND state = 'draft'`,
   );
-  const recordExternalDeliveryStmt = db.prepare(
-    `UPDATE spec_revisions
-     SET external_delivery_json = @external_delivery_json
-     WHERE id = @id`,
-  );
   const insertElementStmt = db.prepare(
     `INSERT INTO spec_elements
        (id, spec_id, kind, number, parent_element_id, created_at)
@@ -1207,16 +1181,6 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         citationHash: row.citation_hash,
         proposedAt: row.proposed_at,
         approvedAt: row.approved_at,
-        externalDelivery:
-          row.external_delivery_json === null
-            ? null
-            : parseJson(
-                externalDeliverySchema,
-                row.external_delivery_json,
-                "spec_revision",
-                row.id,
-                "external_delivery_json",
-              ),
         createdAt: row.created_at,
       },
       "spec_revision",
@@ -2038,19 +2002,6 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     },
   );
 
-  const recordExternalDeliveryTx = db.transaction(
-    (
-      input: z.output<typeof recordExternalDeliveryInputSchema>,
-    ): SpecRevision => {
-      requireRevision(input.revisionId);
-      recordExternalDeliveryStmt.run({
-        id: input.revisionId,
-        external_delivery_json: stableStringify(input.externalDelivery),
-      });
-      return requireRevision(input.revisionId);
-    },
-  );
-
   const withdrawAuthoringRevisionTx = db.transaction(
     (input: z.output<typeof withdrawRevisionInputSchema>): SpecRevision => {
       const current = requireRevision(input.revisionId);
@@ -2477,11 +2428,6 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         withdrawRevisionInputSchema.parse(input),
       );
     },
-    recordExternalDelivery(input) {
-      return recordExternalDeliveryTx(
-        recordExternalDeliveryInputSchema.parse(input),
-      );
-    },
     createDraftElement(input) {
       return createDraftElementTx(createDraftElementInputSchema.parse(input));
     },
@@ -2771,19 +2717,6 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           writeQueue.withWriteQueue(
             "specs.withdrawAuthoringRevision",
             async () => withdrawAuthoringRevisionTx.immediate(validated),
-          ),
-      );
-    },
-
-    async recordExternalDelivery(input) {
-      const validated = recordExternalDeliveryInputSchema.parse(input);
-      return timed(
-        logger,
-        "state-store.specs.record_external_delivery",
-        { revisionId: validated.revisionId },
-        () =>
-          writeQueue.withWriteQueueSync("specs.recordExternalDelivery", () =>
-            recordExternalDeliveryTx.immediate(validated),
           ),
       );
     },

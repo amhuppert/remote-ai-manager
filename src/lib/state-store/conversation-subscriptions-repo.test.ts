@@ -126,15 +126,15 @@ describe("conversation subscriptions durable state", () => {
       },
       {
         id: "gate",
-        sourceKind: "workflow",
+        sourceKind: "validation",
         mode: "active",
         state: "pending",
         expired: true,
-        actionable: true,
+        actionable: false,
       },
       {
         id: "ready",
-        sourceKind: "workflow",
+        sourceKind: "validation",
         mode: "active",
         state: "pending",
         ready: true,
@@ -142,7 +142,7 @@ describe("conversation subscriptions durable state", () => {
       },
       {
         id: "ready-failed",
-        sourceKind: "workflow",
+        sourceKind: "validation",
         mode: "active",
         state: "failed",
         ready: true,
@@ -150,7 +150,7 @@ describe("conversation subscriptions durable state", () => {
       },
       {
         id: "ready-queued",
-        sourceKind: "workflow",
+        sourceKind: "validation",
         mode: "active",
         state: "queued",
         ready: true,
@@ -158,7 +158,7 @@ describe("conversation subscriptions durable state", () => {
       },
       {
         id: "downgraded",
-        sourceKind: "workflow",
+        sourceKind: "validation",
         mode: "passive",
         state: "pending",
         ready: true,
@@ -230,7 +230,7 @@ describe("conversation subscriptions durable state", () => {
         row.id,
       ).toBe(row.actionable);
     }
-    expect(await repo.pendingCount(recipient)).toBe(6);
+    expect(await repo.pendingCount(recipient)).toBe(5);
   });
   it("counts only actionable pending work and permits explicit review without inventing acceptance", async () => {
     const { repo } = setup();
@@ -508,7 +508,7 @@ describe("subscription evidence import and source withdrawal", () => {
     const { fixture, repo } = setup();
     await repo.createIfAbsent(subscription());
     await repo.recordDelivery(delivery());
-    const otherSource = { kind: "workflow", id: "execution" } as const;
+    const otherSource = { kind: "run", id: "run-1" } as const;
     await expect(
       repo.importDelivery(
         { ...subscription(), id: "new-subscription", source: otherSource },

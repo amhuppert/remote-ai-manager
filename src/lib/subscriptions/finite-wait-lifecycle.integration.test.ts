@@ -9,7 +9,6 @@ import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { validationRunRecordSchema } from "@/lib/validation/schemas";
 import { createSubscriptionRuntime } from "./service-factory";
-import { retireConsumedFiniteWaitSourcesMigration } from "@/lib/state-store/migrations/0067-retire-consumed-finite-wait-sources";
 
 let fixture: PersistenceFixture | undefined;
 afterEach(() => {
@@ -108,31 +107,6 @@ async function harness(kind: "validation" | "git_job") {
 describe.each(["validation", "git_job"] as const)(
   "finite %s wait lifecycle",
   (kind) => {
-    it("repairs a legacy cancelled wait's null cursor without baselining away its later result", async () => {
-      const h = await harness(kind);
-      const first = await h.activeWaitService.register(h.input);
-      await h.controlsService.cancel(recipient, first.subscriptionId);
-      if (!fixture) throw Error("Expected fixture");
-      fixture.db
-        .prepare("UPDATE conversation_subscriptions SET cursor=NULL WHERE id=?")
-        .run(first.subscriptionId);
-      await retireConsumedFiniteWaitSourcesMigration.up({
-        name: retireConsumedFiniteWaitSourcesMigration.name,
-        context: { db: fixture.db, configDir: null },
-      });
-      h.finish();
-      const receipt = await h.service.prepareBriefing({
-        recipient,
-        attemptId: "legacy-later",
-      });
-      expect(receipt.block).toContain(
-        kind === "validation" ? "passed" : "completed",
-      );
-      await receipt.onInputAccepted();
-      expect(
-        (await h.repo.readInbox(recipient, { includeSettled: true })).items,
-      ).toHaveLength(1);
-    });
     it.each(["cancel", "expiry"] as const)(
       "delivers the later terminal result passively after %s and retires only after consumption",
       async (end) => {

@@ -13,10 +13,6 @@ import {
 import { z } from "zod";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
-  deliveryDeltaProjectionSchema,
-  type DeliveryDeltaProjection,
-} from "@/lib/specs/delivery-delta";
-import {
   compareCanonicalSpecBundles,
   decodeCanonicalSpecBundle,
 } from "@/lib/specs/export";
@@ -34,9 +30,7 @@ import {
 } from "../../framework/family";
 import {
   specDiffCommand,
-  specDeltaCommand,
   type specDiffSpec,
-  type specDeltaSpec,
   type specExportSpec,
   type specVerifySpec,
 } from "./native-definitions";
@@ -103,57 +97,6 @@ const diffRun = (full: boolean) =>
 export const diffHandler: Read<typeof specDiffSpec> = {
   run: diffRun(false),
   levels: { full: diffRun(true) },
-};
-
-type DeltaData = {
-  delta: DeliveryDeltaProjection;
-  disclosure?: { elements: Omission; criteria: Omission; advisories: Omission };
-};
-const deltaRun = (full: boolean) =>
-  runner<Input<typeof specDeltaSpec>, DeltaData, CcErrorCode>({
-    async run({ app, ctx }: Input<typeof specDeltaSpec>) {
-      const query =
-        ctx.flags.since === undefined
-          ? ""
-          : `?${new URLSearchParams({ since: ctx.flags.since })}`;
-      const response = await readSpecJson(
-        app,
-        (context) =>
-          `${specPath(context.project, ctx.args.slug)}/delta${query}`,
-        deliveryDeltaProjectionSchema,
-        ctx.args.slug,
-      );
-      if (!response.ok) return response;
-      if (full) return { ok: true, data: { delta: response.data } } as const;
-      const reveal = invocation(specDeltaCommand, {
-        args: ctx.args,
-        flags: { ...explicitScopeFlags(app), ...ctx.flags },
-        level: "full",
-      });
-      const elements = boundSpecRows(response.data.elements, reveal);
-      const criteria = boundSpecRows(response.data.criteria, reveal);
-      const advisories = boundSpecRows(response.data.advisories, reveal);
-      return {
-        ok: true,
-        data: {
-          delta: {
-            ...response.data,
-            elements: elements.items,
-            criteria: criteria.items,
-            advisories: advisories.items,
-          },
-          disclosure: {
-            elements: elements.omission,
-            criteria: criteria.omission,
-            advisories: advisories.omission,
-          },
-        },
-      } as const;
-    },
-  });
-export const deltaHandler: Read<typeof specDeltaSpec> = {
-  run: deltaRun(false),
-  levels: { full: deltaRun(true) },
 };
 
 const manifestCountsSchema = z.object({
@@ -223,10 +166,6 @@ function verifyText({ report, against }: JsonData<VerifyData>): string {
         (mismatch) =>
           `Revision ${mismatch.revisionId}: ${mismatch.mismatchedElementIds.length ? `payload hash mismatch for ${mismatch.mismatchedElementIds.join(", ")}` : "revision content hash mismatch"}`,
       ),
-      ...report.consistencyFindings.flatMap((finding) => [
-        `${finding.family} (${finding.code}): ${finding.detail}`,
-        `Remedy: ${finding.remedy}`,
-      ]),
       ...(against ? [`Compared with ${against}.`] : []),
     ].join("\n") + "\n"
   );

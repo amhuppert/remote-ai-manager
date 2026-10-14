@@ -26,7 +26,10 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { describeActiveTurn } from "@/lib/workflows/conversation/lifecycle";
+import { describeCoreTurn } from "@/lib/supervision/handles";
+const describeActiveTurn = (
+  address: import("@/lib/conversation-core/turn/turn-spec").ConversationAddress,
+) => describeCoreTurn(address.target.conversationId);
 
 import {
   ALIGNMENT_AUTONOMOUS_DENIAL_MESSAGE,

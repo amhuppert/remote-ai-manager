@@ -1,6 +1,4 @@
-import type { StatusChipTone } from "@/components/ui/StatusChip";
-import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
-import type { DeliveryDisplay, SpecPhasePrimary } from "@/lib/specs/phase";
+import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import type { SpecGate } from "@/lib/specs/schemas";
 import type { SpecGateAdmissionView } from "@/lib/specs/view-schemas";
 
@@ -10,44 +8,13 @@ export const gateLabels: Record<SpecGate, string> = {
   requirements: "Requirements",
   design: "Design",
   plan: "Plan",
-  execution_start: "Execution start",
-  delivery: "Delivery",
 };
 
 export const phaseLabels: Record<SpecPhasePrimary, string> = {
   abandoned: "Abandoned",
-  executing: "Executing",
   draft: "Draft",
-  delivered: "Delivered",
   approved: "Approved",
 };
-
-/**
- * Reads the delivered tally, not the proof tally: a criterion an imported spec
- * reports as delivered elsewhere is delivered, and a "0/3 delivered" chip on a
- * spec the same view calls Delivered would contradict itself.
- */
-export function deliveryLabel(delivery: DeliveryDisplay): string {
-  if (delivery.allWaived) return "All delivery waived";
-  if (delivery.totalInScope === 0) return "No delivery scope";
-  return `${delivery.deliveredCount}/${delivery.totalInScope} delivered`;
-}
-
-export function deliveryTone(delivery: DeliveryDisplay): StatusChipTone {
-  if (delivery.allWaived) return "amber";
-  if (delivery.totalInScope === 0) return "neutral";
-  return delivery.deliveredCount === delivery.totalInScope ? "green" : "cyan";
-}
-
-/**
- * A draft plan with no blocking finding is the one a human reviews and signs
- * off in Workflow Builder; sign-off is the act that freezes and approves it.
- */
-export function deliveryPlanReadyForSignOff(
-  plan: Pick<DeliveryPlanReviewView, "attempt" | "health">,
-): boolean {
-  return plan.attempt.status === "draft" && plan.health.blocking === 0;
-}
 
 /**
  * The import a spec was born from, as its gate admissions record it.

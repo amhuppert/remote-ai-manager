@@ -1,9 +1,4 @@
 import { CheckpointForkError } from "./fork-service";
-import {
-  checkpointAssignmentKey,
-  checkpointWorkflowAssignments,
-} from "./fork-workflow-assignments";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { CheckpointRelatedWork } from "./fork-schemas";
 
 export interface CheckpointWorkReaders {
@@ -13,14 +8,6 @@ export interface CheckpointWorkReaders {
     revision: { specId: string };
     elements: readonly { element: { id: string; kind: string } }[];
   } | null>;
-  execution(
-    projectPath: string,
-    sessionName: string,
-    id: string,
-  ): Promise<Pick<
-    GraphWorkflowExecution,
-    "launchDocument" | "workingDefinition"
-  > | null>;
 }
 
 export function createCheckpointWorkResolver(readers: CheckpointWorkReaders) {
@@ -53,17 +40,5 @@ export function createCheckpointWorkResolver(readers: CheckpointWorkReaders) {
         throw missing();
       return;
     }
-    const execution = await readers.execution(
-      projectPath,
-      work.sessionName,
-      work.executionId,
-    );
-    if (
-      !execution ||
-      !checkpointWorkflowAssignments(execution).some(
-        (choice) => choice.id === checkpointAssignmentKey(work),
-      )
-    )
-      throw missing();
   };
 }

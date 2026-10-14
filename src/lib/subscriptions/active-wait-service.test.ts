@@ -139,7 +139,7 @@ describe("explicit finite terminal waits", () => {
       });
       const input = {
         recipient,
-        source: { kind: "workflow", id: "workflow" } as const,
+        source: { kind: "validation", id: "workflow" } as const,
         reason: "Continue",
       };
       await service.register(input);
@@ -205,7 +205,7 @@ describe("explicit finite terminal waits", () => {
       );
     },
   );
-  it.each(["validation", "workflow"] as const)(
+  it.each(["validation", "git_job"] as const)(
     "does not treat an undelivered historical %s baseline as consumed",
     async (kind) => {
       const h = harness();
@@ -309,7 +309,7 @@ describe("explicit finite terminal waits", () => {
     h.setSource({ kind: "pending", status: "running" });
     const input = {
       recipient,
-      source: { kind: "workflow", id: "workflow" } as const,
+      source: { kind: "validation", id: "workflow" } as const,
       reason: "Continue",
     };
     const first = await service.register(input);
@@ -335,7 +335,7 @@ describe("explicit finite terminal waits", () => {
     const service = h.build();
     const wait = await service.register({
       recipient,
-      source: { kind: "workflow", id: "workflow" },
+      source: { kind: "validation", id: "workflow" },
       reason: "Continue",
     });
     if (!fixture || !wait.deliveryId) throw Error("Expected receipt");
@@ -395,17 +395,17 @@ describe("explicit finite terminal waits", () => {
     const service = h.build();
     const broken = await service.register({
       recipient,
-      source: { kind: "workflow", id: "broken" },
+      source: { kind: "validation", id: "broken" },
       reason: "Continue",
     });
     const healthy = await service.register({
       recipient,
-      source: { kind: "workflow", id: "healthy" },
+      source: { kind: "validation", id: "healthy" },
       reason: "Continue",
     });
     const ready = await service.register({
       recipient,
-      source: { kind: "workflow", id: "ready" },
+      source: { kind: "validation", id: "ready" },
       reason: "Continue",
     });
     if (!fixture || !broken.deliveryId || !healthy.deliveryId)
@@ -437,7 +437,7 @@ describe("explicit finite terminal waits", () => {
     await expect(
       h.build().register({
         recipient,
-        source: { kind: "workflow", id: "missing" },
+        source: { kind: "validation", id: "missing" },
         reason: "Wait",
       }),
     ).rejects.toMatchObject({
@@ -452,7 +452,7 @@ describe("explicit finite terminal waits", () => {
     h.setSource({ kind: "pending", status: "running" });
     const input = {
       recipient,
-      source: { kind: "workflow", id: "workflow" } as const,
+      source: { kind: "validation", id: "workflow" } as const,
       reason: "Wait",
     };
     const wait = await service.register(input);
@@ -493,7 +493,7 @@ describe("explicit finite terminal waits", () => {
     h.setOccurrenceId("boundary-1");
     const input = {
       recipient,
-      source: { kind: "workflow", id: "workflow" } as const,
+      source: { kind: "validation", id: "workflow" } as const,
       reason: "Continue",
     };
     const first = await h.build().register(input);
@@ -517,7 +517,7 @@ describe("explicit finite terminal waits", () => {
     const h = harness();
     const wait = await h.build().register({
       recipient,
-      source: { kind: "workflow", id: "workflow" },
+      source: { kind: "validation", id: "workflow" },
       reason: "Use the result",
     });
     if (!fixture || !wait.deliveryId)
@@ -719,7 +719,7 @@ describe("explicit finite terminal waits", () => {
     h.setSource({ kind: "pending", status: "running" });
     const waiting = await h.build().register({
       recipient,
-      source: { kind: "workflow", id: "execution" },
+      source: { kind: "validation", id: "execution" },
       reason: "Review result",
       expiresAt: "2026-09-30T12:05:00.000Z",
     });

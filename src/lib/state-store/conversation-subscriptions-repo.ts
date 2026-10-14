@@ -278,8 +278,8 @@ export function createConversationSubscriptionsRepo(
       AND s.project_path=conversation_subscription_deliveries.project_path AND s.conversation_id=conversation_subscription_deliveries.conversation_id
       AND s.status='following' AND s.paused_at IS NULL AND (
         state='queued' OR (
-          (s.mode='passive' OR s.source_kind='workflow')
-          AND (s.expires_at IS NULL OR s.expires_at>@at OR (s.source_kind='workflow' AND s.mode='active')
+          s.mode='passive'
+          AND (s.expires_at IS NULL OR s.expires_at>@at
             OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL))
           AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND s.mode='active')
         ) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL AND s.mode='active' AND conversation_subscription_deliveries.state='pending')
@@ -307,11 +307,11 @@ export function createConversationSubscriptionsRepo(
   );
   const advance =
     db.prepare(`UPDATE conversation_subscriptions SET cursor=@next_cursor,missing_at=@missing_at,updated_at=@at,last_error=NULL
-    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND (mode='passive' OR source_kind='workflow') AND missing_at IS NULL AND (source_kind='workflow' OR NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=conversation_subscriptions.id AND (w.state='waiting' OR (w.state='ready' AND json_extract(w.payload_json,'$.outcome')='source_terminal'))))`);
+    WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND cursor IS @expected_cursor AND status='following' AND mode='passive' AND missing_at IS NULL AND (NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=conversation_subscriptions.id AND (w.state='waiting' OR (w.state='ready' AND json_extract(w.payload_json,'$.outcome')='source_terminal'))))`);
   const claim =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state='queued',attempt_id=@attempt_id,attempt_count=attempt_count+1,queued_at=@at,accepted_at=NULL,finished_at=NULL,last_error=NULL
     WHERE project_path=@project_path AND conversation_id=@conversation_id AND id=@id AND state IN ('pending','failed')
-    AND EXISTS (SELECT 1 FROM conversation_subscriptions s WHERE s.id=subscription_id AND s.project_path=@project_path AND s.conversation_id=@conversation_id AND s.status='following' AND (s.mode='passive' OR s.source_kind='workflow') AND s.paused_at IS NULL AND ((s.expires_at IS NULL OR s.expires_at>@at OR (s.source_kind='workflow' AND s.mode='active')) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL))
+    AND EXISTS (SELECT 1 FROM conversation_subscriptions s WHERE s.id=subscription_id AND s.project_path=@project_path AND s.conversation_id=@conversation_id AND s.status='following' AND s.mode='passive' AND s.paused_at IS NULL AND ((s.expires_at IS NULL OR s.expires_at>@at) OR EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND w.batch_id IS NULL))
       AND NOT EXISTS (SELECT 1 FROM conversation_subscription_waits w WHERE w.subscription_id=s.id AND w.delivery_id=conversation_subscription_deliveries.id AND w.state='ready' AND s.mode='active'))`);
   const settle =
     db.prepare(`UPDATE conversation_subscription_deliveries SET state=@state,accepted_at=CASE WHEN @state='accepted' THEN @at ELSE NULL END,finished_at=@at,last_error=@error
@@ -514,7 +514,7 @@ export function createConversationSubscriptionsRepo(
       return (
         db
           .prepare(
-            "SELECT DISTINCT w.subscription_id FROM conversation_subscription_waits w JOIN conversation_subscriptions s ON s.id=w.subscription_id WHERE w.project_path=@project_path AND w.conversation_id=@conversation_id AND s.source_kind<>'workflow' AND (w.state='waiting' OR (w.state='ready' AND json_extract(w.payload_json,'$.outcome')='source_terminal'))",
+            "SELECT DISTINCT w.subscription_id FROM conversation_subscription_waits w JOIN conversation_subscriptions s ON s.id=w.subscription_id WHERE w.project_path=@project_path AND w.conversation_id=@conversation_id AND (w.state='waiting' OR (w.state='ready' AND json_extract(w.payload_json,'$.outcome')='source_terminal'))",
           )
           .all(scope(recipient)) as unknown[]
       ).map(

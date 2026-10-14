@@ -1,5 +1,3 @@
-import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
-import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 /**
  * Debug-mode route handlers for a conversation.
  *
@@ -22,12 +20,11 @@ import {
   getDebugLogPath,
   clearDebugLog,
 } from "@/lib/debug-log/service";
-import { type ConversationCommandOutcome } from "@/lib/workflows/conversation/manager";
-import { ensureConversationLifecycle } from "@/lib/workflows/conversation/lifecycle";
+import { type CoreDebugCommandOutcome as ConversationCommandOutcome } from "@/lib/conversation-core/debug-mode";
 import {
   getDefaultDebugAdapter,
   type DebugAdapter,
-} from "@/lib/workflows/conversation/debug-adapter";
+} from "@/lib/conversations/debug-adapter";
 import { createDebugLogStatsHandlers } from "@/lib/debug-log/stats-route-handlers";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import type { ApiError } from "@/lib/api/errors";
@@ -37,7 +34,6 @@ interface DebugModeRouteDeps {
   getSession(
     ...args: Parameters<typeof getSession>
   ): ReturnType<typeof getSession>;
-  ensureConversation(binding: ConversationBinding): Promise<void>;
   adapter(): DebugAdapter;
 }
 
@@ -69,18 +65,6 @@ export function createDebugModeHandler(deps: DebugModeRouteDeps) {
     }
 
     try {
-      // Hosts (and repairs) an actor conversation's actor; nothing to do for one the core runs.
-      await deps.ensureConversation({
-        kind: "durable",
-        address: {
-          projectPath,
-          target: sessionConversationTarget(
-            (await params)["name"] ?? "",
-            sessionName,
-            conversationId,
-          ),
-        },
-      });
       const adapter = deps.adapter();
       const target = { projectPath, sessionName, conversationId };
 
@@ -146,7 +130,6 @@ export const updateDebugMode = withTracing(
   createDebugModeHandler({
     resolveProjectPath,
     getSession,
-    ensureConversation: ensureConversationLifecycle,
     adapter: getDefaultDebugAdapter,
   }),
 );
@@ -195,7 +178,6 @@ interface DebugRecordingRouteDeps {
   getSession(
     ...args: Parameters<typeof getSession>
   ): ReturnType<typeof getSession>;
-  ensureConversation(binding: ConversationBinding): Promise<void>;
   setRecording(
     target: {
       projectPath: string;
@@ -240,17 +222,6 @@ export function createDebugModeRecordingHandler(deps: DebugRecordingRouteDeps) {
     }
 
     try {
-      await deps.ensureConversation({
-        kind: "durable",
-        address: {
-          projectPath,
-          target: sessionConversationTarget(
-            (await params)["name"] ?? "",
-            sessionName,
-            conversationId,
-          ),
-        },
-      });
       const outcome = await deps.setRecording(
         { projectPath, sessionName, conversationId },
         body.recording,
@@ -277,7 +248,6 @@ export const updateDebugModeRecording = withTracing(
   createDebugModeRecordingHandler({
     resolveProjectPath,
     getSession,
-    ensureConversation: ensureConversationLifecycle,
     setRecording: (target, recording) =>
       getDefaultDebugAdapter().setRecording(target, recording),
   }),

@@ -59,6 +59,7 @@ import { createValidationCheckRunner } from "@/lib/workspace/validation-checks";
 import {
   composedSupervision,
   CORE_TURN_RUNTIME_KEY,
+  CORE_TURN_RUNTIME_LOADER_KEY,
   CORE_TURN_RUNTIME_READY_KEY,
   loadedCoreTurnRuntime,
   SUPERVISION_KEY,
@@ -95,6 +96,7 @@ const logger = createLogger("runs");
  * admission and one set of running turns.
  */
 export function getSupervision(): Supervision {
+  setGlobalValue(CORE_TURN_RUNTIME_LOADER_KEY, coreTurnRuntime);
   return getGlobalSingleton(SUPERVISION_KEY, composeProductionSupervision);
 }
 

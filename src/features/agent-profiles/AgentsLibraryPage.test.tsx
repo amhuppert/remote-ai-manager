@@ -91,30 +91,6 @@ const DELETION_PREVIEW: AgentProfileDeletionReport = {
   deletedRevision: 5,
   conversationSnapshotsExempt: true,
   savedReferenceEnumeration: {
-    definitions: [
-      {
-        scope: { kind: "project", projectPath: "/repos/my-app" },
-        id: "wf-1",
-        name: "Nightly Delivery",
-        contextId: "context-implement",
-        dormant: false,
-      },
-      {
-        scope: { kind: "project", projectPath: "/repos/my-app" },
-        id: "wf-2",
-        name: "Paused Review",
-        contextId: "context-verify",
-        dormant: true,
-      },
-    ],
-    templates: [
-      {
-        scope: { kind: "global" },
-        id: "tpl-1",
-        name: "Shared Delivery Template",
-        dormant: false,
-      },
-    ],
     runTemplates: [
       {
         scope: { kind: "project", projectPath: "/repos/my-app" },
@@ -124,7 +100,6 @@ const DELETION_PREVIEW: AgentProfileDeletionReport = {
       },
       { scope: { kind: "global" }, id: "shared-fix", name: "Shared fix" },
     ],
-    workflowDefaults: true,
   },
 };
 
@@ -387,28 +362,9 @@ describe("AgentsLibraryPage", () => {
     const confirmation = screen.getByRole("alertdialog", {
       name: "Delete House Style?",
     });
-    const holders = await within(confirmation).findByRole("list", {
-      name: "Graph workflows referencing this profile",
+    await within(confirmation).findByRole("list", {
+      name: "Run templates referencing this profile",
     });
-    expect(holders).toHaveTextContent("Nightly Delivery");
-    expect(holders).toHaveTextContent("Shared Delivery Template");
-    // The dormant holder is listed and MARKED, not silently folded in.
-    const dormantRow = within(holders).getByText("Paused Review").closest("li");
-    expect(dormantRow).not.toBeNull();
-    expect(dormantRow).toHaveTextContent("Dormant");
-    expect(confirmation).toHaveTextContent(
-      "The global workflow defaults also reference it.",
-    );
-
-    // Each list is captioned on screen, so a run template is not read as a graph template.
-    expect(
-      within(confirmation).getByText(
-        "Graph workflows referencing this profile",
-      ),
-    ).toBeVisible();
-    expect(
-      within(confirmation).getByText("Run templates referencing this profile"),
-    ).toBeVisible();
     // A run template names it in one context's settings, or in its defaults.
     const runTemplates = within(confirmation).getByRole("list", {
       name: "Run templates referencing this profile",
@@ -461,7 +417,7 @@ describe("AgentsLibraryPage", () => {
     scan.resolve(Response.json(DELETION_PREVIEW));
 
     await within(confirmation).findByRole("list", {
-      name: "Graph workflows referencing this profile",
+      name: "Run templates referencing this profile",
     });
     await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
@@ -522,7 +478,7 @@ describe("AgentsLibraryPage", () => {
       name: "Delete House Style?",
     });
     await within(firstOpen).findByRole("list", {
-      name: "Graph workflows referencing this profile",
+      name: "Run templates referencing this profile",
     });
     await waitFor(() =>
       expect(
@@ -553,7 +509,7 @@ describe("AgentsLibraryPage", () => {
     // The stale enumeration is neither shown nor counted as having been shown.
     expect(
       within(reopened).queryByRole("list", {
-        name: "Graph workflows referencing this profile",
+        name: "Run templates referencing this profile",
       }),
     ).toBeNull();
     await waitFor(() => expect(confirm).toBeDisabled());

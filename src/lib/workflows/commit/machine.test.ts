@@ -452,7 +452,7 @@ describe("commitMachine", () => {
       expect(states).not.toContain("fixingValidation");
       expect(fixCallCount).toBe(0);
       expect(output.error).toContain("timed out");
-      expect(output.error).toContain("preMergeTimeoutMs");
+      expect(output.error).toContain("validation.commands timeoutMs");
     });
 
     it("stops retrying when a timeout occurs during revalidation", async () => {
@@ -489,7 +489,7 @@ describe("commitMachine", () => {
       // revalidation must not trigger a second fix even though retries remain.
       expect(fixCallCount).toBe(1);
       expect(states.filter((s) => s === "fixingValidation")).toHaveLength(1);
-      expect(output.error).toContain("preMergeTimeoutMs");
+      expect(output.error).toContain("validation.commands timeoutMs");
     });
   });
 

@@ -10,9 +10,6 @@ import {
   specApprovalChangedEventSchema,
   specAttentionChangedEventSchema,
   specChangedEventSchema,
-  specDeliveryPlanChangedEventSchema,
-  specEvidenceChangedEventSchema,
-  specExecutionChangedEventSchema,
   specRevisionChangedEventSchema,
   specSseEventSchema,
   type SpecSseEvent,
@@ -83,10 +80,7 @@ describe("SSEEvent union — strict spec events", () => {
       | typeof specChangedEventSchema
       | typeof specRevisionChangedEventSchema
       | typeof specApprovalChangedEventSchema
-      | typeof specExecutionChangedEventSchema
-      | typeof specEvidenceChangedEventSchema
-      | typeof specAttentionChangedEventSchema
-      | typeof specDeliveryPlanChangedEventSchema;
+      | typeof specAttentionChangedEventSchema;
     event: SpecSseEvent;
   }> = [
     {
@@ -120,27 +114,6 @@ describe("SSEEvent union — strict spec events", () => {
       },
     },
     {
-      schema: specExecutionChangedEventSchema,
-      event: {
-        type: "spec-execution-changed",
-        kind: "running",
-        ...common,
-        revisionId: "revision-1",
-        executionId: "execution-1",
-      },
-    },
-    {
-      schema: specEvidenceChangedEventSchema,
-      event: {
-        type: "spec-evidence-changed",
-        kind: "proof-verdict-recorded",
-        ...common,
-        revisionId: "revision-1",
-        criterionId: "criterion-1",
-        executionId: "execution-1",
-      },
-    },
-    {
       schema: specAttentionChangedEventSchema,
       event: {
         type: "spec-attention-changed",
@@ -148,17 +121,6 @@ describe("SSEEvent union — strict spec events", () => {
         ...common,
         attentionId: "attention-1",
         active: true,
-      },
-    },
-    {
-      schema: specDeliveryPlanChangedEventSchema,
-      event: {
-        type: "spec-delivery-plan-changed",
-        kind: "reaffirmed",
-        ...common,
-        attemptId: "attempt-1",
-        draftRevision: 3,
-        candidateId: null,
       },
     },
   ];

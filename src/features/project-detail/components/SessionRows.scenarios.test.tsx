@@ -40,7 +40,6 @@ function makeSession(
     promptCount: 0,
     derivedLastActivityAt: hourAgo,
     collabContribution: null,
-    hasActiveGraphWorkflow: false,
     ...overrides,
   };
 }

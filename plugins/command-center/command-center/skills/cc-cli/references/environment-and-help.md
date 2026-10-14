@@ -87,8 +87,8 @@ The JSON metadata is `{ "name": "cctl", "version": "<sha>-<build-time>" }`.
 
 ```
 cctl --help                              # top-level usage: the command list + global flags
-cctl workflow --help                     # the 'workflow' group index: one line per subcommand
-cctl workflow create --help              # the leaf: description, usage, flags, examples, related, skills
+
+
 cctl conversation compaction get --help  # 3-level paths resolve too
 ```
 

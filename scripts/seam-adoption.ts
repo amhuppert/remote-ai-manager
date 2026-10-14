@@ -688,25 +688,6 @@ const BACKEND_SEAM_ALLOWLIST: readonly AllowlistEntry[] = [
   },
 ];
 
-const BACKEND_IDENTITY_ALLOWLIST: readonly AllowlistEntry[] = [
-  ...BACKEND_SEAM_ALLOWLIST,
-  {
-    path: "src/lib/state-store/migrations/0035-generalized-model-selection.ts",
-    justification:
-      "Frozen one-way migration boundary: provider identity is required to translate retired provider-specific config fields into atomic selections. The file cannot serve runtime requests and is deleted only when schema-v11 databases are no longer supported.",
-  },
-  {
-    path: "src/lib/state-store/migrations/0051-retire-stored-shape-readers.ts",
-    justification:
-      "Frozen one-way collaboration migration: historical backend pairing and parameter names reconstruct stored settings once; remove with pre-0051 database support. No runtime requests reach it.",
-  },
-  {
-    path: "src/lib/state-store/migrations/frozen-archived-execution.ts",
-    justification:
-      "Frozen one-way archive migration: provider identity translates historical tuples once into canonical assignment records; it cannot serve runtime requests.",
-  },
-];
-
 const NEUTRAL_MODEL_PARAMETER_ALLOWLIST: readonly AllowlistEntry[] = [
   ...BACKEND_SEAM_ALLOWLIST,
   {
@@ -779,13 +760,15 @@ export const SEAMS: readonly SeamDefinition[] = [
     // lane dispatch stopped comparing against Claude, the production caller
     // resumes whichever ref the lane's own backend recorded instead of naming
     // Claude and Codex, and the UI reads default partners from the policy.
-    // Catalog-driven model controls consume neutral catalog metadata; this
-    // ceiling covers the remaining product-policy identity sites below.
-    reviewedCeiling: 2,
+    // Catalog-driven model controls consume neutral catalog metadata.
+    // Ratcheted 2 → 0 with the retirement of the deploy-1.5 migration
+    // history: the last two branches lived in
+    // `0024-collab-lane-flow-agent-ids`, which the history retirement deleted.
+    reviewedCeiling: 0,
     unit: 'backend ===/!== "claude"|"codex" comparisons + case labels',
     corpus:
-      "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the collaboration pair policy (`backend-pair.ts`/`types.ts` — participation, default partners and lane dispatch are named product policy over the participant enum, not derivation from registration), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",
-    allowlist: BACKEND_IDENTITY_ALLOWLIST,
+      "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Survivor floor (at 0 since the deploy-1.5 migration history was retired): per P3 any surviving branches would be sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the collaboration pair policy (`backend-pair.ts`/`types.ts` — participation, default partners and lane dispatch are named product policy over the participant enum, not derivation from registration), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",
+    allowlist: BACKEND_SEAM_ALLOWLIST,
     inCorpus(relPath) {
       return (
         isTsSource(relPath) &&
@@ -843,11 +826,6 @@ export const SEAMS: readonly SeamDefinition[] = [
         justification:
           "Client-side pane-interaction handler — produces no HTTP responses, so it is not part of the route-404 population.",
       },
-      {
-        path: "src/lib/workflows/conversation/external-turn-handler.ts",
-        justification:
-          "Workflow-internal external-turn processing helper — produces no HTTP responses.",
-      },
     ],
     inCorpus(relPath) {
       return (
@@ -899,7 +877,7 @@ export const SEAMS: readonly SeamDefinition[] = [
   {
     id: "status-chip-pills",
     title: "Hand-authored status pills (pre-ui/StatusChip)",
-    reviewedCeiling: 6,
+    reviewedCeiling: 5,
     unit: "class literals co-locating rounded-full + border border-solid + font-mono + text-[0.7rem] (the ui/StatusChip base geometry) outside the primitive, minus data-status-chip-justified sites",
     corpus:
       "src/**/*.{ts,tsx} minus tests. Stories ARE included (they render the markup and migrate with their component). Excludes ui/StatusChip.tsx (the primitive that owns the base geometry). The tone-coded status pills the audit counted (§1.8 '8+ status-chip implementations → 1') have adopted the primitive; the ceiling of 6 is a permanent-survivor floor of genuinely-DISTINCT chip primitives that happen to share the four base tokens but are not tone-coded status pills: the branch selector (BranchChip, max-width + copy affordance), the topbar needs-attention nav anchor (Topbar), the aria-pressed filter toggle (ConversationAutocompleteList), the blue interactive plugin link (AgentCapabilityPanel's PLUGIN_CHIP), and the two uppercase override-count badges (ConfigField, ConfigSubsection). The graph node-status badge (ExecutionContextNode) and inspector BackendChip/GateChip (InspectorChips) use different geometry (rounded-[20px]/rounded-sm, uppercase) and never co-locate all four tokens, so they are outside the population without an entry. Markdown.stories.tsx's numbered source-map overlay is a site-level non-status annotation carrying data-status-chip-justified; its file remains in the corpus, and the counter subtracts only that marked site. Its deletion condition is a dedicated numbered-marker primitive for source-map overlays. All survivors stay IN the corpus rather than creating a file blind spot, so the ratchet still catches any NEW hand-rolled status pill that should compose the primitive. The six-count floor drops only if one of the distinct chip primitives is folded onto a future StatusChip shape/tone variant.",
@@ -928,7 +906,7 @@ export const SEAMS: readonly SeamDefinition[] = [
   {
     id: "internal-vi-mocks",
     title: "Internal non-infrastructure vi.mock calls",
-    reviewedCeiling: 64,
+    reviewedCeiling: 60,
     unit: "vi.mock calls on internal modules outside the infra allowlist",
     corpus:
       "src/**/*.test.{ts,tsx}. Infrastructure allowlist (steering): @/lib/logging and the sdk-env module (@/lib/sdk-env, located at src/lib/shared/sdk-env). External-package mocks do not count. Migration-only survivor floor (ceiling > 0 while unmigrated tests remain; target 0): per D20 the ~100+ internal vi.mock sites are not sloppiness but the signal of a MISSING client-test seam — engineering-principles forbids mocking internal modules, and the sanctioned replacement is fetch-level fakes + an injectable query client (installFetchFixture / renderWithQuery). Every surviving count is migration-only debt: a test still replacing an internal module instead of running the real hook/store over the fetch fixture. Deletion condition (per test file): a mock drops when its test is rewritten onto the sanctioned client-test seam (D20) — real React Query, real fetcher validation, real Zod schemas, real Zustand store — faking only the network boundary. The floor reaches 0 (and the seam retires) when the last non-infrastructure vi.mock is migrated; until then the reviewed count is the migration-only backlog, ratcheted down as each test moves. The allowlist is empty by design: only the two module-load-time infrastructure prefixes (encoded in VI_MOCK_INFRA_PREFIXES) are ever exempt, so any NEW internal vi.mock still fails the ratchet.",
@@ -969,7 +947,7 @@ export const SEAMS: readonly SeamDefinition[] = [
   {
     id: "structured-output-schema-literals",
     title: "Hand-written structured-output schemas",
-    reviewedCeiling: 25,
+    reviewedCeiling: 23,
     unit: "const *_JSON_SCHEMA/*_OUTPUT_SCHEMA = { … } declarations + inline object literals flowing into outputSchema / outputFormat.schema",
     corpus:
       "src/**/*.{ts,tsx} minus tests/stories (a story's `outputSchema` is inert prop data rendered by a node component, authoring no contract any agent run consumes — prototype fixture code is not the migration population); excludes the allowlisted fixture modules the `.test.` filename filter misses. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. The allowlist covers only test-support fixture modules — a directory prefix, or a named file where a domain keeps its fixtures locally — so any new hand-written schema literal in production code still fails the ratchet until the reviewed ceiling is intentionally updated.",
@@ -978,16 +956,6 @@ export const SEAMS: readonly SeamDefinition[] = [
         path: "src/lib/shared/testing/",
         justification:
           "Test-only fixture modules (never imported by production code). A maximal round-trip fixture must carry a distinctive value for the per-context `outputSchema` field — an opaque author-supplied JSON Schema document with no Zod contract behind it, so the canonical generator can never supply it. Deletion condition: this entry drops if the fixture directory stops needing a literal output-schema document.",
-      },
-      {
-        path: "src/lib/workflow-graph/loop-test-fixtures.ts",
-        justification:
-          "Test-only fixture module (imported solely by the loop settlement, crash-safety and budget suites, never by production code) that the `.test.` filename filter misses — the same population as the entry above, in a domain-local file rather than a shared directory. Its `JUDGE_OUTPUT_SCHEMA` is the judge context's authored `outputSchema`, which the definition schema models as an opaque `z.record(z.string(), z.unknown())` document precisely because no Zod contract owns it; the loop's `until` predicate is then evaluated against that document, so inventing a Zod source for it would change what the suites exercise. Deletion condition: this entry drops if the loop fixtures stop declaring a literal output-schema document, or if the module moves under an already-allowlisted fixture directory.",
-      },
-      {
-        path: "src/lib/state-store/spec-delivery-plan-test-fixture.ts",
-        justification:
-          "Test-only fixture module (imported solely by the delivery-plan repo, migration, and service suites, never by production code) that the `.test.` filename filter misses — the same population as the entries above. Its maximal version-2 attempt document must carry a distinctive per-context `outputSchema` so the round-trip durability contract proves the opaque author-supplied field survives persistence; no Zod contract owns that document, so the canonical generator cannot supply it. Deletion condition: this entry drops if the fixture stops declaring a literal output-schema document, or if the module moves under an already-allowlisted fixture directory.",
       },
     ],
     inCorpus(relPath) {

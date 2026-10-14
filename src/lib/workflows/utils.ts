@@ -61,7 +61,7 @@ export function timeoutHaltMessage(error: unknown): string {
     `${extractErrorMessage(error)}\n\n` +
     "Skipped the validation-fix agent: a pre-merge validation timeout is an " +
     "environment/scope limit, not a fixable code error. Increase " +
-    "preMergeTimeoutMs in CommandCenter.json (or narrow the changed-file test " +
+    "the failing command's validation.commands timeoutMs in CommandCenter.json (or narrow the changed-file test " +
     "scope) and retry the merge."
   );
 }

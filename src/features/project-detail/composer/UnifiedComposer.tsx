@@ -84,14 +84,14 @@ export interface UnifiedComposerProps {
    */
   initialDocument?: SerializedPromptDoc;
   onDocumentChange?: (document: SerializedPromptDoc) => void;
-  onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
+  onRunCommand: (id: "new" | "capabilities") => void;
   lastUsedModelSelection?: BackendModelSelection;
   busy: boolean;
   error?: ProjectPromptError | null;
   onDismissError?: () => void;
 }
 
-type ProjectCommandId = "new" | "capabilities" | "workflow-builder";
+type ProjectCommandId = "new" | "capabilities";
 
 export type ProjectComposerSubmitResult =
   | { kind: "noop" }
@@ -120,7 +120,6 @@ function parseCommandDraft(draft: string): ProjectCommandId | null {
   if (command === "/") return "new";
   if (command === "/new") return "new";
   if (command === "/capabilities") return "capabilities";
-  if (command === "/workflow-builder") return "workflow-builder";
   return null;
 }
 

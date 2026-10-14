@@ -18,14 +18,9 @@
 
 import { createLogger } from "@/lib/logging";
 import type {
-  SpecWaiverGrantNotice,
-  SpecWaiverNotifier,
-  SpecWaiverRequestNotice,
-} from "@/lib/specs/evidence-service";
-import type {
   SpecAttentionClearInput,
   SpecAttentionNotifier,
-} from "@/lib/specs/execution-service";
+} from "@/lib/specs/spec-abandonment";
 import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
@@ -76,7 +71,6 @@ function requestMessage(notice: SpecApprovalRequestNotice): string {
 
 const OPEN_REQUEST_TYPES = new Set<SpecNotification["type"]>([
   "spec-approval-requested",
-  "spec-waiver-requested",
 ]);
 
 const RESOLVING_TYPES = new Set<SpecNotification["type"]>([
@@ -84,19 +78,9 @@ const RESOLVING_TYPES = new Set<SpecNotification["type"]>([
   "spec-attention-resolved",
 ]);
 
-// Requests an execution abandonment moots; authoring-gate requests stay open
-// because the revision may still be under concurrent review (R3.6).
-const EXECUTION_SCOPED_GATES = new Set<SpecNotification["gate"]>([
-  "execution_start",
-  "delivery",
-]);
-
 export function createSpecApprovalNotifier(
   deps: SpecApprovalNotifierDeps,
-): SpecReviewNotifier &
-  SpecPolicyAdmissionNotifier &
-  SpecWaiverNotifier &
-  SpecAttentionNotifier {
+): SpecReviewNotifier & SpecPolicyAdmissionNotifier & SpecAttentionNotifier {
   function resolveOpenRequest(
     row: SpecNotification,
     title: string,
@@ -225,61 +209,6 @@ export function createSpecApprovalNotifier(
       });
     },
 
-    waiverRequested(notice: SpecWaiverRequestNotice): void {
-      // Waivers gate deliveries (R14): the request opens a delivery-gate
-      // Needs You item deep-linked to the criterion awaiting the decision.
-      deps.createSpecNotification({
-        type: "spec-waiver-requested",
-        title: "Delivery waiver requested",
-        message: `${notice.specName}: ${notice.reason}`,
-        projectName: deps.getProjectDisplayName(notice.projectPath),
-        sessionName: null,
-        specId: notice.specId,
-        specSlug: notice.specSlug,
-        specName: notice.specName,
-        gate: "delivery",
-        gateRequestId: notice.attentionId,
-        // Deep-link with the criterion handle when resolvable: the Studio
-        // ?el= resolver parses handles, never raw element ids.
-        deepLinkId: notice.criterionHandle ?? notice.criterionElementId,
-        dedupeKey: `spec-waiver-requested:${notice.attentionId}`,
-      });
-      logger.info("notifications.spec-waiver.requested", {
-        specId: notice.specId,
-        attentionId: notice.attentionId,
-        criterionElementId: notice.criterionElementId,
-      });
-    },
-
-    waiverGranted(notice: SpecWaiverGrantNotice): void {
-      const rows = deps.findSpecNotificationsBySpecId(notice.specId);
-      const resolvedRequestIds = new Set(
-        rows
-          .filter((row) => RESOLVING_TYPES.has(row.type))
-          .map((row) => row.gateRequestId),
-      );
-      const criterionKeys = new Set(
-        notice.criterionHandle === null || notice.criterionHandle === undefined
-          ? [notice.criterionElementId]
-          : [notice.criterionElementId, notice.criterionHandle],
-      );
-      for (const row of rows) {
-        if (row.type !== "spec-waiver-requested") continue;
-        if (resolvedRequestIds.has(row.gateRequestId)) continue;
-        if (!criterionKeys.has(row.deepLinkId)) continue;
-        resolveOpenRequest(
-          row,
-          "Waiver granted",
-          `${row.specName}: waiver granted for the requested criterion`,
-        );
-        logger.info("notifications.spec-waiver.granted", {
-          specId: notice.specId,
-          gateRequestId: row.gateRequestId,
-          waiverId: notice.waiverId,
-        });
-      }
-    },
-
     specAttentionCleared(input: SpecAttentionClearInput): void {
       const rows = deps.findSpecNotificationsBySpecId(input.specId);
       const resolvedRequestIds = new Set(
@@ -290,13 +219,6 @@ export function createSpecApprovalNotifier(
       for (const row of rows) {
         if (!OPEN_REQUEST_TYPES.has(row.type)) continue;
         if (resolvedRequestIds.has(row.gateRequestId)) continue;
-        if (
-          input.scope === "execution" &&
-          row.type === "spec-approval-requested" &&
-          !EXECUTION_SCOPED_GATES.has(row.gate)
-        ) {
-          continue;
-        }
         resolveOpenRequest(
           row,
           `${gateLabel(row.gate)} request closed`,

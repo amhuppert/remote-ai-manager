@@ -43,7 +43,6 @@ function canonicalExportBundle() {
     citationHash: computeSpecRevisionCitationHash(2, []),
     proposedAt: null,
     approvedAt: null,
-    externalDelivery: null,
     createdAt: CREATED_AT,
   };
   const requirementPayload = {
@@ -86,7 +85,6 @@ function canonicalExportBundle() {
     gateAdmissions: [],
     questions: [],
     assumptions: [],
-    executions: [],
     attentionAuditEvents: [],
   });
 }
@@ -185,11 +183,6 @@ const RECEIPT = {
     citationHash: "a".repeat(64),
     proposedAt: CREATED_AT,
     approvedAt: CREATED_AT,
-    externalDelivery: {
-      at: CREATED_AT,
-      actor: { kind: "agent", conversationId: "conversation-1" },
-      source: { label: SOURCE_LABEL },
-    },
     createdAt: CREATED_AT,
   },
   counts: {
@@ -327,10 +320,6 @@ describe("cctl spec import", () => {
     expect(inlineDataOf(result)).toMatchObject({
       revision: {
         state: "approved",
-        externalDelivery: {
-          actor: { kind: "agent" },
-          source: { label: SOURCE_LABEL },
-        },
       },
       counts: RECEIPT.counts,
     });
@@ -344,7 +333,7 @@ describe("cctl spec import", () => {
         ? originalFetch(url, init)
         : response({
             ...RECEIPT,
-            revision: { ...RECEIPT.revision, externalDelivery: null },
+            revision: { ...RECEIPT.revision },
           });
     const result = await runCcWithHost(
       ["spec", "import", "--file", BUNDLE_FILE, "--json"],
@@ -353,7 +342,7 @@ describe("cctl spec import", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(inlineDataOf(result)).toMatchObject({
-      revision: { externalDelivery: null },
+      revision: {},
     });
   });
 

@@ -26,7 +26,7 @@ const wait: ActiveSubscriptionWait = {
   id: "wait-one",
   subscriptionId: "subscription-one",
   recipient: { projectPath, conversationId: "conversation-one" },
-  source: { kind: "workflow", id: "run-one" },
+  source: { kind: "validation", id: "run-one" },
   reason: "Continue after completion",
   expiresAt: "2026-10-01T00:00:00.000Z",
   state: "waiting",

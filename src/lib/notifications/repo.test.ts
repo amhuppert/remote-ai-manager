@@ -1,13 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
-import { mkdtempSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { createNotificationsRepo, type NotificationsRepo } from "./repo";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import {
   _createTestDb as createSharedStateDb,
-  _createTestDbAtPath as createSharedStateDbAtPath,
   _installTestDb,
   _resetForTesting,
   getDb as getSharedStateDb,
@@ -599,78 +594,6 @@ describe("schema validation at the persistence boundary", () => {
     if (failure.kind === "validation") {
       expect(failure.entity).toBe("notification");
     }
-  });
-});
-
-describe("notification table migration", () => {
-  it("preserves legacy job rows while allowing project-conversation rows without session columns", () => {
-    _resetForTesting();
-    const dbPath = path.join(
-      mkdtempSync(path.join(os.tmpdir(), "cc-notification-migration-")),
-      "command-center.db",
-    );
-    const legacyDb = new Database(dbPath);
-    legacyDb.exec(`
-      CREATE TABLE notifications (
-        id             TEXT PRIMARY KEY,
-        type           TEXT NOT NULL,
-        title          TEXT NOT NULL,
-        message        TEXT NOT NULL,
-        read           INTEGER NOT NULL DEFAULT 0,
-        project_name   TEXT NOT NULL,
-        session_name   TEXT NOT NULL,
-        branch_name    TEXT NOT NULL,
-        job_id         TEXT NOT NULL,
-        job_type       TEXT NOT NULL,
-        merge_hash     TEXT,
-        commit_hash    TEXT,
-        conflict_count INTEGER,
-        conflict_files TEXT,
-        target_branch  TEXT,
-        error_message  TEXT,
-        created_at     TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      INSERT INTO notifications (
-        id, type, title, message, project_name, session_name, branch_name, job_id, job_type, created_at
-      ) VALUES (
-        'legacy-job-notification', 'merge-completed', 'Merge completed', 'ok', 'my-project', 'feature', 'csm/feature', 'job-1', 'merge', '2026-06-07 12:00:00'
-      );
-    `);
-    legacyDb.close();
-
-    const migratedDb = createSharedStateDbAtPath(dbPath);
-    _installTestDb(migratedDb);
-    const migratedRepo = createNotificationsRepo(migratedDb);
-
-    const { notification: projectNotification } =
-      migratedRepo.createProjectConversationNotification({
-        type: "project-conversation-ready",
-        title: "Agent finished",
-        message: "Project conversation is ready",
-        projectName: "my-project",
-        conversationId: "conversation-1",
-        conversationName: null,
-        status: "awaiting",
-        dedupeKey: "my-project:conversation-1:ready:turn-1",
-      });
-
-    const result = migratedRepo.getNotifications();
-    expect(result.total).toBe(2);
-    expect(result.notifications).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "legacy-job-notification",
-          source: "job",
-          sessionName: "feature",
-          jobId: "job-1",
-        }),
-        expect.objectContaining({
-          id: projectNotification.id,
-          source: "project-conversation",
-          conversationId: "conversation-1",
-        }),
-      ]),
-    );
   });
 });
 

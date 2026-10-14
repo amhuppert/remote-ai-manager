@@ -63,7 +63,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
     ...overrides,
   };
@@ -134,7 +133,6 @@ function makeActiveConversation(
     worktreePath: "/proj/.worktrees/sess-1",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     sessionName: "sess-1",
     branchName: "csm/sess-1",

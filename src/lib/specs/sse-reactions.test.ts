@@ -42,7 +42,6 @@ describe("registerSpecSseReactions", () => {
       occurredAt: "2026-07-18T00:00:00Z",
       kind: "execution_started",
       revisionId: "revision-2",
-      executionId: "execution-1",
     });
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: specKeys.all });

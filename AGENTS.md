@@ -65,11 +65,11 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ### Native specifications
 
-New specifications use `cctl spec`; `.kiro/specs/` retains legacy governed work. Use the `native-sdd-authoring` skill for spec authoring and delivery, and read the relevant `cctl spec` leaf help before composing payloads.
+New specifications use `cctl spec`; `.kiro/specs/` retains legacy governed work. Use the `native-sdd-authoring` skill for spec authoring, and read the relevant `cctl spec` leaf help before composing payloads.
 
 - Before creating a spec, run `cctl spec list` and `cctl spec search --all <query>` to find existing work. Use `cctl spec status <slug>` to check phase and gates for governed changes.
-- Author Requirements → Design → delivery plan, within the server's stage boundaries. `cctl spec propose` and `cctl spec plan propose` submit concrete artifacts for review.
-- Approvals and assumption disposition are human-only Spec Studio actions, and delivery-plan sign-off is a human-only Workflow Builder action; an agent cannot perform them on Alex's behalf.
+- Author Requirements → Design within the server's stage boundaries. `cctl spec propose` submits concrete artifacts for review.
+- Approvals and assumption disposition are human-only Spec Studio actions; an agent cannot perform them on Alex's behalf.
 - Write spec artifacts in the spec's configured language. Ordinary repository documentation and responses use English unless requested otherwise.
 
 ## Canonical architecture boundaries

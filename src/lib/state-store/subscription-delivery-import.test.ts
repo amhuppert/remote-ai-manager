@@ -13,7 +13,7 @@ import { createWriteQueue } from "./write-queue";
 import { importSubscriptionDelivery } from "./subscription-delivery-import";
 
 const recipient = { projectPath: "/project", conversationId: "conversation" };
-const source = { kind: "workflow", id: "execution" } as const;
+const source = { kind: "git_job", id: "job-1" } as const;
 const at = "2026-10-01T12:00:00Z";
 let fixture: PersistenceFixture | undefined;
 afterEach(() => fixture?.close());
@@ -22,7 +22,7 @@ function subscription(id = "subscription") {
     id,
     recipient,
     source,
-    reason: "Workflow result",
+    reason: "Merge result",
     mode: "passive",
     eventKinds: null,
     expiresAt: null,
@@ -44,15 +44,15 @@ function delivery(overrides: Partial<SubscriptionDelivery> = {}) {
     source,
     fact: {
       occurrenceId: "5",
-      eventKind: "execution-completed",
+      eventKind: "job-completed",
       category: "outcome",
-      sourceTitle: "Execution",
+      sourceTitle: "Merge",
       summary: "Completed work",
       sourceText: "Frozen complete result",
       occurredAt: at,
       revision: null,
       outcome: "completed",
-      retrievalHandle: "cctl workflow result execution",
+      retrievalHandle: "cctl job show job-1",
       actorConversationId: null,
     },
     recordedAt: at,

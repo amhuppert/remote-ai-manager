@@ -7,7 +7,7 @@ import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import { checkpointKeys } from "@/lib/conversation-checkpoints/query-keys";
 import { runKeys } from "@/lib/runs/query-keys";
 import { runTemplateKeys } from "@/lib/run-templates/query-keys";
-import { collaborationKeys } from "@/lib/workflows/query-keys";
+import { collaborationKeys } from "@/lib/collaboration/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";

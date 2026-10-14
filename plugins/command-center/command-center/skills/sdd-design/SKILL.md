@@ -22,8 +22,7 @@ change, plus the target project's operating constraints. Stop investigating when
 the consequential claims can be supported and the changed boundaries explained;
 broaden only for an unresolved dependency or new evidence.
 
-Apply the existing [Premise rule](../graph-workflow-planning/SKILL.md#premise-rule)
-at design time. Place its verified or inferred labels beside runtime claims,
+Label every runtime premise as verified, inferred, or proposed new behavior. A verified claim names an observed fact and source; an inference names its evidence and limit. Place its verified or inferred labels beside runtime claims,
 with the source and observed fact. Identify planned new behavior separately,
 including its proposed producer. A requirement can need new data or transitions;
 the design must account for producing them rather than assert they already exist.
@@ -72,5 +71,4 @@ lint and consistency sweep and the requested draft or proposal. Report the
 evidence, unresolved findings, and actual submission state. Human approval
 remains the existing Design gate; the review adds no approval act.
 
-After that gate, [sdd-delivery](../sdd-delivery/SKILL.md) prepares delivery of the
-approved contract when requested.
+After that gate, use [run-planning](../run-planning/SKILL.md) to plan implementation when requested.

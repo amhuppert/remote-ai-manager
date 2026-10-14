@@ -7,7 +7,7 @@ what follows is what the shapes do not tell you.
 
 **Identifier forms.** A bare `<number>` resolves through the ambient project
 scope (`--project` / `CC_PROJECT`); the `<project>#<number>` form addresses any
-project's tickets from any conversation — including graph-workflow lanes — and
+project's tickets from any conversation — including run seats — and
 needs no ambient project. Unknown tickets exit `1` with `ticket_not_found`
 naming the reference; malformed references, missing flags, and invalid enum
 values exit `2` **before any network call**.

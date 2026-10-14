@@ -55,16 +55,10 @@ describe("validation gate composition", () => {
     expect(script).not.toMatch(/npx tsc/);
   });
 
-  it("keeps typecheck, seams, and test on every merge gate", () => {
-    const gates = {
-      preMerge: registration.preMerge,
-      laneMerge: registration.laneMerge ?? [],
-    };
-    for (const [name, gate] of Object.entries(gates)) {
-      expect(gate, `${name} must keep the static merge gate`).toEqual(
-        expect.arrayContaining(["typecheck", "seams", "test"]),
-      );
-    }
+  it("keeps typecheck, seams, and test on the merge gate", () => {
+    expect(registration.preMerge).toEqual(
+      expect.arrayContaining(["typecheck", "seams", "test"]),
+    );
   });
 
   it("keeps the seam ratchet, and no build, inside the pre-merge composite", () => {

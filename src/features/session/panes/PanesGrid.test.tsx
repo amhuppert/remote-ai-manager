@@ -29,7 +29,6 @@ function makeConversation(
     worktreePath: "/tmp/proj/.worktrees/x",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     sessionName: "sess",
     branchName: "csm/x",

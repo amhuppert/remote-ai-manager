@@ -12,7 +12,6 @@ import {
   type CliPrincipalIdentity,
   type ConversationContext,
   type ConversationTargetContext,
-  type LaneContext,
   type ProjectContext,
   type ProjectConversationContext,
   type SessionContext,
@@ -166,24 +165,6 @@ export async function resolveCcConversationTarget(
       target.error.issues.map((issue) => issue.message).join("; "),
     );
   return { ok: true, value: { ...project, target: target.data } };
-}
-
-export async function resolveCcLane(
-  app: CcApplication,
-): Promise<CcContextResult<LaneContext>> {
-  const base = await resolveCcSession(app);
-  if (!base.ok) return base;
-  const executionId = app.env["CC_WORKFLOW_EXECUTION_ID"];
-  if (!executionId)
-    return contextFailure(
-      "no workflow execution — set CC_WORKFLOW_EXECUTION_ID (lane conversations only)",
-    );
-  const contextId = app.env["CC_WORKFLOW_CONTEXT_ID"];
-  if (!contextId)
-    return contextFailure(
-      "no workflow context — set CC_WORKFLOW_CONTEXT_ID (lane conversations only)",
-    );
-  return { ok: true, value: { ...base.value, executionId, contextId } };
 }
 
 export function resolveCcPrincipal(app: CcApplication): CliPrincipalIdentity {

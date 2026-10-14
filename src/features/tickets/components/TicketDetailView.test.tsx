@@ -110,7 +110,6 @@ describe("TicketDetailView loading failures", () => {
       if (path === "/api/conversations/active") {
         return Response.json({
           conversations: [],
-          graphWorkflowExecutions: [],
           activeCollaborationExecutions: [],
         });
       }

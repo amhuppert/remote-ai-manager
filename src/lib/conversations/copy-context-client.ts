@@ -1,8 +1,5 @@
 import { apiFetch } from "@/lib/api/fetcher";
-import {
-  copyContextGraphWorkflowExecutionResponseSchema,
-  copyContextSessionSchema,
-} from "./copy-context-schemas";
+import { copyContextSessionSchema } from "./copy-context-schemas";
 import { buildConversationContext } from "./copy-context";
 
 /**
@@ -16,24 +13,15 @@ export async function copyConversationContextToClipboard(target: {
   sessionName: string;
   conversationId: string;
 }): Promise<void> {
-  const [session, executionResponse] = await Promise.all([
-    apiFetch(
-      `/api/projects/${encodeURIComponent(target.projectName)}/sessions/${encodeURIComponent(target.sessionName)}`,
-      copyContextSessionSchema,
-    ),
-    // The execution no longer rides the session payload (decoupled table),
-    // so fetch it separately to keep the workflow block in the copy.
-    apiFetch(
-      `/api/projects/${encodeURIComponent(target.projectName)}/sessions/${encodeURIComponent(target.sessionName)}/graph-workflow/execution`,
-      copyContextGraphWorkflowExecutionResponseSchema,
-    ),
-  ]);
+  const session = await apiFetch(
+    `/api/projects/${encodeURIComponent(target.projectName)}/sessions/${encodeURIComponent(target.sessionName)}`,
+    copyContextSessionSchema,
+  );
   const text = buildConversationContext({
     projectName: target.projectName,
     sessionName: target.sessionName,
     session,
     conversationId: target.conversationId,
-    graphWorkflowExecution: executionResponse.execution,
   });
   await navigator.clipboard.writeText(text);
 }

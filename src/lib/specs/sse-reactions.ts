@@ -4,13 +4,8 @@ import {
   specApprovalChangedEventSchema,
   specAttentionChangedEventSchema,
   specChangedEventSchema,
-  specDeliveryPlanChangedEventSchema,
-  specEvidenceChangedEventSchema,
-  specExecutionChangedEventSchema,
   specRevisionChangedEventSchema,
 } from "@/lib/api/sse-events";
-import { conversationKeys } from "@/lib/conversations/query-keys";
-import { graphWorkflowTaskStatusEventSchema } from "@/lib/workflow-graph/spec-bridge";
 import { specKeys } from "./query-keys";
 import { applySpecSseEvent } from "./sse-reducer";
 
@@ -54,50 +49,10 @@ export function registerSpecSseReactions(
   );
   addSseListener(
     es,
-    "spec-execution-changed",
-    specExecutionChangedEventSchema,
-    (event) => {
-      reactToSpecEvent(deps.queryClient, event);
-      // Active executions ride the active-conversations feed into the
-      // sidebar's Active Work rail; execution lifecycle changes must refresh
-      // that feed too, not only the Studio spec queries.
-      void deps.queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  );
-  addSseListener(
-    es,
-    "spec-evidence-changed",
-    specEvidenceChangedEventSchema,
-    (event) => {
-      reactToSpecEvent(deps.queryClient, event);
-    },
-  );
-  addSseListener(
-    es,
     "spec-attention-changed",
     specAttentionChangedEventSchema,
     (event) => {
       reactToSpecEvent(deps.queryClient, event);
-    },
-  );
-  addSseListener(
-    es,
-    "spec-delivery-plan-changed",
-    specDeliveryPlanChangedEventSchema,
-    (event) => {
-      reactToSpecEvent(deps.queryClient, event);
-    },
-  );
-  addSseListener(
-    es,
-    "graph-workflow-task-status",
-    graphWorkflowTaskStatusEventSchema,
-    () => {
-      void deps.queryClient.invalidateQueries({
-        queryKey: specKeys.ticketReadThroughs(),
-      });
     },
   );
 }

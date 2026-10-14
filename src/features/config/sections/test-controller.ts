@@ -1,11 +1,6 @@
-import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
-import {
-  deepGet,
-  deepSet,
-  deepEqual,
-  SEEDED_WORKFLOW_DEFAULTS,
-} from "../form-state";
-import type { FieldPath, WorkflowDefaultsBlock } from "../form-state";
+import type { GlobalConfig } from "@/lib/config/schemas";
+import { deepGet, deepSet, deepEqual } from "../form-state";
+import type { FieldPath } from "../form-state";
 import type { ConfigFormController } from "./types";
 
 export const baseFormState: GlobalConfig = {
@@ -35,14 +30,12 @@ export const baseFormState: GlobalConfig = {
     },
   },
   maxConcurrentQueries: 3,
-  preMergeTimeoutMs: 300_000,
   validation: {
     concurrencyLimit: 8,
     defaultTimeoutMs: 600_000,
   },
   ignorePatterns: ["node_modules", ".next"],
   tailscaleEnabled: false,
-  workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),
 };
 
 export function makeController(initial: Partial<GlobalConfig> = {}): {
@@ -67,14 +60,6 @@ export function makeController(initial: Partial<GlobalConfig> = {}): {
       for (const [path, value] of changes) {
         state = deepSet(state, path, value);
       }
-    },
-    handleChangeBlock<K extends WorkflowDefaultsBlock>(
-      block: K,
-      value: WorkflowDefaults[K],
-    ) {
-      const existing =
-        state.workflowDefaults ?? structuredClone(SEEDED_WORKFLOW_DEFAULTS);
-      state = { ...state, workflowDefaults: { ...existing, [block]: value } };
     },
     isDefault: () => true,
     isModified(path: FieldPath) {

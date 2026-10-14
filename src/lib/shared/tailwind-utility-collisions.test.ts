@@ -132,7 +132,6 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationLinkChip.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageRefLinkChip.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageRefLinkChip.stories.tsx`,
-  `${path.sep}components${path.sep}CollapsibleText.tsx`,
   // ConversationsPage is NOT utility-first; the sidebar wave migrated only its
   // sidebar-expand-float button to utilities (the `.convo-sidebar-expand-float`
   // rule was deleted from sidebar.css). File-scoped so the page's still-legacy
@@ -191,7 +190,6 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}MessageMentionChip.stories.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}DocsPanel.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}FileMentionChip.tsx`,
-  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}GraphWorkflowCard.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}RightPane.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SpecBrowser.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SyntheticForkBadge.tsx`,
@@ -274,7 +272,6 @@ const UTILITY_FIRST_PATHS = [
   // global-workflow-templates library + launch UI: authored utility-first against
   // the design system. Registered in all three mirrored allowlists (here +
   // eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
-  `${path.sep}components${path.sep}WorkflowLaunchForm.tsx`,
   `${path.sep}features${path.sep}workflow-templates${path.sep}`,
   // markdown-doc-feedback feature: the multi-document viewer and its comment /
   // selection surfaces are authored utility-first against the design system
@@ -299,7 +296,6 @@ const UTILITY_FIRST_PATHS = [
   // MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}context-artifacts${path.sep}`,
   // Live-editing execution-inspector config editors (doc 06 slice 4): the shared
-  // field editors extracted to src/components/workflow-config/ for reuse by the
   // builder and the execution inspector are authored utility-first against the
   // design system. Registered in all three mirrored allowlists (here +
   // eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).

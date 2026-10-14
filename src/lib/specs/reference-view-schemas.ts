@@ -1,22 +1,16 @@
 import { z } from "zod";
 
-import {
-  deliveryDisplaySchema,
-  specPhaseProjectionSchema,
-} from "./phase-view-schemas";
+import { specPhaseProjectionSchema } from "./phase-view-schemas";
 import {
   actorProvenanceSchema,
   specApprovalRowSchema,
   specAssumptionCitationSchema,
   specAssumptionDispositionSchema,
   specAttentionRecordPresentationSchema,
-  specEvidenceRowSchema,
-  specProofVerdictRowSchema,
   specQuestionStatusSchema,
   specRevisionElementSchema,
   specRevisionSchema,
   specSchema,
-  specWaiverRowSchema,
 } from "./schemas";
 
 export const specQuestionViewSchema = z
@@ -87,8 +81,6 @@ const linkedWorkRollupSchema = z
     tickets: z.number().int().nonnegative(),
     conversations: z.number().int().nonnegative(),
     sessions: z.number().int().nonnegative(),
-    workflowExecutions: z.number().int().nonnegative(),
-    mergeJobs: z.number().int().nonnegative(),
   })
   .strict();
 
@@ -100,7 +92,6 @@ export const specSummaryViewSchema = z
     counts: elementCountsSchema,
     pendingApprovalCount: z.number().int().nonnegative(),
     approvalState: z.enum(["complete", "pending"]),
-    delivery: deliveryDisplaySchema,
     linkedWork: linkedWorkRollupSchema,
     /** The status view's import provenance, carried so an inventory row can
      * mark an imported spec without loading the whole detail. Required for the
@@ -131,16 +122,6 @@ export const specPickerDetailViewSchema = z.object({
 });
 export type SpecPickerDetailView = z.infer<typeof specPickerDetailViewSchema>;
 
-const evidenceStateSchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    handle: z.string().min(1),
-    evidence: z.array(specEvidenceRowSchema),
-    verdicts: z.array(specProofVerdictRowSchema),
-    waiver: specWaiverRowSchema.nullable(),
-  })
-  .strict();
-
 export const specElementReferenceStateSchema = z
   .object({
     observedRevision: z.number().int().positive(),
@@ -161,7 +142,6 @@ export const specElementViewSchema = z
     handle: z.string().min(1),
     element: specRevisionElementSchema,
     approvals: z.array(specApprovalRowSchema),
-    evidenceState: z.array(evidenceStateSchema),
     referenceState: specElementReferenceStateSchema.nullable(),
   })
   .strict();

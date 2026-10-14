@@ -110,14 +110,10 @@ function getDispatcher() {
           )
         )
           return;
-        const { ensureConversationActorAndDrain } =
-          await import("@/lib/workflows/conversation/lifecycle");
+        const { drainCoreConversation } =
+          await import("@/lib/supervision/handles");
         const key = queueKey(identity);
-        await ensureConversationActorAndDrain(
-          key.projectPath,
-          key.sessionName,
-          key.conversationId,
-        );
+        await drainCoreConversation(key.conversationId);
       },
       async confirmAccepted(batch) {
         const identity = identityFor(batch);
@@ -181,12 +177,8 @@ export async function registerActiveSubscriptionWait(
   const identity = runtime.readConversation(input.recipient.conversationId);
   let causationBatchIds: string[] = [];
   if (identity?.projectPath === input.recipient.projectPath) {
-    const { describeActiveTurn } =
-      await import("@/lib/workflows/conversation/lifecycle");
-    const active = describeActiveTurn({
-      projectPath: identity.projectPath,
-      target: targetFor(identity),
-    });
+    const { describeCoreTurn } = await import("@/lib/supervision/handles");
+    const active = describeCoreTurn(identity.conversation.id);
     if (active?.originMessageId) {
       const parent = await runtime.activeWaitService.getBatch(
         active.originMessageId,

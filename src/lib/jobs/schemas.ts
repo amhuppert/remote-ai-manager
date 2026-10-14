@@ -21,55 +21,6 @@ export const jobStatusSchema = z.enum([
 ]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
-export const candidateValidationFactSchema = registerTrustedSchema(
-  z
-    .object({
-      validationRef: z.string().min(1),
-      validatedSha: z.string().min(1),
-      validatedTreeHash: z.string().min(1),
-      commandIdentity: z.string().min(1),
-      outcome: z.enum(["pass", "fail"]),
-    })
-    .strict(),
-  "candidateValidationFactSchema",
-);
-export type CandidateValidationFact = z.infer<
-  typeof candidateValidationFactSchema
->;
-
-export const deliveryGateCriterionOutcomeSchema = z.object({
-  criterionId: z.string().min(1),
-  criterionHandle: z.string().min(1),
-  outcome: z.string().min(1),
-  reason: z.string().optional(),
-  automated: z.array(z.string()).optional(),
-});
-
-export const deliveryGateHaltReasonSchema = z.object({
-  type: z.literal("delivery_gate_failed"),
-  unmet: z.array(deliveryGateCriterionOutcomeSchema),
-  instruction: z.string().min(1),
-  /**
-   * Present only when the refusal is the gate waiting on a human delivery
-   * approval; halt surfaces render it as an attention (amber) state with an
-   * approval deep link instead of the unmet-criteria failure template.
-   * Optional so halt reasons persisted before this field parse unchanged.
-   */
-  refusalCode: z.literal("approval_required").optional(),
-  /** Owning-spec presentation for the halt surface's Controls deep link. */
-  spec: z
-    .object({
-      specSlug: z.string().min(1),
-      specName: z.string().min(1),
-      projectName: z.string().min(1),
-    })
-    .strict()
-    .optional(),
-});
-export type DeliveryGateHaltReason = z.infer<
-  typeof deliveryGateHaltReasonSchema
->;
-
 /**
  * The conflict resolver never reached the conflict: the backend failed, the
  * quota was exhausted, the turn was aborted or timed out, or no schema-valid
@@ -90,7 +41,6 @@ export const resolutionInfrastructureHaltReasonSchema = z.object({
  * degraded one.
  */
 export const mergeHaltReasonSchema = z.discriminatedUnion("type", [
-  deliveryGateHaltReasonSchema,
   resolutionInfrastructureHaltReasonSchema,
 ]);
 export type MergeHaltReason = z.infer<typeof mergeHaltReasonSchema>;
@@ -130,10 +80,6 @@ export const backgroundJobSchema = registerTrustedSchema(
      * simply omits it.
      */
     upToDate: z.boolean().optional(),
-    executionId: z.string().optional(),
-    specExecutionId: z.string().optional(),
-    finalPublish: z.boolean().optional(),
-    candidateValidation: candidateValidationFactSchema.optional(),
     haltReason: mergeHaltReasonSchema.optional(),
     /**
      * When the job last reported movement — a status broadcast or a durable
@@ -198,16 +144,12 @@ export const jobRecordSchema = registerTrustedSchema(
       conflictCount: true,
       conflictFiles: true,
       errorMessage: true,
-      executionId: true,
-      specExecutionId: true,
-      finalPublish: true,
       parkedRef: true,
       preparedSha: true,
       expectedTargetSha: true,
       finalizeSessionOnPublish: true,
       skipMarkMerged: true,
       resolutionContext: true,
-      candidateValidation: true,
     })
     .strict(),
   "jobRecordSchema",

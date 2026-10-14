@@ -22,9 +22,9 @@ async function pickModel(
   await user.click(option!);
 }
 import type { GlobalConfig } from "@/lib/config/schemas";
-import type { RawGlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import type { RawGlobalConfig } from "@/lib/config/schemas";
 import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
-import ConfigPage, { SEEDED_WORKFLOW_DEFAULTS } from "./ConfigPage";
+import ConfigPage from "./ConfigPage";
 
 // next/link and next/navigation are external framework modules with no
 // internal seam; the sanctioned client-test pattern (@/test/fetch-fixture)
@@ -66,14 +66,12 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
       },
     },
     maxConcurrentQueries: 3,
-    preMergeTimeoutMs: 300_000,
     validation: {
       concurrencyLimit: 8,
       defaultTimeoutMs: 600_000,
     },
     ignorePatterns: ["node_modules"],
     tailscaleEnabled: false,
-    workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),
   },
   raw: { baseDir: "/home/user/projects" },
 };
@@ -132,11 +130,7 @@ function selectSettingsTab(name: RegExp | string) {
   fireEvent.mouseDown(screen.getByRole("tab", { name }));
 }
 
-function expandWorkflowDefaults() {
-  selectSettingsTab(/Workflow defaults/i);
-}
-
-describe("ConfigPage — Workflow Defaults", () => {
+describe("ConfigPage", () => {
   beforeEach(() => {
     seedConfigRoutes();
   });
@@ -401,179 +395,6 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(screen.getByText(/^Infrastructure$/i)).toBeVisible();
   });
 
-  it("renders workflow defaults directly at the page top level", async () => {
-    const { container } = await renderConfigPage();
-    selectSettingsTab(/Workflow defaults/i);
-
-    expect(
-      screen.queryByRole("button", { name: /Workflow Defaults/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Implementer/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(/^Implementer$/i)).toBeVisible();
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(11);
-  });
-
-  it("renders all eleven workflow default blocks at the page top level", async () => {
-    await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const expected = [
-      "Implementer",
-      "Collaboration",
-      "Context validator",
-      "Script validator",
-      "Agent validation",
-      "Lane-merge validation",
-      "Ask user questions",
-      "Iteration policy",
-      "Circuit breaker",
-      "Plan repair",
-      "Mutability",
-    ];
-    for (const title of expected) {
-      expect(screen.getByText(new RegExp(`^${title}$`, "i"))).toBeVisible();
-    }
-  });
-
-  it("renders every workflow block as a sub-section", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(11);
-  });
-
-  it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const subs = container.querySelectorAll("[data-subsection]");
-    for (const el of subs) {
-      expect(el.textContent).toContain("DEFAULT");
-      expect(el.textContent).not.toContain("MODIFIED");
-    }
-  });
-
-  it("shows [MODIFIED] on a sub-section whose block differs from seeded defaults", async () => {
-    const customDefaults: WorkflowDefaults = {
-      ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
-      iterationPolicy: {
-        maxIterations: 99,
-      },
-    };
-    api.json("GET", "/api/config", {
-      config: { ...fullConfigData.config, workflowDefaults: customDefaults },
-      raw: {
-        ...fullConfigData.raw,
-        workflowDefaults: { iterationPolicy: customDefaults.iterationPolicy },
-      },
-    });
-
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const iteration = container.querySelector(
-      '[data-subsection="iterationPolicy"]',
-    )!;
-    expect(iteration.textContent).toContain("MODIFIED");
-
-    const implementer = container.querySelector(
-      '[data-subsection="implementer"]',
-    )!;
-    expect(implementer.textContent).toContain("DEFAULT");
-    expect(implementer.textContent).not.toContain("MODIFIED");
-  });
-
-  it("never surfaces a 'disabled' kind in the Context validator sub-section", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const validator = container.querySelector(
-      '[data-subsection="contextValidator"]',
-    );
-    expect(validator).toBeTruthy();
-    // The word "disabled" must not appear as an option / pill in the sub-section.
-    const texts = Array.from(validator!.querySelectorAll("button")).map((el) =>
-      (el.textContent ?? "").trim().toLowerCase(),
-    );
-    expect(texts).not.toContain("disabled");
-    // The `kind` discriminator must not leak either.
-    expect(texts).not.toContain("use");
-  });
-
-  it("marks the Implementer sub-section [MODIFIED] after editing the model", async () => {
-    const user = userEvent.setup();
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const implementer = container.querySelector(
-      '[data-subsection="implementer"]',
-    ) as HTMLElement;
-    expect(implementer.textContent).toContain("DEFAULT");
-
-    // Edit implementer.model from "opus" → "sonnet" via the model select.
-    await pickModel(user, implementer, "Sonnet");
-
-    expect(implementer.textContent).toContain("MODIFIED");
-  });
-
-  it("switching the implementer model to Haiku omits unsupported parameters", async () => {
-    const user = userEvent.setup();
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const implementer = container.querySelector(
-      '[data-subsection="implementer"]',
-    ) as HTMLElement;
-
-    await pickModel(user, implementer, "Haiku");
-
-    expect(
-      implementer.querySelector('[data-testid="model-selector-label"]')
-        ?.textContent,
-    ).toBe("Haiku");
-
-    expect(
-      implementer.querySelector('[role="combobox"][aria-label="Effort"]'),
-    ).toBeNull();
-  });
-
-  it("save writes only the changed blocks (unchanged workflow-defaults blocks not written)", async () => {
-    const user = userEvent.setup();
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const implementer = container.querySelector(
-      '[data-subsection="implementer"]',
-    ) as HTMLElement;
-
-    await pickModel(user, implementer, "Sonnet");
-
-    expect(implementer.textContent).toContain("MODIFIED");
-
-    const saveBtn = screen.getByRole("button", {
-      name: /Save Changes/i,
-    }) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
-    fireEvent.click(saveBtn);
-
-    await vi.waitFor(() =>
-      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
-    );
-    const defaults = savedConfig().workflowDefaults;
-    expect(defaults).toEqual({
-      implementer: expect.objectContaining({
-        agent: expect.objectContaining({
-          modelSelection: {
-            modelId: "sonnet",
-            parameters: { effort: "high" },
-          },
-        }),
-      }),
-    });
-  });
-
   it("saves the checkpoint backend, model, and reasoning directly from the controls", async () => {
     const naming = {
       enabled: true,
@@ -639,131 +460,6 @@ describe("ConfigPage — Workflow Defaults", () => {
       conversationModelSelection: {
         modelId: "opus",
         parameters: { effort: "high" },
-      },
-    });
-  });
-
-  it("marks the Plan repair sub-section modified and saves the full block after disabling it", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const planRepair = container.querySelector(
-      '[data-subsection="planRepair"]',
-    ) as HTMLElement;
-    expect(planRepair.textContent).toContain("DEFAULT");
-
-    // The first switch in the block is the enabled toggle (on by default).
-    const toggle = planRepair.querySelector('[role="switch"]') as HTMLElement;
-    fireEvent.click(toggle);
-
-    expect(planRepair.textContent).toContain("MODIFIED");
-
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
-
-    await vi.waitFor(() =>
-      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
-    );
-    expect(savedConfig().workflowDefaults).toEqual({
-      planRepair: { enabled: false, maxAttemptsPerContext: 2 },
-    });
-  });
-
-  it("marks the Script validator sub-section modified and saves only that block after selecting a command", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const scriptValidator = container.querySelector(
-      '[data-subsection="scriptValidator"]',
-    ) as HTMLElement;
-    expect(scriptValidator.textContent).toContain("DEFAULT");
-
-    const input = scriptValidator.querySelector(
-      'input[aria-label="Add script validator command"]',
-    ) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "typecheck" } });
-    const addButton = Array.from(
-      scriptValidator.querySelectorAll("button"),
-    ).find((button) => button.textContent === "Add")!;
-    fireEvent.click(addButton);
-
-    expect(scriptValidator.textContent).toContain("MODIFIED");
-
-    const saveBtn = screen.getByRole("button", {
-      name: /Save Changes/i,
-    }) as HTMLButtonElement;
-    fireEvent.click(saveBtn);
-
-    await vi.waitFor(() =>
-      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
-    );
-    const defaults = savedConfig().workflowDefaults;
-    expect(defaults).toEqual({
-      scriptValidator: { commands: ["typecheck"] },
-    });
-  });
-
-  it("marks Agent validation modified and saves only that block after a role selector edit", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const agentValidation = container.querySelector(
-      '[data-subsection="agentValidation"]',
-    ) as HTMLElement;
-    expect(agentValidation.textContent).toContain("DEFAULT");
-
-    const implementerField = agentValidation.querySelector(
-      '[data-field="workflowDefaults.agentValidation.implementer"]',
-    ) as HTMLElement;
-    const onlyRadio = Array.from(
-      implementerField.querySelectorAll('[role="radio"]'),
-    ).find((el) => el.textContent === "Only") as HTMLElement;
-    fireEvent.click(onlyRadio);
-
-    expect(agentValidation.textContent).toContain("MODIFIED");
-
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
-
-    await vi.waitFor(() =>
-      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
-    );
-    expect(savedConfig().workflowDefaults).toEqual({
-      agentValidation: {
-        implementer: { mode: "only", commands: [] },
-        contextValidator: { mode: "only", commands: [] },
-      },
-    });
-  });
-
-  it("marks Lane-merge validation modified and saves only that block after a strategy edit", async () => {
-    const { container } = await renderConfigPage();
-    expandWorkflowDefaults();
-
-    const laneMerge = container.querySelector(
-      '[data-subsection="laneMergeValidation"]',
-    ) as HTMLElement;
-    expect(laneMerge.textContent).toContain("DEFAULT");
-
-    const strategyField = laneMerge.querySelector(
-      '[data-field="workflowDefaults.laneMergeValidation.strategy"]',
-    ) as HTMLElement;
-    const everyMerge = Array.from(
-      strategyField.querySelectorAll("button"),
-    ).find(
-      (el) => (el.textContent ?? "").trim() === "every-merge",
-    ) as HTMLElement;
-    fireEvent.click(everyMerge);
-
-    expect(laneMerge.textContent).toContain("MODIFIED");
-
-    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
-
-    await vi.waitFor(() =>
-      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
-    );
-    expect(savedConfig().workflowDefaults).toEqual({
-      laneMergeValidation: {
-        strategy: "every-merge",
-        commands: { mode: "project" },
       },
     });
   });

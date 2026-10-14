@@ -14,14 +14,12 @@ import { createMemoryRepo } from "@/lib/state-store/memory-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { stableStringify } from "@/lib/shared/stable-stringify";
 import {
   loadSpecExportState,
   renderVerifiedCanonicalBundle,
 } from "@/lib/specs/export";
-import { createProductionSpecWorkflowCleanupPort } from "@/lib/specs/workflow-cleanup-port";
 import { getTicketContentStore, getTicketsRepo } from "./storage-production";
 import type { BundleCaptureDeps, BundleContext } from "./bundle-capture";
 
@@ -247,10 +245,7 @@ export function createBundleCaptureDeps(): BundleCaptureDeps {
             {
               specs: createSpecsRepo(db, queue),
               review: createSpecReviewRepo(db),
-              delivery: createSpecDeliveryRepo(db),
               events: createSpecEventsRepo(db),
-              observeLinkedWorkflow:
-                createProductionSpecWorkflowCleanupPort().observe,
             },
             id,
           );

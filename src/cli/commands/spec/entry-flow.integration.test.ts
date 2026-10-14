@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { createSpecEventsPublisher } from "@/lib/specs/events";
-import { computeSpecMeasuresReport } from "@/lib/specs/measures";
 import {
   createSpecRouteHandlers,
   createSpecWriteRouteHandlers,
@@ -140,8 +139,6 @@ describe("native /spec first-save visibility", () => {
       getServices: async () => services,
     };
     const readDeps: SpecRouteDeps = {
-      readDeliveryPlan: async () => null,
-      readDeliveryReview: async () => null,
       resolveProjectPath: async (name) =>
         name === "demo" ? PROJECT_PATH : null,
       listSpecs: (projectPath) => specs.listByProject(projectPath),
@@ -160,20 +157,6 @@ describe("native /spec first-save visibility", () => {
       getLinkedTickets: async () => [],
       findQuestionsBySpecId: review.findQuestionsBySpecId,
       findAssumptionsBySpecId: review.findAssumptionsBySpecId,
-      findExecutionsBySpecId: () => [],
-      findWorkflowEventsByExecution: () => [],
-      reconcileExecution: async (_projectPath, execution) => ({
-        execution,
-        workflowStatus: null,
-      }),
-      findCriterionDispositionsByExecution: () => [],
-      findEvidenceByCriterionRevision: () => [],
-      findProofVerdictsByCriterionRevision: () => [],
-      findDeliveryVerdictsBySpecExecutionId: () => [],
-      findExecutionBindingBySpecExecutionId: () => null,
-      findWaiverForCriterionRevision: () => null,
-      findWaiverById: () => null,
-      findWaiversByRevision: () => [],
       exportSpec: async () => ({ markdownFiles: [], manifest: "{}\n" }),
       verifySpec: async () => ({
         ok: true,
@@ -181,7 +164,6 @@ describe("native /spec first-save visibility", () => {
         mismatches: [],
         consistencyFindings: [],
       }),
-      measureProject: async () => computeSpecMeasuresReport([], []),
     };
     const writeHandlers = createSpecWriteRouteHandlers(writeDeps);
     const readHandlers = createSpecRouteHandlers(readDeps);

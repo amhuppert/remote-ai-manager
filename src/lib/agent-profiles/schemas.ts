@@ -384,30 +384,6 @@ export type AgentProfileReferenceScope = z.infer<
 >;
 
 /**
- * One persisted artifact holding a reference to the profile, named the way the
- * human confirming a delete needs to find it: which document, and where inside
- * it.
- *
- * `contextId` is absent for a workflow-tier assignment, which belongs to the
- * document rather than to any one context. `dormant` marks a reference held by
- * an assignment inside a DISABLED cohort — configuration nothing currently
- * invokes, which is still persisted and re-enablable, so it is enumerated
- * rather than hidden (R15).
- */
-export const agentProfileReferenceHolderSchema = z
-  .object({
-    scope: agentProfileReferenceScopeSchema,
-    id: z.string().min(1),
-    name: z.string(),
-    contextId: z.string().min(1).optional(),
-    dormant: z.boolean(),
-  })
-  .strict();
-export type AgentProfileReferenceHolder = z.infer<
-  typeof agentProfileReferenceHolderSchema
->;
-
-/**
  * A run template naming the profile: in its `defaults` (no `contextId`), or in
  * one context's `settings` (`contextId` is that context's key). A run template
  * has no dormant configuration: a context turns a reviewer off by overriding
@@ -441,10 +417,7 @@ export type AgentProfileRunTemplateHolder = z.infer<
  */
 export const agentProfileSavedReferencesSchema = z
   .object({
-    definitions: z.array(agentProfileReferenceHolderSchema),
-    templates: z.array(agentProfileReferenceHolderSchema),
     runTemplates: z.array(agentProfileRunTemplateHolderSchema),
-    workflowDefaults: z.boolean(),
   })
   .strict();
 export type AgentProfileSavedReferences = z.infer<

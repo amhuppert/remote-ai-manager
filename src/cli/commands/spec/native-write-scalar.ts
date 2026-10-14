@@ -8,7 +8,6 @@ import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
 import {
   specAliasSchema,
   specCommentRowSchema,
-  specExecutionRowSchema,
   specRevisionSchema,
   specSchema,
 } from "@/lib/specs/schemas";
@@ -515,65 +514,6 @@ export const renameHandler = scalar<
           ok: true,
           data: response.value,
           hint: statusHint(app, response.value.spec.slug),
-        },
-      }
-    : response.report;
-});
-
-export const abandonHandler = scalar<
-  typeof S.specAbandonSpec,
-  {
-    execution?: z.infer<typeof specExecutionRowSchema>;
-    spec?: z.infer<typeof specSchema>;
-  }
->(async ({ app, ctx }) => {
-  if (!ctx.flags.reason.trim())
-    return {
-      effect: "not_applied",
-      result: usage("Abandonment reason must not be empty."),
-    };
-  const resolved = await resolveWrite(app, ctx.args.slug);
-  if (!resolved.ok) return { effect: "not_applied", result: resolved };
-  if (ctx.flags.execution !== undefined) {
-    const recovery = recoveryFacts([
-      { kind: "workflow-execution", id: ctx.flags.execution },
-    ]);
-    const response = await postValue(
-      app,
-      resolved.value,
-      actionPath(resolved.value, ctx.args.slug, "abandon-execution"),
-      { executionId: ctx.flags.execution, reason: ctx.flags.reason },
-      specExecutionRowSchema,
-      recovery,
-    );
-    return response.ok
-      ? {
-          effect: "applied",
-          recovery,
-          result: {
-            ok: true,
-            data: { execution: response.value },
-            hint: statusHint(app, ctx.args.slug),
-          },
-        }
-      : response.report;
-  }
-  const response = await postValue(
-    app,
-    resolved.value,
-    actionPath(resolved.value, ctx.args.slug, "abandon-spec"),
-    { reason: ctx.flags.reason },
-    specSchema,
-    specRecovery(ctx.args.slug),
-  );
-  return response.ok
-    ? {
-        effect: "applied",
-        recovery: specRecovery(response.value.id),
-        result: {
-          ok: true,
-          data: { spec: response.value },
-          hint: statusHint(app, ctx.args.slug),
         },
       }
     : response.report;

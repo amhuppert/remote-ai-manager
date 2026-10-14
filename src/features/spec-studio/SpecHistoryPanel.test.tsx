@@ -8,7 +8,7 @@ import type { SpecDetailView } from "@/lib/specs/queries";
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
   draftingSpecControlsDetailFixture,
-  importedDeliveredSpecDetailFixture,
+  importedSpecDetailFixture,
   policyAdmissionViewFixture,
   specControlsDetailFixture,
   subjectFingerprintFixture,
@@ -17,7 +17,7 @@ import SpecHistoryPanel, { buildSpecHistory } from "./SpecHistoryPanel";
 
 describe("buildSpecHistory", () => {
   it("distinguishes human approvals from policy admissions and orders newest activity first", () => {
-    const detail = specControlsDetailFixture("running");
+    const detail = specControlsDetailFixture();
     const historyDetail: SpecDetailView = {
       ...detail,
       approvals: [
@@ -37,17 +37,6 @@ describe("buildSpecHistory", () => {
         policyAdmissionViewFixture({
           createdAt: "2026-07-18T12:04:00.000Z",
         }),
-      ],
-      waivers: [
-        {
-          id: "waiver-1",
-          spec_id: detail.spec.id,
-          criterion_element_id: "criterion-1",
-          revision_id: "revision-1",
-          reason: "Covered by an external conformance run.",
-          waived_at: "2026-07-18T12:05:00.000Z",
-          stale: 0,
-        },
       ],
     };
 
@@ -73,7 +62,7 @@ describe("buildSpecHistory", () => {
   });
 
   it("attributes an import-basis admission to import provenance rather than a human approval", () => {
-    const detail = specControlsDetailFixture("running");
+    const detail = specControlsDetailFixture();
     const events = buildSpecHistory({
       ...detail,
       gateAdmissions: [policyAdmissionViewFixture({ basis: "import" })],
@@ -172,7 +161,7 @@ describe("buildSpecHistory", () => {
 
   it("offers APG radio history-kind filters and isolates policy admissions", async () => {
     const user = userEvent.setup();
-    const detail = specControlsDetailFixture("running");
+    const detail = specControlsDetailFixture();
     render(
       <SpecHistoryPanel
         detail={{
@@ -333,7 +322,7 @@ describe("buildSpecHistory", () => {
     const user = userEvent.setup();
     const { container } = render(
       <SpecHistoryPanel
-        detail={importedDeliveredSpecDetailFixture()}
+        detail={importedSpecDetailFixture()}
         projectName="command-center"
       />,
     );
@@ -371,7 +360,7 @@ describe("buildSpecHistory", () => {
    * dispositions as human acts, which is the honest-provenance failure.
    */
   it("attributes to the import when the import event's detail is unreadable", () => {
-    const detail = importedDeliveredSpecDetailFixture();
+    const detail = importedSpecDetailFixture();
     detail.importRecord = null;
 
     render(<SpecHistoryPanel detail={detail} projectName="command-center" />);
@@ -388,7 +377,7 @@ describe("buildSpecHistory", () => {
     const user = userEvent.setup();
     render(
       <SpecHistoryPanel
-        detail={importedDeliveredSpecDetailFixture()}
+        detail={importedSpecDetailFixture()}
         projectName="command-center"
       />,
     );
@@ -420,7 +409,7 @@ describe("buildSpecHistory", () => {
   });
 
   it("keeps a natively settled revision, answer, and disposition human acts", () => {
-    const detail = importedDeliveredSpecDetailFixture();
+    const detail = importedSpecDetailFixture();
     detail.importRecord = null;
     detail.gateAdmissions = [];
     const questionEvent = detail.attentionAuditEvents.find(
@@ -548,7 +537,7 @@ describe("buildSpecHistory", () => {
   it("uses one flat chronological feed instead of a card for every event", () => {
     render(
       <SpecHistoryPanel
-        detail={specControlsDetailFixture("running")}
+        detail={specControlsDetailFixture()}
         projectName="command-center"
       />,
     );
@@ -574,7 +563,7 @@ describe("buildSpecHistory", () => {
   it("keeps immutable sign-off detail readable on its green status tint", () => {
     render(
       <SpecHistoryPanel
-        detail={specControlsDetailFixture("running")}
+        detail={specControlsDetailFixture()}
         projectName="command-center"
       />,
     );
@@ -588,7 +577,7 @@ describe("buildSpecHistory", () => {
 
   it("provides the prototype's post-hoc review loop on policy admissions", async () => {
     const user = userEvent.setup();
-    const detail = specControlsDetailFixture("running");
+    const detail = specControlsDetailFixture();
     render(
       <SpecHistoryPanel
         detail={{

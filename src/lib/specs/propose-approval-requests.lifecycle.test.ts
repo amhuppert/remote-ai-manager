@@ -16,7 +16,6 @@ import {
 } from "@/lib/notifications/repo";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import {
   createSpecEventsRepo,
   type OpenApprovalRequest,
@@ -41,7 +40,6 @@ import type { SpecGate } from "./schemas";
 const PROJECT_PATH = "/repos/propose-request-changes";
 const PROJECT_NAME = "propose-request-changes-project";
 const SLUG = "re-proposed";
-const EXECUTION_ID = "spec-execution-1";
 const NOW = "2026-08-24T09:00:00.000Z";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
 const HUMAN = { kind: "human" } as const;
@@ -69,7 +67,6 @@ describe("propose approval requests across the real revision lifecycle", () => {
     specs = createSpecsRepo(db, createWriteQueue());
     const reviewRepo = createSpecReviewRepo(db);
     const linksRepo = createSpecLinksRepo(db);
-    const deliveryRepo = createSpecDeliveryRepo(db);
     eventsRepo = createSpecEventsRepo(db);
     const events = createSpecEventsPublisher({
       appendInTransaction: eventsRepo.appendInTransaction,
@@ -93,7 +90,6 @@ describe("propose approval requests across the real revision lifecycle", () => {
     review = createReviewService({
       specs,
       review: reviewRepo,
-      delivery: deliveryRepo,
       links: linksRepo,
       events,
       attention: eventsRepo,
@@ -108,7 +104,6 @@ describe("propose approval requests across the real revision lifecycle", () => {
       review: reviewRepo,
       links: linksRepo,
       events,
-      waivers: deliveryRepo,
       attention: eventsRepo,
       policyNotifier: notifier,
       notifier,
@@ -162,34 +157,7 @@ describe("propose approval requests across the real revision lifecycle", () => {
 
   /** The asks a revision owes a human, apart from the ones a run owes. */
   function openAuthoringRequests(): OpenApprovalRequest[] {
-    return eventsRepo
-      .listOpenApprovalRequests(specId)
-      .filter((request) => request.executionId === null);
-  }
-
-  function openRunRequestIds(): string[] {
-    return eventsRepo
-      .listOpenApprovalRequests(specId)
-      .filter((request) => request.executionId !== null)
-      .map((request) => request.attentionId);
-  }
-
-  function seedRunningExecution(revisionId: string): void {
-    db.prepare(
-      `INSERT INTO spec_executions (
-         id, spec_id, revision_id, scope_json, state, workflow_definition_id,
-         workflow_execution_id, session_name, delivered_at, abandoned_reason,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, 'running', 'workflow-definition-1', NULL, NULL,
-         NULL, NULL, ?, ?)`,
-    ).run(
-      EXECUTION_ID,
-      specId,
-      revisionId,
-      '{"selectedTaskIds":[],"selectedCriterionIds":[],"exclusionDispositions":[]}',
-      NOW,
-      NOW,
-    );
+    return eventsRepo.listOpenApprovalRequests(specId);
   }
 
   /** The ask a review request filed for `gate`, which must be consulted. */
@@ -312,7 +280,6 @@ describe("propose approval requests across the real revision lifecycle", () => {
         gate: "requirements",
         scope: "gate",
         subject: "requirements",
-        executionId: null,
       },
     ]);
     const revision = await specs.getRevisionSnapshot(firstRevisionId);
@@ -353,59 +320,6 @@ describe("propose approval requests across the real revision lifecycle", () => {
         .map((row) => row.type)
         .sort(),
     ).toEqual(["spec-approval-requested", "spec-attention-resolved"]);
-  });
-
-  /**
-   * Withdrawing the draft under review ends it, so the next draft is a
-   * different identity: the next review request files a new entry rather than
-   * silently reusing the retired one. A run's ask is answered by the run, not
-   * by the revision's review, so it survives the same withdrawal.
-   */
-  it("files a new ask under the draft opened after a withdrawal, retiring the old ask but never the run's", async () => {
-    await signOffRequirements();
-    const withdrawnDraftId = await openDesignDraft("decision-1");
-    const first = await proposeAndReadTheAsk(withdrawnDraftId, "design");
-    expect(first).toMatchObject({ outcome: "filed" });
-    const firstAttentionId = first.attentionId;
-    expect(firstAttentionId).not.toBeNull();
-
-    seedRunningExecution(firstRevisionId);
-    const runAsk = await review.requestApproval({
-      specId,
-      revisionId: firstRevisionId,
-      gate: "delivery",
-      actor: AGENT,
-    });
-    if (!runAsk.ok) throw new Error("the run's request was refused");
-
-    const withdrawn = await review.withdraw({
-      specId,
-      revisionId: withdrawnDraftId,
-      actor: HUMAN,
-    });
-    if (!withdrawn.ok) throw new Error("the withdrawal was refused");
-    expect(withdrawn.value).toMatchObject({
-      id: withdrawnDraftId,
-      state: "withdrawn",
-    });
-    expect(openAuthoringRequests()).toEqual([]);
-
-    const nextDraftId = await openDesignDraft("decision-2");
-    expect(nextDraftId).not.toBe(withdrawnDraftId);
-    const second = await proposeAndReadTheAsk(nextDraftId, "design");
-    expect(second).toMatchObject({ gate: "design", outcome: "filed" });
-    expect(second.attentionId).not.toBe(firstAttentionId);
-    expect(openAuthoringRequests()).toEqual([
-      {
-        attentionId: second.attentionId,
-        revisionId: nextDraftId,
-        gate: "design",
-        scope: "gate",
-        subject: "design",
-        executionId: null,
-      },
-    ]);
-    expect(openRunRequestIds()).toEqual([runAsk.value.attentionId]);
   });
 
   /**

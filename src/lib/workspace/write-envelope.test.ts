@@ -429,8 +429,6 @@ describe("authored ownership refuses the engine's own namespace", () => {
   });
 
   it("still accepts an ordinary repo-relative path", () => {
-    expect(ownedPathSchema.safeParse("src/lib/workflow-graph").success).toBe(
-      true,
-    );
+    expect(ownedPathSchema.safeParse("src/lib/workspace").success).toBe(true);
   });
 });

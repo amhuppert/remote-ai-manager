@@ -520,7 +520,6 @@ export function createImportService(deps: ImportServiceDeps): ImportService {
         basis: "import",
         approval_id: null,
         revision_id: revisionId,
-        execution_id: null,
         actor_json: stableStringify(actor),
         created_at: occurredAt,
       });
@@ -588,26 +587,6 @@ export function createImportService(deps: ImportServiceDeps): ImportService {
       }
 
       const counts = countBundle(bundle);
-      // The delivered claim rides on the imported criteria — every surface
-      // reads the spec as delivered because each criterion does — so a bundle
-      // with none has nothing to carry it. Refusing here, before the first
-      // write, is what keeps the marking explicit: the alternative is importing
-      // as approved and dropping a delivery the author claimed.
-      if (bundle.delivered && counts.criteria === 0) {
-        logger.warn("specs.import.refused", {
-          projectPath: identity.projectPath,
-          slug: bundle.slug,
-          refusalCode: "validation",
-        });
-        return refused(
-          "validation",
-          [
-            "The bundle marks the source as already delivered but declares no acceptance criterion for the delivery to be recorded against.",
-          ],
-          'Nothing was written. Give the bundle at least one requirement criterion, or set `"delivered": false` to import a criteria-less source as approved without claiming delivery, then retry the import.',
-          { delivered: true, criteria: 0 },
-        );
-      }
 
       const occurredAt = now();
       const { planned } = planElements(bundle);
@@ -731,16 +710,7 @@ export function createImportService(deps: ImportServiceDeps): ImportService {
           // revision: an amendment forks a revision carrying no record, so the
           // claim cannot outlive the content it was made about. It discharges
           // no gate — the delivery gate never reads it.
-          const revision = bundle.delivered
-            ? repo.recordExternalDelivery({
-                revisionId: approved.id,
-                externalDelivery: {
-                  at: occurredAt,
-                  actor: identity.actor,
-                  source: bundle.source,
-                },
-              })
-            : approved;
+          const revision = approved;
 
           writeAdmissions(
             created.spec.id,

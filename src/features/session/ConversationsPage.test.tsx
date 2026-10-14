@@ -65,7 +65,6 @@ function sessionRow(
     role: null,
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
   };
 }
@@ -96,9 +95,7 @@ function activeData(
 ): ActiveConversationsResponse {
   return {
     conversations,
-    graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
-    specExecutions: [],
   };
 }
 

@@ -12,10 +12,8 @@ import {
   type ApprovalLedgerSubject,
 } from "./approval-ledger";
 import {
-  EXECUTION_SCOPED_GATES,
   approvalHeld,
   elementHandle,
-  executionGateActionable,
   parseProvenance,
   type PendingApproval,
 } from "./gate-projection";
@@ -40,7 +38,6 @@ import {
   type ActorProvenance,
   type ResolvedGateDial,
   type SpecApprovalRow,
-  type SpecExecutionRow,
   type SpecGate,
   type SpecGateAdmissionRow,
   type SpecGatePolicy,
@@ -90,8 +87,6 @@ export interface SpecGateApplicability {
 export interface SpecGateAdmissionRecord {
   revisionId: string;
   revisionNumber: number;
-  /** The run the admission covered, for the per-execution gates. */
-  executionId: string | null;
   basis: SpecGateAdmissionRow["basis"];
   actor: ActorProvenance | null;
   admittedAt: string;
@@ -247,14 +242,6 @@ export interface AuthoringReviewProjectionInput {
    */
   importBaselineRows: readonly RevisionElement[] | null;
   importBaselineCitationState: ApprovalCitationState | null;
-  currentExecution: Pick<
-    SpecExecutionRow,
-    | "id"
-    | "revision_id"
-    | "state"
-    | "workflow_execution_id"
-    | "execution_start_dial"
-  > | null;
   revisionNumberById: ReadonlyMap<string, number>;
   applies: ApprovalApplicability;
   blockingThreads: readonly ReviewThreadSnapshot[];
@@ -297,7 +284,6 @@ function admissionRecords(
             {
               revisionId,
               revisionNumber,
-              executionId: admission.execution_id,
               basis: admission.basis,
               actor: parseProvenance(admission.actor_json),
               admittedAt: admission.created_at,
@@ -315,79 +301,39 @@ function projectGates(
   input: AuthoringReviewProjectionInput,
   consulted: ReadonlySet<AuthoringGate>,
 ): ProjectedGateStatus[] {
-  const revisionId = input.snapshot?.revision.id ?? null;
-  const stage = input.snapshot?.revision.authoringStage ?? null;
-  const governanceBaseRevisionId =
-    input.governanceBaseSnapshot?.revision.id ?? null;
+  const revisionId = input.snapshot?.revision.id ?? null,
+    stage = input.snapshot?.revision.authoringStage ?? null,
+    governanceBaseRevisionId =
+      input.governanceBaseSnapshot?.revision.id ?? null;
   return specGateSchema.options.map((gate) => {
-    const dial =
-      gate === "execution_start" &&
-      input.currentExecution?.execution_start_dial != null
-        ? input.currentExecution.execution_start_dial
-        : resolveDial(input.policy, gate);
-    // Execution-scoped gates admit one run, read against the run's PINNED
-    // revision: an older run's admission must not make the current run read as
-    // admitted, and a newer draft amendment must not hide the active run's
-    // admission (its rows carry the pinned revision, not the draft).
+    const dial = resolveDial(input.policy, gate);
     const countsNow = (admission: SpecGateAdmissionRow) =>
-      admission.gate !== gate
-        ? false
-        : EXECUTION_SCOPED_GATES.has(gate)
-          ? input.currentExecution !== null &&
-            admission.execution_id === input.currentExecution.id &&
-            admission.revision_id === input.currentExecution.revision_id
-          : revisionId === null || admission.revision_id === revisionId;
+      admission.gate === gate &&
+      (revisionId === null || admission.revision_id === revisionId);
     const currentRows = input.admissions.filter(countsNow);
     const priorRows = input.admissions.filter(
       (admission) => admission.gate === gate && !countsNow(admission),
     );
-    const authoring = isAuthoringGate(gate);
-    // A withdrawn revision is terminal: no later transition consults its
-    // gates, so none of them asks a human for anything on its behalf.
-    const terminalRevision = input.snapshot?.revision.state === "withdrawn";
-    const isConsulted = authoring && !terminalRevision && consulted.has(gate);
-    const runActionable =
-      !authoring &&
-      dialRequiresHumanApproval(dial) &&
-      executionGateActionable(
-        gate === "execution_start" ? "execution_start" : "delivery",
-        input.currentExecution,
-      );
-    const reason: SpecGateApplicabilityReason = authoring
-      ? isConsulted
-        ? gate === stage
-          ? "current_stage"
-          : "changed_since_governance_base"
-        : !terminalRevision && dialRequiresHumanApproval(dial)
-          ? "unchanged_since_governance_base"
-          : "dial_off"
-      : runActionable
+    const isConsulted =
+      input.snapshot?.revision.state !== "withdrawn" &&
+      stage !== "plan" &&
+      consulted.has(gate);
+    const reason: SpecGateApplicabilityReason = isConsulted
+      ? gate === stage
         ? "current_stage"
+        : "changed_since_governance_base"
+      : dialRequiresHumanApproval(dial)
+        ? "unchanged_since_governance_base"
         : "dial_off";
-    // Execution start stays pending while the compiled definition parks even
-    // under a dial that admits it without a human, because the run has not
-    // been admitted yet. Every other unadmitted execution-gate position asks
-    // nothing: with no run to receive the act, `pending` would deny the
-    // applicability the same row reports.
-    const executionActPending =
-      !authoring &&
-      (runActionable ||
-        (gate === "execution_start" &&
-          executionGateActionable("execution_start", input.currentExecution)));
-    const state: ProjectedGateStatus["state"] =
-      currentRows.length > 0
-        ? "admitted"
-        : authoring
-          ? isConsulted && dialRequiresHumanApproval(dial)
-            ? "pending"
-            : "not_required"
-          : executionActPending
-            ? "pending"
-            : "not_required";
     return {
       gate,
       dial,
-      state,
+      state:
+        currentRows.length > 0
+          ? "admitted"
+          : isConsulted && dialRequiresHumanApproval(dial)
+            ? "pending"
+            : "not_required",
       applicability: { reason, governanceBaseRevisionId },
       currentAdmissions: admissionRecords(
         currentRows,
@@ -560,14 +506,6 @@ function projectPendingApprovals(
   }
   if (snapshot.revision.authoringStage === "plan" && asked("plan")) {
     recordSubject("plan", "plan", null, "plan");
-  }
-  for (const gate of ["execution_start", "delivery"] as const) {
-    if (
-      gatePending(gate) &&
-      executionGateActionable(gate, input.currentExecution)
-    ) {
-      pending.push({ gate, subject: gate, elementId: null });
-    }
   }
   const subjects = inGateOrder(ledgerSubjects);
   const counted = (classification: ApprovalLedgerClass) =>

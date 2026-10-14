@@ -108,22 +108,6 @@ function invalidServiceResult(
   );
 }
 
-function claimedWorkflow(body: {
-  workflowExecutionId?: string;
-  workflowContextId?: string;
-}): ValidationCallerRef["claimedWorkflow"] {
-  if (
-    body.workflowExecutionId === undefined ||
-    body.workflowContextId === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    executionId: body.workflowExecutionId,
-    contextId: body.workflowContextId,
-  };
-}
-
 type PolledRun = ReturnType<ValidationService["poll"]>;
 type ResolvedPolledRun = PolledRun & { status: ValidationRunStatus };
 
@@ -209,9 +193,6 @@ function createValidationHandlers(
       nestedValidationRunId: parsed.data.nestedValidationRunId ?? null,
       caller: {
         ...resolved.value.caller,
-        ...(claimedWorkflow(parsed.data) === undefined
-          ? {}
-          : { claimedWorkflow: claimedWorkflow(parsed.data) }),
       },
     });
     if (submission.kind === "invalid") {

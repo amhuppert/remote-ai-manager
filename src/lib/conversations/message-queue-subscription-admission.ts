@@ -1,6 +1,4 @@
 import { isOrdinaryConversationRole, type ConversationState } from "./schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 import { scopeRefFromStoreSessionName } from "./conversation-target";
 import {
   isActiveQueuedMessageStatus,
@@ -22,7 +20,6 @@ export function hasOnlySubscriptionWakeQueue(
 export function subscriptionWakeHold(input: {
   conversation: ConversationState | null;
   sessionArchived: boolean;
-  execution: GraphWorkflowExecution | null;
 }): string | null {
   const row = input.conversation;
   if (!row) return "Subscription recipient no longer exists";
@@ -42,22 +39,6 @@ export function subscriptionWakeHold(input: {
     )
   )
     return "Subscription wake delivery needs explicit review";
-  const execution = input.execution;
-  if (
-    execution &&
-    holdsActionableGate(
-      execution.status,
-      execution.haltReason,
-      execution.abandonment,
-    ) &&
-    Object.values(execution.contextStates).some(
-      (state) =>
-        state.status === "awaiting_approval" &&
-        state.pendingApproval?.conversationId === row.id &&
-        state.pendingApproval.decision === null,
-    )
-  )
-    return "Subscription recipient is waiting for approval";
   return null;
 }
 
@@ -99,7 +80,7 @@ export async function readSubscriptionWakeHold(input: {
   const store = await import("@/lib/state-store");
   const projectScope =
     scopeRefFromStoreSessionName(input.sessionName).scope === "project";
-  const [conversation, session, execution] = await Promise.all([
+  const [conversation, session] = await Promise.all([
     store.getConversation(
       input.projectPath,
       input.sessionName,
@@ -108,16 +89,9 @@ export async function readSubscriptionWakeHold(input: {
     projectScope
       ? Promise.resolve(null)
       : store.getSession(input.projectPath, input.sessionName),
-    projectScope
-      ? Promise.resolve(null)
-      : store.getActiveGraphWorkflowExecution(
-          input.projectPath,
-          input.sessionName,
-        ),
   ]);
   return subscriptionWakeHold({
     conversation,
     sessionArchived: !projectScope && (session === null || session.archived),
-    execution,
   });
 }

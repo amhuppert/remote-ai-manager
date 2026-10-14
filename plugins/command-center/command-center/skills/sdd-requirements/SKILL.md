@@ -43,8 +43,7 @@ choices. For example:
 If the current system cannot supply it, identify the gap for Design to resolve
 through new work or a proposed change to the contract.
 
-Apply the [acceptance-criteria rules](../graph-workflow-planning/SKILL.md#acceptance-criteria)
-to spec criteria: one independently failable obligation per criterion, bounded
+Apply these acceptance-criteria rules to spec criteria: one independently failable obligation per criterion, bounded
 named surfaces, and outcomes an inspector can observe. Inventory a surface
 before using "all" or "every" over it. Keep process conventions outside criteria.
 EARS is optional; sentence shape does not establish completeness.

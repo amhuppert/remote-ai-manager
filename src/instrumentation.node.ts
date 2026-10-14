@@ -1,11 +1,8 @@
 import { claimGraphWorkflowRuntimeOwner } from "./lib/state-store/graph-workflow-runtime-owner";
-import { initializeGraphWorkflowRuntimeAtStartup } from "./lib/workflow-graph/production";
-import { stopAllConversationActors } from "./lib/workflows/conversation/lifecycle";
 import { listSessionConversationListItems } from "./lib/state-store";
 import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";
 import { runMigrations } from "./lib/state-store/migrator";
-import { runNativeSddV2CutoverBeforeStateDbOpen } from "./lib/state-store/migrations/0030-native-sdd-v2-cutover";
 import { createContextArtifactsRepo } from "./lib/context-artifacts/repo";
 import { initializeNotifications } from "./lib/notifications/service";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
@@ -26,7 +23,6 @@ import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
-import { createAgentRunsRepo } from "./lib/agent-runs/repo";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";
 import { createTicketsRepo } from "./lib/state-store/tickets-repo";
 import { getSharedWriteQueue } from "./lib/state-store/write-queue";
@@ -44,11 +40,7 @@ import { closeAllEventStreams } from "./lib/events/sse-route-handlers";
 const logger = createLogger("startup");
 
 export interface StartupDeps {
-  loadConversationRehydration(): Promise<{
-    rehydrateConversationActors(): Promise<number>;
-  }>;
   runStateMigrations(): Promise<string[]>;
-  initializeGraphWorkflowRuntime?(): Promise<void>;
   initNotificationDb: typeof initializeNotifications;
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
@@ -60,8 +52,6 @@ export interface StartupDeps {
   recordServerBaseUrl(): string;
   /** Marks orphaned pending compaction rows failed; returns the swept count. */
   sweepInterruptedCompactions(): number;
-  /** Marks orphaned running agent-run rows failed; returns the swept count. */
-  recoverStaleAgentRuns(): number;
   /**
    * Constructs the ValidationService singleton and runs its crash recovery:
    * admission stays closed until orphaned validation process groups are
@@ -72,7 +62,7 @@ export interface StartupDeps {
   recoverInterruptedConversationSnapshots(): Promise<number>;
   /** Marks unacknowledged subscription input from a prior process uncertain. */
   recoverInterruptedSubscriptionDeliveries?(): Promise<number>;
-  /** Starts active wait reconciliation after source recovery and actor rehydration. */
+  /** Starts active wait reconciliation after source recovery and core restoration. */
   startActiveSubscriptionWakes?(): Promise<void>;
   /**
    * Settles seat turns the last process left running, restores every active
@@ -114,11 +104,8 @@ export interface StartupDeps {
 }
 
 const defaultStartupDeps: StartupDeps = {
-  loadConversationRehydration: () =>
-    import("./lib/workflows/conversation/rehydration"),
   runStateMigrations: async () => {
     const configDir = getConfigDirPath();
-    await runNativeSddV2CutoverBeforeStateDbOpen(configDir);
     const db = getDb();
     const claim = claimGraphWorkflowRuntimeOwner(db);
     if (claim.kind === "occupied") {
@@ -130,7 +117,6 @@ const defaultStartupDeps: StartupDeps = {
     }
     return runMigrations({ db, configDir });
   },
-  initializeGraphWorkflowRuntime: initializeGraphWorkflowRuntimeAtStartup,
   initNotificationDb: initializeNotifications,
   setConfigReader,
   readConfig,
@@ -154,8 +140,6 @@ const defaultStartupDeps: StartupDeps = {
       "interrupted by server restart",
       new Date().toISOString(),
     ),
-  recoverStaleAgentRuns: () =>
-    createAgentRunsRepo(getStateDb()).recoverStaleAgentRuns(),
   initializeValidationService: initializeValidationServiceAtStartup,
   recoverInterruptedConversationSnapshots: () =>
     recoverInterruptedConversationSnapshotsForStartup({
@@ -197,7 +181,6 @@ const defaultStartupDeps: StartupDeps = {
           error: getErrorMessage(error),
         });
       }
-      await stopAllConversationActors();
     });
   },
   installServerShutdownGuard: () => {
@@ -267,8 +250,6 @@ export function createStartupRegistrar(
       });
     }
 
-    await deps.initializeGraphWorkflowRuntime?.();
-
     try {
       const recovered = await deps.recoverInterruptedConversationSnapshots();
       if (recovered > 0) {
@@ -294,22 +275,6 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.compaction_sweep_failed", {
-        error: getErrorMessage(err),
-      });
-    }
-
-    // An agent run's abort handle lives only in this process's abort
-    // registry, so rows still `running` now were orphaned by the previous
-    // process shutting down — they would report running forever and cancel
-    // would be a silent no-op. Sweep them to failed before any request reads
-    // them.
-    try {
-      const sweptRuns = deps.recoverStaleAgentRuns();
-      if (sweptRuns > 0) {
-        logger.info("startup.stale_agent_runs_swept", { count: sweptRuns });
-      }
-    } catch (err) {
-      logger.error("startup.agent_run_sweep_failed", {
         error: getErrorMessage(err),
       });
     }
@@ -341,7 +306,7 @@ export function createStartupRegistrar(
     }
 
     // The base URL feeds CC_SERVER_URL in every spawned session's env; record
-    // it before conversations rehydrate so no session sees it unset. The
+    // it before supervision restores conversations so no session sees it unset. The
     // verification self-probe is fire-and-forget: register() completes before
     // the HTTP server listens, so awaiting it here would deadlock — its retry
     // loop absorbs the pre-listen window.
@@ -384,27 +349,7 @@ export function createStartupRegistrar(
         logger.info("startup.subscription_deliveries_uncertain", { count });
     }
 
-    // Rehydrate conversation actors from persisted machine snapshots
-    try {
-      const { rehydrateConversationActors } =
-        await deps.loadConversationRehydration();
-      const rehydrated = await runAsTrace(
-        "startup:rehydrate-conversations",
-        rehydrateConversationActors,
-      );
-      if (rehydrated > 0) {
-        logger.info("startup.rehydrated_conversation_actors", {
-          count: rehydrated,
-        });
-      }
-    } catch (err) {
-      logger.error("startup.conversation_rehydration_failed", {
-        error: getErrorMessage(err),
-      });
-    }
-
-    // Runs restore after seat conversations rehydrate: a restored Run is paused,
-    // so nothing it owns starts until someone resumes it.
+    // Supervision restores interrupted core turns and pauses restored runs.
     try {
       const booted = await deps.bootSupervision?.();
       if (booted !== undefined && booted.restoredRuns > 0) {

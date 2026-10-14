@@ -13,31 +13,25 @@ export const inTurnQuestionService = getGlobalSingleton(
       newId: randomUUID,
       timeoutMs: IN_TURN_QUESTION_TIMEOUT_MS,
       async register(scope, questionId, questions) {
-        const { registerConversationQuestion } =
-          await import("@/lib/workflows/conversation/lifecycle");
-        return registerConversationQuestion(
-          scope.projectPath,
-          scope.sessionName,
-          scope.conversationId,
-          {
-            questionId,
-            questions: questions.map((question, index) => ({
-              ...question,
-              id: question.id ?? String(index),
-            })),
-          },
-        );
+        const { coreQuestionCommand } =
+          await import("@/lib/supervision/handles");
+        return coreQuestionCommand(scope, {
+          kind: "register_question",
+          questionId,
+          questions: questions.map((question, index) => ({
+            ...question,
+            id: question.id ?? String(index),
+          })),
+        });
       },
       async retire(scope, questionId) {
-        const { clearConversationQuestion } =
-          await import("@/lib/workflows/conversation/lifecycle");
+        const { coreQuestionCommand } =
+          await import("@/lib/supervision/handles");
         if (
-          await clearConversationQuestion(
-            scope.projectPath,
-            scope.sessionName,
-            scope.conversationId,
-            { questionId },
-          )
+          await coreQuestionCommand(scope, {
+            kind: "clear_question",
+            questionId,
+          })
         )
           return;
         const { mutateConversation } = await import("@/lib/state-store");

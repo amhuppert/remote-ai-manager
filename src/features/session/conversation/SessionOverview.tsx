@@ -107,7 +107,6 @@ interface SessionOverviewProps {
   onRetryConversations?(): void;
   createAction: ReactNode;
   sessionActions: ReactNode;
-  workflow: ReactNode;
   /** The session's runs (design r2 amendment 17), beside the graph workflow until cutover. */
   runs: ReactNode;
   workspaceTools: ReactNode;
@@ -129,7 +128,6 @@ export default function SessionOverview({
   onRetryConversations,
   createAction,
   sessionActions,
-  workflow,
   runs,
   workspaceTools,
   ticket,
@@ -399,9 +397,6 @@ export default function SessionOverview({
           aria-label="Session workspace"
           className="flex min-w-0 flex-col gap-xl"
         >
-          <section aria-label="Workflow" className="min-w-0">
-            {workflow}
-          </section>
           <section aria-label="Runs" className="min-w-0">
             {runs}
           </section>

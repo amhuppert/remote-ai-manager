@@ -55,11 +55,6 @@ export interface MemoryIndexContextProviderDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | null>;
-  /**
-   * The immutable id of the spec a native-SDD run is bound to, or null when
-   * the graph execution is not a spec delivery. May throw on a stale link.
-   */
-  findBoundSpecId(workflowExecutionId: string): Promise<string | null>;
   /** The budget as global settings hold it right now, re-read per call (R10.3). */
   readBudget(): Promise<MemoryIndexBudget>;
   /**
@@ -135,14 +130,6 @@ export function createMemoryIndexContextProvider(
       // A lane is identified by BOTH ids: an execution without a context is
       // no lane identity at all, and resolving it as one would let a
       // non-lane conversation read a context's policy.
-      workflow:
-        request.workflowExecutionId !== null &&
-        request.workflowContextId !== null
-          ? {
-              executionId: request.workflowExecutionId,
-              contextId: request.workflowContextId,
-            }
-          : null,
     });
     if (policy === "off") {
       logger.debug("memory.live-context.off", {
@@ -208,16 +195,6 @@ export function createMemoryIndexContextProvider(
       // the run (R5.3). A stale spec link is that subsystem's corruption
       // signal, not a reason to drop the whole block: the turn still gets
       // its ticket and execution cues.
-      try {
-        const specId = await deps.findBoundSpecId(request.workflowExecutionId);
-        if (specId !== null) activeArtifacts.push({ kind: "spec", specId });
-      } catch (err) {
-        logger.warn("memory.live-context.spec_unresolved", {
-          conversationId: request.conversationId,
-          workflowExecutionId: request.workflowExecutionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
       activeArtifacts.push({
         kind: "workflow_execution",
         executionId: request.workflowExecutionId,

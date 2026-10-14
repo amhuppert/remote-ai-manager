@@ -20,7 +20,6 @@ function makeSession(overrides: Partial<SessionListItem>): SessionListItem {
     promptCount: 0,
     derivedLastActivityAt: new Date().toISOString(),
     collabContribution: null,
-    hasActiveGraphWorkflow: false,
     ...overrides,
   };
 }

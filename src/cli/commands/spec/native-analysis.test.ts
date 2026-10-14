@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { runForTest } from "cli-for-agents/testing";
-import { graphWorkflowLaunchExample } from "@/lib/workflow-graph/launch-presentation";
 import { createCcRuntimeFixture, jsonReply } from "../../testing/framework";
 
 describe("spec analysis", () => {
@@ -134,38 +133,6 @@ describe("spec analysis", () => {
     });
   });
 
-  it("returns an unresolved consistency finding as a failed verification with its remedy", async () => {
-    const finding = {
-      family: "execution-lifecycle",
-      code: "abandon_cleanup_unfinished",
-      specExecutionId: "execution-1",
-      cleanupPhase: "abort_workflow",
-      workflowExecutionId: "workflow-1",
-      workflowStatus: "running",
-      ownsExecutionSlot: true,
-      detail:
-        "Spec execution execution-1 stopped mid-abandonment at the abort_workflow phase",
-      remedy:
-        "cctl spec abandon native-sdd --execution workflow-1 --reason <reason>",
-    };
-    const fixture = createCcRuntimeFixture({
-      respond: () =>
-        jsonReply({
-          ok: true,
-          checkedRevisionIds: ["r2"],
-          mismatches: [],
-          consistencyFindings: [finding],
-        }),
-    });
-    const result = await fixture.run(["spec", "verify", "native-sdd"]);
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      error: { details: { serverCode: "spec_inconsistent" } },
-      payload: { data: { report: { consistencyFindings: [finding] } } },
-      instruction: "Run the remedy named on each finding, then verify again.",
-    });
-  });
-
   it("validates a comparison bundle before contacting the server", async () => {
     const fixture = createCcRuntimeFixture({
       respond: () => {
@@ -185,60 +152,5 @@ describe("spec analysis", () => {
       "integrity_mismatch",
     );
     expect(fixture.requests).toHaveLength(0);
-  });
-
-  it("reads the authored preview with optimistic concurrency and can project its graph outline", async () => {
-    const launch = graphWorkflowLaunchExample();
-    const fixture = createCcRuntimeFixture({
-      respond: () =>
-        jsonReply({
-          stage: "draft",
-          attemptId: "a1",
-          specSlug: "native-sdd",
-          draftRevision: 4,
-          pinnedRevisionId: "r1",
-          candidateHash: null,
-          snapshotId: null,
-          candidateId: null,
-          approvable: true,
-          approvability:
-            "Draft bytes are what a human reviews; sign-off freezes and approves them.",
-          launch,
-          binding: { dispositions: [] },
-        }),
-    });
-    const invalid = await fixture.run([
-      "spec",
-      "plan",
-      "preview",
-      "native-sdd",
-      "--stage",
-      "approved",
-      "--expected-draft-revision",
-      "4",
-    ]);
-    expect(invalid.exitCode).toBe(2);
-    expect(fixture.requests).toHaveLength(0);
-    const result = await fixture.run([
-      "spec",
-      "plan",
-      "preview",
-      "native-sdd",
-      "--stage",
-      "draft",
-      "--expected-draft-revision",
-      "4",
-      "--outline",
-    ]);
-    expect(result.exitCode, result.stdout).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      payload: { data: { outline: { name: launch.name } } },
-    });
-    expect(fixture.requests[0]?.url).toContain(
-      "stage=draft&expectedDraftRevision=4",
-    );
-    expect(result.stdout).not.toContain(
-      launch.definition.executionContexts[0]?.acceptanceCriteria,
-    );
   });
 });

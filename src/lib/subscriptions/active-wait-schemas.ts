@@ -3,7 +3,7 @@ import { sourceFactSchema, subscriptionRecipientSchema } from "./schemas";
 
 export const activeWaitSourceSchema = z
   .object({
-    kind: z.enum(["workflow", "validation", "git_job"]),
+    kind: z.enum(["validation", "git_job"]),
     id: z.string().min(1).max(256),
   })
   .strict();

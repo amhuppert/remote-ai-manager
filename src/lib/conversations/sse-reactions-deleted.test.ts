@@ -36,7 +36,6 @@ function activeConversation(id: string): ActiveConversation {
     worktreePath: "/repo/demo/.worktrees/session-1",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
   };
 }
@@ -68,9 +67,7 @@ describe("conversation-deleted SSE reaction", () => {
       conversationKeys.active(),
       {
         conversations: [deleted, survivor],
-        graphWorkflowExecutions: [],
         activeCollaborationExecutions: [],
-        specExecutions: [],
       },
     );
     queryClient.setQueryData(conversationKeys.list("demo", "session-1"), [

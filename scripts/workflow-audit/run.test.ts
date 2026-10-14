@@ -12,8 +12,8 @@ vi.mock("@/lib/logging", () => ({
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type Database from "better-sqlite3";
-import { _createTestDb } from "../../src/lib/state-store/state-db";
+import Database from "better-sqlite3";
+import { DEPLOY_1_5_SCHEMA_SQL } from "../../src/lib/state-store/migrations/testing/deploy-1-5-schema";
 import { buildAuditReport } from "./core";
 import {
   collectConversationReferences,
@@ -249,7 +249,8 @@ function seed(): void {
 }
 
 beforeEach(() => {
-  db = _createTestDb({ inMemory: true });
+  db = new Database(":memory:");
+  db.exec(DEPLOY_1_5_SCHEMA_SQL);
   logsBaseDir = mkdtempSync(path.join(tmpdir(), "wf-audit-test-"));
   seed();
 });

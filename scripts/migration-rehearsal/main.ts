@@ -3,9 +3,11 @@
  *   bun run migrations:rehearse -- --from <data directory> --to <empty scratch directory>
  * Both paths absolute: `bun run` resolves relative ones against the checkout.
  *
- * Prints the migrations this build would apply, the schema versions before and
- * after, and the integrity and foreign-key checks before and after; it fails
- * on a problem the migrations introduced, not one the data already had.
+ * Refuses a data directory that has not finished the retired migration history.
+ * Otherwise prints the history verdict, the migrations this build would apply,
+ * the schema versions before and after, the schema entries startup changed, and
+ * the integrity and foreign-key checks before and after; it fails on a problem
+ * startup introduced, not one the data already had.
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -83,12 +85,17 @@ const newViolations =
   report.after.foreignKeyViolations - report.before.foreignKeyViolations;
 const list = (items: string[]) =>
   items.length === 0 ? "none" : items.join(", ");
+const { added, removed, changed } = report.schemaChanges;
 console.log(`Rehearsed on ${report.scratchDir}`);
+console.log(`  migration history: ${report.history}`);
 console.log(
   `  schema version ${report.schemaVersionBefore ?? "none"} -> ${report.schemaVersionAfter ?? "none"}`,
 );
 console.log(`  pending: ${list(report.pendingBefore)}`);
 console.log(`  applied: ${list(report.applied)}`);
+console.log(
+  `  schema entries: added ${list(added)}; removed ${list(removed)}; changed ${list(changed)}`,
+);
 console.log(
   `  integrity: before ${report.before.integrityProblems.length === 0 ? "ok" : report.before.integrityProblems.join("; ")}, after ${report.after.integrityProblems.length === 0 ? "ok" : report.after.integrityProblems.join("; ")}`,
 );

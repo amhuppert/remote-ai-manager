@@ -61,7 +61,6 @@ function sessionRow(
     worktreePath: "/projects/repo/.worktrees/fix-bug",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     sessionName: "fix-bug",
     branchName: "csm/fix-bug",

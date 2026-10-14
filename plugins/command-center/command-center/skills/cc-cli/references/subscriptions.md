@@ -2,8 +2,7 @@
 
 Automatic passive follows belong to the current ordinary conversation, including
 project conversations. Recorded involvement establishes them: supplied notepad
-context, linked tickets, spec authorship/review, launched graph workflows and
-owned runs (see [Runs](#runs)).
+context, linked tickets, spec authorship/review and owned runs (see [Runs](#runs)).
 Validation runs require an explicit subscription or finite wait; submitting a
 validation command does not create a follow, even while it is queued or running.
 A read or search alone does not create a follow.
@@ -11,8 +10,7 @@ A read or search alone does not create a follow.
 Spec review feedback uses the passive inbox for ordinary session and project
 conversations. It arrives with the next user message even when the runtime
 already exists. Lost-background-task reminders use the same durable receipts
-but reach the next replacement runtime, including generated turns and workflow
-roles. Internal `conversation` sources
+but reach the next replacement runtime, including generated turns and run seats. Internal `conversation` sources
 contain notices for their own recipient; they are not peer-turn subscriptions
 and cannot be created through the catalog. `inbox get` exposes the full preserved
 text when a notice's briefing contains only a preview.
@@ -20,7 +18,8 @@ text when a notice's briefing contains only a preview.
 ```
 cctl subscription catalog
 cctl subscription subscribe notepad <notepad-id> --reason "Track decisions"
-cctl subscription subscribe workflow <execution-id> --reason "Continue after completion" --mode active --expires-in 3600
+cctl subscription subscribe run <run-id> --reason "Track run progress"
+cctl subscription subscribe validation <validation-run-id> --reason "Inspect completion" --mode active --expires-in 3600
 cctl subscription list
 cctl subscription get <subscription-id>
 cctl subscription pause <subscription-id>
@@ -28,7 +27,7 @@ cctl subscription resume <subscription-id>
 cctl subscription mode <subscription-id> passive
 cctl subscription cancel <subscription-id>
 cctl subscription unfollow <subscription-id>
-cctl subscription wait workflow <execution-id> --reason "Continue after the workflow finishes"
+cctl subscription wait validation <validation-run-id> --reason "Continue after validation"
 cctl subscription wait validation <run-id> --reason "Inspect the verdict" --expires-in 3600
 cctl subscription wait git_job <job-id> --reason "Inspect the git result"
 cctl subscription waits
@@ -44,7 +43,7 @@ cctl inbox hints on
 
 `subscription catalog` names source identity requirements, supported event ids
 and allowed modes. Use the exact source id: ticket UUID, native spec id, notepad
-id, workflow execution id, validation run id or git job id. A ticket number or
+id, validation run id or git job id. A ticket number or
 spec slug is not the source id. The catalog needs server credentials, but no
 conversation identity.
 
@@ -61,8 +60,7 @@ returns `ACTIVE_WAIT_REASON_LOCKED`; a changed expiry returns
 settlement creates a new generation when another outcome can be delivered.
 An already consumed final outcome returns `ACTIVE_WAIT_SOURCE_FINAL`; register
 a different operation's exact source instead. An undelivered terminal outcome
-remains eligible, and a consumed resumable workflow halt can wait for the next
-boundary after the workflow resumes.
+remains eligible.
 
 `subscription list` returns bounded reason excerpts, expiry, pause state, remembered
 opt-outs and source-read problems. Text and JSON contain the same selected data.
@@ -77,8 +75,7 @@ an opt-out for public sources. For an internal own-conversation notice source,
 does not create these internal sources. Accepted turns cannot be recalled.
 
 `subscription mode` changes an existing follow to passive or to a finite active
-wait. Active mode supports only exact terminal sources: workflow, validation
-and git_job. Use `--expires-in` when creating a finite wait; an existing wait's
+wait. Active mode supports only exact terminal sources: validation and git_job. Use `--expires-in` when creating a finite wait; an existing wait's
 expiry is immutable. Mode changes retain pause state. Passive mode keeps the
 finite wait and its outcome, including an expired outcome for the next explicit
 user message. A pending or unsent planned wake can be safely withdrawn on
@@ -90,9 +87,7 @@ remains available.
 Cancelling a running validation or git-job wait restores passive collection of
 its eventual result. Once that source's terminal result is accepted or dismissed,
 its follow expires and leaves the active Following count. The follow, wait
-generations and delivery evidence remain inspectable as history. Workflow
-following continues because a halted workflow can resume and produce more
-boundaries.
+generations and delivery evidence remain inspectable as history.
 
 `inbox list` reconciles durable source changes and returns a bounded page.
 Omission metadata names the next read. Outline excerpts include their original
@@ -121,11 +116,9 @@ while separate decisions and run outcomes retain their identities.
 Scope comes from the injected conversation environment. Explicit project,
 session and conversation flags address a different target within the authorized
 scope. Project conversations use their project route and never a placeholder
-session. Workflow lanes retain their assigned context policy and cannot use this
-subscription surface.
+session. Run seats retain their assigned context policy and cannot use this subscription surface.
 
-`subscription wait` registers an explicit wait for the exact workflow execution,
-validation run or git job to reach a terminal state, then returns immediately
+`subscription wait` registers an explicit wait for the exact validation run or git job to reach a terminal state, then returns immediately
 with the wait id, subscription id, state and expiry. It does not poll or block.
 Use `--reason-file <path>` for literal prose. The default lifetime is 24 hours;
 `--expires-in` accepts 1 to 604800 seconds (7 days). Arbitrary predicates and
@@ -135,9 +128,7 @@ A validation wait observes the run; it does not detach `validate run` or renew
 its private submitter lease. The submitting command must keep observing a leased
 run, or the lease can expire and interrupt it; that interruption is a terminal
 result too. System-owned runs have their own lifecycle. Launching validation and
-yielding safely needs a separate server-owned lease-transfer feature. For a
-launch-and-yield flow today, use a nonblocking graph workflow execution and
-register its exact execution id.
+yielding safely needs a separate server-owned lease-transfer feature. Runs report their questions, halts, and results to their owner through the automatic run follow.
 
 The server checks durable source state, including a source that finished before
 registration, and queues a bounded result turn for this ordinary conversation.
@@ -184,6 +175,5 @@ notices are delivered regardless, so read `run show` before acting on one. Keep
 that follow: pausing or unfollowing it stops the run's questions and halts from
 reaching you.
 
-`subscription subscribe` and `subscription wait` do not take runs; another
-conversation of the session reads a run with `cctl run show <run-id>`. The
+`subscription subscribe run <run-id>` follows a run passively within its project. The owner also follows it automatically with wakes. `subscription wait` takes validation and git jobs only. Read a run with `cctl run show <run-id>`. The
 [runs reference](runs.md) describes the notices.

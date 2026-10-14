@@ -9,7 +9,9 @@ import {
   setProjectConversationStatusNotificationDepsForTesting,
   _resetProjectConversationStatusNotificationDepsForTesting,
 } from "./status-notifications";
-import type { ConversationContext } from "@/lib/workflows/conversation/types";
+type ConversationContext = Parameters<
+  typeof notifyProjectConversationStatusFromContext
+>[0];
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type {
@@ -26,38 +28,18 @@ describe("notifyProjectConversationStatusFromContext", () => {
     overrides: Partial<ConversationContext> = {},
   ): ConversationContext {
     return {
-      _schemaVersion: 1,
       projectPath: "/repo",
       target: targetFromStoreSessionName(
         "my-project",
         PROJECT_CONVERSATION_SESSION_SENTINEL,
         "conv-plc",
       ),
-
-      worktreePath: "/repo",
-
-      createdAt: "2026-01-01T00:00:00Z",
-      lastActivityAt: "2026-01-01T00:01:00Z",
       status: "awaiting",
       promptCount: 2,
-      transcriptPath: "/repo/.cc/conv-plc.jsonl",
-      agentBackend: "claude",
-      backendRef: null,
-      forkedFrom: null,
-      role: null,
-      activeTurn: null,
       pendingQuestion: null,
-      debugMode: null,
-      totals: {
-        totalCostUsd: null,
-        totalDurationMs: null,
-        totalTurns: 4,
-        contextTokens: null,
-        contextWindowMax: null,
-      },
+      totals: { totalTurns: 4 },
       lastResult: null,
       lastError: null,
-      checkpoint: null,
       ...overrides,
     };
   }
@@ -123,15 +105,6 @@ describe("notifyProjectConversationStatusFromContext", () => {
         promptCount: 1,
         pendingQuestion: {
           questionId: "question-7",
-          questions: [
-            {
-              question: "Continue?",
-              multiSelect: false,
-              options: [],
-              required: true,
-              allowNote: true,
-            },
-          ],
         },
       }),
     );
@@ -156,33 +129,9 @@ describe("notifyProjectConversationStatusFromContext", () => {
       makeContext({
         status: "waiting_for_input",
         promptCount: 2,
-        lastResult: {
-          backendRef: null,
-          costUsd: null,
-          durationMs: null,
-          numTurns: null,
-          contextTokens: null,
-          contextWindow: null,
-          inputTokens: null,
-          outputTokens: null,
-          cachedInputTokens: null,
-          contentBlocks: [],
-          aborted: false,
-          compacted: false,
-          error: "Previous turn failed",
-          continuationDisposition: "retain",
-        },
+        lastResult: { error: "Previous turn failed" },
         pendingQuestion: {
           questionId: "question-8",
-          questions: [
-            {
-              question: "Continue?",
-              multiSelect: false,
-              options: [],
-              required: true,
-              allowNote: true,
-            },
-          ],
         },
       }),
     );
@@ -207,13 +156,7 @@ describe("notifyProjectConversationStatusFromContext", () => {
       makeContext({
         status: "awaiting",
         promptCount: 3,
-        totals: {
-          totalCostUsd: null,
-          totalDurationMs: null,
-          totalTurns: 5,
-          contextTokens: null,
-          contextWindowMax: null,
-        },
+        totals: { totalTurns: 5 },
         lastError: "Tool call timed out",
       }),
     );

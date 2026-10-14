@@ -16,7 +16,6 @@ import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import type { Notification } from "@/lib/notifications/schemas";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -89,7 +88,6 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
         appendInTransaction: eventsRepo.appendInTransaction,
         publish: () => ({ delivered: true }),
       }),
-      waivers: createSpecDeliveryRepo(db),
       policyNotifier: {
         policyAdmitted(notice) {
           policyAdmissionResponder(notice);

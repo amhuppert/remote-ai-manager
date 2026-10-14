@@ -308,7 +308,7 @@ describe("native spec writes", () => {
       "abandon",
       ["--execution", "workflow-one", "--reason", "superseded"],
       "abandon-execution",
-      { executionId: "workflow-one", reason: "superseded" },
+      { reason: "superseded" },
     ],
   ] as const)(
     "preserves %s action input and authoritative refusal",
@@ -376,34 +376,6 @@ describe("native spec writes", () => {
       effect: "not_applied",
       instruction: expect.stringContaining("Spec Studio"),
     });
-  });
-
-  // A human signs the delivery-plan draft off in Workflow Builder; the agent's
-  // path is `spec plan propose`, which freezes the draft itself only under a
-  // Notify or Off execution-start dial.
-  it("offers no spec plan sign-off command and never contacts the server", async () => {
-    const test = createCcRuntimeFixture({
-      respond: () => {
-        throw new Error("must not contact server");
-      },
-    });
-    const result = await test.run([
-      "spec",
-      "plan",
-      "sign-off",
-      "native-sdd",
-      "--candidate",
-      "candidate-seen",
-      "--candidate-hash",
-      "hash-seen",
-    ]);
-    expect(result.exitCode, result.stdout || result.stderr).toBe(2);
-    expect(JSON.parse(result.stdout).error.code).toBe("KERNEL_USAGE");
-    const help = await test.run(["spec", "plan", "--help"], "text");
-    expect(help.exitCode, help.stderr).toBe(0);
-    expect(help.stdout).toContain("spec plan propose");
-    expect(help.stdout).not.toContain("spec plan sign-off");
-    expect(test.requests).toHaveLength(0);
   });
 
   it("previews imports without committing and refuses legacy dryRun:true on the write", async () => {
@@ -533,7 +505,6 @@ describe("native spec writes", () => {
       const receipt = {
         discovery: {
           id: "discovery-one",
-          executionId: "internal-execution",
           workflowExecutionId: "workflow-one",
           attemptId: "attempt-one",
           title: task.title,
@@ -563,7 +534,6 @@ describe("native spec writes", () => {
       ]);
       expect(result.exitCode, result.stdout).toBe(0);
       expect(body(test.requests[0])).toEqual({
-        executionId: "workflow-one",
         discoveredTask: task,
         ...(blocking ? { blockingReason: "Cannot safely continue" } : {}),
       });

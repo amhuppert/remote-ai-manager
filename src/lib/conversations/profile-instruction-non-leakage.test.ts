@@ -418,8 +418,6 @@ describe("active conversations feed", () => {
       listProjectConversations: async () => [
         { projectPath: PROJECT_PATH, conversation: projectConversation },
       ],
-      listActiveGraphWorkflowExecutions: async () => new Map(),
-      listActiveSpecExecutions: async () => [],
       getBackgroundActivity: () => null,
     };
 

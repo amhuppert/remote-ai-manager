@@ -1,24 +1,22 @@
 /**
- * Migration rehearsal: runs this build's database startup (the native SDD
- * pre-open step, the schema floor and the pending migrations) against a copy
- * of a stopped data directory, without starting a server, so no turn, process
+ * Migration rehearsal: runs this build's database startup (the retired-history
+ * guard, the schema floor and the pending migrations) against a copy of a
+ * stopped data directory, without starting a server, so no turn, process
  * group or repository is touched.
  *
  * The source is never opened with SQLite: `command-center.db` and its
  * write-ahead log are copied byte for byte, with the top-level JSON files
  * (config, schema markers, manifests), and everything runs on the copy.
  *
- * Only migrations from `FIRST_REHEARSABLE_MIGRATION` on are rehearsed, and only
- * once the native SDD cutover (0030) has completed: those touch nothing but
- * the database and the schema markers. Earlier ones read and write trees the
- * copy does not hold, and one rewrites `CommandCenter.json` in the projects
- * the copied rows still name, so a source that has them pending is refused.
+ * The guard runs on the copy before the floor, so a directory this build would
+ * refuse is reported with the retired migrations it lacks. The report compares
+ * the copy's schema before and after, which shows what the floor and the
+ * migrations changed.
  */
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -26,16 +24,17 @@ import {
 } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import {
+  classifyMigrationHistory,
+  type MigrationHistory,
+} from "../../src/lib/state-store/migration-history";
 import { runMigrations } from "../../src/lib/state-store/migrator";
 import { migrations as productionMigrations } from "../../src/lib/state-store/migrations";
-import { runNativeSddV2CutoverBeforeStateDbOpen } from "../../src/lib/state-store/migrations/0030-native-sdd-v2-cutover";
 import type { StateMigration } from "../../src/lib/state-store/migrations/types";
 
 type Db = InstanceType<typeof Database>;
 
 const DB_FILE = "command-center.db";
-const CUTOVER_MANIFEST = "native-sdd-v2-cutover-manifest.json";
-export const FIRST_REHEARSABLE_MIGRATION = "0049-graph-workflow-review-origin";
 
 export interface RehearsalDeps {
   /** Opens the scratch database the way the server does: schema floor included. */
@@ -49,14 +48,23 @@ interface DatabaseChecks {
   foreignKeyViolations: number;
 }
 
+/** Schema entries, as `<type> <name>`, that startup added, removed or changed. */
+export interface SchemaChanges {
+  added: string[];
+  removed: string[];
+  changed: string[];
+}
+
 export interface RehearsalReport {
   scratchDir: string;
+  history: MigrationHistory;
   pendingBefore: string[];
   applied: string[];
   schemaVersionBefore: number | null;
   schemaVersionAfter: number | null;
   before: DatabaseChecks;
   after: DatabaseChecks;
+  schemaChanges: SchemaChanges;
 }
 
 export type RehearsalResult =
@@ -159,14 +167,45 @@ function databaseChecks(db: Db): DatabaseChecks {
   };
 }
 
-function cutoverComplete(dir: string): boolean {
-  const manifestPath = path.join(dir, CUTOVER_MANIFEST);
-  if (!existsSync(manifestPath)) return false;
+/** Every schema entry outside SQLite's own, keyed `<type> <name>`. */
+function schemaEntries(db: Db): Map<string, string | null> {
+  const entries = new Map<string, string | null>();
+  const rows = db.prepare("SELECT type, name, sql FROM sqlite_master").all();
+  for (const row of rows) {
+    const entry = rowObject(row);
+    const type = entry?.type;
+    const name = entry?.name;
+    const sql = entry?.sql;
+    if (typeof type !== "string" || typeof name !== "string") continue;
+    if (name.startsWith("sqlite_")) continue;
+    entries.set(`${type} ${name}`, typeof sql === "string" ? sql : null);
+  }
+  return entries;
+}
+
+function schemaChanges(
+  before: Map<string, string | null>,
+  after: Map<string, string | null>,
+): SchemaChanges {
+  const sorted = (keys: Iterable<string>) => [...keys].sort();
+  return {
+    added: sorted([...after.keys()].filter((key) => !before.has(key))),
+    removed: sorted([...before.keys()].filter((key) => !after.has(key))),
+    changed: sorted(
+      [...after.keys()].filter(
+        (key) => before.has(key) && before.get(key) !== after.get(key),
+      ),
+    ),
+  };
+}
+
+function historyOrRefusal(
+  db: Db,
+): { history: MigrationHistory } | { refusal: string } {
   try {
-    const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-    return rowObject(manifest)?.phase === "complete";
-  } catch {
-    return false;
+    return { history: classifyMigrationHistory(db) };
+  } catch (error) {
+    return { refusal: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -227,44 +266,35 @@ export async function rehearseMigrations(
   const ledgered = appliedNames(staged);
   const schemaVersionBefore = schemaVersion(staged);
   const before = databaseChecks(staged);
+  const schemaBefore = schemaEntries(staged);
+  const classified = historyOrRefusal(staged);
   staged.close();
   if (pid !== null) {
     return refuse(
       `a Command Center server (pid ${pid}) holds ${from}; stop it and rerun`,
     );
   }
+  if ("refusal" in classified) return refuse(classified.refusal);
   const pendingBefore = migrationList
     .map((migration) => migration.name)
     .filter((name) => !ledgered.has(name));
-  const unsupported = pendingBefore.filter(
-    (name) => name < FIRST_REHEARSABLE_MIGRATION,
-  );
-  if (unsupported.length > 0) {
-    return refuse(
-      `pending migrations from before ${FIRST_REHEARSABLE_MIGRATION} touch files outside the database, which a copy cannot rehearse safely: ${unsupported.join(", ")}`,
-    );
-  }
-  if (!cutoverComplete(to)) {
-    return refuse(
-      `${CUTOVER_MANIFEST} in ${from} does not record a completed native SDD cutover (0030), whose startup step moves workflow files`,
-    );
-  }
 
   let db: Db | null = null;
   try {
-    await runNativeSddV2CutoverBeforeStateDbOpen(to);
     db = deps.openStateDatabase(scratchPath);
     const applied = await runMigrations({ db, configDir: to }, migrationList);
     return {
       ok: true,
       report: {
         scratchDir: to,
+        history: classified.history,
         pendingBefore,
         applied,
         schemaVersionBefore,
         schemaVersionAfter: schemaVersion(db),
         before,
         after: databaseChecks(db),
+        schemaChanges: schemaChanges(schemaBefore, schemaEntries(db)),
       },
     };
   } catch (error) {

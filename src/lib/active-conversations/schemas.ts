@@ -6,14 +6,6 @@ import {
 } from "@/lib/conversations/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { redactedAgentProfileSnapshotSchema } from "@/lib/agent-profiles/schemas";
-import {
-  graphWorkflowCleanupStatusValueSchema,
-  graphWorkflowMergeStatusValueSchema,
-} from "@/lib/workflow-graph/execution-progress-schemas";
-import {
-  graphWorkflowExecutionJoinKindSchema,
-  graphWorkflowExecutionJoinStatusSchema,
-} from "@/lib/workflow-graph/join-schemas";
 
 const activeConversationForkedFromSchema = z.object({
   conversationId: z.string(),
@@ -71,33 +63,6 @@ const activeConversationSharedFields = {
   // never persisted. Optionality only spares the many row fixtures from
   // restating it; the assembler always sets it.
   custody: z.boolean().optional(),
-  // Human-review-gate standing: present when the conversation's workflow
-  // context is parked awaiting approval with no recorded decision. Always
-  // null for project-scope rows (gates exist only on session executions).
-  pendingApproval: z
-    .object({
-      contextId: z.string(),
-      contextTitle: z.string().nullable(),
-      requestedAt: z.string(),
-      // The owning workflow's display name lives on the stored definition
-      // record, not the embedded working definition, so the assembly cannot
-      // populate it without an async lookup; null until the execution carries
-      // the name itself.
-      workflowName: z.string().nullable().default(null),
-      // True while the owning execution is paused or halted — the gate
-      // survives suspension and the decision applies on resume.
-      executionSuspended: z.boolean().default(false),
-      // True when this gate was frozen under a file-ownership envelope, so the
-      // sidebar peek knows to fetch and render the frozen owned-path artifact
-      // rather than offering a decision with nothing behind it (R15.2).
-      enveloped: z.boolean().default(false),
-      // Task progress of the gated context, surfaced on the sidebar row's
-      // status line ("approval required · 6/6 tasks · validators ✓").
-      tasksCompleted: z.number().int().min(0).nullable().default(null),
-      tasksTotal: z.number().int().min(0).nullable().default(null),
-    })
-    .nullable()
-    .default(null),
 };
 
 export const activeConversationSchema = z.discriminatedUnion("scope", [
@@ -132,68 +97,6 @@ export type ProjectActiveConversation = Extract<
   { scope: "project" }
 >;
 
-const activeGraphWorkflowContextMergeProgressSchema = z.object({
-  contextId: z.string(),
-  branchName: z.string().nullable(),
-  mergeStatus: graphWorkflowMergeStatusValueSchema,
-  cleanupStatus: graphWorkflowCleanupStatusValueSchema,
-  lastMergeError: z.string().nullable(),
-});
-
-const activeGraphWorkflowJoinProgressSchema = z.object({
-  joinId: z.string(),
-  kind: graphWorkflowExecutionJoinKindSchema,
-  contextId: z.string().nullable(),
-  targetLaneId: z.string(),
-  sourceLaneIds: z.array(z.string()).default([]),
-  mergedSourceLaneIds: z.array(z.string()).default([]),
-  status: graphWorkflowExecutionJoinStatusSchema,
-});
-
-const activeGraphWorkflowFinalPublishProgressSchema = z.object({
-  joinId: z.string(),
-  targetLaneId: z.string(),
-  sourceLaneIds: z.array(z.string()).default([]),
-  mergedSourceLaneIds: z.array(z.string()).default([]),
-  status: graphWorkflowExecutionJoinStatusSchema,
-});
-
-const activeGraphWorkflowHaltReasonSchema = z
-  .object({ type: z.string().trim().min(1) })
-  .passthrough();
-
-const activeGraphWorkflowExecutionSchema = z.object({
-  executionId: z.string(),
-  status: z.enum([
-    "pending",
-    "running",
-    "paused",
-    "completed",
-    "halted",
-    "aborted",
-  ]),
-  projectName: z.string(),
-  projectPath: z.string(),
-  sessionName: z.string(),
-  activeContextIds: z.array(z.string()).default([]),
-  activeContextTitles: z.array(z.string()).default([]),
-  activeBatchIds: z.array(z.string()).default([]),
-  pendingHaltReason: activeGraphWorkflowHaltReasonSchema
-    .nullable()
-    .default(null),
-  contextMergeProgress: z
-    .array(activeGraphWorkflowContextMergeProgressSchema)
-    .default([]),
-  activeJoinIds: z.array(z.string()).default([]),
-  joinProgress: z.array(activeGraphWorkflowJoinProgressSchema).default([]),
-  finalPublishState: activeGraphWorkflowFinalPublishProgressSchema
-    .nullable()
-    .default(null),
-  completedContexts: z.number(),
-  totalContexts: z.number(),
-  startedAt: z.string(),
-});
-
 const activeCollaborationExecutionSchema = z.object({
   workflowId: z.string(),
   status: z.enum(["running", "paused"]),
@@ -205,36 +108,15 @@ const activeCollaborationExecutionSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-
-// The feed only ever serves active executions, so the state enum is narrowed
-// to the active subset of SpecExecutionState rather than importing it whole.
-const activeSpecExecutionSchema = z.object({
-  executionId: z.string(),
-  state: z.enum(["definition_review", "running"]),
-  specSlug: z.string(),
-  specName: z.string(),
-  projectPath: z.string(),
-  projectName: z.string(),
-  sessionName: z.string(),
-  createdAt: z.string(),
-});
-
-export type ActiveGraphWorkflowExecution = z.infer<
-  typeof activeGraphWorkflowExecutionSchema
->;
 export type ActiveCollaborationExecution = z.infer<
   typeof activeCollaborationExecutionSchema
 >;
 
 export const activeConversationsResponseSchema = z.object({
   conversations: z.array(activeConversationSchema),
-  graphWorkflowExecutions: z
-    .array(activeGraphWorkflowExecutionSchema)
-    .default([]),
   activeCollaborationExecutions: z
     .array(activeCollaborationExecutionSchema)
     .default([]),
-  specExecutions: z.array(activeSpecExecutionSchema).default([]),
 });
 export type ActiveConversationsResponse = z.infer<
   typeof activeConversationsResponseSchema

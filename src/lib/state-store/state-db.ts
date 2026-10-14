@@ -13,14 +13,13 @@ import {
 import { resetInstalledStateDbForTesting } from "./reset-installed-state-db";
 import { STATE_DB_GLOBAL_KEY } from "./state-db-global-key";
 import {
+  classifyMigrationHistory,
+  stampRetiredMigrationHistory,
+} from "./migration-history";
+import {
   enforceCurrentSchemaCompatibility,
   enforceSchemaCompatibilityBarrier,
-  publishSchemaCompatibilityBarrierSync,
 } from "./schema-compatibility";
-import {
-  applyNativeSddAttentionCitationsSchema,
-  NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION,
-} from "./migrations/0034-native-sdd-attention-citations";
 
 const logger = createLogger("state-store/state-db");
 
@@ -29,170 +28,7 @@ type Db = InstanceType<typeof Database>;
 const GLOBAL_KEY = STATE_DB_GLOBAL_KEY;
 const DB_FILE_NAME = "command-center.db";
 
-/**
- * Highest schema migration version this build understands. Forward-only rule:
- * a protocol-aware build refuses a higher external barrier before opening
- * SQLite and also rejects a higher ledger version under each migration's write
- * lock. The protocol is not a lifetime lease: every lower-version process that
- * already holds a connection must be quiesced during a breaking cutover, and a
- * pre-protocol binary must also be prevented from reopening afterward.
- *
- * Version 1 is the `AgentSessionRef` shape cutover: migration
- * `0005-agent-session-ref-shape` rewrites every persisted ref to the canonical
- * `{backend, ref}` (dropping the legacy `sessionId`/`threadId` handle key) and
- * stamps `schema_migrations` version 1.
- *
- * Version 2 is the evidence-kind narrowing: migration
- * `0009-narrow-evidence-kinds` rewrites persisted validation strategies to
- * the machine-provable vocabulary and deletes dropped-kind evidence. The bump
- * guards against old-build writes — an older build's wide enum and the legacy
- * permissive `spec_evidence` CHECK would re-insert dropped-kind rows the new
- * strict read path hard-fails on.
- *
- * Version 3 is the workflow agent-assignment cutover: migration
- * `0011-workflow-agent-assignments` rewrites every persisted implementer and
- * validator onto library assignments and empties the active execution table.
- * The bump is what makes the "no inbound compatibility parser" rule hold: an
- * older build would happily write the pre-cutover singleton shapes back into a
- * migrated database, and nothing would ever convert them again.
- *
- * Version 4 is the validation_runs status widening: migration
- * `0012-validation-cost-exceeds-limit-status` rebuilds the table's CHECK to
- * admit `cost_exceeds_limit`. Rows persisted with the new status are
- * unreadable to an older build's narrower status enum, so the gate refuses
- * such a build once the migration has stamped the upgraded DB. It also fences
- * the scriptValidator cutover that ships alongside it: `0013` rewrites stored
- * `scriptValidator.enabled` onto `commands`, and a build predating that change
- * would write the retired flag back into definitions the strict schema rejects.
- * Version 3 and version 4 were authored concurrently on two branches and both
- * originally claimed 3; they are sequenced here because one number cannot fence
- * two independent cutovers, and 3 is already stamped in live databases.
- *
- * Version 5 is the graph-workflow lane-placement cutover: migration
- * `0016-graph-workflow-context-placement` backfills authored placement onto
- * every stored execution context. A build predating placement does not know
- * the field and would write it back out stripped, dissolving an authored lane
- * GROUP into one lane per context on the next read — so the gate refuses such a
- * build once the migration has stamped the upgraded DB.
- *
- * Version 6 is the spec_executions state widening: migration
- * `0017-spec-execution-abandon-coordinator` rebuilds the table's CHECK to admit
- * `abandoning`, the abandon coordinator's in-flight cleanup state (design §10).
- * A row parked in that state is unreadable to an older build — the spec
- * execution repository throws a PersistenceError on an unknown `state` rather
- * than quarantining the row — so the gate refuses such a build once the
- * migration has stamped the upgraded DB. Like 3 and 4 before them, 5 and 6 were
- * authored concurrently on two branches and both originally claimed 5; they are
- * sequenced here because one number cannot fence two independent cutovers, and
- * 5 is already stamped in live databases by the placement cutover.
- *
- * Version 7 is the engine-seeded shared-document kind: migration
- * `0023-graph-workflow-seeded-documents` stamps the gate for the widened
- * `sharedDocuments[].kind` vocabulary, which admits `seeded` alongside `shared`
- * and `charter`. The value is persisted in `graph_workflow_executions`
- * `runtime_json`, and the repository throws on a kind its enum does not admit —
- * for the whole `listActive()` result rather than the one row — so an older
- * build sharing the database would lose every execution's workflow state, not
- * just the seeded run's. Nothing is rewritten: the migration exists only to
- * publish the barrier and stamp the version.
- *
- * Version 8 is the session-scoped workflow-result notification source. A
- * workflow notification is returned by the same whole-result-set read as job,
- * conversation, and spec notifications, so an older build would reject the
- * widened source vocabulary and lose the entire notification listing. Migration
- * `0027-workflow-result-notifications` publishes the barrier, rebuilds the
- * notification CHECK and columns, and stamps the version before writers can
- * persist the new source.
- *
- * Version 9 is the native-SDD version-2 cutover: migration
- * `0030-native-sdd-v2-cutover` removes every legacy delivery-plan artifact and
- * legacy-linked graph execution before direct-authored attempt activation.
- * Older builds retain the retired plan/compiler runtime and could recreate
- * artifacts for which the version-2 build deliberately has no reader.
- *
- * Version 10 is the candidate-unstable halt vocabulary: migration
- * `0031-graph-workflow-candidate-unstable-halt` stamps the gate for the
- * `candidate_unstable` halt reason (consecutive candidate-mismatch budget, #69
- * change 8) and its `planRepairRounds[].haltType` counterpart. The values are
- * persisted in `graph_workflow_executions` `runtime_json`, and the repository
- * throws on a halt type its enum does not admit — for the whole `listActive()`
- * result rather than the one row — so an older build sharing the database
- * would lose every execution's workflow state, not just the halted run's.
- * Nothing is rewritten: the migration exists only to publish the barrier and
- * stamp the version.
- *
- * Version 11 is the Native SDD attention/citation cutover: migration
- * `0034-native-sdd-attention-citations` rebuilds question and assumption
- * lifecycle storage and makes assumption citations revision-owned. Older
- * readers cannot interpret either contract and are refused before opening the
- * upgraded database.
- *
- * Version 12 is the generalized model-selection cutover: migration
- * `0035-generalized-model-selection` replaces every live provider-specific
- * model tuple with one atomic selection and rebuilds context-artifact
- * provenance storage. Older writers could recreate tuple-shaped config,
- * workflow, snapshot, transcript, or provenance state that this build refuses.
- *
- * Version 13 is the ticket-relationship cutover: migration
- * `0038-ticket-relationships-and-status-updates` moves legacy
- * `related_ticket` attachment rows into first-class relationship storage.
- * Canonical attachment readers no longer admit that discriminator, so an older
- * build must not write legacy rows back after the migration stamps the database.
- *
- * Version 14 is the Native SDD managed-definition cutover: migration
- * `0039-native-sdd-managed-workflow-definitions` removes embedded workflow
- * graphs from delivery-plan blobs and pins candidates to immutable saved
- * workflow-definition revisions. Older writers cannot preserve that ownership
- * or candidate identity contract.
- *
- * Version 15 is the conversation-checkpoint cutover: migration
- * `0044-add-conversation-checkpoints` makes a conversation's continuation
- * authority durable outside its row. The tables are additive, but the contract
- * is not: an older build sees no checkpoint obligation, so it would admit an
- * ordinary turn against a conversation mid-retirement and establish a fresh
- * provider reference the pending seed can never be delivered into.
- *
- * Version 19 admits checkpoint forks without related work. Older readers
- * discard that fork provenance, so migration `0052-optional-checkpoint-fork-work`
- * fences them before the optional shape is persisted.
- *
- * Version 20 adds checkpoint capture ownership and settlement metadata.
- * Older writers cannot honor those obligations while an operation is building,
- * so migration `0053-add-checkpoint-handoff` fences version-19 binaries too.
- *
- * Version 21 removes required graph lane fields for continuous conversations.
- * Older builds eagerly decode every active execution and cannot read the new
- * lane shape; migration `0054-graph-workflow-continuous-conversations` fences
- * those readers without rewriting saved workflows or executions.
- *
- * Version 22 removes the validator `strategy` and the backend session ref from
- * graph lanes: every validator runs on one durable conversation. Older builds
- * require both fields, so migration
- * `0055-graph-workflow-validator-conversations` fences them the same way.
- *
- * Version 23 retires the `proposed` spec revision state: a draft is reviewed in
- * place, so content approvals record the subject fingerprint they approved.
- * Older builds would pin such an approval by revision id alone, so migration
- * `0057-continuous-spec-review` fences them.
- *
- * Version 26 admits internal own-conversation notice sources. Older subscription
- * lists eagerly parse every source and cannot read the expanded source kind.
- * `0061-conversation-notice-inbox` fences them before importing legacy notices.
- *
- * Version 27 records complete notepad context, withdrawn feedback receipts,
- * and workflow boundaries whose origin conversation may be absent. Older
- * strict readers cannot read these evidence shapes.
- *
- * Version 28 admits explicit wait generations with a terminal baseline.
- * Migration 0065 fences older strict wait readers before storing that field.
- *
- * Version 29 admits the `run` source kind and follows that wake their
- * recipient. Older subscription lists cannot parse a `run` follow, so migration
- * `0068-run-subscription-source` fences them.
- */
-export const KNOWN_SCHEMA_VERSION = 29;
-
-export const WORKFLOW_RESULT_EVIDENCE_SCHEMA_VERSION = 27;
+export const KNOWN_SCHEMA_VERSION = 30;
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -225,9 +61,6 @@ const NOTIFICATIONS_TABLE_DDL = `
     spec_gate_request_id  TEXT,
     spec_deep_link_id     TEXT,
     spec_approval_id      TEXT,
-    workflow_execution_id TEXT,
-    workflow_origin_conversation_id TEXT,
-    workflow_deep_link    TEXT,
     CHECK (
       (source = 'job'
         AND session_name IS NOT NULL
@@ -255,17 +88,6 @@ const NOTIFICATIONS_TABLE_DDL = `
         AND branch_name IS NULL
         AND job_id IS NULL
         AND job_type IS NULL)
-      OR
-      (source = 'workflow'
-        AND session_name IS NOT NULL
-        AND workflow_execution_id IS NOT NULL
-        AND workflow_origin_conversation_id IS NOT NULL
-        AND workflow_deep_link IS NOT NULL
-        AND conversation_id IS NULL
-        AND branch_name IS NULL
-        AND job_id IS NULL
-        AND job_type IS NULL
-        AND spec_id IS NULL)
     )
   );
 `;
@@ -286,130 +108,23 @@ const NOTIFICATIONS_INDEX_DDL = `
     WHERE source = 'spec';
 `;
 
-/**
- * Spec delivery executions. Extracted from the spec schema block so migration
- * 0015 can rebuild the table from this exact DDL rather than a hand-synced
- * copy — the `state` CHECK is a vocabulary SQLite cannot widen in place.
- */
-export const SPEC_EXECUTIONS_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS spec_executions (
-    id                     TEXT PRIMARY KEY,
-    spec_id                TEXT NOT NULL,
-    revision_id            TEXT NOT NULL,
-    scope_json             TEXT NOT NULL,
-    state                  TEXT NOT NULL CHECK (state IN (
-      'definition_review', 'running', 'delivered', 'abandoned', 'abandoning'
-    )),
-    cleanup_phase          TEXT CHECK (cleanup_phase IN (
-      'abort_workflow', 'finalize'
-    )),
-    linked_workflow_execution_id TEXT,
-    cleanup_last_error     TEXT,
-    cleanup_last_error_at  TEXT,
-    execution_start_dial   TEXT CHECK (execution_start_dial IN (
-      'gate', 'notify', 'off'
-    )),
-    workflow_definition_id TEXT,
-    workflow_definition_revision INTEGER CHECK (
-      workflow_definition_revision > 0
-    ),
-    delivery_basis_json TEXT,
-    workflow_seed_source_json TEXT,
-    workflow_execution_binding_json TEXT,
-    workflow_execution_id  TEXT,
-    session_name           TEXT,
-    delivered_at           TEXT,
-    abandoned_reason       TEXT,
-    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_executions_spec_state
-    ON spec_executions (spec_id, state, created_at DESC);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
-    ON spec_executions (workflow_execution_id)
-    WHERE workflow_execution_id IS NOT NULL;
-`;
-
-/**
- * The version-2 spec↔graph link and frozen binding. The workflow execution id
- * remains durable after the graph row is archived, so this row deliberately
- * references the spec execution only; the unique workflow id is the typed
- * authority used by graph-facing adapters.
- */
-export const SPEC_EXECUTION_BINDINGS_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS spec_execution_bindings (
-    spec_execution_id      TEXT PRIMARY KEY,
-    workflow_execution_id  TEXT NOT NULL UNIQUE,
-    binding_json           TEXT NOT NULL,
-    created_at             TEXT NOT NULL,
-    FOREIGN KEY (spec_execution_id) REFERENCES spec_executions(id)
-      ON DELETE CASCADE
-  );
-
-  CREATE TRIGGER IF NOT EXISTS spec_execution_bindings_immutable
-  BEFORE UPDATE ON spec_execution_bindings
-  BEGIN
-    SELECT RAISE(ABORT, 'spec execution bindings are immutable');
-  END;
-`;
-
-export const SPEC_DELIVERY_VERDICTS_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS spec_delivery_verdicts (
-    id                      TEXT PRIMARY KEY,
-    spec_execution_id       TEXT NOT NULL,
-    workflow_execution_id   TEXT NOT NULL,
-    candidate_id            TEXT NOT NULL,
-    candidate_hash          TEXT NOT NULL,
-    criterion_element_id    TEXT NOT NULL,
-    satisfying_context_id   TEXT NOT NULL,
-    verdict_at              TEXT NOT NULL,
-    FOREIGN KEY (spec_execution_id) REFERENCES spec_executions(id)
-      ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    UNIQUE (
-      workflow_execution_id,
-      candidate_id,
-      candidate_hash,
-      criterion_element_id,
-      satisfying_context_id
-    )
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_verdicts_execution
-    ON spec_delivery_verdicts (workflow_execution_id, verdict_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_verdicts_spec_execution
-    ON spec_delivery_verdicts (spec_execution_id, verdict_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_verdicts_criterion
-    ON spec_delivery_verdicts (criterion_element_id, verdict_at);
-`;
-
-/**
- * Gate-admission storage. Exported so the migration that widens the `basis`
- * vocabulary rebuilds the table from this one definition instead of a
- * hand-synced copy (the 0017 precedent).
- */
 export const SPEC_GATE_ADMISSIONS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS spec_gate_admissions (
     id            TEXT PRIMARY KEY,
     spec_id       TEXT NOT NULL,
     gate          TEXT NOT NULL CHECK (gate IN (
-      'requirements', 'design', 'plan', 'execution_start', 'delivery'
+      'requirements', 'design', 'plan'
     )),
     basis         TEXT NOT NULL CHECK (basis IN (
       'human_approval', 'notify_policy', 'off_policy', 'import'
     )),
     approval_id   TEXT,
     revision_id   TEXT,
-    execution_id  TEXT,
     actor_json    TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
     FOREIGN KEY (approval_id) REFERENCES spec_approvals(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_spec_gate_admissions_spec_gate
@@ -501,7 +216,6 @@ const SPEC_SCHEMA_DDL = `
       ),
     proposed_at           TEXT,
     approved_at           TEXT,
-    external_delivery_json TEXT,
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (id, spec_id),
     UNIQUE (spec_id, number),
@@ -531,9 +245,7 @@ const SPEC_SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_spec_element_versions_order
     ON spec_element_versions (revision_id, position);
 
-  ${SPEC_EXECUTIONS_SCHEMA_DDL}
 
-  ${SPEC_EXECUTION_BINDINGS_SCHEMA_DDL}
 
   CREATE TABLE IF NOT EXISTS spec_approvals (
     id            TEXT PRIMARY KEY,
@@ -774,122 +486,17 @@ const SPEC_SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_spec_comments_thread
     ON spec_comments (thread_id, created_at);
 
-  CREATE TABLE IF NOT EXISTS spec_evidence (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    criterion_element_id  TEXT NOT NULL,
-    revision_id           TEXT NOT NULL,
-    kind                  TEXT NOT NULL CHECK (kind IN (
-      'commit', 'test_run', 'validator_verdict'
-    )),
-    ref_json              TEXT NOT NULL,
-    evaluated_state_json  TEXT NOT NULL,
-    producer_json         TEXT NOT NULL,
-    execution_id          TEXT,
-    source_event_id       INTEGER,
-    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_spec_evidence_criterion_revision
-    ON spec_evidence (criterion_element_id, revision_id, created_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_evidence_execution
-    ON spec_evidence (execution_id, created_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_evidence_source_event
-    ON spec_evidence (source_event_id)
-    WHERE source_event_id IS NOT NULL;
 
-  CREATE TABLE IF NOT EXISTS spec_proof_verdicts (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    criterion_element_id  TEXT NOT NULL,
-    revision_id           TEXT NOT NULL,
-    execution_id          TEXT,
-    verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN (
-      'deterministic_validator', 'agent_validator', 'human'
-    )),
-    evidence_ids_json     TEXT NOT NULL,
-    verdict_at            TEXT NOT NULL,
-    stale_at              TEXT,
-    stale_reason          TEXT,
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_criterion_revision
-    ON spec_proof_verdicts (criterion_element_id, revision_id, verdict_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_execution
-    ON spec_proof_verdicts (execution_id, verdict_at);
 
-  ${SPEC_DELIVERY_VERDICTS_SCHEMA_DDL}
 
-  CREATE TABLE IF NOT EXISTS spec_acceptance_reviews (
-    id           TEXT PRIMARY KEY,
-    spec_id      TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
-    revision_id  TEXT NOT NULL REFERENCES spec_revisions(id),
-    review_json  TEXT NOT NULL,
-    created_at   TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_spec_acceptance_reviews_spec
-    ON spec_acceptance_reviews (spec_id, created_at);
 
-  CREATE TABLE IF NOT EXISTS spec_waivers (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    criterion_element_id  TEXT NOT NULL,
-    revision_id           TEXT NOT NULL,
-    reason                TEXT NOT NULL CHECK (length(reason) > 0),
-    waived_at             TEXT NOT NULL,
-    stale                 INTEGER NOT NULL CHECK (stale IN (0, 1)),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
 
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_waivers_criterion_revision
-    ON spec_waivers (criterion_element_id, revision_id);
 
-  CREATE TABLE IF NOT EXISTS spec_criterion_dispositions (
-    execution_id               TEXT NOT NULL,
-    criterion_element_id       TEXT NOT NULL,
-    disposition                TEXT NOT NULL CHECK (disposition IN (
-      'in_scope', 'deferred', 'waived', 'delivered_elsewhere'
-    )),
-    waiver_id                  TEXT,
-    delivered_by_execution_id  TEXT,
-    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (execution_id, criterion_element_id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (waiver_id) REFERENCES spec_waivers(id),
-    FOREIGN KEY (delivered_by_execution_id) REFERENCES spec_executions(id)
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_spec_criterion_dispositions_criterion
-    ON spec_criterion_dispositions (criterion_element_id, disposition);
 
-  CREATE TABLE IF NOT EXISTS spec_task_claims (
-    id                 TEXT PRIMARY KEY,
-    spec_id            TEXT NOT NULL,
-    task_element_id    TEXT NOT NULL,
-    execution_id       TEXT,
-    actor_json         TEXT NOT NULL,
-    evidence_ids_json  TEXT NOT NULL,
-    claimed_at         TEXT NOT NULL,
-    status             TEXT NOT NULL CHECK (status IN ('accepted', 'reopened')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_spec_task_claims_task_execution
-    ON spec_task_claims (task_element_id, execution_id, claimed_at DESC);
 
   CREATE TABLE IF NOT EXISTS spec_links (
     id                TEXT PRIMARY KEY,
@@ -934,523 +541,6 @@ const SPEC_SCHEMA_DDL = `
     ON spec_events (event_type, id);
 `;
 
-/**
- * `DeliveryPlanAttempt` storage (design §4). The attempt is the per-execution
- * delivery plan document that is also the scope; it is keyed by its own id,
- * independently of evergreen revisions and workflow executions, because it
- * exists before the execution does.
- *
- * The document lives whole in `content_json` rather than in normalized child
- * tables: it is edited, proposed, and materialized as one unit under a single
- * compare-and-swap token, and a per-node table would let a partial write leave
- * a plan whose contexts and dispositions disagree.
- *
- * Snapshots are append-only. Nothing updates a snapshot row — a reopen bumps
- * the attempt's `draft_revision` and clears `approval_json`, and the prior
- * snapshots stay readable exactly as they were proposed.
- *
- * A compiled candidate is keyed one-to-one to the snapshot it materialized:
- * the UNIQUE constraint on `snapshot_id` is what makes "exactly one immutable
- * candidate per proposed snapshot" a database fact rather than a service
- * convention, so a second materialization of the same proposal cannot quietly
- * replace the bytes a human approved (`exact-approval`).
- *
- * Exported so migrations 0015 and 0016 apply the identical DDL to pre-floor
- * databases without a second hand-synced copy.
- */
-export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS spec_delivery_plan_attempts (
-    id                        TEXT PRIMARY KEY,
-    spec_id                   TEXT NOT NULL,
-    pinned_revision_id        TEXT NOT NULL,
-    delta_basis_execution_id  TEXT,
-    status                    TEXT NOT NULL CHECK (status IN (
-      'draft', 'approved', 'parked', 'launched', 'abandoned'
-    )),
-    draft_revision            INTEGER NOT NULL CHECK (draft_revision > 0),
-    content_json              TEXT NOT NULL,
-    proposed_snapshot_id      TEXT,
-    approval_json             TEXT,
-    prelaunch_json            TEXT,
-    launched_execution_id     TEXT,
-    workflow_definition_id    TEXT,
-    created_at                TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (pinned_revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (delta_basis_execution_id) REFERENCES spec_executions(id),
-    FOREIGN KEY (launched_execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_spec
-    ON spec_delivery_plan_attempts (spec_id, updated_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_revision
-    ON spec_delivery_plan_attempts (pinned_revision_id);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_definition
-    ON spec_delivery_plan_attempts (workflow_definition_id)
-    WHERE workflow_definition_id IS NOT NULL;
-
-  CREATE TABLE IF NOT EXISTS spec_delivery_plan_snapshots (
-    id                  TEXT PRIMARY KEY,
-    attempt_id          TEXT NOT NULL,
-    candidate_id        TEXT NOT NULL,
-    candidate_hash      TEXT NOT NULL,
-    draft_revision      INTEGER NOT NULL CHECK (draft_revision > 0),
-    content_json        TEXT NOT NULL,
-    pinned_revision_id  TEXT NOT NULL,
-    proposed_at         TEXT NOT NULL,
-    proposed_by_json    TEXT NOT NULL,
-    workflow_definition_id        TEXT,
-    workflow_definition_revision  INTEGER,
-    workflow_definition_hash      TEXT,
-    binding_hash                  TEXT,
-    UNIQUE (attempt_id, draft_revision),
-    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
-      ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_snapshots_attempt
-    ON spec_delivery_plan_snapshots (attempt_id, draft_revision DESC);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_delivery_plan_snapshots_definition
-    ON spec_delivery_plan_snapshots (workflow_definition_id)
-    WHERE workflow_definition_id IS NOT NULL;
-
-  CREATE TABLE IF NOT EXISTS spec_delivery_plan_candidate_approvals (
-    snapshot_id       TEXT PRIMARY KEY,
-    candidate_id      TEXT NOT NULL,
-    candidate_hash    TEXT NOT NULL,
-    approved_at       TEXT NOT NULL,
-    approved_by_json  TEXT NOT NULL,
-    FOREIGN KEY (snapshot_id) REFERENCES spec_delivery_plan_snapshots(id)
-      ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS spec_delivery_plan_comments (
-    id           TEXT PRIMARY KEY,
-    attempt_id   TEXT NOT NULL,
-    context_id   TEXT NOT NULL,
-    body         TEXT NOT NULL,
-    author_json  TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
-      ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_comments_attempt
-    ON spec_delivery_plan_comments (attempt_id, created_at ASC);
-`;
-
-/**
- * Work a running execution found and deliberately left for the next plan
- * (design §11). Kept out of `SPEC_DELIVERY_PLAN_SCHEMA_DDL` so the migration
- * that introduced the attempt tables keeps meaning exactly what it meant.
- *
- * `attempt_id` is nullable because a legacy compiled run has no attempt behind
- * it, and it is `ON DELETE SET NULL` rather than cascading: the discovery is
- * work the next plan still owes, so it must outlive the attempt that found it.
- */
-export const SPEC_DELIVERY_DISCOVERY_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS spec_delivery_discoveries (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    execution_id          TEXT NOT NULL,
-    attempt_id            TEXT,
-    pinned_revision_id    TEXT NOT NULL,
-    discovered_task_json  TEXT NOT NULL,
-    blocking_reason       TEXT,
-    captured_by_json      TEXT NOT NULL,
-    captured_at           TEXT NOT NULL,
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-      ON DELETE CASCADE,
-    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
-      ON DELETE SET NULL,
-    FOREIGN KEY (pinned_revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_discoveries_spec
-    ON spec_delivery_discoveries (spec_id, captured_at ASC, id ASC);
-  CREATE INDEX IF NOT EXISTS idx_spec_delivery_discoveries_execution
-    ON spec_delivery_discoveries (execution_id);
-`;
-
-const SPEC_SCHEMA_DDL_DUPLICATE = `
-  CREATE TABLE IF NOT EXISTS specs (
-    id                TEXT PRIMARY KEY,
-    project_path      TEXT NOT NULL,
-    slug              TEXT NOT NULL,
-    name              TEXT NOT NULL,
-    gate_policy_json  TEXT NOT NULL,
-    abandoned_at      TEXT,
-    abandoned_reason  TEXT,
-    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (project_path, slug),
-    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_specs_project_updated
-    ON specs (project_path, updated_at DESC);
-
-  CREATE TABLE IF NOT EXISTS spec_aliases (
-    project_path  TEXT NOT NULL,
-    slug          TEXT NOT NULL,
-    spec_id       TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (project_path, slug),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_aliases_spec
-    ON spec_aliases (spec_id);
-
-  CREATE TABLE IF NOT EXISTS spec_counters (
-    spec_id      TEXT NOT NULL,
-    scope_key    TEXT NOT NULL CHECK (
-      scope_key IN ('R', 'D', 'T', 'Q', 'A') OR scope_key GLOB 'C:?*'
-    ),
-    last_number  INTEGER NOT NULL CHECK (last_number >= 0),
-    PRIMARY KEY (spec_id, scope_key),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS spec_elements (
-    id                 TEXT PRIMARY KEY,
-    spec_id            TEXT NOT NULL,
-    kind               TEXT NOT NULL CHECK (kind IN (
-      'section', 'requirement', 'criterion', 'decision', 'task'
-    )),
-    number             INTEGER CHECK (number > 0),
-    parent_element_id  TEXT,
-    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (parent_element_id) REFERENCES spec_elements(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_elements_spec_kind_number
-    ON spec_elements (spec_id, kind, number);
-  CREATE INDEX IF NOT EXISTS idx_spec_elements_parent
-    ON spec_elements (parent_element_id);
-
-  CREATE TABLE IF NOT EXISTS spec_revisions (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    number                INTEGER NOT NULL CHECK (number > 0),
-    state                 TEXT NOT NULL CHECK (state IN (
-      'draft', 'approved', 'withdrawn'
-    )),
-    authoring_stage       TEXT NOT NULL DEFAULT 'plan' CHECK (
-      authoring_stage IN ('requirements', 'design', 'plan')
-    ),
-    based_on_revision_id  TEXT,
-    content_hash          TEXT,
-    proposed_at           TEXT,
-    approved_at           TEXT,
-    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (spec_id, number),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (based_on_revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_revisions_spec_state
-    ON spec_revisions (spec_id, state, number DESC);
-
-  CREATE TABLE IF NOT EXISTS spec_element_versions (
-    revision_id     TEXT NOT NULL,
-    element_id      TEXT NOT NULL,
-    position        INTEGER NOT NULL CHECK (position >= 0),
-    payload_json    TEXT NOT NULL,
-    payload_hash    TEXT NOT NULL,
-    element_version INTEGER NOT NULL CHECK (element_version > 0),
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (revision_id, element_id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id) ON DELETE CASCADE,
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_element_versions_element
-    ON spec_element_versions (element_id, revision_id);
-  CREATE INDEX IF NOT EXISTS idx_spec_element_versions_order
-    ON spec_element_versions (revision_id, position);
-
-  ${SPEC_EXECUTIONS_SCHEMA_DDL}
-
-  ${SPEC_EXECUTION_BINDINGS_SCHEMA_DDL}
-
-  CREATE TABLE IF NOT EXISTS spec_approvals (
-    id            TEXT PRIMARY KEY,
-    spec_id       TEXT NOT NULL,
-    subject_kind  TEXT NOT NULL CHECK (subject_kind IN (
-      'requirement', 'decision', 'revision', 'plan'
-    )),
-    element_id    TEXT,
-    revision_id   TEXT NOT NULL,
-    approver      TEXT NOT NULL,
-    granted_at    TEXT NOT NULL,
-    validity      TEXT NOT NULL CHECK (validity IN ('valid', 'stale', 'closed')),
-    -- Added after the table shipped, so it also appears in ADDITIVE_COLUMNS.
-    subject_fingerprint_json TEXT,
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_approvals_revision_validity
-    ON spec_approvals (spec_id, revision_id, validity);
-  CREATE INDEX IF NOT EXISTS idx_spec_approvals_subject
-    ON spec_approvals (spec_id, subject_kind, element_id);
-
-  CREATE TABLE IF NOT EXISTS spec_gate_admissions (
-    id            TEXT PRIMARY KEY,
-    spec_id       TEXT NOT NULL,
-    gate          TEXT NOT NULL CHECK (gate IN (
-      'requirements', 'design', 'plan', 'execution_start', 'delivery'
-    )),
-    basis         TEXT NOT NULL CHECK (basis IN (
-      'human_approval', 'notify_policy', 'off_policy'
-    )),
-    approval_id   TEXT,
-    revision_id   TEXT,
-    execution_id  TEXT,
-    actor_json    TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (approval_id) REFERENCES spec_approvals(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_gate_admissions_spec_gate
-    ON spec_gate_admissions (spec_id, gate, created_at DESC);
-
-  CREATE TABLE IF NOT EXISTS spec_questions (
-    id               TEXT PRIMARY KEY,
-    spec_id          TEXT NOT NULL,
-    number           INTEGER NOT NULL CHECK (number > 0),
-    element_id       TEXT,
-    text             TEXT NOT NULL,
-    provenance_json  TEXT NOT NULL,
-    status           TEXT NOT NULL CHECK (status IN ('open', 'answered')),
-    answer           TEXT,
-    answered_at      TEXT,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (spec_id, number),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_questions_spec_status
-    ON spec_questions (spec_id, status, number);
-
-  CREATE TABLE IF NOT EXISTS spec_assumptions (
-    id                TEXT PRIMARY KEY,
-    spec_id           TEXT NOT NULL,
-    number            INTEGER NOT NULL CHECK (number > 0),
-    element_id        TEXT,
-    text              TEXT NOT NULL,
-    proposed_by_json  TEXT NOT NULL,
-    disposition       TEXT NOT NULL CHECK (disposition IN (
-      'proposed', 'confirmed', 'rejected', 'deferred'
-    )),
-    disposed_at       TEXT,
-    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (spec_id, number),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_assumptions_spec_disposition
-    ON spec_assumptions (spec_id, disposition, number);
-
-  CREATE TABLE IF NOT EXISTS spec_comments (
-    id                 TEXT PRIMARY KEY,
-    spec_id            TEXT NOT NULL,
-    thread_id          TEXT NOT NULL,
-    parent_comment_id  TEXT,
-    element_id         TEXT NOT NULL,
-    anchor_json        TEXT NOT NULL,
-    revision_id        TEXT NOT NULL,
-    body               TEXT NOT NULL,
-    author_json        TEXT NOT NULL,
-    blocking           INTEGER NOT NULL CHECK (blocking IN (0, 1)),
-    resolution         TEXT NOT NULL CHECK (resolution IN (
-      'open', 'resolved', 'dismissed'
-    )),
-    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (parent_comment_id) REFERENCES spec_comments(id),
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_comments_element_resolution
-    ON spec_comments (spec_id, element_id, resolution);
-  CREATE INDEX IF NOT EXISTS idx_spec_comments_thread
-    ON spec_comments (thread_id, created_at);
-
-  CREATE TABLE IF NOT EXISTS spec_evidence (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    criterion_element_id  TEXT NOT NULL,
-    revision_id           TEXT NOT NULL,
-    kind                  TEXT NOT NULL CHECK (kind IN (
-      'commit', 'test_run', 'validator_verdict'
-    )),
-    ref_json              TEXT NOT NULL,
-    evaluated_state_json  TEXT NOT NULL,
-    producer_json         TEXT NOT NULL,
-    execution_id          TEXT,
-    source_event_id       INTEGER,
-    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_evidence_criterion_revision
-    ON spec_evidence (criterion_element_id, revision_id, created_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_evidence_execution
-    ON spec_evidence (execution_id, created_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_evidence_source_event
-    ON spec_evidence (source_event_id)
-    WHERE source_event_id IS NOT NULL;
-
-  CREATE TABLE IF NOT EXISTS spec_proof_verdicts (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    criterion_element_id  TEXT NOT NULL,
-    revision_id           TEXT NOT NULL,
-    execution_id          TEXT,
-    verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN (
-      'deterministic_validator', 'agent_validator', 'human'
-    )),
-    evidence_ids_json     TEXT NOT NULL,
-    verdict_at            TEXT NOT NULL,
-    stale_at              TEXT,
-    stale_reason          TEXT,
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_criterion_revision
-    ON spec_proof_verdicts (criterion_element_id, revision_id, verdict_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_proof_verdicts_execution
-    ON spec_proof_verdicts (execution_id, verdict_at);
-
-  CREATE TABLE IF NOT EXISTS spec_waivers (
-    id                    TEXT PRIMARY KEY,
-    spec_id               TEXT NOT NULL,
-    criterion_element_id  TEXT NOT NULL,
-    revision_id           TEXT NOT NULL,
-    reason                TEXT NOT NULL CHECK (length(reason) > 0),
-    waived_at             TEXT NOT NULL,
-    stale                 INTEGER NOT NULL CHECK (stale IN (0, 1)),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_waivers_criterion_revision
-    ON spec_waivers (criterion_element_id, revision_id);
-
-  CREATE TABLE IF NOT EXISTS spec_criterion_dispositions (
-    execution_id               TEXT NOT NULL,
-    criterion_element_id       TEXT NOT NULL,
-    disposition                TEXT NOT NULL CHECK (disposition IN (
-      'in_scope', 'deferred', 'waived', 'delivered_elsewhere'
-    )),
-    waiver_id                  TEXT,
-    delivered_by_execution_id  TEXT,
-    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (execution_id, criterion_element_id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id) ON DELETE CASCADE,
-    FOREIGN KEY (criterion_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (waiver_id) REFERENCES spec_waivers(id),
-    FOREIGN KEY (delivered_by_execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_criterion_dispositions_criterion
-    ON spec_criterion_dispositions (criterion_element_id, disposition);
-
-  CREATE TABLE IF NOT EXISTS spec_task_claims (
-    id                 TEXT PRIMARY KEY,
-    spec_id            TEXT NOT NULL,
-    task_element_id    TEXT NOT NULL,
-    execution_id       TEXT,
-    actor_json         TEXT NOT NULL,
-    evidence_ids_json  TEXT NOT NULL,
-    claimed_at         TEXT NOT NULL,
-    status             TEXT NOT NULL CHECK (status IN ('accepted', 'reopened')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_element_id) REFERENCES spec_elements(id),
-    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_task_claims_task_execution
-    ON spec_task_claims (task_element_id, execution_id, claimed_at DESC);
-
-  CREATE TABLE IF NOT EXISTS spec_links (
-    id                TEXT PRIMARY KEY,
-    spec_id           TEXT NOT NULL,
-    object_kind       TEXT NOT NULL CHECK (object_kind IN (
-      'ticket', 'conversation', 'session', 'workflow_execution', 'merge_job'
-    )),
-    object_ref_json   TEXT NOT NULL,
-    direction         TEXT NOT NULL,
-    category          TEXT NOT NULL CHECK (category IN (
-      'graduated_from', 'materialized_from', 'reference', 'source'
-    )),
-    snapshot_json     TEXT,
-    element_ids_json  TEXT,
-    actor_json        TEXT NOT NULL,
-    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_links_spec_category
-    ON spec_links (spec_id, category, created_at);
-  CREATE INDEX IF NOT EXISTS idx_spec_links_object
-    ON spec_links (object_kind, object_ref_json);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_links_entry_identity
-    ON spec_links (object_kind, object_ref_json, category)
-    WHERE (object_kind = 'conversation' AND category = 'source')
-       OR (object_kind = 'ticket' AND category = 'graduated_from');
-
-  CREATE TABLE IF NOT EXISTS spec_events (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    spec_id       TEXT NOT NULL,
-    occurred_at   TEXT NOT NULL,
-    event_type    TEXT NOT NULL,
-    actor_json    TEXT NOT NULL,
-    payload_json  TEXT NOT NULL,
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_events_spec_order
-    ON spec_events (spec_id, id);
-  CREATE INDEX IF NOT EXISTS idx_spec_events_type_order
-    ON spec_events (event_type, id);
-`;
-void SPEC_SCHEMA_DDL_DUPLICATE;
-
-/**
- * Validation run ledger (design: validation-concurrency §4/§12): operational
- * ownership state for crash recovery first; terminal rows are RETAINED as the
- * per-run timing record, so there is deliberately no delete-on-terminal path.
- * Deliberately no FK to projects/sessions — the ledger is an append-mostly
- * operational log whose lifecycle is independent of project/session rows.
- *
- * Exported so migration 0011 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy.
- */
 export const VALIDATION_RUNS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS validation_runs (
     run_id                TEXT PRIMARY KEY,
@@ -1500,152 +590,16 @@ export const VALIDATION_RUNS_SCHEMA_DDL = `
     ON validation_runs (project_path, command_name);
 `;
 
-function workflowResultEvidenceNeedsRebuild(db: Db): boolean {
-  return getTableColumns(db, "graph_workflow_result_deliveries").some(
-    (column) =>
-      column.name === "origin_conversation_id" && column.notnull === 1,
-  );
-}
-
-/** Preserve every boundary and receipt while allowing evidence without an owner. */
-export function migrateWorkflowResultEvidenceSchema(db: Db): void {
-  if (workflowResultEvidenceNeedsRebuild(db)) {
-    const objects = db
-      .prepare(
-        `SELECT sql FROM sqlite_master
-      WHERE tbl_name='graph_workflow_result_deliveries'
-        AND type IN ('index','trigger') AND sql IS NOT NULL`,
-      )
-      .all() as Array<{ sql: string }>;
-    const columns = getTableColumns(db, "graph_workflow_result_deliveries")
-      .map((column) => `"${column.name.replaceAll('"', '""')}"`)
-      .join(",");
-    db.exec(
-      "ALTER TABLE graph_workflow_result_deliveries RENAME TO graph_workflow_result_deliveries_prior_evidence",
-    );
-    db.exec(GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL);
-    db.exec(`INSERT INTO graph_workflow_result_deliveries (${columns})
-      SELECT ${columns} FROM graph_workflow_result_deliveries_prior_evidence;
-      DROP TABLE graph_workflow_result_deliveries_prior_evidence;`);
-    for (const object of objects) db.exec(object.sql);
-  }
-  db.exec(GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL);
-}
-
-/**
- * One frozen result snapshot per lifecycle boundary, keyed by execution and
- * boundary sequence so recording replays cannot duplicate evidence.
- *
- * The optional origin has no foreign key: deleting a conversation retains its
- * evidence. The session foreign key cascades with the execution's scope.
- * Migration 0024 uses this DDL for pre-floor databases too.
- */
-export const GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS graph_workflow_result_deliveries (
-    execution_id           TEXT NOT NULL,
-    boundary_seq           INTEGER NOT NULL,
-    project_path           TEXT NOT NULL,
-    session_name           TEXT NOT NULL,
-    origin_conversation_id TEXT,
-    payload_json           TEXT NOT NULL,
-    recorded_at            TEXT NOT NULL,
-    delivery_state         TEXT NOT NULL DEFAULT 'pending' CHECK (
-      delivery_state IN ('pending', 'delivering', 'delivered')
-    ),
-    attempt_id             TEXT,
-    attempt_count          INTEGER NOT NULL DEFAULT 0,
-    delivered_at           TEXT,
-    effects_delivered_at   TEXT,
-    PRIMARY KEY (execution_id, boundary_seq),
-    FOREIGN KEY (project_path, session_name)
-      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
-  );
-
-  -- Turn assembly claims this conversation's undelivered rows in boundary order.
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_result_deliveries_pending
-    ON graph_workflow_result_deliveries (
-      origin_conversation_id, delivery_state, boundary_seq
-    );
-  -- Every delivery read is scoped by the full project/session/execution triple.
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_result_deliveries_session
-    ON graph_workflow_result_deliveries (
-      project_path, session_name, execution_id
-    );
-`;
-
-/**
- * The reserved-but-unmaterialized artifacts of one launch (D7 R3.4): the seeded
- * documents' CONTENTS, inserted in the same transaction that installs the
- * winner's execution row and deleted once its `.cc` writes succeed.
- *
- * One row per execution, because the record answers a yes/no question about one
- * launch — "are this run's artifacts known to be on disk?" — and its presence is
- * the marker a kickoff retries from. The session FK cascades: a deleted session
- * has no run left to materialize for.
- *
- * Exported so migration 0025 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy.
- */
-export const GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL = `
+export const RUNTIME_OWNER_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS graph_workflow_runtime_owner (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     pid INTEGER NOT NULL,
     token TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS graph_workflow_pending_artifacts (
-    execution_id   TEXT PRIMARY KEY,
-    project_path   TEXT NOT NULL,
-    session_name   TEXT NOT NULL,
-    documents_json TEXT NOT NULL,
-    recorded_at    TEXT NOT NULL,
-    FOREIGN KEY (project_path, session_name)
-      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
-  );
 
   -- Every pending-artifact read is scoped by the full project/session/execution
   -- triple, so a same-id record from another session cannot reach a retry.
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_pending_artifacts_session
-    ON graph_workflow_pending_artifacts (
-      project_path, session_name, execution_id
-    );
-`;
-
-/**
- * Terminal plan-review verdicts (#69 change 5): one row per concluded review,
- * bound to the reviewed revision by `workingDefinitionHash` rather than by a
- * plan id, so the record answers "was THIS revision judged?" after any edit.
- *
- * Deliberately unscoped — no project, session, or execution foreign key. A plan
- * is reviewed before it is created, so at record time there is no execution row
- * to hang the verdict off, and the review's value is precisely that it outlives
- * the revision it judged. `reviewer_conversation_id` likewise carries no FK: a
- * compacted or deleted reviewing conversation must not silently delete the
- * verdict it produced.
- *
- * Many rows per hash by design: a revision can be reviewed more than once, and
- * the read path takes the most recent by `reviewed_at` rather than assuming a
- * single verdict. The CHECK pins the terminal-only vocabulary at the storage
- * layer — a draft or canceled review has no row here at all.
- *
- * Exported so migration 0032 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy.
- */
-export const GRAPH_PLAN_REVIEWS_SCHEMA_DDL = `
-  CREATE TABLE IF NOT EXISTS graph_plan_reviews (
-    id                       TEXT PRIMARY KEY,
-    definition_hash          TEXT NOT NULL,
-    reviewer_conversation_id TEXT NOT NULL,
-    verdict                  TEXT NOT NULL CHECK (
-      verdict IN ('approved', 'changes_requested')
-    ),
-    findings                 TEXT,
-    reviewed_at              TEXT NOT NULL
-  );
-
-  -- The one read shape: every review of one exact revision, newest last.
-  CREATE INDEX IF NOT EXISTS idx_graph_plan_reviews_definition_hash
-    ON graph_plan_reviews (definition_hash, reviewed_at);
 `;
 
 /**
@@ -1673,10 +627,8 @@ export const GRAPH_PLAN_REVIEWS_SCHEMA_DDL = `
  * Row cascades cover only the database — image BYTES are removed by the notepad
  * content store, which the notepad and project deletion paths call explicitly.
  *
- * Exported so migration 0035 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy. Purely additive, so no
- * KNOWN_SCHEMA_VERSION bump: an older build sharing `command-center.db` simply
- * ignores tables it has no reader for.
+ * Purely additive, so no KNOWN_SCHEMA_VERSION bump: an older build sharing
+ * `command-center.db` simply ignores tables it has no reader for.
  */
 export const NOTEPADS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS notepads (
@@ -1744,9 +696,6 @@ export const NOTEPADS_SCHEMA_DDL = `
 
 /**
  * Review comments on a notepad passage and their replies (spec design D15).
- * Separate from `NOTEPADS_SCHEMA_DDL` so migration `0036-add-notepad-comments`
- * applies exactly these two tables to a database that already recorded the
- * notepad tables — the same exported-DDL recipe, one constant per ledger entry.
  *
  * The anchor is stored as flat columns rather than a JSON blob: every field is
  * a scalar the durability contract can see, and none of them is read as a set.
@@ -1843,11 +792,10 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     id TEXT PRIMARY KEY,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation','run')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','validation','git_job','conversation','run')),
     source_id TEXT NOT NULL,
     reason TEXT NOT NULL,
     mode TEXT NOT NULL CHECK (mode IN ('passive','active')),
-    -- Added by the ordered 0068 rebuild, not at open, so an older schema keeps its shape until migration.
     wakes INTEGER NOT NULL DEFAULT 0 CHECK (wakes IN (0,1)),
     event_kinds_json TEXT,
     expires_at TEXT,
@@ -1866,7 +814,7 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     subscription_id TEXT NOT NULL,
     project_path TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','workflow','validation','git_job','conversation','run')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('notepad','ticket','spec','validation','git_job','conversation','run')),
     source_id TEXT NOT NULL,
     occurrence_id TEXT NOT NULL,
     fact_json TEXT NOT NULL,
@@ -1894,37 +842,6 @@ export const CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL = `
     ON ticket_status_changes (ticket_id, id);
 `;
 
-export const CONVERSATION_NOTICE_INBOX_SCHEMA_VERSION = 26;
-
-/** Widen source and receipt constraints while retaining all existing evidence. */
-export function migrateConversationNoticeSourceSchema(db: Db): void {
-  for (const table of [
-    "conversation_subscriptions",
-    "conversation_subscription_deliveries",
-  ]) {
-    const row = db
-      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
-      .get(table) as { sql: string } | undefined;
-    if (
-      !row ||
-      (row.sql.includes("'conversation'") &&
-        row.sql.includes("'run'") &&
-        (table !== "conversation_subscription_deliveries" ||
-          row.sql.includes("'superseded'")))
-    )
-      continue;
-    const columns = getTableColumns(db, table)
-      .map((column) => `"${column.name.replaceAll('"', '""')}"`)
-      .join(",");
-    db.exec(`DROP INDEX IF EXISTS idx_subscription_deliveries_inbox;
-      ALTER TABLE ${table} RENAME TO ${table}_notice_cutover;`);
-    db.exec(CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL);
-    db.exec(`INSERT INTO ${table} (${columns}) SELECT ${columns} FROM ${table}_notice_cutover;
-      DROP TABLE ${table}_notice_cutover;`);
-  }
-  db.exec(CONVERSATION_SUBSCRIPTIONS_SCHEMA_DDL);
-}
-
 export const CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS conversation_subscription_preferences (
     project_path TEXT NOT NULL,
@@ -1940,41 +857,6 @@ export const CONVERSATION_SUBSCRIPTION_CONTROLS_SCHEMA_DDL = `
     PRIMARY KEY (project_path,conversation_id,delivery_id)
   );
 `;
-
-export const SUBSCRIPTION_WAIT_GENERATIONS_SCHEMA_VERSION = 28;
-
-/** Run boundaries as a subscription source, and follows whose facts wake their recipient. */
-export const RUN_SUBSCRIPTION_SOURCE_SCHEMA_VERSION = 29;
-
-/** Called only by the ordered startup migration. */
-export function migrateSubscriptionWaitGenerationsSchema(db: Db): void {
-  const table = db
-    .prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversation_subscription_waits'",
-    )
-    .get() as { sql: string } | undefined;
-  if (
-    table &&
-    /subscription_id\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(table.sql)
-  ) {
-    const objects = db
-      .prepare(
-        "SELECT sql FROM sqlite_master WHERE tbl_name='conversation_subscription_waits' AND type IN ('index','trigger') AND sql IS NOT NULL",
-      )
-      .all() as Array<{ sql: string }>;
-    const columns = getTableColumns(db, "conversation_subscription_waits")
-      .map((column) => `"${column.name.replaceAll('"', '""')}"`)
-      .join(",");
-    db.exec(
-      "ALTER TABLE conversation_subscription_waits RENAME TO conversation_subscription_waits_prior_generations",
-    );
-    db.exec(CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL);
-    db.exec(`INSERT INTO conversation_subscription_waits (${columns}) SELECT ${columns} FROM conversation_subscription_waits_prior_generations;
-      DROP TABLE conversation_subscription_waits_prior_generations;`);
-    for (const object of objects) db.exec(object.sql);
-  }
-  db.exec(CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL);
-}
 
 export const CONVERSATION_SUBSCRIPTION_WAITS_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS conversation_subscription_waits (
@@ -2087,10 +969,8 @@ export const TICKET_RELATIONSHIPS_AND_STATUS_UPDATES_SCHEMA_DDL = `
  * deleted must not take the durable notes awaiting promotion with it. The
  * project FK does cascade, because a removed project's memory has no reader.
  *
- * Exported so migration 0040 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy. Purely additive, so no
- * KNOWN_SCHEMA_VERSION bump: an older build sharing `command-center.db` simply
- * ignores tables it has no reader for.
+ * Purely additive, so no KNOWN_SCHEMA_VERSION bump: an older build sharing
+ * `command-center.db` simply ignores tables it has no reader for.
  */
 export const MEMORY_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS memory_notes (
@@ -2267,7 +1147,6 @@ export const MEMORY_LINKS_IDENTITY_INDEX_DDL = `
  * `porter unicode61` stems, so a note written about "running" answers a search
  * for "run"; the corpus-seeded recall evaluation depends on it.
  *
- * Exported so migration 0041 applies the identical DDL to pre-floor databases.
  * Purely additive and fully rebuildable: an older build ignores it, and a build
  * that never writes it can restore it from the canonical tables at any time.
  */
@@ -2331,10 +1210,8 @@ export const MEMORY_SEARCH_SCHEMA_DDL = `
  * Content-free by construction: ids, counts, and timestamps only, never a hook
  * or a body.
  *
- * Exported so migration 0042 applies the identical DDL to pre-floor databases
- * without a second hand-synced copy. Purely additive, so no
- * KNOWN_SCHEMA_VERSION bump: an older build sharing `command-center.db` simply
- * ignores tables it has no reader for.
+ * Purely additive, so no KNOWN_SCHEMA_VERSION bump: an older build sharing
+ * `command-center.db` simply ignores tables it has no reader for.
  */
 export const MEMORY_TELEMETRY_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS memory_delivery_watermarks (
@@ -2405,9 +1282,6 @@ export const MEMORY_TELEMETRY_SCHEMA_DDL = `
  * `session_name` is NULL at project scope rather than the internal sentinel, so
  * no read of this table can hand a sentinel-valued session name to a log field
  * or a projection.
- *
- * Exported so the ordered migration applies the identical DDL to pre-floor
- * databases without a second hand-synced copy.
  *
  * Unlike the other additive tables here, this one DOES carry a
  * KNOWN_SCHEMA_VERSION bump (15, migration
@@ -2650,7 +1524,6 @@ const SCHEMA_DDL = `
     context_tokens        INTEGER,
     context_window_max    INTEGER,
     debug_mode            TEXT,
-    machine_snapshot      TEXT,
     agent_backend         TEXT NOT NULL DEFAULT 'claude',
     backend_ref           TEXT,
     mcp_overrides         TEXT,
@@ -2696,7 +1569,6 @@ const SCHEMA_DDL = `
     context_tokens        INTEGER,
     context_window_max    INTEGER,
     debug_mode            TEXT,
-    machine_snapshot      TEXT,
     agent_backend         TEXT NOT NULL DEFAULT 'claude',
     backend_ref           TEXT,
     mcp_overrides         TEXT,
@@ -2719,13 +1591,6 @@ const SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_project_conversations_last_activity
     ON project_conversations(last_activity_at);
 
-  CREATE TABLE IF NOT EXISTS conversation_machine_snapshots (
-    owner           TEXT NOT NULL CHECK (owner IN ('session', 'project')),
-    conversation_id TEXT NOT NULL,
-    snapshot_json   TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    PRIMARY KEY (owner, conversation_id)
-  );
 
   -- DB-enforced sidecar cleanup. The sidecar's owner discriminator ties one
   -- table to two possible parents (conversations / project_conversations), which
@@ -2735,19 +1600,7 @@ const SCHEMA_DDL = `
   -- the sidecar orphaned. These AFTER DELETE triggers fire for BOTH direct
   -- deletes and FK cascade deletes, within the same transaction as the parent
   -- delete, so a sidecar row can never outlive its owning conversation.
-  CREATE TRIGGER IF NOT EXISTS trg_conversation_machine_snapshots_session_cleanup
-    AFTER DELETE ON conversations
-  BEGIN
-    DELETE FROM conversation_machine_snapshots
-      WHERE owner = 'session' AND conversation_id = OLD.id;
-  END;
 
-  CREATE TRIGGER IF NOT EXISTS trg_conversation_machine_snapshots_project_cleanup
-    AFTER DELETE ON project_conversations
-  BEGIN
-    DELETE FROM conversation_machine_snapshots
-      WHERE owner = 'project' AND conversation_id = OLD.id;
-  END;
 
   CREATE TABLE IF NOT EXISTS reference_documents (
     id            TEXT PRIMARY KEY,
@@ -2811,6 +1664,8 @@ const SCHEMA_DDL = `
 
   ${NOTIFICATIONS_TABLE_DDL}
 
+  ${NOTIFICATIONS_INDEX_DDL}
+
   CREATE TABLE IF NOT EXISTS job_records (
     job_id         TEXT PRIMARY KEY,
     job_type       TEXT NOT NULL,
@@ -2826,10 +1681,6 @@ const SCHEMA_DDL = `
     conflict_files TEXT,
     error_message  TEXT,
     owner_pid      INTEGER,
-    execution_id   TEXT,
-    spec_execution_id TEXT,
-    final_publish  INTEGER NOT NULL DEFAULT 0,
-    candidate_validation TEXT,
     parked_ref     TEXT,
     prepared_sha   TEXT,
     expected_target_sha TEXT,
@@ -2840,87 +1691,13 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
 
-  CREATE TABLE IF NOT EXISTS agent_run_records (
-    run_id              TEXT PRIMARY KEY,
-    backend             TEXT NOT NULL,
-    project_name        TEXT NOT NULL,
-    session_name        TEXT NOT NULL,
-    status              TEXT NOT NULL,
-    started_at          TEXT NOT NULL,
-    completed_at        TEXT,
-    summary             TEXT,
-    reference_documents TEXT,
-    error_message       TEXT,
-    owner_pid           INTEGER
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_agent_run_records_session
-    ON agent_run_records(project_name, session_name);
 
-  CREATE TABLE IF NOT EXISTS graph_workflow_events (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_path  TEXT NOT NULL,
-    session_name  TEXT NOT NULL,
-    execution_id  TEXT NOT NULL,
-    occurred_at   TEXT NOT NULL,
-    event_type    TEXT NOT NULL,
-    context_id    TEXT,
-    pre_reset     INTEGER NOT NULL DEFAULT 0,
-    event_json    TEXT NOT NULL,
-    FOREIGN KEY (project_path, session_name)
-      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_scope_execution
-    ON graph_workflow_events(project_path, session_name, execution_id, id);
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_scope_context
-    ON graph_workflow_events(
-      project_path, session_name, execution_id, context_id, event_type, id
-    );
 
-  CREATE TABLE IF NOT EXISTS graph_workflow_archived_executions (
-    project_path    TEXT NOT NULL,
-    session_name    TEXT NOT NULL,
-    execution_id    TEXT NOT NULL,
-    archived_at     TEXT NOT NULL,
-    status          TEXT NOT NULL,
-    started_at      TEXT NOT NULL,
-    completed_at    TEXT,
-    execution_json  TEXT NOT NULL,
-    PRIMARY KEY (project_path, session_name, execution_id),
-    FOREIGN KEY (project_path, session_name)
-      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_archived_executions_session
-    ON graph_workflow_archived_executions(project_path, session_name, archived_at);
 
-  CREATE TABLE IF NOT EXISTS graph_workflow_executions (
-    project_path              TEXT NOT NULL,
-    session_name              TEXT NOT NULL,
-    execution_id              TEXT NOT NULL,
-    seed_definition_id        TEXT NOT NULL,
-    seed_definition_revision  INTEGER NOT NULL,
-    started_at                TEXT NOT NULL,
-    status                    TEXT NOT NULL,
-    completed_at              TEXT,
-    definition_json           TEXT NOT NULL,
-    runtime_json              TEXT NOT NULL,
-    updated_at                TEXT NOT NULL,
-    -- Derived projection of holdsExecutionLease(status, haltReason,
-    -- abandonment) (D7 decision D15), written by the repository on every
-    -- setActive so SQL-side ambient projections never re-derive the classifier.
-    -- Last in the column list so an ALTER-upgraded database and a fresh floor
-    -- agree on shape. Defaults held: an unprojected row refuses a launch rather
-    -- than admitting a second Current run.
-    lease_held                INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (project_path, session_name),
-    FOREIGN KEY (project_path, session_name)
-      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_graph_workflow_executions_status
-    ON graph_workflow_executions(project_path, session_name, status);
 
   CREATE TABLE IF NOT EXISTS session_alignment_versions (
     id                     TEXT PRIMARY KEY,
@@ -3114,15 +1891,11 @@ const SCHEMA_DDL = `
 
   ${SPEC_SCHEMA_DDL}
 
-  ${SPEC_DELIVERY_PLAN_SCHEMA_DDL}
 
-  ${SPEC_DELIVERY_DISCOVERY_SCHEMA_DDL}
 
-  ${GRAPH_WORKFLOW_RESULT_DELIVERIES_SCHEMA_DDL}
 
-  ${GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL}
+  ${RUNTIME_OWNER_SCHEMA_DDL}
 
-  ${GRAPH_PLAN_REVIEWS_SCHEMA_DDL}
 
   ${SUPERVISION_SCHEMA_DDL}
 
@@ -3251,24 +2024,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   // older database reaches `migrateSpecDirectLaunchStorage` through this
   // back-fill, and that rebuild needs both columns to exist before it can
   // separate finalized snapshots from pre-version-2 ones it must discard.
-  {
-    table: "spec_delivery_plan_snapshots",
-    column: "candidate_id",
-    type: "TEXT",
-  },
-  {
-    table: "spec_delivery_plan_snapshots",
-    column: "candidate_hash",
-    type: "TEXT",
-  },
-  { table: "job_records", column: "execution_id", type: "TEXT" },
-  { table: "job_records", column: "spec_execution_id", type: "TEXT" },
-  {
-    table: "job_records",
-    column: "final_publish",
-    type: "INTEGER NOT NULL DEFAULT 0",
-  },
-  { table: "job_records", column: "candidate_validation", type: "TEXT" },
+
   // Parked-merge bookkeeping for a `ready-to-land` job. Additive and nullable
   // with no back-fill: a job that parked a commit before these columns existed
   // left the fact only in the in-memory registry, so null is the truth for
@@ -3339,54 +2095,18 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   // nullable with no back-fill: every revision this system authored has no such
   // claim, so null is the meaningful legacy value and there is nothing to
   // reconstruct for the rows that predate the column.
-  { table: "spec_revisions", column: "external_delivery_json", type: "TEXT" },
-  {
-    table: "spec_executions",
-    column: "execution_start_dial",
-    type: "TEXT CHECK (execution_start_dial IN ('gate', 'notify', 'off'))",
-  },
-  {
-    table: "spec_executions",
-    column: "workflow_definition_revision",
-    type: "INTEGER CHECK (workflow_definition_revision > 0)",
-  },
-  { table: "spec_executions", column: "delivery_basis_json", type: "TEXT" },
-  {
-    table: "spec_executions",
-    column: "workflow_seed_source_json",
-    type: "TEXT",
-  },
-  {
-    table: "spec_executions",
-    column: "workflow_execution_binding_json",
-    type: "TEXT",
-  },
+
   // Abandon-coordinator cleanup state (design §10). Additive and nullable: a
   // legacy row has no cleanup in flight, so null is the meaningful value and
   // no backfill is possible or wanted. Widening the `state` CHECK to admit
   // `abandoning` needs a table rebuild instead — migration 0015.
-  {
-    table: "spec_executions",
-    column: "cleanup_phase",
-    type: "TEXT CHECK (cleanup_phase IN ('abort_workflow', 'finalize'))",
-  },
-  {
-    table: "spec_executions",
-    column: "linked_workflow_execution_id",
-    type: "TEXT",
-  },
-  { table: "spec_executions", column: "cleanup_last_error", type: "TEXT" },
-  { table: "spec_executions", column: "cleanup_last_error_at", type: "TEXT" },
+
   { table: "validation_runs", column: "session_name", type: "TEXT" },
   // The durable prelaunch review record `spec start --park` writes (design
   // §5). Additive and nullable: an attempt that was never parked has no
   // prelaunch record, so null is the meaningful legacy value and there is
   // nothing to backfill.
-  {
-    table: "spec_delivery_plan_attempts",
-    column: "prelaunch_json",
-    type: "TEXT",
-  },
+
   {
     table: "validation_runs",
     column: "requested_scope",
@@ -3412,16 +2132,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   // it on every setActive. The `1` default is the fail-closed reading of a row
   // no projection has visited yet — it refuses a launch instead of admitting a
   // second Current run — and 0024 replaces it with the classifier's verdict.
-  {
-    table: "graph_workflow_executions",
-    column: "lease_held",
-    type: "INTEGER NOT NULL DEFAULT 1",
-  },
-  {
-    table: "graph_workflow_result_deliveries",
-    column: "effects_delivered_at",
-    type: "TEXT",
-  },
+
   {
     table: "notepad_delivery_watermarks",
     column: "observed_comment_ids_json",
@@ -3475,476 +2186,17 @@ function ensureAdditiveColumns(db: Db): void {
   }
 }
 
-function ensureManagedDeliveryPlanIndexColumns(db: Db): void {
-  const columns = [
-    {
-      table: "spec_delivery_plan_attempts",
-      column: "workflow_definition_id",
-      type: "TEXT",
-    },
-    {
-      table: "spec_delivery_plan_snapshots",
-      column: "workflow_definition_id",
-      type: "TEXT",
-    },
-    {
-      table: "spec_delivery_plan_snapshots",
-      column: "workflow_definition_revision",
-      type: "INTEGER",
-    },
-    {
-      table: "spec_delivery_plan_snapshots",
-      column: "workflow_definition_hash",
-      type: "TEXT",
-    },
-    {
-      table: "spec_delivery_plan_snapshots",
-      column: "binding_hash",
-      type: "TEXT",
-    },
-  ] as const;
-  for (const { table, column, type } of columns) {
-    if (
-      getTableColumns(db, table).length === 0 ||
-      columnExists(db, table, column)
-    ) {
-      continue;
-    }
-    addColumnToleratingRace(db, table, column, type);
-  }
-}
-
-interface TableColumnInfo {
-  name: string;
-  notnull: 0 | 1;
-}
-
-function getTableColumns(db: Db, table: string): TableColumnInfo[] {
-  return db.pragma(`table_info(${table})`) as TableColumnInfo[];
-}
-
-function notificationColumnExpression(
-  existingColumnNames: Set<string>,
-  column: string,
-  fallback: string,
-): string {
-  if (existingColumnNames.has(column)) return column;
-  return fallback;
-}
-
-function migrateNotificationsTable(db: Db, requireWorkflow = false): void {
-  const columns = getTableColumns(db, "notifications");
-  if (columns.length === 0) return;
-
-  const columnNames = new Set(columns.map((column) => column.name));
-  const requiredColumns = [
-    "source",
-    "conversation_id",
-    "conversation_name",
-    "conversation_status",
-    "dedupe_key",
-    "spec_id",
-    "spec_slug",
-    "spec_name",
-    "spec_gate",
-    "spec_gate_request_id",
-    "spec_deep_link_id",
-    "spec_approval_id",
-  ];
-  const missingRequiredColumns = requiredColumns.some(
-    (column) => !columnNames.has(column),
-  );
-  const missingWorkflowColumns = [
-    "workflow_execution_id",
-    "workflow_origin_conversation_id",
-    "workflow_deep_link",
-  ].some((column) => !columnNames.has(column));
-  const jobContextIsStrict = columns.some(
-    (column) =>
-      ["session_name", "branch_name", "job_id", "job_type"].includes(
-        column.name,
-      ) && column.notnull === 1,
-  );
-
-  if (
-    !missingRequiredColumns &&
-    !jobContextIsStrict &&
-    (!requireWorkflow || !missingWorkflowColumns)
-  ) {
-    return;
-  }
-
-  db.exec(`
-    DROP INDEX IF EXISTS idx_notifications_read;
-    DROP INDEX IF EXISTS idx_notifications_created_at;
-    DROP INDEX IF EXISTS idx_notifications_project_session;
-    DROP INDEX IF EXISTS idx_notifications_project_conversation;
-    DROP INDEX IF EXISTS idx_notifications_dedupe;
-    DROP INDEX IF EXISTS idx_notifications_spec_request;
-    ALTER TABLE notifications RENAME TO notifications_legacy_migration;
-  `);
-  db.exec(NOTIFICATIONS_TABLE_DDL);
-
-  const legacyColumns = getTableColumns(db, "notifications_legacy_migration");
-  const legacyColumnNames = new Set(legacyColumns.map((column) => column.name));
-
-  db.exec(`
-    INSERT INTO notifications (
-      id,
-      source,
-      type,
-      title,
-      message,
-      read,
-      project_name,
-      created_at,
-      session_name,
-      branch_name,
-      job_id,
-      job_type,
-      merge_hash,
-      commit_hash,
-      conflict_count,
-      conflict_files,
-      target_branch,
-      conversation_id,
-      conversation_name,
-      conversation_status,
-      dedupe_key,
-      error_message,
-      spec_id,
-      spec_slug,
-      spec_name,
-      spec_gate,
-      spec_gate_request_id,
-      spec_deep_link_id,
-      spec_approval_id,
-      workflow_execution_id,
-      workflow_origin_conversation_id,
-      workflow_deep_link
-    )
-    SELECT
-      id,
-      ${notificationColumnExpression(legacyColumnNames, "source", "'job'")},
-      type,
-      title,
-      message,
-      read,
-      project_name,
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "created_at",
-        "datetime('now')",
-      )},
-      session_name,
-      branch_name,
-      job_id,
-      job_type,
-      ${notificationColumnExpression(legacyColumnNames, "merge_hash", "NULL")},
-      ${notificationColumnExpression(legacyColumnNames, "commit_hash", "NULL")},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "conflict_count",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "conflict_files",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "target_branch",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "conversation_id",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "conversation_name",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "conversation_status",
-        "NULL",
-      )},
-      ${notificationColumnExpression(legacyColumnNames, "dedupe_key", "NULL")},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "error_message",
-        "NULL",
-      )},
-      ${notificationColumnExpression(legacyColumnNames, "spec_id", "NULL")},
-      ${notificationColumnExpression(legacyColumnNames, "spec_slug", "NULL")},
-      ${notificationColumnExpression(legacyColumnNames, "spec_name", "NULL")},
-      ${notificationColumnExpression(legacyColumnNames, "spec_gate", "NULL")},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "spec_gate_request_id",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "spec_deep_link_id",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "spec_approval_id",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "workflow_execution_id",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "workflow_origin_conversation_id",
-        "NULL",
-      )},
-      ${notificationColumnExpression(
-        legacyColumnNames,
-        "workflow_deep_link",
-        "NULL",
-      )}
-    FROM notifications_legacy_migration;
-
-    DROP TABLE notifications_legacy_migration;
-  `);
-  db.exec(NOTIFICATIONS_INDEX_DDL);
-}
-
-export function migrateNotificationsTableForWorkflowResults(db: Db): void {
-  migrateNotificationsTable(db, true);
-}
-
-function migrateGraphWorkflowExecutionsSeedProjection(db: Db): void {
-  const columns = getTableColumns(db, "graph_workflow_executions");
-  const hasRequiredSavedDefinitionProjection = columns.some(
-    (column) =>
-      (column.name === "seed_definition_id" ||
-        column.name === "seed_definition_revision") &&
-      column.notnull === 1,
-  );
-  if (!hasRequiredSavedDefinitionProjection) return;
-
-  db.exec(`
-    DROP INDEX IF EXISTS idx_graph_workflow_executions_status;
-    ALTER TABLE graph_workflow_executions
-      RENAME TO graph_workflow_executions_legacy_seed_projection;
-
-    CREATE TABLE graph_workflow_executions (
-      project_path              TEXT NOT NULL,
-      session_name              TEXT NOT NULL,
-      execution_id              TEXT NOT NULL,
-      seed_definition_id        TEXT,
-      seed_definition_revision  INTEGER,
-      started_at                TEXT NOT NULL,
-      status                    TEXT NOT NULL,
-      completed_at              TEXT,
-      definition_json           TEXT NOT NULL,
-      runtime_json              TEXT NOT NULL,
-      updated_at                TEXT NOT NULL,
-      PRIMARY KEY (project_path, session_name),
-      FOREIGN KEY (project_path, session_name)
-        REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
-    );
-
-    INSERT INTO graph_workflow_executions (
-      project_path, session_name, execution_id, seed_definition_id,
-      seed_definition_revision, started_at, status, completed_at,
-      definition_json, runtime_json, updated_at
-    ) SELECT
-      project_path, session_name, execution_id, seed_definition_id,
-      seed_definition_revision, started_at, status, completed_at,
-      definition_json, runtime_json, updated_at
-    FROM graph_workflow_executions_legacy_seed_projection;
-
-    DROP TABLE graph_workflow_executions_legacy_seed_projection;
-
-    CREATE INDEX idx_graph_workflow_executions_status
-      ON graph_workflow_executions(project_path, session_name, status);
-  `);
-  logger.info("state-store.graph_workflow_execution_seed_projection_relaxed");
-}
-
-function specDirectLaunchExecutionNeedsRebuild(db: Db): boolean {
-  const executionColumns = getTableColumns(db, "spec_executions");
-  return executionColumns.some(
-    (column) =>
-      column.name === "workflow_definition_id" && column.notnull === 1,
-  );
-}
-
-function migrateSpecDirectLaunchStorage(db: Db): void {
-  const executionNeedsRebuild = specDirectLaunchExecutionNeedsRebuild(db);
-  if (executionNeedsRebuild) {
-    const before = (
-      db.prepare("SELECT COUNT(*) AS count FROM spec_executions").get() as {
-        count: number;
-      }
-    ).count;
-    db.exec(`
-      DROP TRIGGER IF EXISTS spec_execution_bindings_immutable;
-      DROP TABLE IF EXISTS spec_execution_bindings;
-      DROP INDEX IF EXISTS idx_spec_executions_spec_state;
-      DROP INDEX IF EXISTS uq_spec_executions_workflow_execution;
-      ALTER TABLE spec_executions
-        RENAME TO spec_executions_legacy_direct_launch;
-    `);
-    db.exec(SPEC_EXECUTIONS_SCHEMA_DDL);
-    db.exec(`
-      INSERT INTO spec_executions (
-        id, spec_id, revision_id, scope_json, state, cleanup_phase,
-        linked_workflow_execution_id, cleanup_last_error,
-        cleanup_last_error_at, execution_start_dial,
-        workflow_definition_id, workflow_definition_revision,
-        workflow_seed_source_json, workflow_execution_binding_json,
-        workflow_execution_id, session_name,
-        delivered_at, abandoned_reason, created_at, updated_at
-      ) SELECT
-        id, spec_id, revision_id, scope_json, state, cleanup_phase,
-        linked_workflow_execution_id, cleanup_last_error,
-        cleanup_last_error_at, execution_start_dial,
-        workflow_definition_id, workflow_definition_revision,
-        workflow_seed_source_json, workflow_execution_binding_json,
-        workflow_execution_id, session_name,
-        delivered_at, abandoned_reason, created_at, updated_at
-      FROM spec_executions_legacy_direct_launch;
-    `);
-    const after = (
-      db.prepare("SELECT COUNT(*) AS count FROM spec_executions").get() as {
-        count: number;
-      }
-    ).count;
-    if (after !== before) {
-      throw new Error(
-        `Direct-launch storage rebuild copied ${after} of ${before} spec_executions rows; refusing to drop the original`,
-      );
-    }
-    db.exec("DROP TABLE spec_executions_legacy_direct_launch;");
-    db.exec(SPEC_EXECUTION_BINDINGS_SCHEMA_DDL);
-  }
-
-  const snapshotColumns = getTableColumns(db, "spec_delivery_plan_snapshots");
-  const snapshotNeedsRebuild = snapshotColumns.some(
-    (column) =>
-      column.name === "plan_hash" ||
-      ((column.name === "candidate_id" || column.name === "candidate_hash") &&
-        column.notnull === 0),
-  );
-  const legacyCandidateTable = db
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'spec_delivery_plan_candidates'",
-    )
-    .get();
-  if (!snapshotNeedsRebuild && legacyCandidateTable === undefined) {
-    if (executionNeedsRebuild) {
-      logger.info("state-store.spec_direct_launch_storage_rebuilt", {
-        executionsRebuilt: true,
-        snapshotsRebuilt: false,
-        discardedSnapshots: 0,
-      });
-    }
-    return;
-  }
-
-  // A snapshot without a finalized candidate identity is a pre-version-2
-  // proposal. Version 2 has no reader for it, so the rebuild discards the
-  // snapshot and returns its attempt to draft rather than leaving an approval
-  // pointing at bytes nothing can parse.
-  const discardedSnapshots = snapshotNeedsRebuild
-    ? (db
-        .prepare(
-          `SELECT COUNT(*) AS count
-             FROM spec_delivery_plan_snapshots
-            WHERE candidate_id IS NULL OR candidate_hash IS NULL`,
-        )
-        .get() as { count: number })
-    : { count: 0 };
-  db.exec("DROP INDEX IF EXISTS idx_spec_delivery_plan_candidates_attempt;");
-  db.exec("DROP TABLE IF EXISTS spec_delivery_plan_candidates;");
-  if (snapshotNeedsRebuild) {
-    db.exec(`
-      UPDATE spec_delivery_plan_attempts
-         SET status = 'draft',
-             proposed_snapshot_id = NULL,
-             approval_json = NULL,
-             prelaunch_json = NULL,
-             updated_at = datetime('now')
-       WHERE id IN (
-         SELECT attempt_id
-           FROM spec_delivery_plan_snapshots
-          WHERE candidate_id IS NULL OR candidate_hash IS NULL
-       )
-         AND status IN ('proposed', 'approved', 'parked');
-
-      DELETE FROM spec_delivery_plan_snapshots
-       WHERE candidate_id IS NULL OR candidate_hash IS NULL;
-
-      DROP INDEX IF EXISTS idx_spec_delivery_plan_snapshots_attempt;
-      ALTER TABLE spec_delivery_plan_snapshots
-        RENAME TO spec_delivery_plan_snapshots_legacy_direct_launch;
-    `);
-    db.exec(SPEC_DELIVERY_PLAN_SCHEMA_DDL);
-    db.exec(`
-      INSERT INTO spec_delivery_plan_snapshots (
-        id, attempt_id, candidate_id, candidate_hash, draft_revision,
-        content_json, pinned_revision_id, proposed_at, proposed_by_json
-      ) SELECT
-        id, attempt_id, candidate_id, candidate_hash, draft_revision,
-        content_json, pinned_revision_id, proposed_at, proposed_by_json
-      FROM spec_delivery_plan_snapshots_legacy_direct_launch;
-
-      DROP TABLE spec_delivery_plan_snapshots_legacy_direct_launch;
-    `);
-  }
-  logger.info("state-store.spec_direct_launch_storage_rebuilt", {
-    executionsRebuilt: executionNeedsRebuild,
-    snapshotsRebuilt: snapshotNeedsRebuild,
-    discardedSnapshots: discardedSnapshots.count,
-  });
-}
-
 function initializeSchema(db: Db, dbPath: string): void {
   enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
-  if (
-    columnExists(db, "spec_revisions", "content_hash") &&
-    !columnExists(db, "spec_revisions", "citation_contract_version")
-  ) {
-    const startedAt = Date.now();
-    if (dbPath !== ":memory:") {
-      publishSchemaCompatibilityBarrierSync(
-        path.dirname(dbPath),
-        NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION,
-      );
-    }
-    const result = applyNativeSddAttentionCitationsSchema(db);
-    logger.info("state-store.attention_citations_floor_complete", {
-      ...result,
-      durationMs: Date.now() - startedAt,
-    });
-  }
-  // The schema floor creates indexes over the managed-definition columns.
-  // Existing delivery-plan tables need those additive columns before SQLite
-  // can evaluate the `CREATE INDEX IF NOT EXISTS` statements in SCHEMA_DDL.
-  ensureManagedDeliveryPlanIndexColumns(db);
+  // Before any write: a database that has not finished the retired history is
+  // refused whole, so this build never builds its floor over a shape it has no
+  // code to finish.
+  const history = classifyMigrationHistory(db);
   db.exec(SCHEMA_DDL);
-  migrateNotificationsTable(db);
-  db.exec(NOTIFICATIONS_INDEX_DDL);
-  // The seed-projection relaxation rebuilds graph_workflow_executions without
-  // the additive columns, so it must run before ensureAdditiveColumns restores
-  // them; the direct-launch rebuild runs after, against the settled shape.
-  migrateGraphWorkflowExecutionsSeedProjection(db);
   ensureAdditiveColumns(db);
   // Names an additive column, so it cannot sit in SCHEMA_DDL above.
   db.exec(MEMORY_LINKS_IDENTITY_INDEX_DDL);
-  migrateSpecDirectLaunchStorage(db);
+  if (history === "fresh") stampRetiredMigrationHistory(db);
 }
 
 function openStateDb(dbPath: string): Db {
@@ -3956,34 +2208,10 @@ function openStateDb(dbPath: string): Db {
     enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
     applyConnectionPragmas(db);
     stateDbBeforeLockedInitializationHook?.();
-    const executionNeedsDirectLaunchRebuild =
-      specDirectLaunchExecutionNeedsRebuild(db);
-    const foreignKeysEnabled =
-      db.pragma("foreign_keys", { simple: true }) === 1;
-    const legacyAlterTableEnabled =
-      db.pragma("legacy_alter_table", { simple: true }) === 1;
-
-    // `spec_executions` is a foreign-key parent. SQLite would otherwise
-    // rewrite every child reference to the temporary legacy table during the
-    // rename, then refuse or cascade those rows when that table is dropped.
-    // These connection pragmas are no-ops inside a transaction, so apply them
-    // around the locked initialization window and restore the caller's state.
-    if (executionNeedsDirectLaunchRebuild) {
-      if (foreignKeysEnabled) db.pragma("foreign_keys = OFF");
-      if (!legacyAlterTableEnabled) db.pragma("legacy_alter_table = ON");
-    }
     // Hold the write lock from the second version check through schema setup,
     // so a concurrently starting newer build cannot advance the compatibility
-    // version between the gate and this build's DDL/data migrations.
-    const initialize = db.transaction(() => initializeSchema(db, dbPath));
-    try {
-      initialize.immediate();
-    } finally {
-      if (executionNeedsDirectLaunchRebuild) {
-        if (!legacyAlterTableEnabled) db.pragma("legacy_alter_table = OFF");
-        if (foreignKeysEnabled) db.pragma("foreign_keys = ON");
-      }
-    }
+    // version between the gate and this build's schema floor.
+    db.transaction(() => initializeSchema(db, dbPath)).immediate();
     // `journal_mode` changes persistent database state and SQLite does not
     // permit changing it inside a transaction. Apply it only after the locked
     // compatibility recheck and schema initialization succeed.
@@ -4041,17 +2269,17 @@ export function _createTestDbAtPath(dbPath: string): Db {
 }
 
 /**
- * Bookkeeping table excluded from {@link truncateAllTables} so the forward-only
- * version check still passes after a reset.
+ * Bookkeeping tables excluded from {@link truncateAllTables}: the version table
+ * keeps the forward-only version check passing after a reset, and the migration
+ * ledger keeps the retired-history guard from refusing the reset database.
  */
-const SCHEMA_VERSION_TABLE = "schema_migrations";
+const BOOKKEEPING_TABLES = new Set(["schema_migrations", "applied_migrations"]);
 
 /**
  * Test helper: empty every application data table, deriving the table set from
  * the live schema (`sqlite_master`) so a newly added table is cleared with no
- * code change. Excludes SQLite internals (`sqlite_%`) and the schema-version
- * bookkeeping table (`schema_migrations`) so the forward-only version check
- * still passes after reset.
+ * code change. Excludes SQLite internals (`sqlite_%`) and the bookkeeping
+ * tables, so the reset database reopens.
  *
  * Foreign-key enforcement is disabled for the duration of the deletes so order
  * is irrelevant, then restored to its prior state.
@@ -4092,7 +2320,7 @@ export function truncateAllTables(db: Db): void {
     if (typeof name !== "string") {
       continue;
     }
-    if (name.startsWith("sqlite_") || name === SCHEMA_VERSION_TABLE) {
+    if (name.startsWith("sqlite_") || BOOKKEEPING_TABLES.has(name)) {
       continue;
     }
     if (shadowTables.has(name)) {

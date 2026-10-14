@@ -68,9 +68,7 @@ function makeActiveConversationsResponse(
 ): ActiveConversationsResponse {
   return {
     conversations,
-    graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
-    specExecutions: [],
   };
 }
 
@@ -137,7 +135,6 @@ function makeSessionConversation(
     worktreePath: "/repos/project-a/.worktrees/session-a",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     ...overrides,
   };
@@ -165,7 +162,6 @@ function makeProjectConversation(
     worktreePath: "/repos/project-a",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     open: overrides.open ?? true,
     ...overrides,
@@ -644,9 +640,6 @@ describe("Topbar", () => {
     );
     const user = userEvent.setup();
 
-    expect(screen.getByTitle("Global Workflow Templates")).toHaveClass(
-      "max-768:hidden",
-    );
     expect(screen.getByTitle("System Configuration")).toHaveClass(
       "max-768:hidden",
     );
@@ -659,9 +652,6 @@ describe("Topbar", () => {
       screen.getByRole("menuitem", { name: /Quick ticket/ }),
     ).toBeInTheDocument();
 
-    expect(
-      screen.getByRole("menuitem", { name: "Workflow Templates" }),
-    ).toHaveAttribute("href", "/templates");
     expect(
       screen.getByRole("menuitem", { name: "System Configuration" }),
     ).toHaveAttribute("href", "/config");
@@ -872,16 +862,6 @@ describe("Topbar", () => {
         projectName: "root-tools",
         sessionName: "feature-a",
         status: "awaiting",
-        pendingApproval: {
-          contextId: "ctx-1",
-          contextTitle: "api-hardening",
-          requestedAt: "2026-06-10T09:00:00.000Z",
-          workflowName: null,
-          executionSuspended: false,
-          enveloped: false,
-          tasksCompleted: 6,
-          tasksTotal: 6,
-        },
       }),
       makeSessionConversation({
         id: "session-question",
@@ -913,12 +893,12 @@ describe("Topbar", () => {
     ]);
     setNotifications([
       makeSpecNotification({
-        id: "waiver-request",
-        type: "spec-waiver-requested",
-        title: "Delivery waiver requested",
-        message: "Native SDD: criterion cannot be proven in this execution",
-        gate: "delivery",
-        gateRequestId: "waiver-1",
+        id: "plan-request",
+        type: "spec-approval-requested",
+        title: "Plan approval requested",
+        message: "Native SDD: implementation plan needs approval",
+        gate: "plan",
+        gateRequestId: "plan-1",
         deepLinkId: "R3.2",
         createdAt: "2026-06-10T09:02:00.000Z",
       }),
@@ -936,11 +916,9 @@ describe("Topbar", () => {
       screen.getByRole("menu", { name: /Needs you/i }),
     ).toBeInTheDocument();
     expect(screen.getByText("Design approval required")).toBeInTheDocument();
-    expect(screen.getByText("Waiver decision required")).toBeInTheDocument();
+    expect(screen.getByText("Plan approval required")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Native SDD: criterion cannot be proven in this execution",
-      ),
+      screen.getByText("Native SDD: implementation plan needs approval"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Which release should this target?"),
@@ -949,7 +927,7 @@ describe("Topbar", () => {
       screen.getAllByRole("menuitem").map((row) => row.textContent),
     ).toEqual([
       expect.stringContaining("Design approval required"),
-      expect.stringContaining("Waiver decision required"),
+      expect.stringContaining("Plan approval required"),
       expect.stringContaining("Input requested"),
     ]);
     expect(

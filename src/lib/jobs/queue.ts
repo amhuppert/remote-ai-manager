@@ -1,7 +1,3 @@
-import type { WorkflowComposition } from "@/lib/workflows/production-contracts";
-import type { MergeDeliveryLifecycle } from "@/lib/workflows/merge/delivery-lifecycle-port";
-import type { MergeAssociationResolver } from "@/lib/workflows/merge/association-port";
-import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 /**
  * Background job lifecycle management for async merge, commit,
  * and conflict resolution operations.
@@ -49,17 +45,11 @@ import {
   mergeMachine,
   type MergeMachineType,
 } from "../workflows/merge/machine";
-import { provideDeliveryGate } from "../workflows/merge/delivery-gate-port";
-import {
-  notifyMergeDelivered,
-  resolveDeliveredMergeSha,
-} from "../workflows/merge/delivery-lifecycle-port";
 import type {
   MergeEntryMode,
   MergeInput,
   MergeContext,
   MergeOutput,
-  MergePhase,
 } from "../workflows/merge/types";
 import {
   commitMachine,
@@ -273,7 +263,6 @@ function markProgress(job: BackgroundJob): void {
 function broadcastJobStatus(
   job: BackgroundJob,
   broadcast: PublishFn = defaultJobBroadcast,
-  deliveryLifecycle?: MergeDeliveryLifecycle,
 ): void {
   markProgress(job);
   const event: JobStatusEvent = {
@@ -309,7 +298,7 @@ function broadcastJobStatus(
     job.status === "ready-to-land" ||
     job.status === "discarded"
   ) {
-    persistTerminalState(job, deliveryLifecycle);
+    persistTerminalState(job);
   }
 }
 
@@ -329,30 +318,8 @@ function persistJobRecord(job: BackgroundJob): void {
   }
 }
 
-/** Persist candidate proof as soon as validation finishes, before gate I/O. */
-function persistJobProgress(job: BackgroundJob): void {
-  const candidateValidation = job.candidateValidation;
-  if (candidateValidation === undefined) return;
-  try {
-    createJobsRepo(getStateDb()).persistCandidateValidation(
-      job.jobId,
-      candidateValidation,
-    );
-  } catch (err) {
-    logger.error("background-jobs.persist_job_progress_failed", {
-      jobId: job.jobId,
-      executionId: job.executionId,
-      validationRef: candidateValidation.validationRef,
-      error: getErrorMessage(err),
-    });
-  }
-}
-
 /** Persist terminal state to DB and create a notification. Non-throwing. */
-function persistTerminalState(
-  job: BackgroundJob,
-  deliveryLifecycle?: MergeDeliveryLifecycle,
-): void {
+function persistTerminalState(job: BackgroundJob): void {
   try {
     createJobsRepo(getStateDb()).updateJobRecord(job.jobId, {
       status: job.status,
@@ -361,36 +328,13 @@ function persistTerminalState(
       conflictCount: job.conflictCount,
       conflictFiles: job.conflictFiles,
       errorMessage: job.errorMessage,
-      executionId: job.executionId,
       // A ready-to-land terminal parks a real commit and hands the operator a
       // decision that can outlive this process, so its bookkeeping goes to the
       // row a land re-entry reads after a restart.
       parkedRef: job.parkedRef,
       preparedSha: job.preparedSha,
       expectedTargetSha: job.expectedTargetSha,
-      candidateValidation: job.candidateValidation,
     });
-
-    // A completed gate-passed final-publish merge IS the delivery: mark the
-    // linked execution Delivered promptly rather than waiting for a status
-    // read to reconcile. The gate ran before publish, so a completed delivering
-    // merge + finalPublish implies gate-passed.
-    const deliveredSha = resolveDeliveredMergeSha(job);
-    if (
-      (job.jobType === "merge" || job.jobType === "resolve-conflicts") &&
-      job.status === "completed" &&
-      deliveredSha !== null &&
-      (job.executionId !== undefined || job.specExecutionId !== undefined) &&
-      job.finalPublish === true
-    ) {
-      notifyMergeDelivered(
-        deliveryLifecycle ??
-          getProductionWorkflowComposition().mergeDeliveryLifecycle,
-        job.executionId,
-        deliveredSha,
-        job.specExecutionId,
-      );
-    }
 
     const notifType = deriveNotificationType(job.jobType, job.status);
     const title = deriveNotificationTitle(notifType);
@@ -788,7 +732,6 @@ function createDispatchHost(
   broadcast: PublishFn,
   acquireSessionLock?: AcquireSessionLockFn,
   jobId?: string,
-  deliveryLifecycle?: MergeDeliveryLifecycle,
 ): JobDispatchHost {
   return {
     prepare(params) {
@@ -800,11 +743,10 @@ function createDispatchHost(
       });
     },
     publishStatus(job) {
-      broadcastJobStatus(job, broadcast, deliveryLifecycle);
+      broadcastJobStatus(job, broadcast);
     },
     persistProgress(job) {
       markProgress(job);
-      persistJobProgress(job);
     },
   };
 }
@@ -834,18 +776,6 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
   phaseOf(context) {
     return context.phase ?? undefined;
   },
-  projectActiveSnapshot(job, context) {
-    const candidateValidation = context.candidateValidation ?? undefined;
-    if (candidateValidation === undefined) return false;
-    if (
-      job.candidateValidation?.validationRef ===
-      candidateValidation.validationRef
-    ) {
-      return false;
-    }
-    job.candidateValidation = candidateValidation;
-    return true;
-  },
   mapOutput(job, output, context) {
     job.status = output.status;
     job.mergeHash = output.mergeHash ?? undefined;
@@ -857,9 +787,6 @@ const mergeSubscription: JobSubscriptionConfig<MergeContext, MergeOutput> = {
     job.parkedRef = output.parkedRef ?? undefined;
     job.refreshWarning = output.refreshWarning ?? undefined;
     job.upToDate = output.upToDate === true ? true : undefined;
-    job.executionId = context.executionId ?? undefined;
-    job.specExecutionId = context.specExecutionId ?? undefined;
-    job.candidateValidation = output.candidateValidation ?? undefined;
     job.haltReason = output.haltReason ?? undefined;
 
     if (output.conflictFiles.length > 0) {
@@ -961,10 +888,6 @@ export interface DispatchMergeParams {
   parkedRef?: string;
   /** Agent-written intent notes for a conflict-resolution turn. */
   resolutionContext?: string;
-  executionId?: string;
-  specExecutionId?: string;
-  finalPublish?: boolean;
-  candidateValidation?: BackgroundJob["candidateValidation"];
   /**
    * Whether this job's publish also finishes the session. Omitted means the
    * user-driven session merge; skipMarkMerged can suppress its cleanup. A re-entry
@@ -976,189 +899,14 @@ export interface DispatchMergeParams {
   skipMarkMerged?: boolean;
 }
 
-/**
- * A merge refused at dispatch by the injected association resolver: the
- * session hosts spec-execution state the delivery gate could never evaluate
- * from this merge (not started, or ambiguous). No job is created.
- */
-export interface MergeAssociationRefusedError {
-  code: "MERGE_ASSOCIATION_REFUSED";
-  reason: string;
-  instruction: string;
-}
-
-export type MergeDispatchError =
-  | JobDispatchError
-  | MergeAssociationRefusedError;
+export type MergeDispatchError = JobDispatchError;
 
 export type MergeDispatchResult =
   | { ok: true; value: { jobId: string } }
   | { ok: false; error: MergeDispatchError };
 
-/**
- * Resolve merge association once, at dispatch. Explicit caller provenance is
- * authoritative; otherwise the injected resolver decides, and its refusal
- * aborts dispatch before any job or lock exists.
- */
-function resolveDispatchProvenance(
-  associationResolver: MergeAssociationResolver,
-  input: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    targetBranch?: string;
-    executionId?: string;
-    specExecutionId?: string;
-    finalPublish?: boolean;
-  },
-):
-  | {
-      ok: true;
-      executionId?: string;
-      specExecutionId?: string;
-      finalPublish?: boolean;
-    }
-  | { ok: false; error: MergeAssociationRefusedError } {
-  if (input.executionId !== undefined || input.specExecutionId !== undefined) {
-    return {
-      ok: true,
-      executionId: input.executionId,
-      specExecutionId: input.specExecutionId,
-      finalPublish: input.finalPublish,
-    };
-  }
-  const association = associationResolver.resolve({
-    projectPath: input.projectPath,
-    projectName: input.projectName,
-    sessionName: input.sessionName,
-    ...(input.targetBranch !== undefined && {
-      targetBranch: input.targetBranch,
-    }),
-  });
-  if (association.kind === "refused") {
-    logger.warn("merge.association_refused", {
-      sessionName: input.sessionName,
-      reason: association.reason,
-    });
-    return {
-      ok: false,
-      error: {
-        code: "MERGE_ASSOCIATION_REFUSED",
-        reason: association.reason,
-        instruction: association.instruction,
-      },
-    };
-  }
-  if (association.kind === "linked") {
-    return {
-      ok: true,
-      executionId: association.executionId,
-      specExecutionId: association.specExecutionId,
-      finalPublish: association.finalPublish,
-    };
-  }
-  return { ok: true, finalPublish: input.finalPublish };
-}
-
-export interface RegisteredMergeJobInput {
-  machine: MergeMachineType;
-  input: MergeInput;
-  broadcast?: PublishFn;
-  onPhase?(phase: MergePhase): void;
-}
-
-/**
- * Run a graph-owned merge through the canonical background-job host while the
- * graph join retains ownership of the outer git locks. The registered job is
- * what lets a ready-to-land candidate re-enter later through the session merge
- * surface with its execution linkage and validation fact intact.
- */
-export function runRegisteredMergeJob(
-  params: RegisteredMergeJobInput,
-  deliveryLifecycle?: MergeDeliveryLifecycle,
-): Promise<MergeOutput> {
-  return new Promise<MergeOutput>((resolve, reject) => {
-    const { input } = params;
-    const result = dispatchMachineJob<MergeContext, MergeOutput>({
-      jobType: "merge",
-      session: {
-        projectPath: input.projectPath,
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        branchName: input.branchName,
-        targetBranch: input.targetBranch,
-      },
-      host: createDispatchHost(
-        params.broadcast ?? defaultJobBroadcast,
-        () => () => {},
-        input.jobId,
-        deliveryLifecycle,
-      ),
-      ...(input.parkedRef !== undefined
-        ? { continuesParkedRef: input.parkedRef }
-        : {}),
-      decorateJob(job) {
-        if (input.resolutionContext) {
-          job.resolutionContext = input.resolutionContext;
-        }
-        if (input.executionId) job.executionId = input.executionId;
-        if (input.specExecutionId) job.specExecutionId = input.specExecutionId;
-        if (input.finalPublish === true) job.finalPublish = true;
-        job.finalizeSessionOnPublish = resolveFinalizeSessionOnPublish({
-          ...(input.entryMode !== undefined
-            ? { entryMode: input.entryMode }
-            : {}),
-          ...(input.finalizeSessionOnPublish !== undefined
-            ? { requested: input.finalizeSessionOnPublish }
-            : {}),
-        });
-        // This host exists for graph-owned merges; the lane's intent brief is
-        // the join's, not a session merge's.
-        job.intentSource = "graph-join";
-        if (input.candidateValidation) {
-          job.candidateValidation = input.candidateValidation;
-        }
-      },
-      logStart(job) {
-        logger.info("graph-merge.start", {
-          jobId: job.jobId,
-          sessionName: input.sessionName,
-          branchName: input.branchName,
-          targetBranch: input.targetBranch,
-          executionId: input.executionId,
-          specExecutionId: input.specExecutionId,
-          finalPublish: input.finalPublish === true,
-        });
-      },
-      createJobActor() {
-        return createActor(params.machine, { input });
-      },
-      subscription: mergeSubscription,
-      callbacks: {
-        onPhaseChange(_phase, context) {
-          if (context.phase !== null) params.onPhase?.(context.phase);
-        },
-        onComplete(output) {
-          resolve(output);
-        },
-        onError(error) {
-          reject(error);
-        },
-      },
-    });
-    if (!result.ok) {
-      reject(
-        new Error(
-          `Graph merge job ${input.jobId} could not start: ${result.error}`,
-        ),
-      );
-    }
-  });
-}
-
 export function dispatchMergeJob(
   params: DispatchMergeParams,
-  composition: WorkflowComposition = getProductionWorkflowComposition(),
 ): MergeDispatchResult {
   const {
     projectPath,
@@ -1177,28 +925,8 @@ export function dispatchMergeJob(
     expectedTargetSha,
     parkedRef,
     resolutionContext,
-    executionId,
-    specExecutionId,
-    finalPublish,
-    candidateValidation,
   } = params;
-  const machine =
-    injectedMachine ??
-    provideDeliveryGate(mergeMachine, composition.deliveryGate);
-
-  const provenance = resolveDispatchProvenance(composition.mergeAssociation, {
-    projectPath,
-    projectName,
-    sessionName,
-    ...(targetBranch !== undefined && { targetBranch }),
-    ...(executionId !== undefined && { executionId }),
-    ...(specExecutionId !== undefined && { specExecutionId }),
-    ...(finalPublish !== undefined && { finalPublish }),
-  });
-  if (!provenance.ok) return { ok: false, error: provenance.error };
-  const resolvedExecutionId = provenance.executionId;
-  const resolvedSpecExecutionId = provenance.specExecutionId;
-  const resolvedFinalPublish = provenance.finalPublish;
+  const machine = injectedMachine ?? mergeMachine;
   // Decided once and threaded into BOTH the job fact and the machine input, so
   // the launch guard's reader and the publish actor's gate read one decision.
   const finalizeSessionOnPublish = resolveFinalizeSessionOnPublish({
@@ -1217,25 +945,15 @@ export function dispatchMergeJob(
       branchName,
       targetBranch,
     },
-    host: createDispatchHost(
-      broadcast,
-      acquireSessionLock,
-      undefined,
-      composition.mergeDeliveryLifecycle,
-    ),
+    host: createDispatchHost(broadcast, acquireSessionLock),
     // A land or discard re-entry continues the parked candidate rather than
     // superseding it, so the host must not drop the ref it is about to use.
     ...(parkedRef !== undefined ? { continuesParkedRef: parkedRef } : {}),
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
-      if (resolvedExecutionId) job.executionId = resolvedExecutionId;
-      if (resolvedSpecExecutionId)
-        job.specExecutionId = resolvedSpecExecutionId;
-      if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
       job.skipMarkMerged = params.skipMarkMerged ?? false;
       job.intentSource = "session-merge";
-      if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
       logger.info("merge.start", {
@@ -1245,8 +963,6 @@ export function dispatchMergeJob(
         branchName,
         autoResolve,
         entryMode: entryMode ?? "merge",
-        executionId: resolvedExecutionId,
-        finalPublish: resolvedFinalPublish === true,
         skipMarkMerged: params.skipMarkMerged ?? false,
       });
     },
@@ -1274,14 +990,6 @@ export function dispatchMergeJob(
         ...(expectedTargetSha && { expectedTargetSha }),
         ...(parkedRef && { parkedRef }),
         ...(resolutionContext && { resolutionContext }),
-        ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
-        ...(resolvedSpecExecutionId && {
-          specExecutionId: resolvedSpecExecutionId,
-        }),
-        ...(resolvedFinalPublish !== undefined && {
-          finalPublish: resolvedFinalPublish,
-        }),
-        ...(candidateValidation && { candidateValidation }),
       };
       return createActor(machine, { input });
     },
@@ -1356,36 +1064,29 @@ export function dispatchCommitJob(params: {
  * with jobType "resolve-conflicts". The routing state skips directly to
  * conflict resolution, then proceeds through validation and squash merge.
  */
-export function dispatchResolveConflictsJob(
-  params: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    worktreePath: string;
-    branchName: string;
-    mergeMessage: string;
-    decisions?: ConflictDecisionInput[];
-    /**
-     * Files the conflicted merge this retry resumes reported. The retry's own
-     * run never sees that merge, so without them its post-resolution
-     * ground-truth check has no list of files to hold the agent to.
-     */
-    conflictFiles?: string[];
-    targetBranch?: string;
-    resolutionContext?: string;
-    broadcast?: PublishFn;
-    acquireSessionLock?: AcquireSessionLockFn;
-    machine?: MergeMachineType;
-    executionId?: string;
-    specExecutionId?: string;
-    finalPublish?: boolean;
-    candidateValidation?: BackgroundJob["candidateValidation"];
-    /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
-    finalizeSessionOnPublish?: boolean;
-    skipMarkMerged?: boolean;
-  },
-  composition: WorkflowComposition = getProductionWorkflowComposition(),
-): MergeDispatchResult {
+export function dispatchResolveConflictsJob(params: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  mergeMessage: string;
+  decisions?: ConflictDecisionInput[];
+  /**
+   * Files the conflicted merge this retry resumes reported. The retry's own
+   * run never sees that merge, so without them its post-resolution
+   * ground-truth check has no list of files to hold the agent to.
+   */
+  conflictFiles?: string[];
+  targetBranch?: string;
+  resolutionContext?: string;
+  broadcast?: PublishFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: MergeMachineType;
+  /** The resumed merge's own fact; see {@link DispatchMergeParams}. */
+  finalizeSessionOnPublish?: boolean;
+  skipMarkMerged?: boolean;
+}): MergeDispatchResult {
   const {
     projectPath,
     projectName,
@@ -1400,28 +1101,8 @@ export function dispatchResolveConflictsJob(
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine: injectedMachine,
-    executionId,
-    specExecutionId,
-    finalPublish,
-    candidateValidation,
   } = params;
-  const machine =
-    injectedMachine ??
-    provideDeliveryGate(mergeMachine, composition.deliveryGate);
-
-  const provenance = resolveDispatchProvenance(composition.mergeAssociation, {
-    projectPath,
-    projectName,
-    sessionName,
-    ...(targetBranch !== undefined && { targetBranch }),
-    ...(executionId !== undefined && { executionId }),
-    ...(specExecutionId !== undefined && { specExecutionId }),
-    ...(finalPublish !== undefined && { finalPublish }),
-  });
-  if (!provenance.ok) return { ok: false, error: provenance.error };
-  const resolvedExecutionId = provenance.executionId;
-  const resolvedSpecExecutionId = provenance.specExecutionId;
-  const resolvedFinalPublish = provenance.finalPublish;
+  const machine = injectedMachine ?? mergeMachine;
   // Conflict resolution continues a merge that already exists, so its publish
   // finalizes the session exactly as the merge it resumes would have — which is
   // not at all when the conflicted merge was a graph lane's.
@@ -1440,30 +1121,18 @@ export function dispatchResolveConflictsJob(
       branchName,
       targetBranch,
     },
-    host: createDispatchHost(
-      broadcast,
-      acquireSessionLock,
-      undefined,
-      composition.mergeDeliveryLifecycle,
-    ),
+    host: createDispatchHost(broadcast, acquireSessionLock),
     decorateJob(job) {
       if (resolutionContext) job.resolutionContext = resolutionContext;
-      if (resolvedExecutionId) job.executionId = resolvedExecutionId;
-      if (resolvedSpecExecutionId)
-        job.specExecutionId = resolvedSpecExecutionId;
-      if (resolvedFinalPublish === true) job.finalPublish = true;
       job.finalizeSessionOnPublish = finalizeSessionOnPublish;
       job.skipMarkMerged = params.skipMarkMerged ?? false;
       job.intentSource = "session-merge";
-      if (candidateValidation) job.candidateValidation = candidateValidation;
     },
     logStart(job) {
       logger.info("resolve-conflicts.start", {
         jobId: job.jobId,
         sessionName,
         resolutionContextLength: resolutionContext?.length ?? 0,
-        executionId: resolvedExecutionId,
-        finalPublish: resolvedFinalPublish === true,
         skipMarkMerged: params.skipMarkMerged ?? false,
       });
     },
@@ -1493,14 +1162,6 @@ export function dispatchResolveConflictsJob(
         finalizeSessionOnPublish,
         skipMarkMerged: params.skipMarkMerged ?? false,
         ...(resolutionContext && { resolutionContext }),
-        ...(resolvedExecutionId && { executionId: resolvedExecutionId }),
-        ...(resolvedSpecExecutionId && {
-          specExecutionId: resolvedSpecExecutionId,
-        }),
-        ...(resolvedFinalPublish !== undefined && {
-          finalPublish: resolvedFinalPublish,
-        }),
-        ...(candidateValidation && { candidateValidation }),
       };
       return createActor(machine, { input });
     },

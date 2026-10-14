@@ -53,13 +53,26 @@ import type {
   ConversationCheckpointRequest,
   ConversationCheckpointStart,
 } from "@/lib/conversation-checkpoints/operation-contract";
-import {
-  cancelConversationCheckpoint,
-  checkConversationCheckpoint,
-  reconcileConversationCheckpoint,
-  startConversationCheckpoint,
-  skipConversationCheckpointHandoff,
-} from "@/lib/workflows/conversation/lifecycle";
+import { coreCheckpoints } from "@/lib/supervision/handles";
+import type { CoreCheckpoints } from "@/lib/conversation-core/checkpoints";
+const checkpoints = (): CoreCheckpoints => {
+  const owner = coreCheckpoints();
+  if (owner === undefined)
+    throw new Error("The conversation core is not running");
+  return owner;
+};
+const startConversationCheckpoint: CoreCheckpoints["start"] = (input) =>
+  checkpoints().start(input);
+const checkConversationCheckpoint: CoreCheckpoints["check"] = (...args) =>
+  checkpoints().check(...args);
+const cancelConversationCheckpoint: CoreCheckpoints["cancel"] = (input) =>
+  checkpoints().cancel(input);
+const reconcileConversationCheckpoint: CoreCheckpoints["reconcile"] = (input) =>
+  checkpoints().reconcile(input);
+const skipConversationCheckpointHandoff: CoreCheckpoints["skipHandoff"] = (
+  input,
+) => checkpoints().skipHandoff(input);
+
 import { checkpointScopeKeyForStoreIdentity } from "@/lib/conversation-checkpoints/scope-key";
 import type { ConversationAddress } from "@/lib/conversation-core/turn/turn-spec";
 

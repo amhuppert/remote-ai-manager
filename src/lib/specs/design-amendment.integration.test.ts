@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -39,13 +37,9 @@ function createWorld() {
   return {
     persistence,
     specs,
-    plans: createSpecDeliveryPlanRepo(db, {
-      appendEvent: attention.appendInTransaction,
-    }),
     authoring: createAuthoringService(deps),
     reviewing: createReviewService({
       ...deps,
-      delivery: createSpecDeliveryRepo(db),
     }),
   };
 }
@@ -168,29 +162,6 @@ async function approvedDesign() {
 
 async function openDesignAmendment() {
   const base = await approvedDesign();
-  const pinnedAttempt = world.plans.open({
-    attempt: {
-      id: "existing-attempt",
-      spec_id: base.specId,
-      pinned_revision_id: base.design.id,
-      delta_basis_execution_id: null,
-      status: "draft",
-      draft_revision: 1,
-      content_json: JSON.stringify({
-        schemaVersion: 4,
-        binding: { dispositions: [] },
-      }),
-      proposed_snapshot_id: null,
-      approval_json: null,
-      prelaunch_json: null,
-      launched_execution_id: null,
-      workflow_definition_id: null,
-      created_at: "2026-09-23T00:00:00.000Z",
-      updated_at: "2026-09-23T00:00:00.000Z",
-    },
-    actor: AGENT,
-    occurredAt: "2026-09-23T00:00:00.000Z",
-  });
   const { revision } = await world.authoring.openAmendment({
     specId: base.specId,
     actor: AGENT,
@@ -200,13 +171,12 @@ async function openDesignAmendment() {
     state: "draft",
     basedOnRevisionId: base.design.id,
   });
-  return { ...base, revision, pinnedAttempt };
+  return { ...base, revision };
 }
 
 describe("approved Design amendments", () => {
   it("opens Design, carries unchanged approvals, and owes only the changed decision and Design sign-off", async () => {
-    const { specId, design, revision, pinnedAttempt } =
-      await openDesignAmendment();
+    const { specId, design, revision } = await openDesignAmendment();
     const baseline = await snapshot(design.id);
     await world.authoring.upsertDraftElement({
       specId,
@@ -281,9 +251,6 @@ describe("approved Design amendments", () => {
     ).toMatchObject({ ok: true });
     expect((await snapshot(design.id)).revision).toEqual(baseline.revision);
     expect((await snapshot(revision.id)).revision.state).toBe("approved");
-    expect(world.plans.findAttemptById(pinnedAttempt.id)).toEqual(
-      pinnedAttempt,
-    );
   });
 
   it("refuses Requirements writes and removals until the explicit return path is used", async () => {

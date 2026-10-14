@@ -42,7 +42,6 @@ function makeSession(conversations: ConversationState[]): SessionState {
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
   };
 }

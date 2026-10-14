@@ -569,23 +569,19 @@ describe("document comment + feedback lifecycle (real store)", () => {
   // (and is unchanged without the payload)
   // -------------------------------------------------------------------------
 
-  it("forwards documentFeedback through the conversation prompt route to the execution layer", async () => {
+  it("forwards documentFeedback through the conversation prompt route to the core", async () => {
     fx.seedConversation(
       PROJECT_PATH,
       DOC_SESSION,
       makeConversation("conv-immediate"),
     );
 
-    // `executePromptStream` is the execution-layer seam — injected as a test
-    // double at the deps boundary (the codebase's DI pattern; mirrors
-    // prompt/route-handlers.test.ts) so the assertion targets what the ROUTE
-    // forwards, not the actor's internals.
+    // Script the core prompt boundary; persistence and route body parsing are real.
     const promptDeps: PromptRouteDeps = {
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       getSession: fx.store.getSession,
       getConversation: fx.store.getConversation,
-      getActiveGraphWorkflowExecution: async () => null,
       isConversationBusy: () => false,
       admitConversationTurn: async () => ({
         kind: "admit" as const,
@@ -612,11 +608,9 @@ describe("document comment + feedback lifecycle (real store)", () => {
           },
         ),
       coreConversations: {
-        owns: () => false,
+        owns: () => true,
         admitCollaboration: async () => null,
-        prompt: async () => {
-          throw new Error("No conversation here runs on the shared core");
-        },
+        prompt: vi.fn(async () => new Response(null, { status: 200 })),
       },
     };
     const handlers = createPromptRouteHandlers(promptDeps);
@@ -652,7 +646,7 @@ describe("document comment + feedback lifecycle (real store)", () => {
           }),
         },
       );
-      // Drain the SSE stream so the handler's executePromptStream call runs.
+      // Consume the response, as the delivery client does for a prompt.
       const reader = res.body?.getReader();
       if (reader) {
         while (!(await reader.read()).done) {
@@ -667,29 +661,22 @@ describe("document comment + feedback lifecycle (real store)", () => {
     });
     await send({ prompt: "just a normal prompt" });
 
-    // `executePromptStream(projectPath, session, prompt, emit, conversationId,
-    // modelId, images, options)` — prompt is arg 2, options (carrying
-    // documentFeedback) is arg 7.
-    const calls = vi.mocked(promptDeps.executePromptStream).mock.calls;
+    const calls = vi.mocked(promptDeps.coreConversations.prompt).mock.calls;
     expect(calls).toHaveLength(2);
-
-    const withPayload = calls[0]![7] as {
-      documentFeedback?: DocumentFeedbackPayload;
-    };
-    expect(withPayload.documentFeedback).toEqual(payload);
-    expect(calls[0]![2]).toContain("selected words");
-
-    const withoutPayload = calls[1]![7] as {
-      documentFeedback?: DocumentFeedbackPayload;
-    };
-    expect(withoutPayload.documentFeedback).toBeUndefined();
+    expect(calls[0]![0]).toMatchObject({
+      projectPath: PROJECT_PATH,
+      conversation: { id: "conv-immediate" },
+      body: { documentFeedback: payload },
+    });
+    expect(calls[0]![0].body.prompt).toContain("selected words");
+    expect(calls[1]![0].body.documentFeedback).toBeUndefined();
+    expect(calls[1]![0].body.prompt).toBe("just a normal prompt");
+    expect(promptDeps.executePromptStream).not.toHaveBeenCalled();
   });
 
   it("records a document_feedback block + derived text on the user turn, and a plain text turn without the payload", () => {
-    // The exact transform the immediate-send actor path applies: an empty
-    // transcript text + the payload yields the card-only block, and the
-    // agent-facing prose is derived from the items. (executePromptForMachine
-    // composes exactly these two production functions.)
+    // Immediate feedback keeps the structured card in the transcript and
+    // derives the agent-facing prose from the same items.
     const items = [
       {
         docPath: DOC_PATH,

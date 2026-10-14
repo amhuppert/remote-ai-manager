@@ -9,17 +9,8 @@ import { createCheckpointConversationGateway } from "@/lib/conversation-checkpoi
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createAccessors } from "./accessors";
 import { diffChangedConversationColumns } from "./conversation-row-codec";
-import {
-  createConversationMachineSnapshotsRepo,
-  type ConversationSnapshotOwner,
-} from "./conversation-machine-snapshots-repo";
 import { createConversationsRepo } from "./conversations-repo";
 import { createDocumentCommentsRepo } from "./document-comments-repo";
-import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
-import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
-import { createGraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
-import { createGraphWorkflowResultDeliveriesRepo } from "./graph-workflow-result-deliveries-repo";
-import { createGraphWorkflowPendingArtifactsRepo } from "./graph-workflow-pending-artifacts-repo";
 import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
@@ -141,9 +132,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     conversations: deps.repos?.conversations ?? createConversationsRepo(db),
     projectConversations:
       deps.repos?.projectConversations ?? createProjectConversationsRepo(db),
-    conversationMachineSnapshots:
-      deps.repos?.conversationMachineSnapshots ??
-      createConversationMachineSnapshotsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
     sessionMarkdownDocuments:
@@ -151,20 +139,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       createSessionMarkdownDocumentsRepo(db),
     documentComments:
       deps.repos?.documentComments ?? createDocumentCommentsRepo(db),
-    graphWorkflowEvents:
-      deps.repos?.graphWorkflowEvents ?? createGraphWorkflowEventsRepo(db),
-    graphWorkflowArchivedExecutions:
-      deps.repos?.graphWorkflowArchivedExecutions ??
-      createGraphWorkflowArchivedExecutionsRepo(db),
-    graphWorkflowExecutions:
-      deps.repos?.graphWorkflowExecutions ??
-      createGraphWorkflowExecutionsRepo(db),
-    graphWorkflowResultDeliveries:
-      deps.repos?.graphWorkflowResultDeliveries ??
-      createGraphWorkflowResultDeliveriesRepo(db),
-    graphWorkflowPendingArtifacts:
-      deps.repos?.graphWorkflowPendingArtifacts ??
-      createGraphWorkflowPendingArtifactsRepo(db),
     notifications: deps.repos?.notifications ?? createNotificationsRepo(db),
   };
 
@@ -468,90 +442,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
-  /**
-   * Read one conversation's persisted resume-token snapshot from the
-   * owner-discriminated sidecar. A point read keyed by the composite
-   * `(owner, conversation_id)` primary key — it never enters the write queue, so
-   * it never contends with writers (queue callbacks stay reads-free per Design 3).
-   */
-  function getConversationMachineSnapshot(
-    owner: ConversationSnapshotOwner,
-    conversationId: string,
-  ): unknown | null {
-    const record = repos.conversationMachineSnapshots.get(
-      owner,
-      conversationId,
-    );
-    return record === null ? null : record.snapshot;
-  }
-
-  /**
-   * Upsert one conversation's resume-token snapshot into the sidecar. A short
-   * focused write: the queue callback holds only the single-row upsert — no I/O,
-   * no external await, no O(total-state) work — so the write-queue hold stays
-   * within budget.
-   *
-   * `timed` wraps the queue CALL, not the queue callback: its completion/error
-   * log is a synchronous `appendFileSync` in the production logger, so nesting it
-   * inside the callback would emit that log with the write lock still held,
-   * violating `no-slow-work-in-critical-section`. Because the write queue calls
-   * `release()` in its `finally` before `withWriteQueueSync` resolves, awaiting it
-   * here defers the timing emit until after the lock is released.
-   */
-  async function upsertConversationMachineSnapshot(
-    owner: ConversationSnapshotOwner,
-    conversationId: string,
-    snapshot: unknown,
-  ): Promise<void> {
-    await timed(
-      storeLogger,
-      "state.mutate",
-      { label: "conversationSnapshot.upsert", conversationId },
-      () =>
-        writeQueue.withWriteQueueSync(
-          `conversationSnapshot.upsert[${owner}::${conversationId}]`,
-          () => {
-            repos.conversationMachineSnapshots.upsert(
-              owner,
-              conversationId,
-              snapshot,
-              new Date().toISOString(),
-            );
-          },
-        ),
-    );
-  }
-
-  /**
-   * Delete one conversation's sidecar snapshot row. Parent-row deletes already
-   * cascade their sidecar row in the same transaction; this serves the explicit
-   * `clearConversationSnapshot` path.
-   *
-   * Timing is wrapped OUTSIDE the queue call for the same reason as the upsert
-   * above: the completion log must not perform filesystem I/O while the write
-   * lock is held.
-   */
-  async function deleteConversationMachineSnapshot(
-    owner: ConversationSnapshotOwner,
-    conversationId: string,
-  ): Promise<void> {
-    await timed(
-      storeLogger,
-      "state.mutate",
-      { label: "conversationSnapshot.delete", conversationId },
-      () =>
-        writeQueue.withWriteQueueSync(
-          `conversationSnapshot.delete[${owner}::${conversationId}]`,
-          () => {
-            repos.conversationMachineSnapshots.deleteByConversation(
-              owner,
-              conversationId,
-            );
-          },
-        ),
-    );
-  }
-
   const accessors = createAccessors(core, storeLogger);
   const setters = createSetters(core, { mutateSession }, storeLogger);
 
@@ -572,9 +462,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     mutateConversation,
     mutateProjectConversation,
     createSessionConversation,
-    getConversationMachineSnapshot,
-    upsertConversationMachineSnapshot,
-    deleteConversationMachineSnapshot,
     getProjectSessions: accessors.getProjectSessions,
     getProjectSessionListItems: accessors.getProjectSessionListItems,
     getSession: accessors.getSession,
@@ -602,26 +489,6 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     listProjectPaths: accessors.listProjectPaths,
     getArchivedProjects: accessors.getArchivedProjects,
     getPinnedProjects: accessors.getPinnedProjects,
-    getGraphWorkflowEventsTail: accessors.getGraphWorkflowEventsTail,
-    getGraphWorkflowEventsPage: accessors.getGraphWorkflowEventsPage,
-    findLatestGraphWorkflowContextEvent:
-      accessors.findLatestGraphWorkflowContextEvent,
-    getActiveGraphWorkflowExecution: accessors.getActiveGraphWorkflowExecution,
-    getArchivedGraphWorkflowExecutionById:
-      accessors.getArchivedGraphWorkflowExecutionById,
-    getGraphWorkflowExecutionById: accessors.getGraphWorkflowExecutionById,
-    getGraphWorkflowBoundaryResultAfter:
-      accessors.getGraphWorkflowBoundaryResultAfter,
-    getGraphWorkflowPendingArtifacts:
-      accessors.getGraphWorkflowPendingArtifacts,
-    getGraphWorkflowResultDelivery: accessors.getGraphWorkflowResultDelivery,
-    listPendingGraphWorkflowResultEffects:
-      accessors.listPendingGraphWorkflowResultEffects,
-    listActiveGraphWorkflowExecutions:
-      accessors.listActiveGraphWorkflowExecutions,
-    findGraphWorkflowExecutionById: accessors.findGraphWorkflowExecutionById,
-    listArchivedGraphWorkflowExecutions:
-      accessors.listArchivedGraphWorkflowExecutions,
     createSessionRow: setters.createSessionRow,
     deleteSessionRow: setters.deleteSessionRow,
     retargetChildrenToMain: setters.retargetChildrenToMain,
@@ -652,23 +519,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     setProjectPinned: setters.setProjectPinned,
     setSessionSpawnedFrom: setters.setSessionSpawnedFrom,
     addPlcSpawnedSessionIds: setters.addPlcSpawnedSessionIds,
-    mutateActiveGraphWorkflowExecution:
-      setters.mutateActiveGraphWorkflowExecution,
-    reserveActiveGraphWorkflowExecution:
-      setters.reserveActiveGraphWorkflowExecution,
-    clearGraphWorkflowPendingArtifacts:
-      setters.clearGraphWorkflowPendingArtifacts,
-    archiveActiveGraphWorkflowExecution:
-      setters.archiveActiveGraphWorkflowExecution,
 
     mutateSessionWorkflowLanes: setters.mutateSessionWorkflowLanes,
     mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
-    settleGraphWorkflowResultDeliveryFallback:
-      setters.settleGraphWorkflowResultDeliveryFallback,
-    commitGraphWorkflowMissingOriginFallback:
-      setters.commitGraphWorkflowMissingOriginFallback,
-    markGraphWorkflowResultEffectDelivered:
-      setters.markGraphWorkflowResultEffectDelivered,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
     upsertSessionMarkdownDocuments: setters.upsertSessionMarkdownDocuments,

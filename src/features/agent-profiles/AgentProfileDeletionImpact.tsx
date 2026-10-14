@@ -5,7 +5,6 @@ import { useId } from "react";
 import { StatusChip } from "@/components/ui/StatusChip";
 import type {
   AgentProfileDeletionReport,
-  AgentProfileReferenceHolder,
   AgentProfileRunTemplateHolder,
 } from "@/lib/agent-profiles/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -18,13 +17,12 @@ export interface AgentProfileDeletionImpactProps {
   };
 }
 
-type Holder = AgentProfileReferenceHolder | AgentProfileRunTemplateHolder;
+type Holder = AgentProfileRunTemplateHolder;
 
 function holderKey(holder: Holder): string {
   const scope =
     holder.scope.kind === "global" ? "global" : holder.scope.projectPath;
-  const dormant = "dormant" in holder ? holder.dormant : false;
-  return `${scope}:${holder.id}:${holder.contextId ?? ""}:${dormant}`;
+  return `${scope}:${holder.id}:${holder.contextId ?? ""}`;
 }
 
 function HolderRow({
@@ -51,12 +49,6 @@ function HolderRow({
         place !== undefined && (
           <span className="text-text-tertiary">{place}</span>
         )
-      )}
-      {/* A dormant holder is configuration nothing currently invokes — it is
-          listed because re-enabling the cohort would run it, and by then the
-          library lookup that could have caught the dangling reference is gone. */}
-      {"dormant" in holder && holder.dormant && (
-        <StatusChip tone="neutral">Dormant</StatusChip>
       )}
     </li>
   );
@@ -108,7 +100,7 @@ export default function AgentProfileDeletionImpact({
   if (preview.error !== null) {
     return (
       <p role="alert" className="m-0 font-mono text-[0.72rem] text-amber">
-        Could not check which workflows reference this profile:{" "}
+        Could not check which run templates reference this profile:{" "}
         {getErrorMessage(preview.error)}. Deletion is unavailable until the
         check succeeds — the delete runs the same check and would refuse.
       </p>
@@ -119,21 +111,18 @@ export default function AgentProfileDeletionImpact({
     return (
       <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
         {preview.isPending
-          ? "Checking which workflows reference this profile…"
+          ? "Checking which run templates reference this profile…"
           : "References have not been checked."}
       </p>
     );
   }
 
-  const { definitions, templates, runTemplates, workflowDefaults } =
-    preview.report.savedReferenceEnumeration;
-  const holders = [...definitions, ...templates];
+  const { runTemplates } = preview.report.savedReferenceEnumeration;
 
-  if (holders.length === 0 && runTemplates.length === 0 && !workflowDefaults) {
+  if (runTemplates.length === 0) {
     return (
       <p className="m-0 font-mono text-[0.72rem] text-text-tertiary">
-        No saved workflow, template, run template, or global default references
-        this profile.
+        No saved run template references this profile.
       </p>
     );
   }
@@ -144,13 +133,6 @@ export default function AgentProfileDeletionImpact({
         These saved artifacts still reference this profile, and may need
         updating before they launch:
       </p>
-      {holders.length > 0 && (
-        <HolderList caption="Graph workflows referencing this profile">
-          {holders.map((holder) => (
-            <HolderRow key={holderKey(holder)} holder={holder} />
-          ))}
-        </HolderList>
-      )}
       {runTemplates.length > 0 && (
         <HolderList caption="Run templates referencing this profile">
           {runTemplates.map((holder) => (
@@ -161,11 +143,6 @@ export default function AgentProfileDeletionImpact({
             />
           ))}
         </HolderList>
-      )}
-      {workflowDefaults && (
-        <p className="m-0 font-mono text-[0.72rem] text-text-secondary">
-          The global workflow defaults also reference it.
-        </p>
       )}
     </section>
   );

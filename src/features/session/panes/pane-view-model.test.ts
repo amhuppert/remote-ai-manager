@@ -24,7 +24,6 @@ function makeConversation(
     worktreePath: "/repos/command-center/.worktrees/x",
     lastActivitySummary: null,
     unread: false,
-    pendingApproval: null,
     backgroundActivity: null,
     sessionName: "tabs-split",
     branchName: "csm/tabs-split",

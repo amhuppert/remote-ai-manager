@@ -8,8 +8,6 @@ vi.mock("@/lib/logging", () => ({
     error: vi.fn(),
   }),
 }));
-
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import {
@@ -100,7 +98,6 @@ beforeEach(() => {
   authoring = createAuthoringService(deps);
   reviewDeps = {
     ...deps,
-    delivery: createSpecDeliveryRepo(db),
   };
   reviewing = createReviewService(reviewDeps);
 });
@@ -263,7 +260,6 @@ async function projectionOf(spec: Spec, revisionId: string) {
       importBaselineCitationState: loaded.importBaselineCitationState,
       approvals: reviewRepo.findApprovalsBySpecId(spec.id),
       admissions: reviewRepo.findGateAdmissionsBySpecId(spec.id),
-      currentExecution: null,
       revisionNumberById: new Map(
         revisions.map((candidate) => [candidate.id, candidate.number]),
       ),

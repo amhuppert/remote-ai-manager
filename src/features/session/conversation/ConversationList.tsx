@@ -10,7 +10,6 @@ import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { sessionKeys } from "@/lib/sessions/query-keys";
-import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   useCreateConversationMutation,
@@ -51,7 +50,6 @@ import Topbar from "@/components/Topbar";
 import WorkRailMain from "@/components/WorkRailMain";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SessionTicketIndicator from "@/components/SessionTicketIndicator";
-import GraphWorkflowCard from "./GraphWorkflowCard";
 import { SessionRuns } from "./SessionRuns";
 import SessionPromotionCandidateCount from "./SessionPromotionCandidateCount";
 import SessionOverview, { SessionOverviewPending } from "./SessionOverview";
@@ -73,10 +71,6 @@ export default function ConversationList({
   // --- TanStack Query ---
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const conversationsQuery = useConversationsQuery(projectName, sessionName);
-  const graphWorkflowExecutionQuery = useGraphWorkflowExecutionQuery(
-    projectName,
-    sessionName,
-  );
 
   // --- Zustand ---
   const showArchived = useShowArchivedConversations();
@@ -119,7 +113,6 @@ export default function ConversationList({
           projectName,
           sessionName,
           session,
-          graphWorkflowExecution: graphWorkflowExecutionQuery.data ?? null,
         }),
       );
       setCopyError(null);
@@ -132,7 +125,7 @@ export default function ConversationList({
       setCopyError("Could not copy session context.");
       log.warn("session_overview.copy_failed", { projectName, sessionName });
     }
-  }, [session, projectName, sessionName, graphWorkflowExecutionQuery.data]);
+  }, [session, projectName, sessionName]);
 
   // Identity is a per-creation choice, so the one-click control (and its
   // hotkey) stays on the Standard Agent the server resolves for an omitted
@@ -386,25 +379,6 @@ export default function ConversationList({
                   projectName={projectName}
                   sessionName={sessionName}
                 />
-              }
-              workflow={
-                graphWorkflowExecutionQuery.isError ? (
-                  <p role="alert" className="text-[0.78rem] text-red-text">
-                    Could not load workflow.
-                    <Button
-                      size="sm"
-                      onClick={() => void graphWorkflowExecutionQuery.refetch()}
-                    >
-                      Try again
-                    </Button>
-                  </p>
-                ) : (
-                  <GraphWorkflowCard
-                    projectName={projectName}
-                    sessionName={sessionName}
-                    execution={graphWorkflowExecutionQuery.data ?? null}
-                  />
-                )
               }
               runs={
                 <SessionRuns

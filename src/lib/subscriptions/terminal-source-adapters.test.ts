@@ -6,10 +6,6 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { createSubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
-import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
-import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
-import { createGraphWorkflowBoundaryEvent } from "@/lib/workflow-graph/boundary-event-projection";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import {
   validationRunRecordSchema,
   type ValidationRunStatus,
@@ -26,10 +22,6 @@ beforeEach(() => {
 afterEach(() => fixture.close());
 function reader() {
   return createTerminalSourceReader({
-    workflows: createGraphWorkflowExecutionsRepo(fixture.db),
-    archivedWorkflows: fixture.graphWorkflowArchivedExecutions,
-    workflowEvents: fixture.graphWorkflowEvents,
-    resultDeliveries: createGraphWorkflowResultDeliveriesRepo(fixture.db),
     validations: createValidationRunsRepo(fixture.db),
     jobs: createJobsRepo(fixture.db),
     queries: createSubscriptionSourceQueriesRepo(fixture.db),
@@ -70,93 +62,6 @@ function validation(runId: string, status: ValidationRunStatus) {
   );
 }
 describe("cursor-free terminal source projections", () => {
-  it("uses the frozen canonical workflow boundary for finite terminal delivery", async () => {
-    fixture.seedSession(projectPath, "session");
-    const execution = createWorkflowExecution({
-      id: "canonical",
-      status: "halted",
-    });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      execution,
-      execution.startedAt,
-    );
-    const at = "2026-09-30T12:00:00.000Z";
-    const record = fixture.graphWorkflowEvents.append(
-      projectPath,
-      "session",
-      execution.id,
-      at,
-      {
-        occurredAt: at,
-        preReset: false,
-        event: createGraphWorkflowBoundaryEvent({
-          projectPath,
-          sessionName: "session",
-          execution,
-          boundaryKind: "halt",
-        }),
-      },
-    );
-    const payload = {
-      boundaryKind: "halt",
-      status: "halted",
-      name: "Frozen terminal result",
-      outputs: {
-        kind: "declared_outputs",
-        byContext: { planning: { result: "retained output" } },
-      },
-    };
-    createGraphWorkflowResultDeliveriesRepo(fixture.db).record({
-      executionId: execution.id,
-      boundarySeq: record.id,
-      projectPath,
-      sessionName: "session",
-      originConversationId: recipient.conversationId,
-      payload,
-      recordedAt: at,
-      state: "pending",
-      attemptId: null,
-      attemptCount: 0,
-      deliveredAt: null,
-      effectsDeliveredAt: null,
-    });
-    const terminal = await reader()(recipient, {
-      kind: "workflow",
-      id: execution.id,
-    });
-    expect(terminal).toMatchObject({
-      kind: "terminal",
-      fact: {
-        occurrenceId: String(record.id),
-        eventKind: "graph-workflow-boundary:halt",
-        sourceTitle: "Frozen terminal result",
-      },
-    });
-    if (terminal.kind !== "terminal") throw Error("Expected terminal result");
-    expect(JSON.parse(terminal.fact.sourceText ?? "null")).toEqual(payload);
-  });
-  it("uses observed time for terminal rows without a recorded finish time", async () => {
-    fixture.seedSession(projectPath, "session");
-    const execution = createWorkflowExecution({
-      id: "unknown-finish",
-      status: "halted",
-      completedAt: null,
-    });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      execution,
-      execution.startedAt,
-    );
-    expect(
-      await reader()(recipient, { kind: "workflow", id: "unknown-finish" }),
-    ).toMatchObject({
-      kind: "terminal",
-      fact: { occurredAt: "2026-09-30T12:20:00.000Z" },
-    });
-  });
   it("normalizes SQLite UTC job finish timestamps for deadline comparisons", async () => {
     const jobs = createJobsRepo(fixture.db);
     jobs.createJobRecord({
@@ -208,48 +113,6 @@ describe("cursor-free terminal source projections", () => {
         { ...recipient, projectPath: "/other" },
         { kind: "validation", id: "passed" },
       ),
-    ).toEqual({ kind: "missing" });
-  });
-  it("treats halted as terminal and paused as pending and retrieves exact archived executions without boundary history", async () => {
-    fixture.seedSession(projectPath, "session");
-    const paused = createWorkflowExecution({ id: "paused", status: "paused" });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      paused,
-      paused.startedAt,
-    );
-    expect(
-      await reader()(recipient, { kind: "workflow", id: "paused" }),
-    ).toEqual({ kind: "pending", status: "paused" });
-    for (const status of ["halted", "completed", "aborted"] as const) {
-      const execution = createWorkflowExecution({
-        id: status,
-        status,
-        completedAt: "2026-09-30T12:01:00.000Z",
-      });
-      fixture.graphWorkflowArchivedExecutions.insert({
-        projectPath,
-        sessionName: "session",
-        executionId: status,
-        archivedAt: "2026-09-30T12:02:00.000Z",
-        status,
-        startedAt: execution.startedAt,
-        completedAt: execution.completedAt,
-        execution,
-      });
-      expect(
-        await reader()(recipient, { kind: "workflow", id: status }),
-      ).toMatchObject({
-        kind: "terminal",
-        fact: {
-          outcome: status,
-          retrievalHandle: expect.stringContaining("workflow wait"),
-        },
-      });
-    }
-    expect(
-      await reader()(recipient, { kind: "workflow", id: "successor" }),
     ).toEqual({ kind: "missing" });
   });
   it("keeps every git actor outcome terminal, including ready-to-land and discarded", async () => {

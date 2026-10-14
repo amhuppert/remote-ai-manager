@@ -46,7 +46,6 @@ export interface NeedsYouItem {
 }
 
 function conversationLabel(row: ActiveConversation): string {
-  if (row.pendingApproval !== null) return "Approval required";
   if (row.status === "waiting_for_input") return "Input requested";
   return "Unread update";
 }
@@ -59,19 +58,6 @@ function conversationTitle(row: ActiveConversation): string {
 }
 
 function conversationDetail(row: ActiveConversation): string {
-  if (row.pendingApproval !== null) {
-    const context =
-      row.pendingApproval.contextTitle ??
-      row.pendingApproval.workflowName ??
-      "Workflow";
-    const completed = row.pendingApproval.tasksCompleted;
-    const total = row.pendingApproval.tasksTotal;
-    const progress =
-      completed !== null && total !== null
-        ? ` · ${completed}/${total} tasks complete`
-        : "";
-    return `${context} is awaiting approval${progress}`;
-  }
   return (
     row.pendingQuestion?.trim() ||
     row.lastActivitySummary?.trim() ||

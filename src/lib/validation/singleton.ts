@@ -8,24 +8,12 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import {
-  getActiveGraphWorkflowExecution,
   getConversation,
   getProjectConversation,
   getSession,
 } from "@/lib/state-store";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { getStateDb } from "@/lib/state-store/store";
-import {
-  DEFAULT_AGENT_VALIDATION_CONFIG,
-  type GraphWorkflowCommandSelector,
-} from "@/lib/workflow-graph/config-schemas";
-import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
-import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
-import { expandCommandSelector } from "@/lib/workflow-graph/resolve-config";
-import type {
-  GraphWorkflowAgentSessionState,
-  GraphWorkflowExecution,
-} from "@/lib/workflow-graph/schemas";
 import { spawnValidation } from "./process-runner";
 import {
   globalValidationConfigSchema,
@@ -61,52 +49,6 @@ function ambiguous(reason: string): ResolvedValidationCaller {
   return { kind: "ambiguous", reason };
 }
 
-type ConversationLaneLookup =
-  | { kind: "none" }
-  | { kind: "unique"; lane: GraphWorkflowAgentSessionState }
-  | { kind: "ambiguous" };
-
-function findLaneForConversation(
-  execution: GraphWorkflowExecution,
-  conversationId: string,
-): ConversationLaneLookup {
-  const matches: GraphWorkflowAgentSessionState[] = [];
-  for (const perContext of Object.values(execution.laneStates)) {
-    for (const lane of Object.values(perContext)) {
-      if (lane.workflowConversationId === conversationId) matches.push(lane);
-    }
-  }
-  if (matches.length === 0) return { kind: "none" };
-  if (matches.length > 1) return { kind: "ambiguous" };
-  return { kind: "unique", lane: matches[0]! };
-}
-
-/**
- * Whether the execution has spawned no lane conversation at all — a run parked
- * before its first iteration (awaiting definition approval, prelaunch) or a
- * legacy non-spec run. Lane classification has nothing to classify in that
- * state, which is what makes the owner bypass necessary rather than a loophole:
- * as soon as ONE lane exists, the ordinary fail-closed rules apply again.
- */
-function hasNoLaneConversations(execution: GraphWorkflowExecution): boolean {
-  for (const perContext of Object.values(execution.laneStates)) {
-    if (Object.keys(perContext).length > 0) return false;
-  }
-  return true;
-}
-
-/**
- * Expand a selector for executions persisted before explicit command
- * snapshots were introduced. Current executions authorize from the snapshot
- * itself so registry edits cannot broaden their running lanes.
- */
-function expandLanePolicy(
-  selector: GraphWorkflowCommandSelector,
-  registryNames: readonly string[],
-): readonly string[] {
-  return expandCommandSelector(selector, [...registryNames]).commands;
-}
-
 export interface ProductionValidationResolverDeps {
   /** The run seat this conversation is bound to, or null for any other conversation. */
   seatWorkplace(
@@ -116,10 +58,6 @@ export interface ProductionValidationResolverDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  getActiveGraphWorkflowExecution(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution | null>;
   readRepoValidation(projectPath: string): Promise<RepoValidationConfig | null>;
 }
 
@@ -128,8 +66,6 @@ const productionResolverDeps: ProductionValidationResolverDeps = {
     supervisedSeatWorkplace(conversationId),
   getSession: (projectPath, sessionName) =>
     getSession(projectPath, sessionName),
-  getActiveGraphWorkflowExecution: (projectPath, sessionName) =>
-    getActiveGraphWorkflowExecution(projectPath, sessionName),
   readRepoValidation: async (projectPath) =>
     (await readRepoConfig(projectPath))?.validation ?? null,
 };
@@ -139,8 +75,6 @@ export function createProductionValidationCallerResolver(
 ): {
   resolveCaller(ref: ValidationCallerRef): Promise<ResolvedValidationCaller>;
 } {
-  const targetResolver = createExecutionTargetResolver();
-
   /**
    * A run seat validates where it works, with the commands frozen for it; a
    * seat that cannot be placed is refused, never sent to the session worktree.
@@ -149,8 +83,6 @@ export function createProductionValidationCallerResolver(
     ref: ValidationCallerRef,
     seat: SupervisedSeatWorkplace,
   ): Promise<ResolvedValidationCaller> {
-    if (ref.claimedWorkflow)
-      return ambiguous("a run seat holds no graph workflow identity");
     if (
       seat.projectPath !== ref.projectPath ||
       seat.sessionName !== (ref.sessionName ?? null)
@@ -185,11 +117,6 @@ export function createProductionValidationCallerResolver(
       }
       const sessionName = ref.sessionName ?? null;
       if (!sessionName) {
-        if (ref.claimedWorkflow) {
-          return ambiguous(
-            "workflow identity was claimed outside any session scope",
-          );
-        }
         // Project conversation: validate the repo root itself.
         return {
           kind: "project",
@@ -205,184 +132,12 @@ export function createProductionValidationCallerResolver(
         return ambiguous(`session "${sessionName}" was not found`);
       }
 
-      const conversationId = ref.conversationId ?? null;
-      const execution = await deps.getActiveGraphWorkflowExecution(
-        ref.projectPath,
-        sessionName,
-      );
-      if (!execution) {
-        if (ref.claimedWorkflow) {
-          return ambiguous(
-            "claimed workflow identity does not match an active execution",
-          );
-        }
-        return {
-          kind: "session",
-          worktreePath: session.worktreePath,
-          sessionName,
-          branchName: session.branchName,
-          targetBranch: session.targetBranch,
-        };
-      }
-
-      // The lease owns validation ownership too (D7 decision D3): a run that no
-      // longer holds it has released its claim on the session's validation.
-      // Such a row is normally already archived — this is the legacy/
-      // pre-normalization case — and gating callers on it would keep a finished
-      // run blocking the session forever. A run that still holds the lease,
-      // including a resumable halt, falls through to the fail-closed lane rules
-      // below, because it can still resume. Reading the whole record rather
-      // than the status is what makes an abandoned or non-resumably halted run
-      // stop blocking here the moment it stops blocking a launch.
-      if (
-        !holdsExecutionLease(
-          execution.status,
-          execution.haltReason,
-          execution.abandonment,
-        )
-      ) {
-        if (ref.claimedWorkflow) {
-          return ambiguous(
-            "claimed workflow identity does not match an active execution",
-          );
-        }
-        return {
-          kind: "session",
-          worktreePath: session.worktreePath,
-          sessionName,
-          branchName: session.branchName,
-          targetBranch: session.targetBranch,
-        };
-      }
-
-      if (!conversationId) {
-        return ambiguous(
-          "an active execution requires a conversation id for lane policy resolution",
-        );
-      }
-      const lookup = findLaneForConversation(execution, conversationId);
-      if (lookup.kind === "ambiguous") {
-        return ambiguous(
-          `conversation "${conversationId}" maps to multiple execution lanes`,
-        );
-      }
-      if (lookup.kind === "none") {
-        // Zero-lane bypass. An execution that has spawned no lane cannot
-        // classify anyone, yet it holds the slot — the state that stranded
-        // planners before. Exactly ONE identity is admitted: the
-        // ownerConversationId captured server-side at the start seam. Everyone
-        // else, and every legacy execution whose owner is null, stays refused,
-        // so the bypass can never widen into "unowned means open".
-        if (
-          hasNoLaneConversations(execution) &&
-          !ref.claimedWorkflow &&
-          execution.ownerConversationId !== null &&
-          execution.ownerConversationId === conversationId
-        ) {
-          return {
-            kind: "session",
-            worktreePath: session.worktreePath,
-            sessionName,
-            branchName: session.branchName,
-            targetBranch: session.targetBranch,
-          };
-        }
-        return ambiguous(
-          `conversation "${conversationId}" does not map to a lane in the active execution`,
-        );
-      }
-      const lane = lookup.lane;
-
-      // Claimed graph identity must match server-side state exactly;
-      // anything missing, stale, or mismatched fails closed.
-      if (ref.claimedWorkflow) {
-        if (
-          ref.claimedWorkflow.executionId !== execution.id ||
-          ref.claimedWorkflow.contextId !== lane.contextId ||
-          (ref.claimedWorkflow.role !== undefined &&
-            ref.claimedWorkflow.role !== lane.lane)
-        ) {
-          return ambiguous(
-            "claimed workflow identity is stale or mismatched against execution state",
-          );
-        }
-      }
-
-      const context = execution.workingDefinition.executionContexts.find(
-        (candidate) => candidate.id === lane.contextId,
-      );
-      if (!context) {
-        return ambiguous(
-          `lane context "${lane.contextId}" is not present in the execution definition`,
-        );
-      }
-
-      // The context state's lane assignment is the authoritative source for
-      // where this lane executes (an execution lane's includedContextIds
-      // fills in only as contexts COMMIT, so an actively running lane may
-      // list none). The canonical resolver reads it and throws on
-      // inconsistent state — worktree targeting fails closed rather than
-      // silently validating the session worktree.
-      let worktreePath: string;
-      let branchName: string;
-      let targetBranch: string;
-      try {
-        const target = targetResolver.resolve({
-          execution,
-          contextId: lane.contextId,
-          session,
-        });
-        worktreePath = target.worktreePath;
-        branchName = target.branchName;
-        // The diff base is whatever the lane's branch merges into: a lane
-        // worktree targets the session branch, while a session-isolated
-        // context IS the session branch — pointing TARGET_BRANCH at itself
-        // would give merge-base-scoped validation an empty diff.
-        targetBranch =
-          target.isolation === "worktree"
-            ? session.branchName
-            : session.targetBranch;
-      } catch (err) {
-        return ambiguous(
-          `execution target for lane context "${lane.contextId}" did not resolve: ${getErrorMessage(err)}`,
-        );
-      }
-
-      const repoValidation = await deps.readRepoValidation(ref.projectPath);
-      const registryNames = Object.keys(repoValidation?.commands ?? {});
-      const snapshot = context.agentValidation;
-      const rolePolicy =
-        lane.lane === "implementer"
-          ? snapshot?.implementer
-          : snapshot?.contextValidator;
-      const selector =
-        rolePolicy?.value ??
-        (lane.lane === "implementer"
-          ? DEFAULT_AGENT_VALIDATION_CONFIG.implementer
-          : DEFAULT_AGENT_VALIDATION_CONFIG.contextValidator);
-      // An enveloped context's whole-repo GATE is its lane's join barrier, so
-      // the per-context script gate reports nothing here. The agent allowlist
-      // is a separate tier and is unaffected: script-gate selection and agent
-      // permissions cascade independently so an implementer doing TDD can
-      // still verify its own work, and silently discarding a resolved
-      // selection would strand a configured command as a runtime no-op.
-      const scriptGateCommands =
-        context.placement.mode === "full"
-          ? (context.scriptValidator.commands ?? [])
-          : [];
-
       return {
-        kind: "graph_lane",
-        worktreePath,
+        kind: "session",
+        worktreePath: session.worktreePath,
         sessionName,
-        branchName,
-        targetBranch,
-        executionId: execution.id,
-        contextId: lane.contextId,
-        role: lane.lane,
-        allowedCommands:
-          rolePolicy?.commands ?? expandLanePolicy(selector, registryNames),
-        scriptGateCommands,
+        branchName: session.branchName,
+        targetBranch: session.targetBranch,
       };
     },
   };

@@ -110,34 +110,6 @@ describe("publishEvent", () => {
     expect(envelopes).toEqual([]);
   });
 
-  it("does not manufacture a lifecycle envelope for graph-workflow-lane-status (wire delivery only)", () => {
-    const wire = vi.fn<(event: SSEEvent) => void>();
-    setPublicationBroadcastForTesting(wire);
-    const envelopes: StatusBusEnvelope[] = [];
-    const unsubscribe = subscribeLifecycle((envelope) => {
-      envelopes.push(envelope);
-    });
-
-    const outcome = publishEvent({
-      type: "graph-workflow-lane-status",
-      projectName: "p",
-      sessionName: "s",
-      executionId: "exec-lane-1",
-      laneId: "lane-1",
-      kind: "worktree",
-      status: "active",
-      branchName: "csm/lane-1",
-      worktreePath: null,
-      includedContextIds: [],
-      lastCommittingContextId: null,
-    });
-    unsubscribe();
-
-    expect(outcome.delivered).toBe(true);
-    expect(wire).toHaveBeenCalledTimes(1);
-    expect(envelopes).toEqual([]);
-  });
-
   it("runs each broadcast under a fresh sse:broadcast:<type> root trace, even inside an existing trace scope", () => {
     const captured: Array<TraceContext | null> = [];
     const wire = vi.fn<(event: SSEEvent) => void>(() => {

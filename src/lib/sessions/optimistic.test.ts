@@ -58,7 +58,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
     ...overrides,
   };
@@ -159,17 +158,16 @@ describe("executeOptimisticWorkflow", () => {
     });
   });
 
-  it("does not dispatch the merge while a graph workflow holds the session lease", async () => {
+  it("does not dispatch the merge while a current run works in the session", async () => {
     const deps = createTestDeps({
       evaluateSessionMergeAdmission: vi.fn(async () => ({
         admitted: false as const,
         refusal: {
-          code: "GRAPH_WORKFLOW_ACTIVE" as const,
-          executionId: "execution-1",
-          status: "running" as const,
-          remedy: "inspect_or_pause" as const,
+          code: "RUN_CURRENT" as const,
+          runId: "run-1",
+          progress: "running" as const,
           message:
-            "Graph workflow execution execution-1 is running. Complete or abort it before merging this session.",
+            "Run run-1 is running. Let it finish or cancel it before merging this session.",
         },
       })),
     });
@@ -181,7 +179,7 @@ describe("executeOptimisticWorkflow", () => {
       expect.objectContaining({
         type: "merge-failed",
         message: expect.stringContaining(
-          "Complete or abort it before merging this session.",
+          "Let it finish or cancel it before merging this session.",
         ),
       }),
     );

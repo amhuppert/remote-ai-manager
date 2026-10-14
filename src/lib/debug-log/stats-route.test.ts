@@ -72,7 +72,6 @@ const BASE_SESSION: SessionState = {
   tddEnabled: false,
   targetBranch: "main",
   parentSessionName: null,
-  graphWorkflowExecution: null,
   referenceDocuments: [],
 };
 

@@ -29,9 +29,7 @@ import {
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import {
   createDevServerTargetResolver,
-  DevServerTargetError,
   type ResolvedDevServerTarget,
-  type DevServerTargetResolver,
 } from "./target-resolver";
 
 const SESSION_WORKTREE = "/repos/project/.worktrees/s1";
@@ -84,19 +82,12 @@ function makeHandlers(
       resolve: vi.fn(
         async ({ target }): Promise<ResolvedDevServerTarget> => ({
           kind: target.kind,
-          worktreePath:
-            target.kind === "workflow-context"
-              ? LANE_WORKTREE
-              : SESSION_WORKTREE,
-          branchName:
-            target.kind === "workflow-context" ? "lane-branch" : "s1-branch",
-          isolation:
-            target.kind === "workflow-context" ? "worktree" : "session",
-          executionId:
-            target.kind === "workflow-context" ? target.executionId : null,
-          contextId:
-            target.kind === "workflow-context" ? target.contextId : null,
-          laneId: target.kind === "workflow-context" ? "lane-1" : null,
+          worktreePath: SESSION_WORKTREE,
+          branchName: "s1-branch",
+          isolation: "session",
+          executionId: null,
+          contextId: null,
+          laneId: null,
         }),
       ),
     },
@@ -276,74 +267,6 @@ describe("dev-server route handlers", () => {
     });
   });
 
-  it("GET lists only the server-owned workflow context target", async () => {
-    const service = makeService();
-    const { handlers } = makeHandlers(service);
-
-    const response = await handlers.GET(
-      new Request(
-        "http://cc.test/dev-servers?executionId=execution-1&contextId=ctx-1",
-      ),
-      context({ name: "project", session: "s1" }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(service.list).toHaveBeenCalledWith({
-      projectPath: "/repos/project",
-      sessionName: "s1",
-      worktreePath: LANE_WORKTREE,
-    });
-  });
-
-  it("START spawns only in the server-owned workflow context target", async () => {
-    const service = makeService();
-    const { handlers } = makeHandlers(service);
-
-    const response = await handlers.START(
-      new Request(
-        "http://cc.test/dev-servers/web/start?executionId=execution-1&contextId=ctx-1",
-        { method: "POST" },
-      ),
-      context({ name: "project", session: "s1", serverName: "web" }),
-    );
-
-    expect(response.status).toBe(202);
-    expect(service.ensure).toHaveBeenCalledWith({
-      projectPath: "/repos/project",
-      sessionName: "s1",
-      serverName: "web",
-      wait: false,
-      worktreePath: LANE_WORKTREE,
-    });
-  });
-
-  it("STOP looks up and stops only the server-owned workflow context target", async () => {
-    const service = makeService();
-    const { handlers, deps } = makeHandlers(service);
-
-    const response = await handlers.STOP(
-      new Request(
-        "http://cc.test/dev-servers/web/stop?executionId=execution-1&contextId=ctx-1",
-        { method: "POST" },
-      ),
-      context({ name: "project", session: "s1", serverName: "web" }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(deps.getServer).toHaveBeenCalledWith({
-      projectPath: "/repos/project",
-      sessionName: "s1",
-      worktreePath: LANE_WORKTREE,
-      serverName: "web",
-    });
-    expect(deps.stopServer).toHaveBeenCalledWith({
-      projectPath: "/repos/project",
-      sessionName: "s1",
-      worktreePath: LANE_WORKTREE,
-      serverName: "web",
-    });
-  });
-
   it("rejects a partial workflow target before invoking the service", async () => {
     const service = makeService();
     const { handlers } = makeHandlers(service);
@@ -378,35 +301,6 @@ describe("dev-server route handlers", () => {
     expect(service.list).not.toHaveBeenCalled();
   });
 
-  it("rejects a stale workflow target before invoking the service", async () => {
-    const service = makeService();
-    const targetResolver: DevServerTargetResolver = {
-      resolve: vi.fn(async () => {
-        throw new DevServerTargetError(
-          "WORKFLOW_EXECUTION_NOT_ACTIVE",
-          "stale workflow execution",
-          409,
-          "Run `cctl workflow status`.",
-        );
-      }),
-    };
-    const { handlers } = makeHandlers(service, { targetResolver });
-
-    const response = await handlers.GET(
-      new Request(
-        "http://cc.test/dev-servers?executionId=stale&contextId=ctx-1",
-      ),
-      context({ name: "project", session: "s1" }),
-    );
-
-    expect(response.status).toBe(409);
-    expect(await json(response)).toMatchObject({
-      code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
-      instruction: "Run `cctl workflow status`.",
-    });
-    expect(service.list).not.toHaveBeenCalled();
-  });
-
   it("refuses a run seat working in a lane, named by its agent identity, before invoking the service", async () => {
     const service = makeService();
     const targetResolver = createDevServerTargetResolver({
@@ -419,7 +313,6 @@ describe("dev-server route handlers", () => {
           createdAt: "2026-01-01T00:00:00.000Z",
           lastActivityAt: "2026-01-01T00:00:00.000Z",
         }),
-      getActiveGraphWorkflowExecution: async () => null,
       directoryExists: async () => true,
       seatWorkplace: async (conversationId) =>
         conversationId === "lane-seat"

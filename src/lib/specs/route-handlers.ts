@@ -1,14 +1,4 @@
-import { specDeliveryBasisSchema } from "./schemas";
-import type { DeliveryApprovalService } from "./delivery-approval";
-import type { DeliveryReviewService } from "./delivery-review-service";
-import type { DeliveryContinuationService } from "./delivery-continuation";
-import type { DeliveryReviewView } from "./delivery-review-schemas";
-import {
-  acceptanceReviewRequestSchema,
-  deliveryContinuationRequestSchema,
-  deliveryReplacementRequestSchema,
-  deliveryApprovalRequestSchema,
-} from "./delivery-review-schemas";
+import type { SpecAbandonmentService } from "./spec-abandonment";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -23,12 +13,6 @@ import {
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import { PersistenceError } from "@/lib/shared/errors";
-import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
-import {
-  createSpecDeliveryRepo,
-  type SpecDeliveryRepo,
-} from "@/lib/state-store/spec-delivery-repo";
-import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -42,7 +26,6 @@ import {
 } from "@/lib/state-store/specs-repo";
 import { getStateDb } from "@/lib/state-store/store";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/spec-bridge";
 
 import { draftAuthoringSequence } from "./authoring-sequence";
 import {
@@ -72,24 +55,8 @@ import {
   returnToRequirementsInputSchema,
   type AuthoringService,
 } from "./authoring-service";
-import { isEarlierMergedDelivery } from "./delivery-history";
-import { findDeliveryVerdictForExecution } from "./delivery-verdict-identity";
-import type { DeliveryPlanService } from "./delivery-plan-service";
-import {
-  deliveryPlanStatus,
-  deliveryPlanEditRequestSchema,
-  deliveryPlanOpenRequestSchema,
-  deliveryPlanPreviewRequestSchema,
-  deliveryPlanAbandonRequestSchema,
-  deliveryPlanReopenRequestSchema,
-  deliveryPlanCommentRequestSchema,
-  deliveryPlanReaffirmBatchRequestSchema,
-  deliveryPlanSignOffRequestSchema,
-} from "./delivery-plan-views";
 import { DRAFT_HEALTH_TOP_FINDINGS, draftHealth } from "./draft-health";
-import type { EvidenceService } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
-import type { LinkedSpecExecutionBindingV2 } from "./execution-binding";
 import {
   loadSpecExportState,
   renderVerifiedCanonicalBundle,
@@ -99,19 +66,11 @@ import {
   type IntegrityReport,
 } from "./export";
 import {
-  type ExecutionService,
-  type ReconciledSpecExecution,
-  type SpecWorkflowCleanupTarget,
-} from "./execution-service";
-import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
-import { nativeSddSeedSourceSummary } from "./execution-seed-source";
-import {
   createApprovalApplicability,
   type ApprovalApplicability,
 } from "./approval-applicability";
 import {
   approvalHeld,
-  currentExecution,
   elementHandle,
   latestRevision,
   parseProvenance,
@@ -146,24 +105,15 @@ import {
   LinksServiceError,
   graduateTicketInputSchema,
   linkTicketInputSchema,
-  materializeApprovedTasksInputSchema,
   promoteConversationInputSchema,
   type LinksService,
   type LinkedTicketReadThrough,
 } from "./links-service";
-import { loadDeliveryDelta } from "./delivery-delta-query";
 import type { ImportService } from "./import-service";
 import type { LintFinding } from "./lint";
-import type { SpecMeasuresReport } from "./measures";
-import { createMeasuresQuery } from "./measures-query";
 import {
-  projectDeliveryDisplay,
   projectRequirementStatus,
   projectSpecPhase,
-  projectTaskWorkStatus,
-  type DeliveryCriterion,
-  type IdentifiedDeliveryCriterion,
-  type RequirementStatusInput,
   type SpecPhaseProjection,
 } from "./phase";
 import { revisionReviewHash } from "./review-hash";
@@ -188,7 +138,6 @@ import {
   proposeAssumptionInputSchema,
   mutateAssumptionCitationInputSchema,
   requestApprovalInputSchema,
-  grantGateApprovalInputSchema,
   withdrawDraftInputSchema,
   replyToReviewThreadInputSchema,
   resolveReviewThreadInputSchema,
@@ -199,15 +148,12 @@ import {
   withdrawAttentionRecordInputSchema,
   type ReviewService,
 } from "./review-service";
-import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
-import { isWaiverValidForExecution } from "./waiver-staleness";
 import { projectSpecComment } from "./comment-projection";
 import {
   assembleSpecCommentThreads,
   summarizeSpecComments,
 } from "./comment-threads";
 import type {
-  CriterionDeliveryProjection,
   DraftReviewView,
   RemainingAuthoringSequence,
   SpecAssumptionView,
@@ -218,22 +164,17 @@ import type {
   SpecRevisionSnapshotView,
   SpecShowOutlineView,
   SpecEditContextView,
-  SpecExecutionView,
   SpecGateAdmissionView,
   SpecImportRecordView,
   SpecSearchHit,
   SpecSectionView,
-  SpecStartedExecutionView,
-  SpecStatusExecution,
   SpecStatusView as PublishedSpecStatusView,
 } from "./view-schemas";
 import {
   actorProvenanceSchema,
   importBundleSchema,
-  specCriterionDispositionSchema,
   specAuthoringStageSchema,
   specImportedEventPayloadSchema,
-  taskElementPayloadSchema,
   type ActorProvenance,
   type Refusal,
   type Spec,
@@ -241,21 +182,14 @@ import {
   type SpecApprovalRow,
   type SpecAssumptionRow,
   type SpecCommentRow,
-  type SpecCriterionDispositionRow,
-  type SpecDeliveryVerdictRow,
   type SpecEventRow,
-  type SpecEvidenceRow,
-  type SpecExecutionRow,
   type SpecGate,
   type SpecGateAdmissionRow,
   type SpecLinkRow,
-  type SpecProofVerdictRow,
   type SpecQuestionRow,
   type SpecRevision,
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
-  type SpecWaiverRow,
-  type SpecWorkflowLaneStatus,
 } from "./schemas";
 
 const logger = createLogger("specs.routes");
@@ -269,10 +203,6 @@ export type SpecRouteContext = {
 };
 
 export interface SpecRouteDeps {
-  readDeliveryPlan(
-    spec: Spec,
-  ): Promise<PublishedSpecStatusView["deliveryPlan"]>;
-  readDeliveryReview(spec: Spec): Promise<DeliveryReviewView | null>;
   resolveProjectPath(name: string): Promise<string | null>;
   listSpecs(projectPath: string): Promise<Spec[]>;
   resolveSpec(projectPath: string, slug: string): Promise<Spec | null>;
@@ -296,43 +226,8 @@ export interface SpecRouteDeps {
   ): Promise<LinkedTicketReadThrough[]>;
   findQuestionsBySpecId(specId: string): SpecQuestionRow[];
   findAssumptionsBySpecId(specId: string): SpecAssumptionRow[];
-  findExecutionsBySpecId(specId: string): SpecExecutionRow[];
-  findWorkflowEventsByExecution(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-  ): GraphWorkflowExecutionEvent[];
-  reconcileExecution(
-    projectPath: string,
-    execution: SpecExecutionRow,
-  ): Promise<ReconciledSpecExecution>;
-  findCriterionDispositionsByExecution(
-    executionId: string,
-  ): SpecCriterionDispositionRow[];
-  findEvidenceByCriterionRevision(
-    criterionElementId: string,
-    revisionId: string,
-  ): SpecEvidenceRow[];
-  findProofVerdictsByCriterionRevision(
-    criterionElementId: string,
-    revisionId: string,
-  ): SpecProofVerdictRow[];
-  findDeliveryVerdictsBySpecExecutionId(
-    executionId: string,
-  ): SpecDeliveryVerdictRow[];
-  findExecutionBindingBySpecExecutionId(
-    executionId: string,
-  ): LinkedSpecExecutionBindingV2 | null;
-  findWaiverForCriterionRevision(
-    criterionElementId: string,
-    revisionId: string,
-  ): SpecWaiverRow | null;
-  /** By-id waiver resolution for persisted disposition and delta history. */
-  findWaiverById(waiverId: string): SpecWaiverRow | null;
-  findWaiversByRevision(revisionId: string): SpecWaiverRow[];
   exportSpec(specId: string): Promise<CanonicalSpecBundle>;
   verifySpec(specId: string): Promise<IntegrityReport>;
-  measureProject(projectPath: string): Promise<SpecMeasuresReport>;
 }
 
 export interface ResolvedSpecProjectRoute {
@@ -360,18 +255,11 @@ interface CurrentSpecState {
   currentApprovedSnapshot: SpecRevisionSnapshot | null;
 }
 
-interface SpecCoverage {
-  coveredCriteria: number;
-  totalCriteria: number;
-  percentage: number;
-}
-
 interface SpecStatusView {
   specId: string;
   currentRevision: PublishedSpecStatusView["currentRevision"];
   slug: string;
   phase: SpecPhaseProjection;
-  executions: SpecStatusExecution[];
   gates: ProjectedGateStatus[];
   authoringSequence: RemainingAuthoringSequence | null;
   pendingApprovals: PendingApproval[];
@@ -398,8 +286,6 @@ interface SpecStatusView {
   taskPlan: ReturnType<typeof taskPlanStatus>;
   /** Taken from the view schema so the tier cannot drift from what it parses. */
   draftHealth: PublishedSpecStatusView["draftHealth"];
-  coverage: SpecCoverage;
-  delivery: ReturnType<typeof projectDeliveryDisplay>;
   imported: PublishedSpecStatusView["imported"];
 }
 
@@ -407,18 +293,12 @@ interface SpecLinkedWorkRollup {
   tickets: number;
   conversations: number;
   sessions: number;
-  workflowExecutions: number;
-  mergeJobs: number;
 }
 
 interface SpecElementStatusesView {
   requirements: Array<{
     elementId: string;
     status: ReturnType<typeof projectRequirementStatus>;
-  }>;
-  tasks: Array<{
-    elementId: string;
-    status: ReturnType<typeof projectTaskWorkStatus>;
   }>;
 }
 
@@ -439,18 +319,8 @@ function createDefaultDeps(): SpecRouteDeps {
   const db = getStateDb();
   const specs = createSpecsRepo(db, getSharedWriteQueue());
   const review = createSpecReviewRepo(db);
-  const delivery = createSpecDeliveryRepo(db);
-  const executionBindings = createSpecExecutionBindingRepo(db);
   const links = createSpecLinksRepo(db);
   const eventsRepo = createSpecEventsRepo(db);
-  const workflowEvents = createGraphWorkflowEventsRepo(db);
-  const measures = createMeasuresQuery({
-    specs,
-    events: eventsRepo,
-    delivery,
-    executionBindings,
-    now: () => new Date().toISOString(),
-  });
   const authoring = createAuthoringService({
     specs,
     review,
@@ -466,23 +336,10 @@ function createDefaultDeps(): SpecRouteDeps {
   const exportDeps = {
     specs,
     review,
-    delivery,
     events: eventsRepo,
-    observeLinkedWorkflow: (target: SpecWorkflowCleanupTarget) =>
-      createProductionSpecWorkflowCleanupPort().observe(target),
   };
 
   return {
-    async readDeliveryPlan(spec) {
-      const services = await loadProductionSpecRouteServices(spec.projectPath);
-      const result = await services.deliveryPlan.read({ spec });
-      if (!result.ok) return null;
-      return deliveryPlanStatus(result.value);
-    },
-    async readDeliveryReview(spec) {
-      const services = await loadProductionSpecRouteServices(spec.projectPath);
-      return services.readDeliveryReview(spec);
-    },
     resolveProjectPath: defaultResolveProjectPath,
     listSpecs: (projectPath) => specs.listByProject(projectPath),
     resolveSpec: (projectPath, slug) => authoring.getSpec(projectPath, slug),
@@ -504,32 +361,6 @@ function createDefaultDeps(): SpecRouteDeps {
     },
     findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
     findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
-    findExecutionsBySpecId: (specId) => delivery.findExecutionsBySpecId(specId),
-    findWorkflowEventsByExecution: (projectPath, sessionName, executionId) =>
-      workflowEvents.findByExecution(projectPath, sessionName, executionId),
-    async reconcileExecution(projectPath, execution) {
-      const services = await loadProductionSpecRouteServices(projectPath);
-      const result = await services.execution.getStatus(execution.id);
-      return result.ok ? result.value : { execution, workflowStatus: null };
-    },
-    findCriterionDispositionsByExecution: (executionId) =>
-      delivery.findCriterionDispositionsByExecution(executionId),
-    findEvidenceByCriterionRevision: (criterionElementId, revisionId) =>
-      delivery.findEvidenceByCriterionRevision(criterionElementId, revisionId),
-    findProofVerdictsByCriterionRevision: (criterionElementId, revisionId) =>
-      delivery.findProofVerdictsByCriterionRevision(
-        criterionElementId,
-        revisionId,
-      ),
-    findDeliveryVerdictsBySpecExecutionId: (executionId) =>
-      delivery.findDeliveryVerdictsBySpecExecutionId(executionId),
-    findExecutionBindingBySpecExecutionId: (executionId) =>
-      executionBindings.findBySpecExecutionId(executionId),
-    findWaiverForCriterionRevision: (criterionElementId, revisionId) =>
-      delivery.findWaiverForCriterionRevision(criterionElementId, revisionId),
-    findWaiverById: (waiverId) => delivery.findWaiverById(waiverId),
-    findWaiversByRevision: (revisionId) =>
-      delivery.findWaiversByRevision(revisionId),
     async exportSpec(specId) {
       return renderVerifiedCanonicalBundle(
         await loadSpecExportState(exportDeps, specId),
@@ -538,7 +369,6 @@ function createDefaultDeps(): SpecRouteDeps {
     async verifySpec(specId) {
       return verifyExportState(await loadSpecExportState(exportDeps, specId));
     },
-    measureProject: (projectPath) => measures.forProject(projectPath),
   };
 }
 
@@ -663,213 +493,11 @@ function elementCounts(snapshot: SpecRevisionSnapshot | null) {
   return counts;
 }
 
-/**
- * The criteria the coverage ratio is computed over. The plan status reports
- * the ids it excludes from the same set, so the two readings cannot disagree
- * about which criterion a revision carries.
- */
-function currentCriterionElementIds(
-  snapshot: SpecRevisionSnapshot | null,
-): Set<string> {
-  return new Set(
-    (snapshot?.elements ?? [])
-      .filter(({ element }) => element.kind === "criterion")
-      .map(({ element }) => element.id),
-  );
-}
-
-function coverage(snapshot: SpecRevisionSnapshot | null): SpecCoverage {
-  const criteria = currentCriterionElementIds(snapshot);
-  const covered = new Set<string>();
-  for (const { version } of snapshot?.elements ?? []) {
-    if (version.payload.kind !== "task") continue;
-    for (const criterionId of version.payload.coveredCriterionElementIds) {
-      if (criteria.has(criterionId)) covered.add(criterionId);
-    }
-  }
-  const totalCriteria = criteria.size;
-  return {
-    coveredCriteria: covered.size,
-    totalCriteria,
-    percentage:
-      totalCriteria === 0
-        ? 0
-        : Math.round((covered.size / totalCriteria) * 100),
-  };
-}
-
-function recordedCriterionDelivery(
-  deps: SpecRouteDeps,
-  execution: SpecExecutionRow,
-  criterionId: string,
-  visited = new Set<string>(),
-): "accepted_and_merged" | "delivered_externally" | null {
-  if (execution.state !== "delivered" || visited.has(execution.id)) return null;
-  visited.add(execution.id);
-  const disposition = deps
-    .findCriterionDispositionsByExecution(execution.id)
-    .find((row) => row.criterion_element_id === criterionId);
-  if (
-    disposition?.disposition === "delivered_elsewhere" &&
-    disposition.delivered_by_execution_id
-  ) {
-    const source = deps
-      .findExecutionsBySpecId(execution.spec_id)
-      .find((row) => row.id === disposition.delivered_by_execution_id);
-    return source
-      ? recordedCriterionDelivery(deps, source, criterionId, visited)
-      : null;
-  }
-  if (
-    disposition?.disposition !== "in_scope" ||
-    disposition.delivered_by_execution_id !== execution.id
-  )
-    return null;
-  const verified = findDeliveryVerdictForExecution(
-    deps.findDeliveryVerdictsBySpecExecutionId(execution.id),
-    execution,
-    deps.findExecutionBindingBySpecExecutionId(execution.id),
-    criterionId,
-  );
-  if (verified !== null) return null;
-  const basis = execution.delivery_basis_json
-    ? specDeliveryBasisSchema.parse(JSON.parse(execution.delivery_basis_json))
-    : null;
-  return basis?.kind === "external"
-    ? "delivered_externally"
-    : "accepted_and_merged";
-}
-
-function deliveryCriteria(
-  deps: SpecRouteDeps,
-  currentApprovedSnapshot: SpecRevisionSnapshot | null,
-  executions: readonly SpecExecutionRow[],
-): IdentifiedDeliveryCriterion[] {
-  const currentApprovedRevisionId = currentApprovedSnapshot?.revision.id;
-  const externalDelivery =
-    currentApprovedSnapshot?.revision.externalDelivery ?? null;
-  const deliveredExecutions = executions.filter(
-    (execution) =>
-      execution.state === "delivered" &&
-      execution.revision_id === currentApprovedRevisionId,
-  );
-  const hasBoundDeliveryAttempt = deliveredExecutions.some(
-    (execution) =>
-      deps.findExecutionBindingBySpecExecutionId(execution.id) !== null,
-  );
-  const executionById = new Map(executions.map((row) => [row.id, row]));
-  const dispositionsByExecution = new Map(
-    executions.map((execution) => [
-      execution.id,
-      deps.findCriterionDispositionsByExecution(execution.id),
-    ]),
-  );
-  const priorRuns: PriorRunLookup = {
-    findExecutionById: (executionId) => executionById.get(executionId) ?? null,
-    findCriterionDisposition: (executionId, criterionElementId) =>
-      dispositionsByExecution
-        .get(executionId)
-        ?.find((row) => row.criterion_element_id === criterionElementId) ??
-      null,
-  };
-  return (
-    currentApprovedSnapshot?.elements
-      .filter(({ element }) => element.kind === "criterion")
-      .map(({ element }) => {
-        const waiver = deps.findWaiverForCriterionRevision(
-          element.id,
-          currentApprovedSnapshot.revision.id,
-        );
-        if (waiver?.stale === 0) {
-          return { criterionElementId: element.id, state: "waived" as const };
-        }
-
-        const proven = deliveredExecutions.some((execution) => {
-          const disposition = dispositionsByExecution
-            .get(execution.id)
-            ?.find((row) => row.criterion_element_id === element.id);
-          if (disposition?.disposition === "delivered_elsewhere") {
-            return (
-              isEarlierMergedDelivery(priorRuns, execution, disposition) &&
-              recordedCriterionDelivery(deps, execution, element.id) === null
-            );
-          }
-          if (disposition?.disposition !== "in_scope") return false;
-          const linkedBinding = deps.findExecutionBindingBySpecExecutionId(
-            execution.id,
-          );
-          if (linkedBinding === null) {
-            if (hasBoundDeliveryAttempt) return false;
-            return deps
-              .findProofVerdictsByCriterionRevision(
-                element.id,
-                currentApprovedSnapshot.revision.id,
-              )
-              .some((verdict) => verdict.stale_at === null);
-          }
-          return (
-            findDeliveryVerdictForExecution(
-              deps.findDeliveryVerdictsBySpecExecutionId(execution.id),
-              execution,
-              linkedBinding,
-              element.id,
-            ) !== null
-          );
-        });
-        if (proven) {
-          return {
-            criterionElementId: element.id,
-            state: "proven_and_merged" as const,
-          };
-        }
-
-        const recorded = deliveredExecutions
-          .map((execution) =>
-            recordedCriterionDelivery(deps, execution, element.id),
-          )
-          .find((state) => state !== null);
-        if (recorded)
-          return { criterionElementId: element.id, state: recorded };
-
-        // The imported spec's own testimony that this content shipped
-        // elsewhere. It is read from the revision the criterion belongs to, so
-        // an amendment — which forks a revision carrying no record — drops back
-        // to pending until delivery is proven here.
-        if (externalDelivery !== null) {
-          return {
-            criterionElementId: element.id,
-            state: "delivered_externally" as const,
-          };
-        }
-
-        return { criterionElementId: element.id, state: "pending" as const };
-      }) ?? []
-  );
-}
-
-function executionScopeCriterionIds(
-  execution: SpecExecutionRow | null,
-  revisionId: string | undefined,
-): ReadonlySet<string> | null {
-  if (execution === null || execution.revision_id !== revisionId) return null;
-
-  try {
-    const scope = executionScopeSchema.safeParse(
-      JSON.parse(execution.scope_json),
-    );
-    return scope.success ? new Set(scope.data.selectedCriterionIds) : null;
-  } catch {
-    return null;
-  }
-}
-
 function linkedWork(links: readonly SpecLinkRow[]): SpecLinkedWorkRollup {
   const rollup: SpecLinkedWorkRollup = {
     tickets: 0,
     conversations: 0,
     sessions: 0,
-    workflowExecutions: 0,
-    mergeJobs: 0,
   };
   for (const link of links) {
     switch (link.object_kind) {
@@ -881,12 +509,6 @@ function linkedWork(links: readonly SpecLinkRow[]): SpecLinkedWorkRollup {
         break;
       case "session":
         rollup.sessions += 1;
-        break;
-      case "workflow_execution":
-        rollup.workflowExecutions += 1;
-        break;
-      case "merge_job":
-        rollup.mergeJobs += 1;
         break;
     }
   }
@@ -912,134 +534,19 @@ function latestApprovalValidity(
   return matching.at(-1)?.validity ?? null;
 }
 
-function criterionProofState(
-  deps: SpecRouteDeps,
-  criterionElementId: string,
-  revision: SpecRevisionSnapshot["revision"],
-): RequirementStatusInput["criteria"][number]["proof"] {
-  const waiver = deps.findWaiverForCriterionRevision(
-    criterionElementId,
-    revision.id,
-  );
-  if (waiver?.stale === 0) return "waived";
-  const deliveredExecutions = deps
-    .findExecutionsBySpecId(revision.specId)
-    .filter(
-      (execution) =>
-        execution.state === "delivered" &&
-        execution.revision_id === revision.id,
-    );
-  const boundExecutions = deliveredExecutions.flatMap((execution) => {
-    const linkedBinding = deps.findExecutionBindingBySpecExecutionId(
-      execution.id,
-    );
-    return linkedBinding === null ? [] : [{ execution, linkedBinding }];
-  });
-  if (
-    boundExecutions.some(
-      ({ execution, linkedBinding }) =>
-        findDeliveryVerdictForExecution(
-          deps.findDeliveryVerdictsBySpecExecutionId(execution.id),
-          execution,
-          linkedBinding,
-          criterionElementId,
-        ) !== null,
-    )
-  ) {
-    return "proven";
-  }
-  if (
-    deliveredExecutions.some(
-      (execution) =>
-        recordedCriterionDelivery(deps, execution, criterionElementId) ===
-        "delivered_externally",
-    )
-  )
-    return "delivered_externally";
-  if (boundExecutions.length > 0) {
-    return revision.externalDelivery === null
-      ? "pending"
-      : "delivered_externally";
-  }
-  if (
-    deps
-      .findProofVerdictsByCriterionRevision(criterionElementId, revision.id)
-      .some((verdict) => verdict.stale_at === null)
-  ) {
-    return "proven";
-  }
-  // Same order the delivery projection uses: work this system proved wins, and
-  // otherwise the revision's own external-delivery record explains the
-  // criterion. Read off the revision, so an amendment carrying no record drops
-  // its criteria back to pending.
-  if (revision.externalDelivery !== null) return "delivered_externally";
-  return "pending";
-}
-
-function criterionOutlineStatus(
-  deps: SpecRouteDeps,
-  snapshot: SpecRevisionSnapshot,
-  criterion: SpecRevisionElement,
-  requirementTaskRows: readonly SpecRevisionElement[],
-): SpecShowOutlineView["requirements"][number]["criteria"][number]["status"] {
-  return {
-    coverage: requirementTaskRows.some(
-      ({ version }) =>
-        version.payload.kind === "task" &&
-        version.payload.coveredCriterionElementIds.includes(
-          criterion.element.id,
-        ),
-    )
-      ? "covered"
-      : "uncovered",
-    proof: criterionProofState(deps, criterion.element.id, snapshot.revision),
-  };
-}
-
 function requirementStatus(
-  deps: SpecRouteDeps,
-  snapshot: SpecRevisionSnapshot,
+  _deps: SpecRouteDeps,
+  _snapshot: SpecRevisionSnapshot,
   requirement: SpecRevisionElement,
   approvals: readonly SpecApprovalRow[],
-  related?: {
-    readonly criteria: readonly SpecRevisionElement[];
-    readonly tasks: readonly SpecRevisionElement[];
-  },
+  _related?: { readonly criteria: readonly SpecRevisionElement[] },
 ): ReturnType<typeof projectRequirementStatus> {
-  const criteria =
-    related?.criteria ??
-    snapshot.elements.filter(
-      ({ element }) =>
-        element.kind === "criterion" &&
-        element.parentElementId === requirement.element.id,
-    );
-  const taskRows =
-    related?.tasks ??
-    snapshot.elements.filter(
-      ({ version }) =>
-        version.payload.kind === "task" &&
-        version.payload.tracedRequirementElementIds.includes(
-          requirement.element.id,
-        ),
-    );
   return projectRequirementStatus({
     approvalValidity: latestApprovalValidity(
       approvals,
       "requirement",
       requirement.element.id,
     ),
-    criteria: criteria.map((criterion) => {
-      const status = criterionOutlineStatus(
-        deps,
-        snapshot,
-        criterion,
-        taskRows,
-      );
-      return {
-        covered: status.coverage === "covered",
-        proof: status.proof,
-      };
-    }),
   });
 }
 
@@ -1062,7 +569,7 @@ function buildElementStatuses(
   approvals: readonly SpecApprovalRow[],
 ): SpecElementStatusesView {
   if (snapshot === null) {
-    return { requirements: [], tasks: [] };
+    return { requirements: [] };
   }
 
   const requirements = snapshot.elements
@@ -1072,16 +579,7 @@ function buildElementStatuses(
       status: requirementStatus(deps, snapshot, row, approvals),
     }));
 
-  const tasks = snapshot.elements
-    .filter(({ element }) => element.kind === "task")
-    .map((row) => {
-      return {
-        elementId: row.element.id,
-        status: projectTaskWorkStatus({ executionEvents: [] }),
-      };
-    });
-
-  return { requirements, tasks };
+  return { requirements };
 }
 
 /**
@@ -1116,22 +614,13 @@ function importedProvenance(
 function phase(
   spec: Spec,
   revisions: readonly SpecRevision[],
-  executions: readonly SpecExecutionRow[],
-  criteria: readonly DeliveryCriterion[],
 ): SpecPhaseProjection {
   return projectSpecPhase({
     abandoned: spec.abandonedAt !== null,
-    revisions: revisions.map((revision) => ({
-      state: revision.state,
-      authoringStage: revision.authoringStage,
+    revisions: revisions.map(({ state, authoringStage }) => ({
+      state,
+      authoringStage,
     })),
-    executionStates: executions.map((execution) => execution.state),
-    deliveryCriteria: [...criteria],
-    deliveryPending: executions.some(
-      (execution) =>
-        execution.state === "definition_review" ||
-        execution.state === "running",
-    ),
   });
 }
 
@@ -1173,12 +662,10 @@ function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
       elementHandle(snapshot, entry),
     ]),
   );
-  const criterionIds = currentCriterionElementIds(snapshot);
   return snapshot.elements.flatMap((entry) => {
     const payload = entry.version.payload;
     if (payload.kind !== "task") return [];
     const handle = handles.get(entry.element.id) ?? entry.element.id;
-    const covered = payload.coveredCriterionElementIds;
     return [
       {
         elementId: entry.element.id,
@@ -1196,175 +683,9 @@ function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
         laneGroup: payload.laneGroup ?? null,
         executionLane: payload.executionLane ?? null,
         touchedPaths: payload.touchedPaths ?? [],
-        criterionCoverage: covered
-          .filter((elementId) => criterionIds.has(elementId))
-          .map((elementId) => handles.get(elementId) ?? elementId),
-        unresolvedCriterionElementIds: covered
-          .filter((elementId) => !criterionIds.has(elementId))
-          .sort(),
       },
     ];
   });
-}
-
-/**
- * Project a stored run into the domain shape (R24.1). The JSON columns become
- * the objects they hold, so a reader never parses a payload a second time, and
- * the revision's number rides alongside its id.
- */
-function toExecutionView(
-  execution: SpecExecutionRow,
-  revisionNumberById: ReadonlyMap<string, number>,
-  deliveryProjection: CriterionDeliveryProjection[],
-): SpecExecutionView {
-  const scope = parseExecutionScope(execution.scope_json);
-  return {
-    id: execution.id,
-    specId: execution.spec_id,
-    revisionId: execution.revision_id,
-    revisionNumber: revisionNumberById.get(execution.revision_id) ?? null,
-    state: execution.state,
-    workflowSeedSource: nativeSddSeedSourceSummary(execution),
-    workflowExecutionId: execution.workflow_execution_id,
-    ...(execution.delivery_basis_json
-      ? {
-          deliveryBasis: specDeliveryBasisSchema.parse(
-            JSON.parse(execution.delivery_basis_json),
-          ),
-        }
-      : {}),
-    scope,
-    sessionName: execution.session_name,
-    deliveredAt: execution.delivered_at,
-    abandonedReason: execution.abandoned_reason,
-    createdAt: execution.created_at,
-    updatedAt: execution.updated_at,
-    deliveryProjection,
-  };
-}
-
-/**
- * The start receipt's run: the same domain shape as `toExecutionView` minus
- * the delivery projection, with the pinned revision's number supplied by the
- * start result itself so the mutation needs no second read.
- */
-function toStartedExecutionView(
-  execution: SpecExecutionRow,
-  revisionNumber: number,
-): SpecStartedExecutionView {
-  return {
-    id: execution.id,
-    specId: execution.spec_id,
-    revisionId: execution.revision_id,
-    revisionNumber,
-    state: execution.state,
-    workflowSeedSource: nativeSddSeedSourceSummary(execution),
-    workflowExecutionId: execution.workflow_execution_id,
-    ...(execution.delivery_basis_json
-      ? {
-          deliveryBasis: specDeliveryBasisSchema.parse(
-            JSON.parse(execution.delivery_basis_json),
-          ),
-        }
-      : {}),
-    scope: parseExecutionScope(execution.scope_json),
-    sessionName: execution.session_name,
-    deliveredAt: execution.delivered_at,
-    abandonedReason: execution.abandoned_reason,
-    createdAt: execution.created_at,
-    updatedAt: execution.updated_at,
-  };
-}
-
-/**
- * The prior-run rule needs by-id lookups; the detail route already holds every
- * execution and its dispositions in memory, so the adapter closes over those
- * instead of issuing new repo reads.
- */
-type PriorRunLookup = Pick<
-  SpecDeliveryRepo,
-  "findExecutionById" | "findCriterionDisposition"
->;
-
-/**
- * The per-criterion delivery standing the merge-gate panel renders. A valid
- * pinned-revision waiver wins, external delivery must satisfy the prior-run
- * rule, and a graph verdict must name this exact spec/workflow execution and
- * criterion.
- */
-function buildDeliveryProjection(
-  deps: SpecRouteDeps,
-  execution: SpecExecutionRow,
-  pinnedSnapshot: SpecRevisionSnapshot | undefined,
-  dispositions: readonly SpecCriterionDispositionRow[],
-  priorRuns: PriorRunLookup,
-): CriterionDeliveryProjection[] {
-  if (pinnedSnapshot === undefined) return [];
-  const scope = parseExecutionScope(execution.scope_json);
-  if (scope === null) return [];
-  const criterionIds = new Set(
-    pinnedSnapshot.elements.flatMap((entry) =>
-      entry.version.payload.kind === "criterion" ? [entry.element.id] : [],
-    ),
-  );
-  return scope.selectedCriterionIds.flatMap((criterionElementId) => {
-    if (!criterionIds.has(criterionElementId)) return [];
-    return [
-      {
-        criterionElementId,
-        handle:
-          elementHandleInSnapshot(pinnedSnapshot, criterionElementId) ??
-          criterionElementId,
-        ...criterionDeliveryState(
-          deps,
-          execution,
-          criterionElementId,
-          dispositions,
-          priorRuns,
-        ),
-      },
-    ];
-  });
-}
-
-function criterionDeliveryState(
-  deps: SpecRouteDeps,
-  execution: SpecExecutionRow,
-  criterionElementId: string,
-  dispositions: readonly SpecCriterionDispositionRow[],
-  priorRuns: PriorRunLookup,
-): Pick<CriterionDeliveryProjection, "deliveryState" | "verdict"> {
-  const disposition = dispositions.find(
-    (row) => row.criterion_element_id === criterionElementId,
-  );
-  const waiver = deps.findWaiverForCriterionRevision(
-    criterionElementId,
-    execution.revision_id,
-  );
-  if (isWaiverValidForExecution(waiver, execution, criterionElementId)) {
-    return { deliveryState: "waived", verdict: null };
-  }
-  if (
-    disposition?.disposition === "delivered_elsewhere" &&
-    isEarlierMergedDelivery(priorRuns, execution, disposition)
-  ) {
-    return { deliveryState: "delivered_elsewhere", verdict: null };
-  }
-  const verdict = deps.findDeliveryVerdictsBySpecExecutionId(execution.id);
-  const matchedVerdict = findDeliveryVerdictForExecution(
-    verdict,
-    execution,
-    deps.findExecutionBindingBySpecExecutionId(execution.id),
-    criterionElementId,
-  );
-  if (matchedVerdict === null) {
-    return { deliveryState: "awaiting_outcome", verdict: null };
-  }
-  return {
-    deliveryState:
-      execution.state === "delivered" ? "delivered" : "verdict_recorded",
-    verdict: matchedVerdict,
-  };
 }
 
 /**
@@ -1404,15 +725,6 @@ function importRecordView(
   };
 }
 
-function parseExecutionScope(raw: string): ExecutionScope | null {
-  try {
-    const parsed = executionScopeSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
 function toDiffRevisionRef(revision: SpecRevision): SpecDiffView["to"] {
   return {
     revisionId: revision.id,
@@ -1436,7 +748,6 @@ function toGateAdmissionView(
       admission.revision_id === null
         ? null
         : (revisionNumberById.get(admission.revision_id) ?? null),
-    executionId: admission.execution_id,
     actor: parseProvenance(admission.actor_json),
     createdAt: admission.created_at,
   };
@@ -1565,16 +876,11 @@ async function buildStatus(
   deps: SpecRouteDeps,
   spec: Spec,
   state: CurrentSpecState,
-  loadedExecutions?: ReconciledExecutions,
   loadedAdmissions?: readonly SpecGateAdmissionRow[],
 ): Promise<SpecStatusView> {
   const revisionId = state.currentRevision?.id ?? null;
   const attention = await loadAttentionProjection(deps, spec, state.revisions);
   const approvals = deps.findApprovalsBySpecId(spec.id);
-  const reconciled =
-    loadedExecutions ?? (await loadReconciledExecutions(deps, spec));
-  const executions = reconciled.rows;
-  const selectedExecution = currentExecution(executions);
   // Authoring-gate admissions live on the current document revision and
   // execution-scoped ones on the selected run's pinned revision, but the
   // whole spec's admissions are read so a gate that an amendment reset can
@@ -1653,7 +959,6 @@ async function buildStatus(
     importBaselineCitationState,
     approvals,
     admissions,
-    currentExecution: selectedExecution,
     revisionNumberById,
     applies,
     blockingThreads: commentThreads
@@ -1679,21 +984,6 @@ async function buildStatus(
       })),
     specSlug: spec.slug,
   });
-  const criteria = deliveryCriteria(
-    deps,
-    state.currentApprovedSnapshot,
-    executions,
-  );
-  const deliveryScopeCriterionIds = executionScopeCriterionIds(
-    selectedExecution,
-    state.currentApprovedSnapshot?.revision.id,
-  );
-  const displayCriteria =
-    deliveryScopeCriterionIds === null
-      ? criteria
-      : criteria.filter(({ criterionElementId }) =>
-          deliveryScopeCriterionIds.has(criterionElementId),
-        );
   return {
     specId: spec.id,
     slug: spec.slug,
@@ -1706,21 +996,7 @@ async function buildStatus(
             state: state.currentRevision.state,
             authoringStage: state.currentRevision.authoringStage,
           },
-    phase: phase(spec, state.revisions, executions, criteria),
-    executions: executions.map((run) => ({
-      id: run.id,
-      state: run.state,
-      workflowSeedSource: nativeSddSeedSourceSummary(run),
-      workflowExecutionId: run.workflow_execution_id,
-      ...(run.delivery_basis_json
-        ? {
-            deliveryBasis: specDeliveryBasisSchema.parse(
-              JSON.parse(run.delivery_basis_json),
-            ),
-          }
-        : {}),
-      workflowStatus: reconciled.laneStatusById.get(run.id) ?? null,
-    })),
+    phase: phase(spec, state.revisions),
     gates: projection.gates,
     authoringSequence:
       state.currentSnapshot === null
@@ -1772,8 +1048,6 @@ async function buildStatus(
             counts: health.counts.map((entry) => ({ ...entry })),
             top: statusDraftHealthTop(health.ordered),
           },
-    coverage: coverage(state.currentSnapshot),
-    delivery: projectDeliveryDisplay(displayCriteria),
     imported: importedProvenance(
       state.revisions,
       state.currentApprovedSnapshot?.revision.id,
@@ -1796,41 +1070,9 @@ function statusDraftHealthTop(findings: readonly LintFinding[]): LintFinding[] {
   return [...top, emptyDesign];
 }
 
-/**
- * The reconciled rows plus each active run's live lane status keyed by
- * execution id — kept side by side so the row-consuming projections stay
- * untouched while the status facet can report the lane's real position.
- */
-interface ReconciledExecutions {
-  rows: SpecExecutionRow[];
-  laneStatusById: ReadonlyMap<string, SpecWorkflowLaneStatus | null>;
-}
-
-async function loadReconciledExecutions(
-  deps: SpecRouteDeps,
-  spec: Spec,
-): Promise<ReconciledExecutions> {
-  const reconciled = await Promise.all(
-    deps
-      .findExecutionsBySpecId(spec.id)
-      .map((execution) =>
-        execution.state === "definition_review" || execution.state === "running"
-          ? deps.reconcileExecution(spec.projectPath, execution)
-          : Promise.resolve({ execution, workflowStatus: null }),
-      ),
-  );
-  return {
-    rows: reconciled.map((entry) => entry.execution),
-    laneStatusById: new Map(
-      reconciled.map((entry) => [entry.execution.id, entry.workflowStatus]),
-    ),
-  };
-}
-
 async function buildSummary(deps: SpecRouteDeps, spec: Spec) {
   const state = await loadCurrentState(deps, spec.id);
-  const reconciled = await loadReconciledExecutions(deps, spec);
-  const status = await buildStatus(deps, spec, state, reconciled);
+  const status = await buildStatus(deps, spec, state);
   // A consulted gate stays pending after its last subject approval until a
   // human signs the revision off, so the outstanding sign-off is one more
   // human act the inventory owes — counting only subjects made a revision that
@@ -1847,7 +1089,6 @@ async function buildSummary(deps: SpecRouteDeps, spec: Spec) {
     counts: elementCounts(state.currentSnapshot),
     pendingApprovalCount,
     approvalState: pendingApprovalCount === 0 ? "complete" : "pending",
-    delivery: status.delivery,
     linkedWork: linkedWork(deps.findLinksBySpecId(spec.id)),
     imported: status.imported,
   };
@@ -1946,15 +1187,9 @@ async function buildOutline(
   spec: Spec,
 ): Promise<SpecShowOutlineView> {
   const state = await loadCurrentState(deps, spec.id);
-  const reconciled = await loadReconciledExecutions(deps, spec);
   const snapshot = state.currentSnapshot;
   const counts = outlineCounts(snapshot);
-  const outlinePhase = phase(
-    spec,
-    state.revisions,
-    reconciled.rows,
-    deliveryCriteria(deps, state.currentApprovedSnapshot, reconciled.rows),
-  );
+  const outlinePhase = phase(spec, state.revisions);
   const empty = outlineDisclosure(0, 0);
   if (snapshot === null) {
     return {
@@ -2037,20 +1272,11 @@ async function buildOutline(
         selectedApprovalElementIds.has(approval.element_id),
     );
   const applies = loadApprovalApplicability(state);
-  const taskStatuses = buildElementStatuses(
-    deps,
-    { ...snapshot, elements: taskEntries.map(({ row }) => row) },
-    [],
-  );
-  const taskStatusById = new Map(
-    taskStatuses.tasks.map((entry) => [entry.elementId, entry.status]),
-  );
   let returnedCriteria = 0;
   const requirements: SpecShowOutlineView["requirements"] =
     requirementEntries.flatMap(({ row, handle }) => {
       const payload = row.version.payload;
       if (payload.kind !== "requirement") return [];
-      const taskRows = tasksByRequirement.get(row.element.id) ?? [];
       const criterionRows = criteriaByRequirement.get(row.element.id) ?? [];
       const criteria = criterionRows
         .flatMap((criterion) => {
@@ -2071,12 +1297,6 @@ async function buildOutline(
               validationKinds: [
                 ...new Set(criterionPayload.validationStrategy.kinds),
               ],
-              status: criterionOutlineStatus(
-                deps,
-                snapshot,
-                criterion,
-                taskRows,
-              ),
             },
           ];
         });
@@ -2089,7 +1309,6 @@ async function buildOutline(
           status: {
             ...requirementStatus(deps, snapshot, row, approvals, {
               criteria: criterionRows,
-              tasks: taskRows,
             }),
             approval: outlineApprovalStatus(
               approvals,
@@ -2143,9 +1362,6 @@ async function buildOutline(
         ? [
             {
               ...outlineIdentity(row, handle, row.version.payload.title),
-              status: taskStatusById.get(row.element.id) ?? {
-                status: "pending" as const,
-              },
             },
           ]
         : [],
@@ -2180,26 +1396,6 @@ async function buildOutline(
       next: `cctl spec show ${spec.slug} --rendered`,
     },
   };
-}
-
-function criterionIdsForElement(
-  snapshot: SpecRevisionSnapshot,
-  row: SpecRevisionElement,
-): string[] {
-  if (row.element.kind === "criterion") return [row.element.id];
-  if (row.element.kind === "requirement") {
-    return snapshot.elements
-      .filter(
-        ({ element }) =>
-          element.kind === "criterion" &&
-          element.parentElementId === row.element.id,
-      )
-      .map(({ element }) => element.id);
-  }
-  if (row.version.payload.kind === "task") {
-    return row.version.payload.coveredCriterionElementIds;
-  }
-  return [];
 }
 
 function searchableText(row: SpecRevisionElement): string | null {
@@ -2247,14 +1443,6 @@ function approvalAppliesToElement(
     case "section":
       return false;
   }
-}
-
-async function snapshotForRevisionId(
-  deps: SpecRouteDeps,
-  revisionId: string | null,
-): Promise<SpecRevisionSnapshot | null> {
-  if (revisionId === null) return null;
-  return deps.getRevisionSnapshot(revisionId);
 }
 
 /**
@@ -2432,23 +1620,6 @@ export function createSpecRouteHandlers(
     return NextResponse.json({ specs: summaries });
   }
 
-  async function getSpecMeasuresGET(
-    _request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const project = await resolveSpecProjectRoute(deps, context);
-    if (!project.ok) return project.response;
-    const report = await deps.measureProject(project.value.projectPath);
-    logger.info("specs.routes.measures.complete", {
-      projectName: project.value.projectName,
-      definitionsVersion: report.definitionsVersion,
-      deliveredCriterionCount:
-        report.traceabilityCompleteness.deliveredInScopeCriterionCount,
-      completeChainCount: report.traceabilityCompleteness.completeChainCount,
-    });
-    return NextResponse.json(report);
-  }
-
   async function getSpecSummaryGET(
     _request: Request,
     context: SpecRouteContext,
@@ -2486,49 +1657,21 @@ export function createSpecRouteHandlers(
     const resolved = await resolveSpecRoute(deps, context);
     if (!resolved.ok) return resolved.response;
     const state = await loadCurrentState(deps, resolved.value.spec.id);
-    const [aliases, reconciled, linkedTickets] = await Promise.all([
+    const [aliases, linkedTickets] = await Promise.all([
       deps.listAliases(resolved.value.spec.id),
-      loadReconciledExecutions(deps, resolved.value.spec),
       deps.getLinkedTickets(resolved.value.projectPath, resolved.value.spec.id),
     ]);
-    const executions = reconciled.rows;
     const approvals = deps.findApprovalsBySpecId(resolved.value.spec.id);
     const admissions = deps.findGateAdmissionsBySpecId(resolved.value.spec.id);
     const status = await buildStatus(
       deps,
       resolved.value.spec,
       state,
-      reconciled,
       admissions,
     );
     const baseRevision = state.baseSnapshot;
-    const proofSnapshot =
+    const approvalSnapshot =
       state.currentApprovedSnapshot ?? state.currentSnapshot;
-    const executionRevisionIds = [
-      ...new Set(executions.map((execution) => execution.revision_id)),
-    ].filter(
-      (revisionId) =>
-        revisionId !== state.currentSnapshot?.revision.id &&
-        revisionId !== baseRevision?.revision.id &&
-        revisionId !== state.currentApprovedSnapshot?.revision.id,
-    );
-    const executionRevisionSnapshots = (
-      await Promise.all(
-        executionRevisionIds.map((revisionId) =>
-          snapshotForRevisionId(deps, revisionId),
-        ),
-      )
-    ).filter((snapshot): snapshot is SpecRevisionSnapshot => snapshot !== null);
-    const dispositionsByExecution = new Map(
-      executions.map((execution) => [
-        execution.id,
-        deps.findCriterionDispositionsByExecution(execution.id),
-      ]),
-    );
-    const criterionDispositions = [...dispositionsByExecution.values()].flat();
-    const pinnedRevisionIds = new Set(
-      executions.map((execution) => execution.revision_id),
-    );
     const revisionNumberById = new Map(
       state.revisions.map((candidate) => [candidate.id, candidate.number]),
     );
@@ -2538,7 +1681,7 @@ export function createSpecRouteHandlers(
     // import (History's policy-admissions view, the Q&A provenance register)
     // with nothing to read, and no way to tell an import from a human sign-off.
     // The current approved revision's lineage is carried for that reason.
-    const admissionRevisionIds = new Set(pinnedRevisionIds);
+    const admissionRevisionIds = new Set<string>();
     const approvedRevisionId = state.currentApprovedSnapshot?.revision.id;
     if (approvedRevisionId !== undefined) {
       admissionRevisionIds.add(approvedRevisionId);
@@ -2558,33 +1701,8 @@ export function createSpecRouteHandlers(
     // The merge gate honors waivers for each run's pinned revision, so the
     // detail view must carry those too — loading only the proof snapshot's
     // waivers made a valid older-pin waiver invisible in Studio (F26).
-    const proofSnapshotWaivers =
-      proofSnapshot?.elements
-        .filter(({ element }) => element.kind === "criterion")
-        .flatMap(({ element }) => {
-          const waiver = deps.findWaiverForCriterionRevision(
-            element.id,
-            proofSnapshot.revision.id,
-          );
-          return waiver === null ? [] : [waiver];
-        }) ?? [];
-    const waivers = [
-      ...new Map(
-        [
-          ...proofSnapshotWaivers,
-          ...[...pinnedRevisionIds].flatMap((revisionId) =>
-            deps.findWaiversByRevision(revisionId),
-          ),
-        ].map((waiver) => [waiver.id, waiver]),
-      ).values(),
-    ];
     const snapshotsByRevisionId = new Map(
-      [
-        state.currentSnapshot,
-        baseRevision,
-        state.currentApprovedSnapshot,
-        ...executionRevisionSnapshots,
-      ]
+      [state.currentSnapshot, baseRevision, state.currentApprovedSnapshot]
         .filter(
           (candidate): candidate is SpecRevisionSnapshot => candidate !== null,
         )
@@ -2603,22 +1721,6 @@ export function createSpecRouteHandlers(
       snapshotsByRevisionId,
       specEvents,
     );
-    const executionById = new Map(
-      executions.map((execution) => [execution.id, execution]),
-    );
-    const priorRunLookup: PriorRunLookup = {
-      findExecutionById(id) {
-        return executionById.get(id) ?? null;
-      },
-      findCriterionDisposition(executionId, criterionElementId) {
-        return (
-          dispositionsByExecution
-            .get(executionId)
-            ?.find((row) => row.criterion_element_id === criterionElementId) ??
-          null
-        );
-      },
-    };
     const commentHandles =
       state.currentSnapshot === null
         ? new Map<string, string>()
@@ -2633,7 +1735,7 @@ export function createSpecRouteHandlers(
       );
     const elementStatuses = buildElementStatuses(
       deps,
-      proofSnapshot,
+      approvalSnapshot,
       approvals,
     );
     logger.debug("specs.routes.detail.complete", {
@@ -2658,28 +1760,11 @@ export function createSpecRouteHandlers(
         state.currentApprovedSnapshot === null
           ? null
           : toSnapshotView(state.currentApprovedSnapshot),
-      executionRevisionSnapshots:
-        executionRevisionSnapshots.map(toSnapshotView),
       approvals,
       comments,
-      executions: executions.map((run) =>
-        toExecutionView(
-          run,
-          revisionNumberById,
-          buildDeliveryProjection(
-            deps,
-            run,
-            snapshotsByRevisionId.get(run.revision_id),
-            dispositionsByExecution.get(run.id) ?? [],
-            priorRunLookup,
-          ),
-        ),
-      ),
-      criterionDispositions,
       gateAdmissions: gateAdmissions.map((admission) =>
         toGateAdmissionView(admission, revisionNumberById),
       ),
-      waivers,
       elementStatuses,
       status,
       linkedTickets,
@@ -2714,27 +1799,9 @@ export function createSpecRouteHandlers(
     if (!resolved.ok) return resolved.response;
     const state = await loadCurrentState(deps, resolved.value.spec.id);
     const status = await buildStatus(deps, resolved.value.spec, state);
-    const review = await deps.readDeliveryReview(resolved.value.spec);
     return NextResponse.json({
       ...status,
-      deliveryPlan: await deps.readDeliveryPlan(resolved.value.spec),
       reviewHref: `/specs/${encodeURIComponent(resolved.value.projectName)}/${encodeURIComponent(resolved.value.spec.slug)}`,
-      deliveryReadiness:
-        review === null
-          ? null
-          : {
-              revisionId: review.revisionId,
-              executionId: review.execution?.id ?? null,
-              approvalGranted: review.approvalGranted,
-              totalInScope: review.criteria.filter(
-                (criterion) => criterion.inScope,
-              ).length,
-              settled: review.criteria.filter(
-                (criterion) =>
-                  criterion.inScope && criterion.outcome !== "needs_review",
-              ).length,
-              blockers: review.blockers,
-            },
     });
   }
 
@@ -2870,47 +1937,6 @@ export function createSpecRouteHandlers(
             },
     };
     return NextResponse.json(view);
-  }
-
-  /**
-   * The delivery-delta projection (P1/P2). Read-only and computed per request:
-   * it persists nothing, so there is no cached classification that can drift
-   * from the revisions it compares.
-   */
-  async function getSpecDeltaGET(
-    request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    const state = await loadCurrentState(deps, resolved.value.spec.id);
-    if (state.currentApprovedSnapshot === null) {
-      return notFound(
-        `Spec ${resolved.value.spec.slug} has no approved revision, so there is nothing to compare a delivery against. Approve a revision first, then read the delta.`,
-      );
-    }
-    const since = new URL(request.url).searchParams.get("since") ?? undefined;
-    const result = await loadDeliveryDelta(deps, {
-      spec: resolved.value.spec,
-      currentApprovedSnapshot: state.currentApprovedSnapshot,
-      sinceExecutionId: since,
-    });
-    if (!result.ok) {
-      logger.debug("specs.routes.delta.refused", {
-        specId: resolved.value.spec.id,
-        code: result.code,
-      });
-      return result.code === "execution_not_found"
-        ? notFound(result.message, result.code)
-        : jsonError(result.message, 409, result.code);
-    }
-    logger.debug("specs.routes.delta.complete", {
-      specId: resolved.value.spec.id,
-      comparedExecutionId: result.projection.comparedExecution?.executionId,
-      criterionCount: result.projection.criteria.length,
-      advisoryCount: result.projection.advisories.length,
-    });
-    return NextResponse.json(result.projection);
   }
 
   async function getSpecLintGET(
@@ -3091,25 +2117,6 @@ export function createSpecRouteHandlers(
       );
     }
 
-    const revisionId = snapshot.revision.id;
-    const evidenceState = criterionIdsForElement(snapshot, row).map(
-      (criterionElementId) => ({
-        criterionElementId,
-        handle: handles.get(criterionElementId) ?? criterionElementId,
-        evidence: deps.findEvidenceByCriterionRevision(
-          criterionElementId,
-          revisionId,
-        ),
-        verdicts: deps.findProofVerdictsByCriterionRevision(
-          criterionElementId,
-          revisionId,
-        ),
-        waiver: deps.findWaiverForCriterionRevision(
-          criterionElementId,
-          revisionId,
-        ),
-      }),
-    );
     const referenceState = await buildReferenceState(
       deps,
       state.revisions,
@@ -3134,7 +2141,6 @@ export function createSpecRouteHandlers(
         .filter((approval) =>
           approvalAppliesToElement(snapshot, row, approval),
         ),
-      evidenceState,
       referenceState,
     });
   }
@@ -3553,7 +2559,6 @@ export function createSpecRouteHandlers(
 
   return {
     listSpecsGET,
-    getSpecMeasuresGET,
     getSpecSummaryGET,
     getSpecOutlineGET,
     getSpecGET,
@@ -3561,7 +2566,6 @@ export function createSpecRouteHandlers(
     getSpecCommentsGET,
     getSpecEditContextGET,
     getSpecLintGET,
-    getSpecDeltaGET,
     getSpecElementGET,
     getSpecSectionGET,
     searchSpecGET,
@@ -3574,7 +2578,6 @@ export function createSpecRouteHandlers(
 
 const handlers = createSpecRouteHandlers();
 export const specsInventoryGET = withTracing(handlers.listSpecsGET);
-export const specMeasuresGET = withTracing(handlers.getSpecMeasuresGET);
 export const specSummaryGET = withTracing(handlers.getSpecSummaryGET);
 export const specOutlineGET = withTracing(handlers.getSpecOutlineGET);
 export const specDetailGET = withTracing(handlers.getSpecGET);
@@ -3582,7 +2585,6 @@ export const specStatusGET = withTracing(handlers.getSpecStatusGET);
 export const specCommentsGET = withTracing(handlers.getSpecCommentsGET);
 export const specEditContextGET = withTracing(handlers.getSpecEditContextGET);
 export const specLintGET = withTracing(handlers.getSpecLintGET);
-export const specDeltaGET = withTracing(handlers.getSpecDeltaGET);
 export const specElementGET = withTracing(handlers.getSpecElementGET);
 export const specSectionGET = withTracing(handlers.getSpecSectionGET);
 export const specSearchGET = withTracing(handlers.searchSpecGET);
@@ -3595,13 +2597,7 @@ export const SPEC_CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
 export const SPEC_CALLER_BACKEND_HEADER = "x-cc-agent-backend";
 
 export interface SpecMutationServices {
-  deliveryReview: DeliveryReviewService;
-  deliveryApproval: DeliveryApprovalService;
-  deliveryContinuation: DeliveryContinuationService;
-  readDeliveryReview(
-    spec: Spec,
-    executionId?: string,
-  ): Promise<DeliveryReviewView | null>;
+  abandonment: SpecAbandonmentService;
   authoring: Pick<
     AuthoringService,
     | "createSpec"
@@ -3616,24 +2612,10 @@ export interface SpecMutationServices {
     | "advanceAuthoringStage"
   >;
   review: ReviewService;
-  evidence: EvidenceService;
-  execution: Pick<
-    ExecutionService,
-    | "start"
-    | "parkDeliveryPlan"
-    | "linkWorkflowExecution"
-    | "markRunning"
-    | "markDelivered"
-    | "getStatus"
-    | "abandonExecution"
-    | "abandonSpec"
-    | "captureScopeAmendment"
-  >;
   links: Pick<
     LinksService,
     | "promoteConversation"
     | "graduateTicket"
-    | "materializeApprovedTasks"
     | "linkTicket"
     | "getSpecLinkedTickets"
     | "getTicketReadThrough"
@@ -3644,7 +2626,6 @@ export interface SpecMutationServices {
    * transaction instead of continuing an authoring line.
    */
   import: Pick<ImportService, "importSpec">;
-  deliveryPlan: DeliveryPlanService;
   verify(specId: string): Promise<IntegrityReport>;
 }
 
@@ -3747,15 +2728,6 @@ const approveRemainingAndSignOffBodySchema =
     actor: true,
     approver: true,
   });
-// Delivery is the only spec-side lifecycle grant; graph-run approval stays
-// with the immutable graph execution it governs.
-const grantGateApprovalBodySchema = grantGateApprovalInputSchema
-  .omit({
-    specId: true,
-    actor: true,
-    approver: true,
-  })
-  .extend({ gate: z.literal("delivery") });
 const bulkApproveBodySchema = bulkApproveInputSchema.omit({
   specId: true,
   actor: true,
@@ -3803,76 +2775,15 @@ const changePolicyBodySchema = changeSpecPolicyInputSchema.omit({
   specId: true,
   actor: true,
 });
-const materializeTasksBodySchema = materializeApprovedTasksInputSchema.omit({
-  specId: true,
-  actor: true,
-});
 const linkTicketBodySchema = linkTicketInputSchema.omit({
   specId: true,
   actor: true,
 });
-
-const waiverBodySchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    revisionId: z.string().min(1),
-    reason: z.string(),
-  })
-  .strict();
-const staleWaiverBodySchema = z
-  .object({
-    waiverId: z.string().min(1),
-    laterRevisionId: z.string().min(1),
-  })
-  .strict();
-const dispositionBodySchema = z
-  .object({
-    executionId: z.string().min(1),
-    criterionElementId: z.string().min(1),
-    disposition: specCriterionDispositionSchema,
-    waiverId: z.string().min(1).optional(),
-    deliveredByExecutionId: z.string().min(1).optional(),
-  })
-  .strict();
-const startExecutionBodySchema = z
-  .object({
-    revisionId: z.string().min(1),
-    /**
-     * Recognized only so retired clients receive the migration act rather than
-     * a generic strict-schema refusal. Active delivery-plan starts omit it.
-     */
-    scope: executionScopeSchema.nullable().optional(),
-    sessionName: z.string().min(1).nullable(),
-    parameters: z.record(z.string(), z.unknown()).optional(),
-    /** Hold an approved candidate for prelaunch review. */
-    park: z.boolean().optional(),
-  })
-  .strict();
-const abandonExecutionBodySchema = z
-  .object({ executionId: z.string().min(1), reason: z.string() })
-  .strict();
 const abandonSpecBodySchema = z.object({ reason: z.string() }).strict();
 const renameSpecBodySchema = z
   .object({ slug: specSlugSchema, name: z.string().min(1).optional() })
   .strict();
-const captureScopeAmendmentBodySchema = z
-  .object({
-    /** Optional: the spec's live attempt names the run it launched. */
-    executionId: z.string().min(1).optional(),
-    discoveredTask: taskElementPayloadSchema.omit({ kind: true }),
-    blockingReason: z.string().optional(),
-  })
-  .strict();
 const emptyBodySchema = z.object({}).strict();
-
-// The plan request bodies are the CLI's `--file` documents, parsed by the same
-// schemas on both sides (`src/lib/specs/delivery-plan-views.ts`).
-const planOpenBodySchema = deliveryPlanOpenRequestSchema;
-const planEditBodySchema = deliveryPlanEditRequestSchema;
-const planReopenBodySchema = deliveryPlanReopenRequestSchema;
-const planAbandonBodySchema = deliveryPlanAbandonRequestSchema;
-const planSignOffBodySchema = deliveryPlanSignOffRequestSchema;
-const planCommentBodySchema = deliveryPlanCommentRequestSchema;
 
 type TransportResolution = RouteResolution<ActorProvenance>;
 
@@ -3967,10 +2878,7 @@ function refusalStatus(refusal: Pick<Refusal, "code">): number {
   ) {
     return 403;
   }
-  if (
-    refusal.code === "validation" ||
-    refusal.code === "spec_side_execution_id"
-  ) {
+  if (refusal.code === "validation") {
     return 400;
   }
   if (refusal.code === "not_found") return 404;
@@ -4028,11 +2936,7 @@ const HUMAN_ONLY_ACTIONS = new Map<string, string>([
   ["approve-remaining-and-sign-off", BROWSER_SESSION_REMEDY],
   ["bulk-approve", BROWSER_SESSION_REMEDY],
   ["grant-gate-approval", BROWSER_SESSION_REMEDY],
-  ["grant-waiver", BROWSER_SESSION_REMEDY],
   ["review-acceptance", BROWSER_SESSION_REMEDY],
-  ["approve-delivery-review", BROWSER_SESSION_REMEDY],
-  ["continue-delivery", BROWSER_SESSION_REMEDY],
-  ["replace-delivery", BROWSER_SESSION_REMEDY],
   ["change-policy", BROWSER_SESSION_REMEDY],
   // Assumption disposition is the human half of the propose/dispose split
   // (mirrors waiver origin rules); the service also refuses agents, but the
@@ -4321,7 +3225,7 @@ export function createSpecWriteRouteHandlers(
     if (!actor.ok) return actor.response;
     const resolved = await resolveSpecRoute(deps, context);
     if (!resolved.ok) return resolved.response;
-    const { name, action } = await context.params;
+    const { action } = await context.params;
     if (actor.value.kind === "agent" && HUMAN_ONLY_ACTIONS.has(action ?? "")) {
       return humanActRequiredResponse(action ?? "unknown");
     }
@@ -4484,39 +3388,6 @@ export function createSpecWriteRouteHandlers(
                 approver: "operator",
               }),
           );
-        case "approve-delivery-review":
-          return invokeAction(request, deliveryApprovalRequestSchema, (input) =>
-            services.deliveryApproval.approve({
-              ...input,
-              spec: resolved.value.spec,
-              actor: actor.value,
-            }),
-          );
-        case "review-acceptance":
-          return invokeAction(request, acceptanceReviewRequestSchema, (input) =>
-            services.deliveryReview.record(withReviewIdentity(input)),
-          );
-        case "replace-delivery":
-          return invokeAction(
-            request,
-            deliveryReplacementRequestSchema,
-            (input) =>
-              services.deliveryContinuation.replace(withReviewIdentity(input)),
-          );
-        case "continue-delivery":
-          return invokeAction(
-            request,
-            deliveryContinuationRequestSchema,
-            (input) =>
-              services.deliveryContinuation.continue(withReviewIdentity(input)),
-          );
-        case "grant-gate-approval":
-          return invokeAction(request, grantGateApprovalBodySchema, (input) =>
-            services.review.grantGateApproval({
-              ...withReviewIdentity(input),
-              approver: "operator",
-            }),
-          );
         case "withdraw":
           return invokeAction(request, withdrawDraftBodySchema, (input) =>
             services.review.withdraw(withReviewIdentity(input)),
@@ -4622,131 +3493,9 @@ export function createSpecWriteRouteHandlers(
           return invokeAction(request, changePolicyBodySchema, (input) =>
             services.review.changePolicy(withReviewIdentity(input)),
           );
-        // Evidence attachment, proof verdicts and task-completion claims were
-        // retired with the criterion-modality proof pipeline: authored context
-        // outcomes and human waivers decide delivery, so all of them fall
-        // through to the 404 default.
-        case "request-waiver":
-          if (actor.value.kind !== "agent") {
-            return specRefusalResponse({
-              code: "validation",
-              unmetConditions: [
-                "Waiver requests from this route require agent provenance.",
-              ],
-              instruction:
-                "Grant or reject the waiver from Spec Studio instead.",
-            });
-          }
-          return invokeAction(request, waiverBodySchema, (input) =>
-            services.evidence.requestWaiver({
-              ...input,
-              specId,
-              source: actor.value as Extract<
-                ActorProvenance,
-                { kind: "agent" }
-              >,
-            }),
-          );
-        case "grant-waiver":
-          return invokeAction(request, waiverBodySchema, (input) =>
-            services.evidence.grantWaiver({
-              ...input,
-              specId,
-              actor: actor.value,
-            }),
-          );
-        case "mark-waiver-stale":
-          return invokeAction(request, staleWaiverBodySchema, (input) =>
-            services.evidence.markWaiverStaleForCriterionChange({
-              ...input,
-              actor: actor.value,
-            }),
-          );
-        case "set-disposition":
-          return invokeAction(request, dispositionBodySchema, (input) =>
-            services.evidence.setDisposition({ ...input, actor: actor.value }),
-          );
-        case "start-execution":
-          return invokeAction(
-            request,
-            startExecutionBodySchema,
-            async (input) => {
-              if (input.scope !== undefined && input.scope !== null) {
-                logger.warn("specs.routes.execution-scope-retired", {
-                  specId,
-                  specSlug: resolved.value.spec.slug,
-                  actorKind: actor.value.kind,
-                  parkRequested: input.park === true,
-                });
-                return {
-                  ok: false as const,
-                  refusal: {
-                    code: "validation" as const,
-                    unmetConditions: [
-                      "Execution scope documents are retired; the approved delivery plan is the execution graph.",
-                    ],
-                    instruction: `Nothing was started. Open an authored delivery attempt with \`cctl spec plan open ${resolved.value.spec.slug}\`, then have its draft signed off before rerunning \`cctl spec start ${resolved.value.spec.slug} --file .cc/temp/inputs.json\`.`,
-                  },
-                };
-              }
-              const { scope: _retiredScope, ...activeInput } = input;
-              const startInput = {
-                ...activeInput,
-                specId,
-                actor: actor.value,
-                projectName: name ?? "",
-              };
-              // A park launches nothing, so it is a different act with a
-              // different receipt rather than a start that quietly did less.
-              if (activeInput.park === true) {
-                const parked =
-                  await services.execution.parkDeliveryPlan(startInput);
-                return parked.ok
-                  ? { ok: true as const, parked: parked.value }
-                  : parked;
-              }
-              const result = await services.execution.start(startInput);
-              if (!result.ok) return result;
-              return {
-                ok: true as const,
-                execution: toStartedExecutionView(
-                  result.execution,
-                  result.revisionNumber,
-                ),
-                workflowDefinition: result.workflowDefinition,
-                deliveryPlan: result.deliveryPlan,
-              };
-            },
-          );
-        case "abandon-execution":
-          return invokeAction(request, abandonExecutionBodySchema, (input) =>
-            services.execution.abandonExecution({
-              ...input,
-              actor: actor.value,
-            }),
-          );
         case "abandon-spec":
           return invokeAction(request, abandonSpecBodySchema, (input) =>
-            services.execution.abandonSpec({
-              ...input,
-              specId,
-              actor: actor.value,
-            }),
-          );
-        case "capture-scope-amendment":
-          return invokeAction(
-            request,
-            captureScopeAmendmentBodySchema,
-            (input) =>
-              services.execution.captureScopeAmendment({
-                ...input,
-                specId,
-                actor: actor.value,
-              }),
-          );
-        case "materialize-tasks":
-          return invokeAction(request, materializeTasksBodySchema, (input) =>
-            services.links.materializeApprovedTasks({
+            services.abandonment.abandonSpec({
               ...input,
               specId,
               actor: actor.value,
@@ -4767,84 +3516,6 @@ export function createSpecWriteRouteHandlers(
             ok: true as const,
             value: await services.verify(specId),
           }));
-        case "plan-open":
-          return invokeAction(request, planOpenBodySchema, () =>
-            services.deliveryPlan.open({
-              spec: resolved.value.spec,
-              actor: actor.value,
-            }),
-          );
-        case "plan-edit":
-          return invokeAction(request, planEditBodySchema, (input) =>
-            services.deliveryPlan.edit({
-              spec: resolved.value.spec,
-              expectedDraftRevision: input.expectedDraftRevision,
-              binding: input.binding,
-              actor: actor.value,
-            }),
-          );
-        case "plan-propose":
-          return invokeAction(request, emptyBodySchema, () =>
-            services.deliveryPlan.propose({
-              spec: resolved.value.spec,
-              actor: actor.value,
-            }),
-          );
-        case "plan-reopen":
-          return invokeAction(request, planReopenBodySchema, (input) =>
-            services.deliveryPlan.reopen({
-              spec: resolved.value.spec,
-              reason: input.reason,
-              actor: actor.value,
-            }),
-          );
-        // The prelaunch retirement (command-center#92): a never-launched
-        // attempt whose pin the spec amended past is retired so a fresh open
-        // can pin the current approved revision.
-        case "plan-abandon":
-          return invokeAction(request, planAbandonBodySchema, (input) =>
-            services.deliveryPlan.abandonPrelaunch({
-              spec: resolved.value.spec,
-              reason: input.reason,
-              actor: actor.value,
-            }),
-          );
-        // The one default approval: it freezes the draft the caller read into
-        // the candidate and admits `execution_start` in the same act. Human
-        // attribution rides the transport actor, so a Builder sign-off is a
-        // human act and an agent's is refused whenever the dial says a human
-        // decides.
-        case "plan-sign-off":
-          return invokeAction(request, planSignOffBodySchema, (input) =>
-            services.deliveryPlan.signOff({
-              spec: resolved.value.spec,
-              ...input,
-              actor: actor.value,
-              approver: actor.value.kind === "human" ? "operator" : "agent",
-            }),
-          );
-        case "plan-reaffirm-batch":
-          return invokeAction(
-            request,
-            deliveryPlanReaffirmBatchRequestSchema,
-            (input) =>
-              services.deliveryPlan.reaffirmBatch({
-                spec: resolved.value.spec,
-                ...input,
-                actor: actor.value,
-              }),
-          );
-        // A review note anchored to one context of the live attempt. The
-        // transport actor is the author, so the comment carries the same
-        // durable attribution every other spec act does.
-        case "plan-comment":
-          return invokeAction(request, planCommentBodySchema, (input) =>
-            services.deliveryPlan.comment({
-              spec: resolved.value.spec,
-              ...input,
-              actor: actor.value,
-            }),
-          );
         default:
           return notFound("Spec action not found");
       }
@@ -4853,157 +3524,9 @@ export function createSpecWriteRouteHandlers(
     }
   }
 
-  /**
-   * The delivery-plan read. It lives beside the plan mutations rather than in
-   * the read-handler family because it reads through the same service the
-   * mutations write through — one projection owner, so `spec plan status` and
-   * an edit receipt can never disagree about what the attempt owes.
-   */
-  async function specPlanGET(
-    _request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    try {
-      const services = await deps.getServices(resolved.value.projectPath);
-      const result = await services.deliveryPlan.read({
-        spec: resolved.value.spec,
-      });
-      return serviceResultResponse(result);
-    } catch (error) {
-      return routeFailure(error, "plan-read");
-    }
-  }
-
-  async function specDeliveryReviewGET(
-    request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    try {
-      const services = await deps.getServices(resolved.value.projectPath);
-      const executionId =
-        new URL(request.url).searchParams.get("execution") ?? undefined;
-      return NextResponse.json(
-        await services.readDeliveryReview(resolved.value.spec, executionId),
-      );
-    } catch (error) {
-      return routeFailure(error, "delivery-review");
-    }
-  }
-
-  /**
-   * The delivery-plan review read: the plan projection resolved with its
-   * pinned criteria in full. It is a separate route rather than a field on
-   * `specPlanGET` because the criterion text is what a Studio reviewer needs
-   * and what a `cctl spec plan status` receipt would only have to truncate —
-   * one service call behind both, two response bounds in front.
-   */
-  async function specPlanReviewGET(
-    _request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    try {
-      const services = await deps.getServices(resolved.value.projectPath);
-      return serviceResultResponse(
-        await services.deliveryPlan.review({ spec: resolved.value.spec }),
-      );
-    } catch (error) {
-      return routeFailure(error, "plan-review");
-    }
-  }
-
-  /**
-   * The semantic diff between two of the attempt's frozen snapshots. A read,
-   * mounted beside the plan mutations for the same reason the others are: the
-   * snapshots it compares are written by sign-off, and one owner is what keeps
-   * a diff from ever describing bytes no sign-off froze.
-   */
-  async function specPlanDiffGET(
-    request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    const url = new URL(request.url);
-    const from = url.searchParams.get("from");
-    const to = url.searchParams.get("to");
-    if (from === null || to === null) {
-      return jsonError(
-        `Invalid plan diff request. Pass ?from=<snapshotId>&to=<snapshotId>; list this attempt's snapshots with cctl spec plan status ${resolved.value.spec.slug}.`,
-        400,
-        "plan_diff_invalid_request",
-      );
-    }
-    try {
-      const services = await deps.getServices(resolved.value.projectPath);
-      return serviceResultResponse(
-        await services.deliveryPlan.diffSnapshots({
-          spec: resolved.value.spec,
-          fromSnapshotId: from,
-          toSnapshotId: to,
-        }),
-      );
-    } catch (error) {
-      return routeFailure(error, "plan-diff");
-    }
-  }
-
-  /**
-   * The delivery-plan preview. A read, but mounted here beside the plan
-   * mutations for the same reason `specPlanGET` is: previewing a draft reads
-   * the document sign-off finalizes, and one owner keeps the preview and
-   * sign-off on the same authored bytes.
-   */
-  async function specPlanPreviewGET(
-    request: Request,
-    context: SpecRouteContext,
-  ): Promise<Response> {
-    const resolved = await resolveSpecRoute(deps, context);
-    if (!resolved.ok) return resolved.response;
-    const url = new URL(request.url);
-    const rawExpected = url.searchParams.get("expectedDraftRevision");
-    const parsed = deliveryPlanPreviewRequestSchema.safeParse({
-      stage: url.searchParams.get("stage") ?? "approved",
-      ...(rawExpected === null
-        ? {}
-        : { expectedDraftRevision: Number(rawExpected) }),
-    });
-    if (!parsed.success) {
-      return jsonError(
-        `Invalid plan preview request. Pass ?stage=draft or ?stage=approved, and an optional integer ?expectedDraftRevision, then re-run cctl spec plan preview ${resolved.value.spec.slug} --stage <draft|approved>.`,
-        400,
-        "plan_preview_invalid_request",
-      );
-    }
-    try {
-      const services = await deps.getServices(resolved.value.projectPath);
-      return serviceResultResponse(
-        await services.deliveryPlan.preview({
-          spec: resolved.value.spec,
-          stage: parsed.data.stage,
-          ...(parsed.data.expectedDraftRevision === undefined
-            ? {}
-            : { expectedDraftRevision: parsed.data.expectedDraftRevision }),
-        }),
-      );
-    } catch (error) {
-      return routeFailure(error, "plan-preview");
-    }
-  }
-
   return {
     projectActionPOST,
     specActionPOST,
-    specPlanGET,
-    specPlanReviewGET,
-    specDeliveryReviewGET,
-    specPlanDiffGET,
-    specPlanPreviewGET,
   };
 }
 
@@ -5012,13 +3535,3 @@ export const specProjectActionPOST = withTracing(
   writeHandlers.projectActionPOST,
 );
 export const specActionPOST = withTracing(writeHandlers.specActionPOST);
-export const specPlanGET = withTracing(writeHandlers.specPlanGET);
-export const specPlanReviewGET = withTracing(writeHandlers.specPlanReviewGET);
-export const specPlanDiffGET = withTracing(writeHandlers.specPlanDiffGET);
-export const specPlanAttemptPreviewGET = withTracing(
-  writeHandlers.specPlanPreviewGET,
-);
-
-export const specDeliveryReviewGET = withTracing(
-  writeHandlers.specDeliveryReviewGET,
-);

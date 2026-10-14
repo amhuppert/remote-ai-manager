@@ -288,7 +288,6 @@ function mockTicketFetch(initialTickets: TicketListItem[]) {
     if (parsed.pathname === "/api/conversations/active") {
       return Response.json({
         conversations: [],
-        graphWorkflowExecutions: [],
         activeCollaborationExecutions: [],
       });
     }

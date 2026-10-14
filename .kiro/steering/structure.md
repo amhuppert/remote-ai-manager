@@ -30,7 +30,6 @@ The agent profile library domain: `schemas.ts` (identity, tiers, refs and the
 - **Reference holders arrive through a port, never an import.** `previewDeletion`
   and `delete` answer with the same report, whose holder enumeration comes from
   the `AgentProfileReferenceReporter` port the domain declares.
-  `workflow-graph/profile-reference-reporter.ts` and
   `run-templates/profile-references.ts` each implement their share, and
   `combineReferenceReporters` makes one report of them. Only
   `route-handlers.ts` wires them together; a library built without a reporter

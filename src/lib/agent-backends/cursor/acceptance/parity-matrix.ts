@@ -496,12 +496,8 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
       test(
         "src/lib/agent-backends/cursor/conversation-runtime-capture.test.ts",
       ),
-      test(
-        "src/lib/workflows/conversation/checkpoint-fork.integration.test.ts",
-      ),
-      test(
-        "src/lib/workflows/conversation/checkpoint-delivery.integration.test.ts",
-      ),
+      test("src/lib/conversation-core/checkpoint-delivery.integration.test.ts"),
+      test("src/lib/conversation-core/checkpoint-delivery.integration.test.ts"),
       report("docs/reports/2026-09-29-cursor-continuity.md"),
     ],
   },
@@ -826,24 +822,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     ],
   },
   {
-    id: "agent-run-cli",
-    area: "tasks",
-    claim:
-      "`cctl agent run` and the agent-runs API accept Cursor and execute it through the same admitted task path as any other backend.",
-    mechanism: "cc-owned",
-    limitation: null,
-    owner: "command-center#115",
-    verdict: "verified",
-    blocker: null,
-    liveFlow: true,
-    facts: [],
-    auditGaps: ["feature-agent-run-cli"],
-    evidence: [
-      test("src/lib/agent-runs/route-handlers.test.ts"),
-      APPLICATION_PASS,
-    ],
-  },
-  {
     id: "production-continuity-binding",
     area: "tasks",
     claim:
@@ -1002,91 +980,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     ],
   },
 
-  // ----- workflows -------------------------------------------------------
-  {
-    id: "workflow-assignments",
-    area: "workflows",
-    claim:
-      "Cursor is assignable as a graph workflow implementer, validator, plan-repair agent and collaboration second agent, in the schema, the assignment editor and the config cascade.",
-    mechanism: "cc-owned",
-    limitation: null,
-    owner: "command-center#118",
-    verdict: "verified",
-    blocker: null,
-    liveFlow: true,
-    facts: [],
-    auditGaps: ["feature-workflow-assignments"],
-    evidence: [
-      test("src/lib/workflow-graph/config-schemas.test.ts"),
-      test("src/lib/workflow-graph/definition-validation.test.ts"),
-      APPLICATION_PASS,
-    ],
-  },
-  {
-    id: "workflow-auxiliary-runners",
-    area: "workflows",
-    claim:
-      "Validator, advisory-response, output-capture and plan-repair runs execute on Cursor, inheriting the assignment's backend rather than requiring a Claude fallback.",
-    mechanism: "cc-owned",
-    limitation: null,
-    owner: "command-center#118",
-    verdict: "verified",
-    blocker: null,
-    liveFlow: true,
-    facts: [],
-    auditGaps: ["feature-auxiliary-runners"],
-    evidence: [
-      test("src/lib/workflow-graph/validator-runner.test.ts"),
-      test("src/lib/workflow-graph/plan-repair/agent-runner.test.ts"),
-      APPLICATION_PASS,
-    ],
-  },
-  {
-    id: "owned-workflow-writes",
-    area: "workflows",
-    claim:
-      "Path-owned and read-only workflow placements accept Cursor: the same write envelope Claude receives is composed, delivered and briefed in the implementer prompt.",
-    mechanism: "instruction-only",
-    limitation:
-      "The write envelope is delivered as instructions, so a Cursor lane can write outside its owned paths; ownership violations are detected after the fact rather than prevented.",
-    owner: "command-center#118",
-    verdict: "verified",
-    blocker: null,
-    liveFlow: true,
-    facts: [],
-    auditGaps: ["feature-owned-workflow-writes"],
-    evidence: [
-      test(
-        "src/lib/workflow-graph/implementer-write-envelope.integration.test.ts",
-      ),
-      live("instructions.acceptance.test.ts", "instructions-durable-resume"),
-      live(
-        "instructions.acceptance.test.ts",
-        "validator-instruction-policy-resume",
-      ),
-      APPLICATION_PASS,
-    ],
-  },
-  {
-    id: "spec-managed-delivery",
-    area: "workflows",
-    claim:
-      "A native spec's managed delivery workflow can be staffed with Cursor, and that staffing survives freeze, reload and reopen.",
-    mechanism: "cc-owned",
-    limitation: null,
-    owner: "command-center#118",
-    verdict: "verified",
-    blocker: null,
-    liveFlow: true,
-    facts: [],
-    auditGaps: ["feature-spec-delivery"],
-    evidence: [
-      test("src/lib/specs/managed-workflow-definition-service.test.ts"),
-      test("src/lib/workflow-graph/workflow-manager.test.ts"),
-      APPLICATION_PASS,
-    ],
-  },
-
   // ----- collaboration ---------------------------------------------------
   {
     id: "collaboration-mode",
@@ -1107,7 +1000,7 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
       test("src/lib/workflows/collaboration/backend-refusal.test.ts"),
       test("src/lib/workflows/collaboration/agent-caller-production.test.ts"),
       test("src/lib/workflows/collaboration/manager.test.ts"),
-      test("src/lib/workflows/conversation/manager.test.ts"),
+      test("src/lib/conversation-core/turn-engine.test.ts"),
       APPLICATION_PASS,
     ],
   },
@@ -1238,29 +1131,6 @@ export const CURSOR_PARITY_MATRIX: readonly CursorParityRow[] = [
     auditGaps: [],
     evidence: [
       test("src/lib/agent-backends/cursor/runtime-config.test.ts"),
-      live("instructions.acceptance.test.ts", "instructions-durable-resume"),
-    ],
-  },
-  {
-    id: "filesystem-confinement",
-    area: "policy",
-    claim:
-      "A filesystem write policy supplied to Cursor is translated into explicit instructions and is declared instruction-only on both facets; an unrepresentable policy is refused at the adapter boundary rather than silently dropped.",
-    mechanism: "instruction-only",
-    limitation:
-      "There is no mechanical confinement: a Cursor agent can write outside its allowed paths, and the declaration exists so no consumer mistakes the instruction for an enforced envelope.",
-    owner: "command-center#117",
-    verdict: "unresolved",
-    blocker:
-      "SandboxOptions exposes only an enabled flag, with no path allowlist and no coverage of shell, direct file tools, MCP or subagents, so an exact write envelope cannot be expressed.",
-    liveFlow: true,
-    facts: ["conversation.fsWriteRestriction", "tasks.fsWriteRestriction"],
-    auditGaps: ["comparison-fs-write", "defect-5-fs-policy-refusal"],
-    evidence: [
-      test("src/lib/agent-backends/cursor/task-runner.test.ts"),
-      test(
-        "src/lib/workflow-graph/implementer-write-envelope.integration.test.ts",
-      ),
       live("instructions.acceptance.test.ts", "instructions-durable-resume"),
     ],
   },

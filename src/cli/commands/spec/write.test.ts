@@ -10,7 +10,6 @@ const CREATED_AT = "2026-07-18T00:00:00.000Z";
 const SPEC_FILE = "/tmp/spec-element.json";
 const DRAFT_FILE = "/tmp/spec-draft-element.json";
 const BATCH_FILE = "/tmp/spec-elements.json";
-const SCOPE_FILE = "/tmp/spec-scope.json";
 const INPUTS_FILE = "/tmp/spec-start-inputs.json";
 const TASK_FILE = "/tmp/spec-discovered-task.json";
 
@@ -24,14 +23,6 @@ const spec = {
   abandonedReason: null,
   createdAt: CREATED_AT,
   updatedAt: CREATED_AT,
-};
-
-const SPEC_SCOPE = {
-  selectedTaskIds: ["task-id-1"],
-  selectedCriterionIds: ["criterion-id-1"],
-  exclusionDispositions: [
-    { criterionId: "criterion-id-2", disposition: "deferred" },
-  ],
 };
 
 function revision(state: "draft" | "approved" = "draft") {
@@ -1090,35 +1081,9 @@ function makeHost(
             );
           }
           return response({
-            execution: {
-              id: "execution-1",
-              specId: spec.id,
-              revisionId: "revision-approved",
-              revisionNumber: 1,
-              scope: null,
-              state: "definition_review",
-              workflowSeedSource: {
-                kind: "spec_delivery",
-                specSlug: "native-sdd",
-                candidateId: "launch-1",
-              },
-              workflowExecutionId: null,
-              sessionName: "feature-session",
-              deliveredAt: null,
-              abandonedReason: null,
-              createdAt: CREATED_AT,
-              updatedAt: CREATED_AT,
-            },
             workflowDefinition: {
               id: "candidate-1",
               revision: 4,
-            },
-            deliveryPlan: {
-              attemptId: "attempt-1",
-              candidateId: "candidate-1",
-              candidateHash: "sha256:candidate",
-              workflowExecutionId: "workflow-execution-1",
-              resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
             },
           });
         case "open-amendment":
@@ -1180,7 +1145,6 @@ function makeHost(
           return response({
             discovery: {
               id: "discovery-1",
-              executionId: "execution-1",
               workflowExecutionId: "workflow-execution-1",
               attemptId: "attempt-1",
               title: "Handle the discovered migration",
@@ -2546,7 +2510,6 @@ describe("cctl spec write verbs", () => {
     // The flag is forwarded verbatim: the id an agent holds is the workflow
     // execution id, and the server resolves it through the binding.
     expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      executionId: "workflow-execution-1",
       reason: "Superseded",
     });
 
@@ -2674,7 +2637,6 @@ describe("cctl spec write verbs", () => {
 
     expect(result.exitCode, result.stderr || result.stdout).toBe(0);
     expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      executionId: "workflow-execution-1",
       discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
     });
   });
@@ -2728,48 +2690,6 @@ describe("cctl spec write verbs", () => {
 });
 
 describe("cctl spec start against a delivery plan", () => {
-  const CANDIDATE = {
-    attemptId: "attempt-1",
-    candidateId: "candidate-1",
-    candidateHash: "sha256:candidate",
-    workflowExecutionId: "workflow-execution-1",
-    resolvedDefinitionHash: `sha256:${"d".repeat(64)}`,
-  };
-
-  it("rejects the retired scope file before reading it or contacting the server", async () => {
-    const host = makeHost({
-      approved: true,
-      files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
-    });
-
-    const result = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("cctl spec plan open native-sdd");
-    expect(result.stderr).not.toMatch(/legacy planning|--seed-from/i);
-    expect(host.requests).toHaveLength(0);
-
-    const structured = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-    expect(structured.exitCode).toBe(2);
-    expect(JSON.parse(structured.stdout)).toMatchObject({
-      ok: false,
-      instruction: expect.stringContaining("cctl spec plan open native-sdd"),
-      error: {},
-    });
-    expect(JSON.parse(structured.stdout).instruction).not.toMatch(
-      /legacy planning|--seed-from/i,
-    );
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("forwards an inputs JSON object unchanged and reports every launch identity", async () => {
     const parameters = {
       required: "ticket-66",
@@ -2781,30 +2701,10 @@ describe("cctl spec start against a delivery plan", () => {
       files: { [INPUTS_FILE]: JSON.stringify(parameters) },
       startBody: {
         body: {
-          execution: {
-            id: "execution-1",
-            specId: spec.id,
-            revisionId: "revision-approved",
-            revisionNumber: 1,
-            scope: null,
-            state: "definition_review",
-            workflowSeedSource: {
-              kind: "spec_delivery",
-              specSlug: "native-sdd",
-              candidateId: "launch-1",
-            },
-            workflowExecutionId: null,
-            sessionName: "feature-session",
-            deliveredAt: null,
-            abandonedReason: null,
-            createdAt: CREATED_AT,
-            updatedAt: CREATED_AT,
-          },
           workflowDefinition: {
             id: "candidate-1",
             revision: 4,
           },
-          deliveryPlan: CANDIDATE,
         },
       },
     });
@@ -2824,7 +2724,7 @@ describe("cctl spec start against a delivery plan", () => {
       sessionName: "feature-session",
       parameters,
     });
-    expect(inlineDataOf(result)).toMatchObject({ deliveryPlan: CANDIDATE });
+    expect(inlineDataOf(result)).toMatchObject({});
     expect(JSON.parse(result.stdout).recovery.references).toContainEqual({
       kind: "workflow-execution",
       id: "workflow-execution-1",
@@ -2873,40 +2773,6 @@ describe("cctl spec start against a delivery plan", () => {
       ]),
     );
     expect(host.requests).toHaveLength(0);
-  });
-
-  it("reports a park as holding the candidate with no execution and no slot", async () => {
-    const host = makeHost({
-      approved: true,
-      startBody: {
-        body: {
-          parked: {
-            attemptId: CANDIDATE.attemptId,
-            candidateId: CANDIDATE.candidateId,
-            candidateHash: CANDIDATE.candidateHash,
-            nextAct: {
-              actor: "agent",
-              command: "cctl spec start native-sdd --file .cc/temp/inputs.json",
-              reason: "The approved parked candidate is ready to launch.",
-            },
-          },
-        },
-      },
-    });
-
-    const result = await runCcWithHost(
-      ["spec", "start", "native-sdd", "--park", "--file", INPUTS_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    const started = host.requests.find((request) =>
-      request.url.includes("/actions/start-execution"),
-    );
-    expect(JSON.parse(String(started?.init.body))).toMatchObject({
-      park: true,
-    });
   });
 });
 

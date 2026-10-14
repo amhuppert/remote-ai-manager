@@ -43,34 +43,11 @@ const events: SpecSseEvent[] = [
     subjectId: "requirement-1",
   },
   {
-    type: "spec-execution-changed",
-    kind: "running",
-    ...common,
-    revisionId: "revision-1",
-    executionId: "execution-1",
-  },
-  {
-    type: "spec-evidence-changed",
-    kind: "proof-verdict-recorded",
-    ...common,
-    revisionId: "revision-1",
-    criterionId: "criterion-1",
-    executionId: "execution-1",
-  },
-  {
     type: "spec-attention-changed",
     kind: "needs-you-added",
     ...common,
     attentionId: "attention-1",
     active: true,
-  },
-  {
-    type: "spec-delivery-plan-changed",
-    kind: "reaffirmed",
-    ...common,
-    attemptId: "attempt-1",
-    draftRevision: 3,
-    candidateId: null,
   },
 ];
 
@@ -79,10 +56,7 @@ describe("reduceSpecSseEvent", () => {
     ["spec-changed", ["content", "lint", "summary"]],
     ["spec-revision-changed", ["approval", "content", "revision", "summary"]],
     ["spec-approval-changed", ["approval", "attention", "summary"]],
-    ["spec-execution-changed", ["attention", "execution", "summary"]],
-    ["spec-evidence-changed", ["evidence", "execution", "summary"]],
     ["spec-attention-changed", ["attention", "summary"]],
-    ["spec-delivery-plan-changed", ["deliveryPlan", "summary"]],
   ] as const)("reduces %s to its affected cache facets", (type, facets) => {
     const event = events.find((candidate) => candidate.type === type);
     if (!event) throw new Error(`missing fixture for ${type}`);

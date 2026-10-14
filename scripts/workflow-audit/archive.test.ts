@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { _createTestDb } from "../../src/lib/state-store/state-db";
+import { DEPLOY_1_5_SCHEMA_SQL } from "../../src/lib/state-store/migrations/testing/deploy-1-5-schema";
 import {
   ARCHIVE_REF_PREFIX,
   ARCHIVE_SUBDIR,
@@ -382,7 +382,8 @@ beforeEach(() => {
   configDir = path.join(root, "cc");
   mkdirSync(configDir);
   seedRepository();
-  db = _createTestDb({ inMemory: true });
+  db = new Database(":memory:");
+  db.exec(DEPLOY_1_5_SCHEMA_SQL);
   seedDatabase();
   seedConfigFiles();
 });

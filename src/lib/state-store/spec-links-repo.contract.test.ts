@@ -193,10 +193,10 @@ describe("spec-links-repo durability contract", () => {
     repo.insertLink(second);
     repo.insertLink(
       linkFixture(
-        "link-merge-job",
+        "link-ticket",
         SPEC_ID,
-        "merge_job",
-        stableStringify({ mergeJobId: "merge-job-7" }),
+        "ticket",
+        stableStringify({ projectName: "links-contract", number: 7 }),
       ),
     );
 
@@ -204,9 +204,7 @@ describe("spec-links-repo durability contract", () => {
       first,
       second,
     ]);
-    expect(
-      repo.findByLinkedObject("workflow_execution", objectRefJson),
-    ).toEqual([]);
+    expect(repo.findByLinkedObject("conversation", objectRefJson)).toEqual([]);
   });
 
   it("durably reserves one source entry identity and completes its snapshot", () => {

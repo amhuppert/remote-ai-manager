@@ -16,17 +16,10 @@ const targets: Record<LiveReferenceTarget["kind"], LiveReferenceTarget> = {
     projectName: "command-center",
     id: "conv-42",
   },
-  execution: {
-    kind: "execution",
-    projectName: "command-center",
-    sessionName: "notepad-live-chips",
-    id: "eca05bca-951a-4fb0",
-  },
 };
 const names = {
   ticket: "Notepad capture",
   conversation: "Capture verification",
-  execution: "Deliver Notepad capture",
 };
 const Chip = createLiveReferenceChip({
   useReference(target) {
@@ -55,35 +48,21 @@ const Chip = createLiveReferenceChip({
                   : target.kind === "conversation"
                     ? "amber"
                     : "cyan",
-              attentionCount: target.kind === "execution" ? 1 : 0,
+              attentionCount: 0,
               href: "#destination",
               readCommand: "cctl ticket get command-center#90",
               details:
-                target.kind === "execution"
+                target.kind === "conversation"
                   ? [
                       { label: "Project", value: "command-center" },
-                      { label: "Session", value: "notepad-live-chips" },
-                      {
-                        label: "Activity",
-                        value:
-                          "Implementation running · verification awaiting you",
-                      },
-                      {
-                        label: "Awaiting you",
-                        value: "Verification · context approval",
-                      },
+                      { label: "Scope", value: "notepad-live-chips" },
+                      { label: "Agent", value: "codex" },
+                      { label: "Last activity", value: "2026-09-10 00:30" },
                     ]
-                  : target.kind === "conversation"
-                    ? [
-                        { label: "Project", value: "command-center" },
-                        { label: "Scope", value: "notepad-live-chips" },
-                        { label: "Agent", value: "codex" },
-                        { label: "Last activity", value: "2026-09-10 00:30" },
-                      ]
-                    : [
-                        { label: "Project", value: "command-center" },
-                        { label: "Work type", value: "feature" },
-                      ],
+                  : [
+                      { label: "Project", value: "command-center" },
+                      { label: "Work type", value: "feature" },
+                    ],
             },
     };
     return {
@@ -142,19 +121,7 @@ function Dashboard({ mode = "ready" }: { mode?: Mode }) {
               />
             </div>
           </div>
-          <div className="flex flex-col gap-md">
-            <div className="text-[0.7rem] tracking-wider text-text-secondary uppercase">
-              Delivery
-            </div>
-            <div>
-              <Chip
-                target={targets.execution}
-                title={names.execution}
-                identity="eca05bca"
-                reference="execution reference"
-              />
-            </div>
-          </div>
+
           <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle pt-lg">
             <Button size="sm" onClick={() => setDone(!done)}>
               {done ? "Reopen ticket" : "Complete ticket"}

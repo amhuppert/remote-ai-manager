@@ -43,10 +43,6 @@ import {
   specWriteCommands,
   specWriteGroups,
 } from "../commands/spec/native-write-definitions";
-import {
-  workflowCommands,
-  workflowGroups,
-} from "../commands/workflow/definitions";
 
 import { devCommands, devGroups } from "../commands/dev/definitions";
 import {
@@ -87,7 +83,6 @@ export function createCommandCenterCli(
       ...validateCommands,
       ...specCommands,
       ...specWriteCommands,
-      ...workflowCommands,
       ...devCommands,
       ...fixtureCommands,
       ...logsCommands,
@@ -106,7 +101,6 @@ export function createCommandCenterCli(
       ...validateGroups,
       ...specGroups,
       ...specWriteGroups,
-      ...workflowGroups,
       ...devGroups,
       ...fixtureGroups,
       ...logsGroups,
@@ -114,16 +108,12 @@ export function createCommandCenterCli(
     contexts: {
       cc: async ({ env, globals, signal }) => {
         const transport = await resolveCcHost(host, env, signal);
-        let laneReminderState: unknown;
         let inboxHintState: unknown;
         return {
           ok: true,
           app: {
             env,
             globals,
-            get laneReminderState() {
-              return laneReminderState;
-            },
             get inboxHintState() {
               return inboxHintState;
             },
@@ -131,12 +121,6 @@ export function createCommandCenterCli(
               ...transport,
               onJsonResponse(body: unknown) {
                 transport.onJsonResponse?.(body);
-                if (
-                  typeof body === "object" &&
-                  body !== null &&
-                  "laneReminderState" in body
-                )
-                  laneReminderState = body.laneReminderState;
                 if (
                   typeof body === "object" &&
                   body !== null &&

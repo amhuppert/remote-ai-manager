@@ -1,4 +1,3 @@
-import type { ExecutionRefAttrs } from "@/lib/workflow-graph/references";
 import { findRegisteredRefs } from "./ref-parser";
 import { type ConversationRefAttrs, type MessageRefAttrs } from "./schemas";
 import type { NotepadRefAttrs } from "@/lib/notepads/schemas";
@@ -14,7 +13,6 @@ import type {
 } from "@/lib/prompt-editor/spec-mention-nodes";
 
 export type RefSegment =
-  | { type: "execution-ref"; attrs: ExecutionRefAttrs; raw: string }
   | { type: "text"; text: string }
   | { type: "conversation-ref"; attrs: ConversationRefAttrs; raw: string }
   | { type: "message-ref"; attrs: MessageRefAttrs; raw: string }

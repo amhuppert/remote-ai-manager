@@ -46,7 +46,10 @@
         "cost": {
           "full": 7,
           "changed": 7,
-          "paths": { "base": 3, "perPath": 1 }
+          "paths": {
+            "base": 3,
+            "perPath": 1
+          }
         },
         "timeoutMs": 3600000,
         "description": "Run unit tests in a worker pool clamped to the machine's memory budget",
@@ -72,19 +75,24 @@
         "pathArgs": "forbid"
       }
     },
-    "preMerge": ["format", "lint", "typecheck", "seams", "test"],
-    "laneMerge": ["typecheck", "seams", "test"]
+    "preMerge": ["format", "lint", "typecheck", "seams", "test"]
   },
   "devServers": [
     {
       "name": "nextjs",
       "command": "bun run dev",
-      "port": { "base": 3000, "range": 100 }
+      "port": {
+        "base": 3000,
+        "range": 100
+      }
     },
     {
       "name": "storybook",
       "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
-      "port": { "base": 6006, "range": 100 }
+      "port": {
+        "base": 6006,
+        "range": 100
+      }
     }
   ]
 }

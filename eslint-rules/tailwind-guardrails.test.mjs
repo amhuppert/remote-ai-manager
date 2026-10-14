@@ -13,10 +13,7 @@ import { describe } from "vitest";
 import plugin from "./tailwind-guardrails.mjs";
 
 // Same shape as the css block in eslint.config.mjs.
-const APPROVED_AREAS = [
-  "/features/_root/styles/",
-  "/components/workflow-graph/",
-];
+const APPROVED_AREAS = ["/features/_root/styles/"];
 const GRANDFATHERED = [
   "/features/projects-index/styles/projects-index.css",
   "/features/config/styles/config-editor.css",
@@ -261,11 +258,6 @@ describe("tailwind-guardrails", () => {
         {
           code: `.x { color: red; }`,
           filename: "src/features/_root/styles/typography.css",
-          options: CSS_OPTS,
-        },
-        {
-          code: `.y { color: red; }`,
-          filename: "src/components/workflow-graph/workflow-graph.css",
           options: CSS_OPTS,
         },
         {

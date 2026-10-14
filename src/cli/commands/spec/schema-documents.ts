@@ -1,7 +1,7 @@
 /**
  * `cctl spec schema` — the agent surface describing its input documents and
  * read-envelope reference (R24.4). Off this repository the element write,
- * delivery-plan edit, and discovered-task documents are otherwise knowable
+ * import bundle and draft element documents are otherwise knowable
  * only by reading `src/lib/specs/**`, so every input shape here is DERIVED from
  * the schemas the server parses with: the JSON Schema, enumerated values, and
  * admitting authoring stage all come from those sources. Read-envelope field
@@ -31,14 +31,12 @@ import {
   importBundleSchema,
   sectionRoleSchema,
   specElementPayloadSchema,
-  taskElementPayloadSchema,
   touchedPathSchema,
   validationStrategyKindsSchema,
   type ImportBundle,
   type SectionRole,
   type SpecAuthoringStage,
   type SpecElementKind,
-  type TaskElementPayload,
 } from "@/lib/specs/schemas";
 import {
   admitDraftWrite,
@@ -258,15 +256,15 @@ const KIND_NOTES: Record<SpecElementKind, readonly string[]> = {
   ],
   criterion: [
     "parentElementId must be the owning requirement's elementId — the R<n>.<m> handle is composed from that requirement's number.",
-    `validationStrategy.kinds must include at least one machine-provable kind (${MACHINE_VALIDATION_EVIDENCE_KINDS.join(" or ")}); a criterion whose only proposed proof is that someone committed something states no checkable claim, so an empty or commit-only list is refused. The kinds are the author's stated proof intent — delivery is decided by the claiming context's graph-configured gates, not by matching evidence against this list.`,
+    `validationStrategy.kinds must include at least one machine-provable kind (${MACHINE_VALIDATION_EVIDENCE_KINDS.join(" or ")}); a criterion whose only proposed proof is that someone committed something states no checkable claim, so an empty or commit-only list is refused. The kinds describe the criterion's intended validation.`,
   ],
   decision: [
     "tracedRequirementElementIds holds requirement elementIds, not R<n> handles.",
   ],
   task: [
-    "A task element states intended work on the spec's Plan revision. It is not a delivery plan: the graph that runs is authored directly with `cctl workflow replace <definitionId> --file <plan.json>`, and no task element compiles into it.",
+    "Legacy task elements are read-only historical content. Implementation is planned with run workflows.",
     "All four id arrays hold elementIds, not handles.",
-    "dependsOnTaskElementIds, laneGroup, executionLane and touchedPaths record the author's intended ordering, grouping, lane and surfaces. Nothing derives execution from them — the delivery-plan author reads them while placing contexts, tasks, edges and ownedPaths in the authored launch, where those decisions are actually made.",
+    "dependsOnTaskElementIds, laneGroup, executionLane and touchedPaths record the author's intended ordering, grouping, lane and surfaces. These fields remain readable as historical task content and do not create implementation runs.",
   ],
 };
 
@@ -379,17 +377,6 @@ const REMOVAL_BATCH_EXAMPLE = {
   ],
 };
 
-const DISCOVERED_TASK_EXAMPLE: Omit<TaskElementPayload, "kind"> = {
-  title: "Publish the delivery-plan migration guidance too",
-  instructions:
-    "The retired scope-file path needs an exact migration act; capture that documentation as plan work on the next delivery attempt.",
-  tracedRequirementElementIds: ["req-self-describing-surface"],
-  tracedDecisionElementIds: [],
-  coveredCriterionElementIds: [],
-  dependsOnTaskElementIds: ["task-publish-input-schemas"],
-  laneGroup: "cli",
-};
-
 /**
  * The draft write document narrowed to one kind. Both the discriminator and
  * the payload variant come from `specElementPayloadSchema`'s own options, so a
@@ -399,47 +386,49 @@ const DISCOVERED_TASK_EXAMPLE: Omit<TaskElementPayload, "kind"> = {
  * file with no version in it.
  */
 function elementDocuments(): SchemaDocument[] {
-  return specElementPayloadSchema.options.map((payload) => {
-    const kind: SpecElementKind = payload.shape.kind.value;
-    const jsonSchema = jsonSchemaOf(
-      draftElementDocumentSchema.extend({
-        kind: z.literal(kind),
-        payload,
-      }),
-    );
-    return {
-      id: kind,
-      title:
-        kind === "task"
-          ? "legacy draft element write document (kind: task)"
-          : `draft element write document (kind: ${kind})`,
-      usedBy: [DRAFT_USAGE, BATCH_USAGE],
-      jsonSchema,
-      enums: collectEnums(jsonSchema, ""),
-      example: draftExample(kind),
-      notes: [
-        ...KIND_NOTES[kind],
-        ...positionNotes("this element's own baseElementVersion"),
-        DRAFT_REINTRODUCTION_NOTE,
-        ...BASE_VERSION_NOTES,
-        `The first element of a spec that does not exist yet is a different document — run \`cctl spec schema ${CREATE_DOCUMENT_ID}\`.`,
-      ],
-      // Role-less probe: the earliest stage this kind can be admitted at
-      // under any role. `roleStages` carries the per-role answer where it
-      // differs, so this line never overstates.
-      admittedFromStage: earliestAdmittingStage(kind, undefined),
-      ...(kind === "section"
-        ? {
-            roleStages: Object.fromEntries(
-              sectionRoleSchema.options.map((role) => [
-                role,
-                earliestAdmittingStage("section", role),
-              ]),
-            ),
-          }
-        : {}),
-    };
-  });
+  return specElementPayloadSchema.options
+    .filter((payload) => payload.shape.kind.value !== "task")
+    .map((payload) => {
+      const kind: SpecElementKind = payload.shape.kind.value;
+      const jsonSchema = jsonSchemaOf(
+        draftElementDocumentSchema.extend({
+          kind: z.literal(kind),
+          payload,
+        }),
+      );
+      return {
+        id: kind,
+        title:
+          kind === "task"
+            ? "legacy read-only task element"
+            : `draft element write document (kind: ${kind})`,
+        usedBy: [DRAFT_USAGE, BATCH_USAGE],
+        jsonSchema,
+        enums: collectEnums(jsonSchema, ""),
+        example: draftExample(kind),
+        notes: [
+          ...KIND_NOTES[kind],
+          ...positionNotes("this element's own baseElementVersion"),
+          DRAFT_REINTRODUCTION_NOTE,
+          ...BASE_VERSION_NOTES,
+          `The first element of a spec that does not exist yet is a different document — run \`cctl spec schema ${CREATE_DOCUMENT_ID}\`.`,
+        ],
+        // Role-less probe: the earliest stage this kind can be admitted at
+        // under any role. `roleStages` carries the per-role answer where it
+        // differs, so this line never overstates.
+        admittedFromStage: earliestAdmittingStage(kind, undefined),
+        ...(kind === "section"
+          ? {
+              roleStages: Object.fromEntries(
+                sectionRoleSchema.options.map((role) => [
+                  role,
+                  earliestAdmittingStage("section", role),
+                ]),
+              ),
+            }
+          : {}),
+      };
+    });
 }
 
 /**
@@ -616,7 +605,6 @@ const IMPORT_BUNDLE_EXAMPLE: ImportBundle = {
       disposition: "confirmed",
     },
   ],
-  delivered: true,
   dryRun: false,
 };
 
@@ -637,7 +625,6 @@ function importBundleDocument(): SchemaDocument {
     notes: [
       "Import creates new specs only. A slug or alias this project already uses — including one an abandoned spec holds — refuses with slug_taken, and there is no revival or amendment path through this verb; change an existing spec with `cctl spec amend <slug>`.",
       "The imported spec is born approved at the design stage on IMPORT PROVENANCE. No approval of any kind is written, so every human gate on it stays exactly as strong as on a spec authored here.",
-      'delivered defaults to TRUE: a spec worth importing has usually already shipped, and the record it writes is external-delivery provenance rather than machine proof — the delivery gate never reads it. A source with no acceptance criterion to record delivery against is refused; give the bundle a criterion, or set `"delivered": false` to import it as approved without claiming delivery.',
       "requirements[].ref is a BUNDLE-LOCAL label, not an element id: it exists only so decisions[].traces can point at a requirement before any element id exists. Every ref a trace names must be declared by exactly one requirement in the same bundle — a duplicate or an unresolved ref refuses before anything is written.",
       `A criterion that states no validationStrategy is born with a machine-provable default whose note reads "${IMPORTED_VALIDATION_STRATEGY_NOTE}" — state one explicitly whenever the external source names the obligation, because an authoring agent that read the source knows it better than the default does.`,
       "Handles are allocated in bundle order: requirements R1…Rn, criteria numbered within each requirement (R1.1, R1.2), decisions D1…Dn, questions Q1…Qn, assumptions A1…An. Run spec import-preview to see the exact numbering before writing cross-references against it.",
@@ -647,38 +634,21 @@ function importBundleDocument(): SchemaDocument {
 }
 
 function otherDocuments(): SchemaDocument[] {
-  const discoveredTaskSchema = jsonSchemaOf(
-    taskElementPayloadSchema.omit({ kind: true }),
-  );
-  return [
-    {
-      id: "discovered-task",
-      title: "discovered-task document",
-      usedBy: ["cctl spec capture <slug> --execution <id> --file <task.json>"],
-      jsonSchema: discoveredTaskSchema,
-      enums: collectEnums(discoveredTaskSchema, ""),
-      example: DISCOVERED_TASK_EXAMPLE,
-      notes: [
-        "This is a task payload without its `kind` discriminator — capture supplies it.",
-        "Capture amends the spec from inside a running execution; to continue authoring an approved spec outside one, use `cctl spec amend <slug>` and `cctl spec draft`.",
-      ],
-    },
-    guidanceDocument(),
-  ];
+  return [guidanceDocument()];
 }
 
 function guidanceDocument(): SchemaDocument {
   const schema = jsonSchemaOf(nativeSddGuidanceSchema);
   return {
     id: "guidance",
-    title: "native SDD graph-admission, lint, and evidence reference",
+    title: "native SDD authoring lint reference",
     usedBy: ["cctl spec schema guidance"],
     jsonSchema: schema,
     enums: collectEnums(schema, ""),
     example: NATIVE_SDD_GUIDANCE,
     notes: [
-      "Every rule id comes from the registry that constructs the finding: the delivery-plan rows are derived from the binding lint's code list and the propose gate's launch and plan ids, so a code the gate can emit cannot be missing here. `severity` names the transition the finding blocks; a `note` of \"human act\" marks a blocks_propose code no authored write clears, because reaffirming a criterion an earlier execution delivered is a human judgment.",
-      "test_run is minted only when the criterion's own strategy declares it, alongside validator_verdict from the same graph-workflow-validation-result event; no test runner mints independent test_run evidence.",
+      "Every rule id comes from the authoring lint registry. Severity names the transition a finding blocks.",
+      "Validation strategy kinds describe the observable evidence a criterion needs. Implementation runs and their checks establish that evidence independently of spec authoring.",
     ],
   };
 }

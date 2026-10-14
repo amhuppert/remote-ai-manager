@@ -16,7 +16,6 @@ import type {
   PushNotificationConfig,
   Notification,
 } from "@/lib/notifications/schemas";
-import type { GraphWorkflowPushInfo } from "@/lib/workflow-graph/execution-events";
 const logger = createLogger("push-dispatcher");
 
 /** Config reader function — injected for testability, defaults to reading from disk */
@@ -157,27 +156,17 @@ function pushEventFromNotification(notification: Notification): PushEvent {
         sessionName: notification.sessionName ?? undefined,
         contextName: `${notification.specName} · ${notification.deepLinkId}`,
       };
-    case "workflow":
-      return {
-        trigger: "workflow-completed",
-        title: notification.title,
-        message: notification.message,
-        projectName: notification.projectName,
-        sessionName: notification.sessionName,
-      };
     default:
       assertNever(notification);
   }
 }
 
-// Waiver-request and attention-resolution rows reuse the existing
-// user-configurable spec approval triggers rather than adding config keys.
+// Attention resolutions use the configured approval-granted trigger.
 function specPushTrigger(
   type: Extract<Notification, { source: "spec" }>["type"],
 ): PushEvent["trigger"] {
   switch (type) {
     case "spec-approval-requested":
-    case "spec-waiver-requested":
       return "spec-approval-requested";
     case "spec-approval-granted":
     case "spec-attention-resolved":
@@ -248,104 +237,6 @@ export async function pushForConversationStatus(
       return;
     default:
       assertNever(info.status);
-  }
-}
-
-// ============================================================
-// Push for graph workflow events
-// ============================================================
-
-export async function pushForGraphWorkflowEvent(
-  config: PushNotificationConfig | undefined,
-  info: GraphWorkflowPushInfo,
-): Promise<void> {
-  if (!config) return;
-
-  switch (info.kind) {
-    case "workflow-completed":
-      await sendPushNotification(config, {
-        trigger: "workflow-completed",
-        title: "Graph workflow completed",
-        message: `Graph workflow completed for session ${info.sessionName}`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-        ...(info.dedupeKey ? { dedupeKey: info.dedupeKey } : {}),
-      });
-      return;
-    case "workflow-halted":
-      await sendPushNotification(config, {
-        trigger: "workflow-halted",
-        title: "Graph workflow halted",
-        message: `Graph workflow halted for session ${info.sessionName}`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-      });
-      return;
-    case "circuit-breaker":
-      await sendPushNotification(config, {
-        trigger: "workflow-halted",
-        title: "Circuit breaker tripped",
-        message: `Circuit breaker tripped in context "${info.contextTitle}" for session ${info.sessionName}`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-      });
-      return;
-    case "context-completed":
-      await sendPushNotification(config, {
-        trigger: "workflow-completed",
-        title: `Context completed (${info.completedContexts}/${info.totalContexts})`,
-        message: `Context "${info.contextTitle}" completed for session ${info.sessionName}`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-      });
-      return;
-    case "approval-pending":
-      await sendPushNotification(config, {
-        trigger: "waiting-for-input",
-        title: "Approval required",
-        message: `Context "${info.contextTitle}" passed validators — review to continue`,
-        projectName: info.projectName,
-        sessionName: info.sessionName,
-      });
-      return;
-    case "plan-repair": {
-      const attempt =
-        info.planRepairAttempt !== undefined
-          ? ` (attempt ${info.planRepairAttempt})`
-          : "";
-      const diagnosis = info.planRepairDiagnosis?.split("\n")[0] ?? "";
-      switch (info.planRepairOutcome) {
-        case "repaired":
-          await sendPushNotification(config, {
-            trigger: "plan-repaired",
-            title: "Plan repair applied — resumed",
-            message: `Context "${info.contextTitle}"${attempt}: ${diagnosis}`,
-            projectName: info.projectName,
-            sessionName: info.sessionName,
-          });
-          return;
-        case "declined":
-        case "failed":
-        case "exhausted":
-          await sendPushNotification(config, {
-            trigger: "plan-repair-declined",
-            title:
-              info.planRepairOutcome === "exhausted"
-                ? "Plan repair exhausted — human review needed"
-                : "Plan repair declined — still halted",
-            message: `Context "${info.contextTitle}"${attempt}${diagnosis ? `: ${diagnosis}` : ""}`,
-            projectName: info.projectName,
-            sessionName: info.sessionName,
-          });
-          return;
-        default:
-          // Superseded rounds are audit-only and never reach the dispatcher;
-          // an unknown outcome is not worth a push.
-          return;
-      }
-    }
-    default:
-      assertNever(info.kind);
   }
 }
 
@@ -459,14 +350,6 @@ export function dispatchPushForConversationStatus(
 ): void {
   getPushConfig()
     .then((config) => pushForConversationStatus(config, info))
-    .catch(() => {});
-}
-
-export function dispatchPushForGraphWorkflowEvent(
-  info: GraphWorkflowPushInfo,
-): Promise<void> {
-  return getPushConfig()
-    .then((config) => pushForGraphWorkflowEvent(config, info))
     .catch(() => {});
 }
 

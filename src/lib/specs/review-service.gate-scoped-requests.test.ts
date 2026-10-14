@@ -15,7 +15,6 @@ import { createNotificationsRepo } from "@/lib/notifications/repo";
 import type { SpecNotification } from "@/lib/notifications/schemas";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -39,8 +38,6 @@ const PROJECT_NAME = "gate-scoped-requests-project";
 const SPEC_ID = "spec-gate-scoped";
 const REVISION_ID = "revision-draft";
 const CRITERION_ELEMENT_ID = "element-criterion-1";
-const TASK_ELEMENT_ID = "element-task-1";
-const EXECUTION_ID = "spec-execution-1";
 const REQUIREMENT_COUNT = 12;
 const NOW = "2026-08-02T09:00:00.000Z";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
@@ -98,7 +95,6 @@ describe("gate-scoped approval requests", () => {
     service = createReviewService({
       specs,
       review: createSpecReviewRepo(db),
-      delivery: createSpecDeliveryRepo(db),
       links: createSpecLinksRepo(db),
       events: createSpecEventsPublisher({
         appendInTransaction: eventsRepo.appendInTransaction,
@@ -120,18 +116,7 @@ describe("gate-scoped approval requests", () => {
     return specRows().filter((row) => row.type === "spec-approval-requested");
   }
 
-  /** The notification row the queue renders for one durable ask. */
-  function requestRowId(attentionId: string): string {
-    const row = openRequests().find(
-      (candidate) => candidate.gateRequestId === attentionId,
-    );
-    if (row === undefined) {
-      throw new Error(`no request row for ${attentionId}`);
-    }
-    return row.id;
-  }
-
-  function requestGate(gate: "requirements" | "plan") {
+  function requestGate(gate: "requirements") {
     return service.requestApproval({
       specId: SPEC_ID,
       revisionId: REVISION_ID,
@@ -153,17 +138,6 @@ describe("gate-scoped approval requests", () => {
       revisionId: REVISION_ID,
       subjectKind: "requirement",
       elementId: requirementElementId(number),
-      approver: "operator",
-      actor: HUMAN,
-      expectedReviewHash: await reviewHash(),
-    });
-  }
-
-  async function approvePlan() {
-    return service.bulkApprove({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      subjects: [{ subjectKind: "plan", elementId: null }],
       approver: "operator",
       actor: HUMAN,
       expectedReviewHash: await reviewHash(),
@@ -263,8 +237,6 @@ describe("gate-scoped approval requests", () => {
     const requested = await requestGate("requirements");
     if (!requested.ok) throw new Error("the gate request was refused");
     await approveAllRequirements();
-    const planApproved = await approvePlan();
-    expect(planApproved.ok).toBe(true);
     // Every subject is approved and only the sign-off is left: the gate holds
     // no admission, so its request is still the thing a human must answer.
     expect(deriveNotificationOutcomes(specRows(), []).needsAction).toHaveLength(
@@ -287,63 +259,6 @@ describe("gate-scoped approval requests", () => {
     });
     expect(deriveNotificationOutcomes(specRows(), []).needsAction).toHaveLength(
       0,
-    );
-  });
-
-  it("does not let the plan ITEM approval clear a plan GATE request", async () => {
-    const requested = await requestGate("plan");
-    if (!requested.ok) throw new Error("the gate request was refused");
-    expect(requested.value).toMatchObject({ scope: "gate", subject: "plan" });
-
-    const planApproved = await approvePlan();
-    expect(planApproved.ok).toBe(true);
-
-    // The gate is admitted by the revision sign-off, never by approving the
-    // plan item: clearing here would retire the entry that asks for sign-off.
-    expect(
-      specRows().filter((row) => row.type === "spec-approval-granted"),
-    ).toHaveLength(0);
-    expect(deriveNotificationOutcomes(specRows(), []).needsAction).toHaveLength(
-      1,
-    );
-
-    await approveAllRequirements();
-    const signedOff = await signOff();
-    expect(signedOff.ok).toBe(true);
-    expect(
-      specRows().filter((row) => row.type === "spec-approval-granted"),
-    ).toMatchObject([{ gateRequestId: requested.value.attentionId }]);
-  });
-
-  /**
-   * The plan gate is where the item subject and the gate name are the same
-   * word, so a queue that re-derives request identity from (spec, gate,
-   * subject) shows one entry for two asks — and answering the item hides the
-   * one still waiting on the sign-off.
-   */
-  it("surfaces the plan ITEM ask and the plan GATE ask as two Needs You entries", async () => {
-    const item = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      gate: "plan",
-      subject: "plan",
-      actor: AGENT,
-    });
-    const gate = await requestGate("plan");
-    if (!item.ok || !gate.ok) throw new Error("a request was refused");
-    expect(item.value).toMatchObject({ scope: "item", subject: "plan" });
-    expect(gate.value).toMatchObject({ scope: "gate", subject: "plan" });
-    expect(deriveNotificationOutcomes(specRows(), []).needsAction).toHaveLength(
-      2,
-    );
-
-    const planApproved = await approvePlan();
-    expect(planApproved.ok).toBe(true);
-
-    const remaining = deriveNotificationOutcomes(specRows(), []).needsAction;
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.id).toBe(
-      `notification:${requestRowId(gate.value.attentionId)}`,
     );
   });
 
@@ -416,34 +331,6 @@ describe("gate-scoped approval requests", () => {
     expect(deriveNotificationOutcomes(specRows(), []).needsAction).toHaveLength(
       1,
     );
-  });
-
-  it("clears the withdrawn revision's authoring requests, never the run's", async () => {
-    const authoring = await requestGate("requirements");
-    const delivery = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      gate: "delivery",
-      actor: AGENT,
-    });
-    if (!authoring.ok || !delivery.ok) throw new Error("a request was refused");
-
-    const withdrawn = await service.withdraw({
-      specId: SPEC_ID,
-      revisionId: REVISION_ID,
-      actor: HUMAN,
-    });
-    expect(withdrawn.ok).toBe(true);
-
-    expect(openRequestIds(specRows())).toEqual([delivery.value.attentionId]);
-    // A withdrawn revision is terminal, so its ask ends without an answer —
-    // it is closed, not reported as granted.
-    expect(
-      specRows().filter((row) => row.type === "spec-approval-granted"),
-    ).toHaveLength(0);
-    expect(
-      specRows().filter((row) => row.type === "spec-attention-resolved"),
-    ).toMatchObject([{ gateRequestId: authoring.value.attentionId }]);
   });
 
   it("retires a pre-boundary scope-less request instead of colliding with a gate request", async () => {
@@ -532,7 +419,6 @@ describe("gate-scoped approval requests", () => {
         revisionId: REVISION_ID,
         gate: "requirements",
         subject,
-        executionId: null,
         active: true,
       }),
     });
@@ -572,11 +458,7 @@ function openRequestIds(rows: readonly SpecNotification[]): string[] {
     .map((row) => row.gateRequestId);
 }
 
-/**
- * A plan-stage draft with twelve requirements, lint-clean so a human can sign
- * it off: sign-off refuses on any blocking finding, so R1 carries a criterion
- * and one task covers it.
- */
+/** A requirements draft with twelve subjects proves gate-scoped request closure. */
 interface SeedElement {
   elementId: string;
   kind: SpecElementPayload["kind"];
@@ -615,22 +497,6 @@ function seed(db: Db): void {
         validationStrategy: { kinds: ["test_run"] },
       },
     },
-    {
-      elementId: TASK_ELEMENT_ID,
-      kind: "task",
-      number: 1,
-      parentElementId: null,
-      position: REQUIREMENT_COUNT + 2,
-      payload: {
-        kind: "task",
-        title: "Meet requirement 1",
-        instructions: "Implement and test requirement 1.",
-        tracedRequirementElementIds: [requirementElementId(1)],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: [CRITERION_ELEMENT_ID],
-        dependsOnTaskElementIds: [],
-      },
-    },
   ];
 
   db.prepare(
@@ -652,7 +518,7 @@ function seed(db: Db): void {
        id, spec_id, number, state, authoring_stage, based_on_revision_id,
        content_hash, citation_contract_version, citation_hash,
        proposed_at, approved_at, created_at
-     ) VALUES (?, ?, 1, 'draft', 'plan', NULL, NULL, 2, ?, NULL, NULL, ?)`,
+     ) VALUES (?, ?, 1, 'draft', 'requirements', NULL, NULL, 2, ?, NULL, NULL, ?)`,
   ).run(REVISION_ID, SPEC_ID, computeSpecRevisionCitationHash(2, []), NOW);
   for (const element of elements) {
     db.prepare(
@@ -681,19 +547,4 @@ function seed(db: Db): void {
       NOW,
     );
   }
-  db.prepare(
-    `INSERT INTO spec_executions (
-       id, spec_id, revision_id, scope_json, state, workflow_definition_id,
-       workflow_execution_id, session_name, delivered_at, abandoned_reason,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'running', 'workflow-definition-1', NULL, NULL,
-       NULL, NULL, ?, ?)`,
-  ).run(
-    EXECUTION_ID,
-    SPEC_ID,
-    REVISION_ID,
-    '{"selectedTaskIds":[],"selectedCriterionIds":[],"exclusionDispositions":[]}',
-    NOW,
-    NOW,
-  );
 }

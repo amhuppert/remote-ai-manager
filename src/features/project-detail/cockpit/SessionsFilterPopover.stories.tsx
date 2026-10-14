@@ -24,7 +24,6 @@ function makeSession(
     promptCount: 2,
     derivedLastActivityAt: "2026-01-02T00:00:00Z",
     collabContribution: null,
-    hasActiveGraphWorkflow: false,
     ...o,
   };
 }

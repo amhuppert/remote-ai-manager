@@ -34,7 +34,6 @@ const fakeSession: SessionState = {
   tddEnabled: true,
   targetBranch: "main",
   parentSessionName: null,
-  graphWorkflowExecution: null,
   referenceDocuments: [],
 };
 

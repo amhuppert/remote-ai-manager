@@ -43,12 +43,10 @@ import {
 } from "@/lib/shared/route-resolution";
 import { createRunTemplateProfileReferences } from "@/lib/run-templates/profile-references";
 import { createRunTemplateStorage } from "@/lib/run-templates/storage";
-import { createWorkflowProfileReferenceReporter } from "@/lib/workflow-graph/profile-reference-reporter";
 
 import { AgentProfileInstructionCollisionError } from "./composer";
 import {
   agentProfileLibraryItemOf,
-  combineReferenceReporters,
   createAgentProfileLibraryService,
   AgentProfileDeletionNotConfirmedError,
   AgentProfileNotResolvableError,
@@ -101,12 +99,16 @@ export interface AgentProfileRouteDeps {
 const defaultDeps: AgentProfileRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   library: createAgentProfileLibraryService({
-    referenceReporter: combineReferenceReporters(
-      createWorkflowProfileReferenceReporter(),
-      createRunTemplateProfileReferences({
-        storage: createRunTemplateStorage(),
-      }),
-    ),
+    referenceReporter: {
+      async enumerateSavedReferences(projectPath, ref) {
+        const reporter = createRunTemplateProfileReferences({
+          storage: createRunTemplateStorage(),
+        });
+        return {
+          runTemplates: await reporter.runTemplateHolders(projectPath, ref),
+        };
+      },
+    },
   }),
   publish: publishEvent,
 };

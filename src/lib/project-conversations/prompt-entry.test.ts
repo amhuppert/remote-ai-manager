@@ -12,7 +12,7 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/proje
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import type { ExecutionTarget } from "@/lib/project-conversations/execution-target";
 import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
@@ -265,7 +265,7 @@ describe("executeProjectPromptStream", () => {
     expect(h.createdBroadcasts).toEqual([]);
   });
 
-  it("binds the agent cwd to the repo-root worktree via the sentinel session + executionTarget", async () => {
+  it("addresses the project conversation from its repo-root session projection", async () => {
     const h = harness();
     await h.executeProjectPromptStream({
       projectPath: "/repo",
@@ -277,13 +277,11 @@ describe("executeProjectPromptStream", () => {
       PROJECT_CONVERSATION_SESSION_SENTINEL,
     );
     expect(call.session.worktreePath).toBe("/repo");
-    expect(call.options?.executionTarget?.worktreePath).toBe("/repo");
-    expect(call.options?.binding?.worktreePath).toBe("/repo");
     // No backend change requested ⇒ entry never serializes/blocks on the dirty
     // main worktree (there is no clean check); the turn simply proceeds.
   });
 
-  it("marks actor input as project scope and keeps backend out of prompt options", async () => {
+  it("keeps the project backend on the durable row", async () => {
     const h = harness({
       seed: [makeConv({ id: "c1", promptCount: 1, agentBackend: "codex" })],
     });
@@ -294,7 +292,9 @@ describe("executeProjectPromptStream", () => {
       emit: () => {},
     });
 
-    expect(h.calls[0]?.options?.binding?.address.target.scope).toBe("project");
+    expect(h.calls[0]?.session.sessionName).toBe(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
     expect(h.store.get("c1")?.agentBackend).toBe("codex");
     expect(h.calls[0]?.options).not.toHaveProperty("backend");
   });

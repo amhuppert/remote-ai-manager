@@ -13,7 +13,6 @@ vi.mock("@/lib/logging", () => ({
 
 import type Database from "better-sqlite3";
 import type { SSEEvent } from "@/lib/api/sse-events";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -45,8 +44,6 @@ const DRAFT_REVISION_ID = "revision-draft";
 const APPROVED_REVISION_ID = "revision-approved";
 const REQUIREMENT_ELEMENT_ID = "element-requirement-1";
 const DECISION_ELEMENT_ID = "element-decision-1";
-const EXECUTION_ID = "spec-execution-1";
-const SECOND_EXECUTION_ID = "spec-execution-2";
 const NOW = "2026-07-25T09:00:00.000Z";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
 
@@ -74,7 +71,6 @@ describe("ReviewService.requestApproval validation", () => {
     serviceDeps = {
       specs,
       review: reviewRepo,
-      delivery: createSpecDeliveryRepo(db),
       links: createSpecLinksRepo(db),
       events: createSpecEventsPublisher({
         appendInTransaction: eventsRepo.appendInTransaction,
@@ -305,7 +301,6 @@ describe("ReviewService.requestApproval validation", () => {
         revisionId: DRAFT_REVISION_ID,
         gate: "requirements",
         subject,
-        executionId: null,
         active: true,
       }),
     });
@@ -341,77 +336,6 @@ describe("ReviewService.requestApproval validation", () => {
     );
   });
 
-  it("converges the gate's pinned-revision ask and the CLI's latest-revision ask on one durable request", async () => {
-    // The delivery gate auto-fire names the run's pinned revision while the
-    // CLI resolves the latest one; with an open amendment those differ. A
-    // per-run gate's identity is (spec, gate, subject, execution), so both
-    // asks must land on the same durable request and attention id.
-    const fromCli = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "delivery",
-      subject: "delivery",
-      actor: AGENT,
-    });
-    const fromGate = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: APPROVED_REVISION_ID,
-      gate: "delivery",
-      subject: "delivery",
-      actor: AGENT,
-    });
-
-    if (!fromCli.ok || !fromGate.ok) throw new Error("request was refused");
-    expect(fromGate.value.attentionId).toBe(fromCli.value.attentionId);
-    expect(fromGate.value.alreadyRequested).toBe(true);
-    expect(fromCli.value.alreadyRequested).toBe(false);
-    const events = attentionEvents();
-    expect(events).toHaveLength(1);
-    // The durable identity is canonicalized to the revision the run pinned —
-    // the only revision this run can ever be approved against.
-    const payload: unknown = JSON.parse(events[0]?.payload_json ?? "null");
-    expect(payload).toMatchObject({
-      kind: "approval-requested",
-      revisionId: APPROVED_REVISION_ID,
-      gate: "delivery",
-      executionId: EXECUTION_ID,
-    });
-    expect(fromCli.value.revisionId).toBe(APPROVED_REVISION_ID);
-  });
-
-  it("recognizes a pre-fix execution-scoped request persisted under a non-pinned revision", async () => {
-    // Rows persisted before revision canonicalization can carry the latest
-    // revision in their payload; the execution id alone identifies the ask.
-    eventsRepo.append({
-      spec_id: SPEC_ID,
-      occurred_at: NOW,
-      event_type: "spec-attention-changed",
-      actor_json: JSON.stringify(AGENT),
-      payload_json: JSON.stringify({
-        kind: "approval-requested",
-        attentionId: "attention-pre-fix",
-        revisionId: DRAFT_REVISION_ID,
-        gate: "delivery",
-        subject: "delivery",
-        executionId: EXECUTION_ID,
-        active: true,
-      }),
-    });
-
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: APPROVED_REVISION_ID,
-      gate: "delivery",
-      subject: "delivery",
-      actor: AGENT,
-    });
-
-    if (!result.ok) throw new Error("request was refused");
-    expect(result.value.attentionId).toBe("attention-pre-fix");
-    expect(result.value.alreadyRequested).toBe(true);
-    expect(attentionEvents()).toHaveLength(1);
-  });
-
   /**
    * A withdrawn revision is terminal: `approveItem` refuses on it, so a
    * request against it is a Needs You entry no human act can ever clear. The
@@ -444,63 +368,6 @@ describe("ReviewService.requestApproval validation", () => {
     });
     expect(attentionEvents()).toHaveLength(0);
     expect(requested).toHaveLength(0);
-  });
-
-  it("asks again for the next run at an execution-scoped gate, and only once per run", async () => {
-    const requestDelivery = () =>
-      service.requestApproval({
-        specId: SPEC_ID,
-        revisionId: DRAFT_REVISION_ID,
-        gate: "delivery",
-        subject: "delivery",
-        actor: AGENT,
-      });
-
-    const firstRun = await requestDelivery();
-    const firstRunRepeat = await requestDelivery();
-    if (!firstRun.ok || !firstRunRepeat.ok) {
-      throw new Error("request was refused");
-    }
-    expect(firstRunRepeat.value.attentionId).toBe(firstRun.value.attentionId);
-    expect(firstRunRepeat.value.alreadyRequested).toBe(true);
-    expect(attentionEvents()).toHaveLength(1);
-    // Repeat notices reuse the run's attention id (idempotent ensure).
-    expect(requested.map((notice) => notice.gateRequestId)).toEqual([
-      firstRun.value.attentionId,
-      firstRun.value.attentionId,
-    ]);
-
-    startSecondRun(db);
-
-    const secondRun = await requestDelivery();
-    if (!secondRun.ok) throw new Error("request was refused");
-    expect(secondRun.value.alreadyRequested).toBe(false);
-    expect(secondRun.value.attentionId).not.toBe(firstRun.value.attentionId);
-    expect(attentionEvents()).toHaveLength(2);
-    expect(requested).toHaveLength(3);
-  });
-
-  it("keeps a revision-scoped request idempotent across runs, which do not scope it", async () => {
-    const requestRequirements = () =>
-      service.requestApproval({
-        specId: SPEC_ID,
-        revisionId: DRAFT_REVISION_ID,
-        gate: "requirements",
-        subject: "R1",
-        actor: AGENT,
-      });
-
-    const first = await requestRequirements();
-    startSecondRun(db);
-    const second = await requestRequirements();
-
-    if (!first.ok || !second.ok) throw new Error("request was refused");
-    expect(second.value.attentionId).toBe(first.value.attentionId);
-    expect(second.value.alreadyRequested).toBe(true);
-    expect(attentionEvents()).toHaveLength(1);
-    expect(new Set(requested.map((notice) => notice.gateRequestId)).size).toBe(
-      1,
-    );
   });
 
   it("refuses a request that names a revision other than the current one", async () => {
@@ -590,22 +457,6 @@ describe("ReviewService.requestApproval validation", () => {
     expect(attentionEvents()).toHaveLength(0);
   });
 
-  it("refuses a gate the draft has not reached yet", async () => {
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "plan",
-      subject: "plan",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "gate_not_applicable" },
-    });
-    expect(attentionEvents()).toHaveLength(0);
-  });
-
   /**
    * The one outstanding subject is NOT what an omitted subject means. If it
    * were, the same command would ask for a different thing tomorrow, and the
@@ -656,102 +507,6 @@ describe("ReviewService.requestApproval validation", () => {
       },
     });
     expect(attentionEvents()).toHaveLength(1);
-  });
-
-  it("resolves an omitted subject at an execution gate to the gate itself", async () => {
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "delivery",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: { gate: "delivery", subject: "delivery" },
-    });
-    expect(attentionEvents()).toHaveLength(1);
-  });
-
-  it("refuses a delivery request while no run exists to approve", async () => {
-    db.prepare("DELETE FROM spec_executions WHERE id = ?").run(EXECUTION_ID);
-
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "delivery",
-      subject: "delivery",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "gate_not_applicable" },
-    });
-    expect(attentionEvents()).toHaveLength(0);
-  });
-
-  it("refuses an execution-start request while no run awaits definition approval", async () => {
-    // The seeded run is already running: its start either happened or was
-    // policy-admitted, so there is no definition left for a human to approve.
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "execution_start",
-      subject: "execution_start",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "gate_not_applicable" },
-    });
-    expect(attentionEvents()).toHaveLength(0);
-  });
-
-  it("issues the execution-start request for a run parked with its lane linked", async () => {
-    db.prepare(
-      "UPDATE spec_executions SET state = 'definition_review', workflow_execution_id = 'workflow-execution-1' WHERE id = ?",
-    ).run(EXECUTION_ID);
-
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "execution_start",
-      subject: "execution_start",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: { gate: "execution_start", subject: "execution_start" },
-    });
-    expect(attentionEvents()).toHaveLength(1);
-  });
-
-  it("issues the frozen execution-start request after the live dial changes to Notify", async () => {
-    db.prepare(
-      "UPDATE spec_executions SET state = 'definition_review', workflow_execution_id = 'workflow-execution-1' WHERE id = ?",
-    ).run(EXECUTION_ID);
-    db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
-      '{"preset":"contract-bearing","overrides":{"execution_start":"notify"}}',
-      SPEC_ID,
-    );
-
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: APPROVED_REVISION_ID,
-      gate: "execution_start",
-      subject: "execution_start",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: { gate: "execution_start", subject: "execution_start" },
-    });
-    expect(attentionEvents()).toHaveLength(1);
-    expect(requested).toHaveLength(1);
   });
 
   it("refuses a subject that is not outstanding at the named gate", async () => {
@@ -908,47 +663,6 @@ describe("ReviewService.requestApproval validation", () => {
     ).resolves.toMatchObject({ ok: true, value: { subject: "R1" } });
   });
 
-  it("refuses a delivery request while the gate is already admitted for the run", async () => {
-    reviewRepo.insertGateAdmission({
-      id: "admission-delivery-1",
-      spec_id: SPEC_ID,
-      gate: "delivery",
-      basis: "human_approval",
-      approval_id: null,
-      revision_id: APPROVED_REVISION_ID,
-      execution_id: EXECUTION_ID,
-      actor_json: '{"kind":"human"}',
-      created_at: NOW,
-    });
-
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "delivery",
-      subject: "delivery",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "already_satisfied" },
-    });
-    expect(attentionEvents()).toHaveLength(0);
-  });
-
-  it("still issues the delivery request while the run holds no admission", async () => {
-    const result = await service.requestApproval({
-      specId: SPEC_ID,
-      revisionId: DRAFT_REVISION_ID,
-      gate: "delivery",
-      subject: "delivery",
-      actor: AGENT,
-    });
-
-    expect(result).toMatchObject({ ok: true, value: { gate: "delivery" } });
-    expect(attentionEvents()).toHaveLength(1);
-  });
-
   it("names the spec, not approval authority: the receipt never records an admission", async () => {
     const result = await service.requestApproval({
       specId: SPEC_ID,
@@ -1013,46 +727,6 @@ function seed(db: Db): void {
     reason: "A duplicate Needs You entry teaches agents to distrust the queue.",
     tracedRequirementElementIds: [],
   });
-  db.prepare(
-    `INSERT INTO spec_executions (
-       id, spec_id, revision_id, scope_json, state, workflow_definition_id,
-       workflow_execution_id, session_name, delivered_at, abandoned_reason,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'running', 'workflow-definition-1', NULL, NULL,
-       NULL, NULL, ?, ?)`,
-  ).run(
-    EXECUTION_ID,
-    SPEC_ID,
-    APPROVED_REVISION_ID,
-    '{"selectedTaskIds":[],"selectedCriterionIds":[],"exclusionDispositions":[]}',
-    NOW,
-    NOW,
-  );
-}
-
-/**
- * The seeded run ends and a fresh one starts against the same approved
- * revision — the shape that made a per-run gate look already-requested.
- */
-function startSecondRun(db: Db): void {
-  db.prepare("UPDATE spec_executions SET state = 'delivered' WHERE id = ?").run(
-    EXECUTION_ID,
-  );
-  db.prepare(
-    `INSERT INTO spec_executions (
-       id, spec_id, revision_id, scope_json, state, workflow_definition_id,
-       workflow_execution_id, session_name, delivered_at, abandoned_reason,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'running', 'workflow-definition-1', NULL, NULL,
-       NULL, NULL, ?, ?)`,
-  ).run(
-    SECOND_EXECUTION_ID,
-    SPEC_ID,
-    APPROVED_REVISION_ID,
-    '{"selectedTaskIds":[],"selectedCriterionIds":[],"exclusionDispositions":[]}',
-    "2026-07-25T10:00:00.000Z",
-    "2026-07-25T10:00:00.000Z",
-  );
 }
 
 function insertElement(

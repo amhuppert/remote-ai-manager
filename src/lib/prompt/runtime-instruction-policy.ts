@@ -1,5 +1,5 @@
 // ============================================================
-// Constants (imported by actor-implementations.ts)
+// Runtime instruction constants
 // ============================================================
 
 /** Appended to the system prompt when session.tddEnabled is true. */
@@ -22,15 +22,15 @@ export const ASK_QUESTION_INSTRUCTIONS =
 
 /**
  * The workflow-lane variant of {@link ASK_QUESTION_INSTRUCTIONS}, selected when
- * a graph-workflow context resolves its ask-user-questions toggle on AND the
+ * a run seat may ask its owner AND the
  * lane holds a real CC conversation (see `selectAskQuestionInstructions`). It
  * tells the lane agent the tool IS available and states the full protocol,
- * including that the workflow PAUSES this context until the user answers — so
+ * including that the run PAUSES this context until its owner answers — so
  * asking is a real, non-free action, not a throwaway. Unlike the default
  * variant it omits the autonomous-denied disclaimer.
  */
 export const ASK_QUESTION_INSTRUCTIONS_ENABLED =
-  "<asking-questions>The `cctl ask` tool IS available on this turn to ask the user a question (see the cc-cli skill) — it renders your questions as a rich multiple-choice panel the user answers in a couple of clicks. Ask only at a consequential, hard-to-reverse, or ambiguous decision point that the request and prior context do not settle. Existing authorization covers routine next steps; do not ask about trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. Batch related questions into ONE `cctl ask` invocation (a single batch pends at a time), and give options substance: each option can carry a description, a recommended flag (rendered as a Suggested badge), and a tradeoff with pro/con — author the batch as JSON and pass it with --file to use them (shape in the skill). After `cctl ask` succeeds, write a brief handoff note (what you asked, what you'll do with each possible answer) and END YOUR TURN — do not start new work. The workflow PAUSES this context until the user answers, so asking is not a lightweight or free action — the whole context waits. The answers arrive as a <cc-question-answers> block when this context RESUMES; an answer with `skipped: true` means the user declined that question — proceed with your best judgment.</asking-questions>";
+  "<asking-questions>The `cctl ask` tool IS available on this turn to ask the run owner a question (see the cc-cli skill) — it renders your questions as a rich multiple-choice panel the owner answers in a couple of clicks. Ask only at a consequential, hard-to-reverse, or ambiguous decision point that the request and prior context do not settle. Existing authorization covers routine next steps; do not ask about trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. Batch related questions into ONE `cctl ask` invocation (a single batch pends at a time), and give options substance: each option can carry a description, a recommended flag (rendered as a Suggested badge), and a tradeoff with pro/con — author the batch as JSON and pass it with --file to use them (shape in the skill). After `cctl ask` succeeds, write a brief handoff note (what you asked, what you'll do with each possible answer) and END YOUR TURN — do not start new work. The run PAUSES this context until its owner answers, so asking is not a lightweight or free action — the whole context waits. The owner's answer arrives in the next Work Order when this context RESUMES. If the owner declines a question, proceed with your best judgment.</asking-questions>";
 
 /**
  * Chooses the asking-questions session-instruction block for a turn. Workflow
@@ -51,4 +51,4 @@ export function selectAskQuestionInstructions(
  * cctl CLI; detail lives in the command-center:cc-cli skill, loaded on demand.
  */
 export const CC_CLI_INSTRUCTIONS =
-  "Command Center actions (notifications, questions, documents, dev servers, workflows) go through the `cctl` CLI — see the cc-cli skill.";
+  "Command Center actions (notifications, questions, documents, dev servers, runs) go through the `cctl` CLI — see the cc-cli skill.";

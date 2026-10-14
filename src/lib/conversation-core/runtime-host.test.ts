@@ -11,7 +11,7 @@ import {
   type HostedConversation,
   type RuntimeRequirements,
 } from "./runtime-host";
-import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
+import { readNextTurnContextLoss } from "@/lib/memory/next-turn-context-loss";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 

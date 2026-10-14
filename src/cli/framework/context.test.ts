@@ -5,7 +5,6 @@ import type { CcApplication } from "./family";
 import {
   resolveCcConversation,
   resolveCcConversationTarget,
-  resolveCcLane,
   resolveCcPrincipal,
   resolveCcProject,
   resolveCcProjectConversation,
@@ -159,40 +158,6 @@ describe("native CC context resolution", () => {
         sessionName: "ambient-session",
         conversationId: "actual-caller",
       }),
-    });
-  });
-
-  it("takes lane authority only from injected execution, context, and caller ids", async () => {
-    const app = application({
-      globals: { conversation: "target-conversation" },
-    });
-    app.env["CC_WORKFLOW_EXECUTION_ID"] = "execution";
-    app.env["CC_WORKFLOW_CONTEXT_ID"] = "context";
-    expect(await resolveCcLane(app)).toMatchObject({
-      ok: true,
-      value: {
-        executionId: "execution",
-        contextId: "context",
-        session: "ambient-session",
-      },
-    });
-    expect(resolveCcPrincipal(app)).toEqual({
-      lane: JSON.stringify({
-        laneKind: "implementer",
-        executionId: "execution",
-        contextId: "context",
-        conversationId: "ambient-conversation",
-      }),
-    });
-    delete app.env["CC_WORKFLOW_CONTEXT_ID"];
-    expect(await resolveCcLane(app)).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("CC_WORKFLOW_CONTEXT_ID") },
-    });
-    delete app.env["CC_WORKFLOW_EXECUTION_ID"];
-    expect(await resolveCcLane(app)).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("CC_WORKFLOW_EXECUTION_ID") },
     });
   });
 

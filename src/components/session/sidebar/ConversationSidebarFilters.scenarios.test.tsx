@@ -15,8 +15,8 @@ function FiltersHarness() {
       projects={["cc", "recall"]}
       project={project}
       onProjectChange={setProject}
-      includeGraphWorkflows={workflows}
-      onGraphWorkflowsChange={setWorkflows}
+      includeRoleHistory={workflows}
+      onRoleHistoryChange={setWorkflows}
       includeArchived={archived}
       onArchivedChange={setArchived}
     />

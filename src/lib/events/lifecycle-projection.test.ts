@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import type { SSEEvent } from "@/lib/api/sse-events";
-import type { GraphWorkflowStatusEvent } from "@/lib/workflow-graph/event-schemas";
 import {
   LIFECYCLE_EVENT_TYPES,
   projectLifecycle,
@@ -39,40 +38,6 @@ function jobStatusEvent(
   };
 }
 
-function graphWorkflowStatusEvent(
-  workflowStatus: GraphWorkflowStatusEvent["workflowStatus"],
-): SSEEvent {
-  return {
-    type: "graph-workflow-status",
-    projectName: "p",
-    sessionName: "s",
-    executionId: "exec-1",
-    workflowStatus,
-    activeContextIds: [],
-    activeBatchIds: [],
-    activeJoinIds: [],
-    haltReason: null,
-    pendingHaltReason: null,
-    secondaryHaltReasons: [],
-  };
-}
-
-function taskStatusEvent(
-  status: "pending" | "running" | "interrupted" | "completed" | "failed",
-): SSEEvent {
-  return {
-    type: "graph-workflow-task-status",
-    projectName: "p",
-    sessionName: "s",
-    executionId: "exec-1",
-    taskId: "task-1",
-    contextId: "ctx-1",
-    status,
-    source: "user",
-    order: 1,
-  };
-}
-
 function devServerStatusEvent(
   status: "starting" | "running" | "stopped" | "error",
 ): SSEEvent {
@@ -100,9 +65,6 @@ describe("LIFECYCLE_EVENT_TYPES enumeration", () => {
         "conversation-status",
         "ask-question",
         "job-status",
-        "graph-workflow-status",
-        "graph-workflow-context-status",
-        "graph-workflow-task-status",
         "dev-server-status",
         "debug-mode-status",
         "debug-log-received",
@@ -165,85 +127,6 @@ describe("projectLifecycle — supported lifecycle events", () => {
     );
     expect(projectLifecycle(jobStatusEvent("discarded"))?.status).toBe(
       "completed",
-    );
-  });
-
-  it("projects graph-workflow-status to the graph_workflow scope across every status branch", () => {
-    expect(projectLifecycle(graphWorkflowStatusEvent("completed"))).toEqual({
-      scope: "graph_workflow",
-      scopeId: "exec-1",
-      status: "completed",
-    });
-    expect(projectLifecycle(graphWorkflowStatusEvent("halted"))?.status).toBe(
-      "paused",
-    );
-    expect(projectLifecycle(graphWorkflowStatusEvent("paused"))?.status).toBe(
-      "paused",
-    );
-    expect(projectLifecycle(graphWorkflowStatusEvent("pending"))?.status).toBe(
-      "running",
-    );
-    expect(projectLifecycle(graphWorkflowStatusEvent("running"))?.status).toBe(
-      "running",
-    );
-    expect(projectLifecycle(graphWorkflowStatusEvent("aborted"))?.status).toBe(
-      "failed",
-    );
-  });
-
-  it("projects graph-workflow-context-status to its own context scope without overwriting execution status", () => {
-    const contextEvent = (
-      status:
-        | "pending"
-        | "ready"
-        | "running"
-        | "completed"
-        | "halted"
-        | "awaiting_approval"
-        | "awaiting_user_input",
-    ): SSEEvent => ({
-      type: "graph-workflow-context-status",
-      projectName: "p",
-      sessionName: "s",
-      executionId: "exec-ctx",
-      contextId: "ctx-1",
-      status,
-      remainingTaskCount: 2,
-      iterationCount: 1,
-    });
-
-    expect(projectLifecycle(contextEvent("completed"))).toEqual({
-      scope: "graph_workflow_context",
-      scopeId: "exec-ctx/ctx-1",
-      status: "completed",
-    });
-    expect(projectLifecycle(contextEvent("halted"))?.status).toBe("paused");
-    expect(projectLifecycle(contextEvent("awaiting_approval"))?.status).toBe(
-      "paused",
-    );
-    expect(projectLifecycle(contextEvent("awaiting_user_input"))?.status).toBe(
-      "paused",
-    );
-    expect(projectLifecycle(contextEvent("pending"))?.status).toBe("running");
-    expect(projectLifecycle(contextEvent("ready"))?.status).toBe("running");
-    expect(projectLifecycle(contextEvent("running"))?.status).toBe("running");
-  });
-
-  it("projects graph-workflow-task-status across every task status branch", () => {
-    expect(projectLifecycle(taskStatusEvent("completed"))).toEqual({
-      scope: "graph_workflow_task",
-      scopeId: "exec-1/task-1",
-      status: "completed",
-    });
-    expect(projectLifecycle(taskStatusEvent("failed"))?.status).toBe("failed");
-    expect(projectLifecycle(taskStatusEvent("pending"))?.status).toBe(
-      "running",
-    );
-    expect(projectLifecycle(taskStatusEvent("running"))?.status).toBe(
-      "running",
-    );
-    expect(projectLifecycle(taskStatusEvent("interrupted"))?.status).toBe(
-      "paused",
     );
   });
 
@@ -352,24 +235,6 @@ describe("projectLifecycle — wire-only events return null (no manufactured fal
     ).toBeNull();
   });
 
-  it("returns null for graph-workflow-lane-status instead of manufacturing conversation/unknown/running", () => {
-    expect(
-      projectLifecycle({
-        type: "graph-workflow-lane-status",
-        projectName: "p",
-        sessionName: "s",
-        executionId: "exec-lane-1",
-        laneId: "lane-1",
-        kind: "worktree",
-        status: "active",
-        branchName: "csm/lane-1",
-        worktreePath: null,
-        includedContextIds: [],
-        lastCommittingContextId: null,
-      }),
-    ).toBeNull();
-  });
-
   it("returns null for wire-only mutations and point events", () => {
     const wireOnly: SSEEvent[] = [
       {
@@ -395,13 +260,6 @@ describe("projectLifecycle — wire-only events return null (no manufactured fal
         type: "notification-updated",
         id: "notif-1",
         read: true,
-      },
-      {
-        type: "graph-workflow-shared-documents-updated",
-        projectName: "p",
-        sessionName: "s",
-        executionId: "exec-1",
-        documents: [],
       },
       {
         type: "ticket-changed",

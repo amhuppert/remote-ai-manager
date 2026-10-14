@@ -20,9 +20,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import { createClientLogger } from "@/lib/logging/client-logger";
-import ApprovalGatePanel, {
-  type ApprovalScopedChanges,
-} from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import MessageRow from "@/components/conversation/MessageRow";
 import { DocumentScopeProvider } from "@/components/conversation/document-scope";
@@ -42,7 +39,6 @@ import type {
   SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import {
-  isWorkflowLaneRole,
   type AskQuestionAnswer,
   type TranscriptMessage,
 } from "@/lib/conversations/schemas";
@@ -79,21 +75,6 @@ type PeekReplyArgs =
       collabDraft: CollabConfigDraft,
     ];
 
-export interface PeekApprovalGate {
-  isSubmitting: boolean;
-  executionSuspended: boolean;
-  /**
-   * The frozen owned-path artifact for an enveloped context, null for a
-   * full-access one (R15.2). Required rather than optional: the peek offers
-   * live Approve/Reject controls, so it is a real approval surface, and a
-   * surface that can decide has to state what it is deciding on instead of
-   * defaulting into showing nothing.
-   */
-  scopedChanges: ApprovalScopedChanges | null;
-  onApprove(): void;
-  onReject(message: string): void;
-}
-
 interface PeekPopoverProps {
   anchorEl: HTMLElement | null;
   conversation: SessionActiveConversation;
@@ -112,7 +93,6 @@ interface PeekPopoverProps {
    * same fresh-conversation fork the full transcript offers (R7.1).
    */
   forkProjectName: string;
-  approvalGate?: PeekApprovalGate | null;
 }
 
 const STATUS_LABEL: Record<ActiveConversationStatus, string> = {
@@ -352,9 +332,7 @@ function PeekReplyComposer({
             sessionName: conversation.sessionName,
             conversationId: conversation.id,
             backend: conversation.agentBackend,
-            isWorkflowManagedConversation: isWorkflowLaneRole(
-              conversation.role,
-            ),
+            isWorkflowManagedConversation: conversation.role !== null,
           }}
           value={replyText}
           onValueChange={handleReplyTextChange}
@@ -398,7 +376,6 @@ export default function PeekPopover({
   onAnswerQuestion,
   onFork,
   forkProjectName,
-  approvalGate = null,
 }: PeekPopoverProps): React.JSX.Element | null {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bodyMounted, setBodyMounted] = useState(false);
@@ -596,12 +573,7 @@ export default function PeekPopover({
               </button>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-[6px] font-mono text-[10.5px] leading-[1.4] text-text-tertiary [&_b]:font-medium [&_b]:text-text-secondary">
-              {conversation.pendingApproval !== null ? (
-                <span className="inline-flex flex-none items-center gap-xs font-mono text-[10px] leading-[1.4] font-semibold tracking-[0.08em] text-amber uppercase">
-                  awaiting approval ·{" "}
-                  {formatPeekTime(conversation.pendingApproval.requestedAt)}
-                </span>
-              ) : (
+              {
                 <span
                   className={cn(
                     "inline-flex flex-none items-center gap-xs font-mono text-[10px] leading-[1.4] font-semibold tracking-[0.08em] uppercase",
@@ -610,7 +582,7 @@ export default function PeekPopover({
                 >
                   {STATUS_LABEL[conversation.status]}
                 </span>
-              )}
+              }
               <span aria-hidden="true">·</span>
               <b>{conversation.projectName}</b>
               <span aria-hidden="true">·</span>
@@ -683,28 +655,9 @@ export default function PeekPopover({
               />
             </div>
 
-            {(!hasPendingQuestions ||
-              (conversation.pendingApproval !== null &&
-                approvalGate != null)) && (
+            {!hasPendingQuestions && (
               <footer className="max-h-[55dvh] flex-none overflow-y-auto border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-base px-md pt-[9px] pb-md">
-                {conversation.pendingApproval !== null &&
-                  approvalGate != null && (
-                    <ApprovalGatePanel
-                      contextTitle={conversation.pendingApproval.contextTitle}
-                      // The workflow segment is dropped in the peek's compact
-                      // strip; the 380px card only fits the context.
-                      workflowName={null}
-                      requestedAt={conversation.pendingApproval.requestedAt}
-                      isSubmitting={approvalGate.isSubmitting}
-                      conversationBusy={conversation.status === "running"}
-                      executionSuspended={approvalGate.executionSuspended}
-                      scopedChanges={approvalGate.scopedChanges}
-                      onApprove={approvalGate.onApprove}
-                      onReject={approvalGate.onReject}
-                      voiceProjectName={conversation.projectName}
-                    />
-                  )}
-                {!hasPendingQuestions && (
+                {!hasPendingQuestions && conversation.role === null && (
                   <PeekReplyComposer
                     conversation={conversation}
                     backendDefaults={backendDefaults}

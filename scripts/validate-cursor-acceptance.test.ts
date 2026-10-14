@@ -215,7 +215,6 @@ describe("cursor acceptance registered command", () => {
       readRegisteredValidation(),
     );
     expect(validation.preMerge).not.toContain("cursor-acceptance");
-    expect(validation.laneMerge ?? []).not.toContain("cursor-acceptance");
   });
 
   it("refuses with the blocked verdict instead of passing when the credential is absent", () => {

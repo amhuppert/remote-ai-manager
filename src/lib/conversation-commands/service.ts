@@ -23,12 +23,11 @@ import { hasUncommittedChanges, collectChangeSummary } from "@/lib/git/commits";
 import { resolveMergeTarget, type MergeTarget } from "@/lib/git/merge-target";
 import type { RebaseOnto } from "@/lib/git/rebase";
 import { parseRebaseArgs } from "./rebase-args";
-import { getProductionWorkflowComposition } from "@/lib/workflows/production";
 import {
   evaluateMergeInitiation as evaluateSessionMergeAdmission,
   type MergeInitiation as SessionMergeAdmission,
 } from "@/lib/workflows/merge/initiation";
-import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
+import { runConversationTask as executeWorkflowTaskRun } from "@/lib/supervision/handles";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/conversation-core/turn/execute-workflow-task-run";
 import type { TaskRunResult } from "@/lib/conversation-core/turn/turn-result";
 import { appendNotice, type AppendNoticeInput } from "@/lib/prompt/transcript";
@@ -848,12 +847,9 @@ const productionDeps: ConversationCommandDeps = {
   },
   enqueueAuthoringTurn: enqueueConversationMessage,
   evaluateSessionMergeAdmission(input) {
-    const policy = getProductionWorkflowComposition();
     return evaluateSessionMergeAdmission({
       ...input,
       surface: "merge-command",
-      association: policy.mergeAssociation,
-      gate: policy.deliveryGate,
       readCurrentRuns: currentRuns,
       readBackgroundWork: sessionBackgroundWork,
     });

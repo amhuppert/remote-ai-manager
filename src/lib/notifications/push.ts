@@ -26,9 +26,7 @@ export type PushTriggerType =
   | "conversation-idle"
   | "spec-approval-requested"
   | "spec-approval-granted"
-  | "spec-policy-admitted"
-  | "plan-repaired"
-  | "plan-repair-declined";
+  | "spec-policy-admitted";
 
 export interface PushEvent {
   trigger: PushTriggerType;
@@ -64,8 +62,6 @@ const triggerToConfigKey: Record<
   "spec-approval-granted": "specApprovalGranted",
   "spec-policy-admitted": "specPolicyAdmitted",
   // Both plan-repair outcomes share one config toggle; severity differs.
-  "plan-repaired": "planRepair",
-  "plan-repair-declined": "planRepair",
 };
 
 const triggerToTag: Record<PushTriggerType, string> = {
@@ -77,8 +73,6 @@ const triggerToTag: Record<PushTriggerType, string> = {
   "spec-approval-requested": "bell",
   "spec-approval-granted": "white_check_mark",
   "spec-policy-admitted": "eyes",
-  "plan-repaired": "wrench",
-  "plan-repair-declined": "warning",
 };
 
 // ============================================================

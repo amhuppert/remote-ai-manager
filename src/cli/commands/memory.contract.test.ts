@@ -213,9 +213,6 @@ async function newInstance(): Promise<MemoryInstance> {
       const linked = await tickets.findLinkedTicket(projectPath, sessionName);
       return linked?.id ?? null;
     },
-    async findBoundSpecId() {
-      return null;
-    },
     async readBudget() {
       return {
         bytes: MEMORY_INDEX_BUDGET_DEFAULT_BYTES,
@@ -269,9 +266,6 @@ async function newInstance(): Promise<MemoryInstance> {
       return null;
     },
     findSessionCreatedAt,
-    async findLaneBinding() {
-      return null;
-    },
     async readNextTurnContextLoss() {
       return contextLoss;
     },

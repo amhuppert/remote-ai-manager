@@ -59,13 +59,12 @@ const identity = {
 };
 
 describe("recordConversationCostSettlement", () => {
-  it("adds the delta to the persisted row when no actor hosts the conversation", async () => {
+  it("adds the delta to the persisted row and survives a reload", async () => {
     const result = await recordConversationCostSettlement(
       identity,
       { costUsdDelta: 0.04, lineageId: "agent-1", cumulativeCostUsd: 0.04 },
       {
         mutateConversation: fixture.deps.mutateConversation,
-        applyToHostedActor: () => ({ applied: false }),
         publish,
         appendTranscriptEntryOnce: async (_id, entry) => {
           appended.push(entry);
@@ -99,39 +98,12 @@ describe("recordConversationCostSettlement", () => {
     });
   });
 
-  it("leaves the row to the hosted actor's own sync and publishes the actor's total", async () => {
-    const applied: number[] = [];
-    const result = await recordConversationCostSettlement(
-      identity,
-      { costUsdDelta: 0.02, lineageId: "agent-1", cumulativeCostUsd: 0.06 },
-      {
-        mutateConversation: fixture.deps.mutateConversation,
-        applyToHostedActor: (_identity, delta) => {
-          applied.push(delta);
-          return { applied: true, totalCostUsd: 0.52 };
-        },
-        publish,
-      },
-    );
-    expect(applied).toEqual([0.02]);
-    expect(result.totalCostUsd).toBe(0.52);
-    // The row is the actor's to write; this seam must not race it.
-    const row = await fixture.deps.getConversation(
-      PROJECT,
-      SESSION,
-      CONVERSATION,
-    );
-    expect(row?.totalCostUsd).toBe(0.5);
-    expect(published[0]).toMatchObject({ totalCostUsd: 0.52 });
-  });
-
   it("still publishes when the transcript frame cannot be written", async () => {
     await recordConversationCostSettlement(
       identity,
       { costUsdDelta: 0.01, lineageId: "agent-1", cumulativeCostUsd: 0.01 },
       {
         mutateConversation: fixture.deps.mutateConversation,
-        applyToHostedActor: () => ({ applied: false }),
         publish,
         appendTranscriptEntryOnce: async () => {
           throw new Error("disk full");

@@ -82,7 +82,7 @@ async function createSpec(
       name: overrides.name ?? "Native SDD",
       gatePolicy: {
         preset: "contract-bearing",
-        overrides: { delivery: "notify" },
+        overrides: { design: "notify" },
       },
       createdAt: CREATED_AT,
       updatedAt: UPDATED_AT,
@@ -242,6 +242,51 @@ async function addCriterion(
 }
 
 describe("maximal persistence contracts", () => {
+  it("round-trips every persisted revision field through draft and approval", async () => {
+    const created = await createSpec({ id: "spec-revision-maximal" });
+    await assertRoundTripDurability({
+      label: "spec-revisions",
+      schema: specRevisionSchema,
+      buildMaximalFixture: () =>
+        specRevisionSchema.parse({
+          id: "revision-maximal",
+          specId: created.spec.id,
+          number: 2,
+          state: "approved",
+          authoringStage: "design",
+          basedOnRevisionId: created.revision.id,
+          contentHash: "derived-by-approval",
+          citationContractVersion: 2,
+          citationVersion: 1,
+          citationHash: citationHash(2, []),
+          proposedAt: APPROVED_AT,
+          approvedAt: APPROVED_AT,
+          createdAt: UPDATED_AT,
+        }),
+      persist: async (maximal) => {
+        await repo.createDraftFromBase({
+          id: maximal.id,
+          specId: maximal.specId,
+          baseRevisionId: requireFixtureString(
+            maximal.basedOnRevisionId,
+            "basedOnRevisionId",
+          ),
+          authoringStage: maximal.authoringStage,
+          createdAt: maximal.createdAt,
+        });
+        return repo.approveRevision({
+          revisionId: maximal.id,
+          approvedAt: requireFixtureString(maximal.approvedAt, "approvedAt"),
+        });
+      },
+      reload: (expected) => repo.findRevision(expected.id),
+      fieldPolicies: {
+        contentHash: "derived-on-write",
+        proposedAt: "derived-on-write",
+      },
+    });
+  });
+
   it("round-trips every persisted spec field", async () => {
     await assertRoundTripDurability({
       label: "specs",
@@ -394,71 +439,6 @@ describe("maximal persistence contracts", () => {
     });
   });
 
-  it("round-trips every persisted revision field through draft and approval", async () => {
-    const created = await createSpec({ id: "spec-revision-maximal" });
-    await addRequirement(created.spec.id, created.revision.id);
-    await repo.approveRevision({
-      revisionId: created.revision.id,
-      approvedAt: APPROVED_AT,
-    });
-
-    await assertRoundTripDurability({
-      label: "spec-revisions",
-      schema: specRevisionSchema,
-      buildMaximalFixture: () =>
-        specRevisionSchema.parse({
-          id: "revision-maximal",
-          specId: created.spec.id,
-          number: 2,
-          state: "approved",
-          authoringStage: "design",
-          basedOnRevisionId: created.revision.id,
-          contentHash: "derived-by-approval",
-          citationContractVersion: 2,
-          citationVersion: 1,
-          citationHash: citationHash(2, []),
-          proposedAt: APPROVED_AT,
-          approvedAt: APPROVED_AT,
-          externalDelivery: {
-            at: APPROVED_AT,
-            actor: { kind: "agent", conversationId: "conversation-import" },
-            source: { label: "kiro:.kiro/specs/native-sdd" },
-          },
-          createdAt: UPDATED_AT,
-        }),
-      persist: async (maximal) => {
-        await repo.createDraftFromBase({
-          id: maximal.id,
-          specId: maximal.specId,
-          baseRevisionId: requireFixtureString(
-            maximal.basedOnRevisionId,
-            "basedOnRevisionId",
-          ),
-          authoringStage: maximal.authoringStage,
-          createdAt: maximal.createdAt,
-        });
-        await repo.approveRevision({
-          revisionId: maximal.id,
-          approvedAt: requireFixtureString(maximal.approvedAt, "approvedAt"),
-        });
-        if (maximal.externalDelivery === null) {
-          throw new Error("maximal fixture requires externalDelivery");
-        }
-        return repo.recordExternalDelivery({
-          revisionId: maximal.id,
-          externalDelivery: maximal.externalDelivery,
-        });
-      },
-      reload: (expected) => repo.findRevision(expected.id),
-      // Approval is the freeze: it hashes the content and records the moment
-      // the content froze as `proposedAt`, so neither is written from input.
-      fieldPolicies: {
-        contentHash: "derived-on-write",
-        proposedAt: "derived-on-write",
-      },
-    });
-  });
-
   it("reloads an ordinarily-authored revision with no external-delivery record", async () => {
     const created = await createSpec({ id: "spec-revision-no-external" });
 
@@ -467,28 +447,7 @@ describe("maximal persistence contracts", () => {
     // Null is the meaningful value for every revision this system authored:
     // external delivery is a claim only an import can make, and a missing
     // column value must never read back as an empty record that looks like one.
-    expect(reloaded?.externalDelivery).toBeNull();
-  });
-
-  it("refuses to persist an external-delivery claim dated in free text", async () => {
-    const created = await createSpec({ id: "spec-revision-bad-date" });
-
-    // The write path validates, not just the schema in isolation: an
-    // unparseable date reaching the column would be durable forever, and no
-    // later reader could order it against this system's own timestamps.
-    await expect(
-      repo.recordExternalDelivery({
-        revisionId: created.revision.id,
-        externalDelivery: {
-          at: "not-an-iso-timestamp",
-          actor: { kind: "human" },
-          source: { label: "kiro:.kiro/specs/imported-feature" },
-        },
-      }),
-    ).rejects.toThrow();
-    expect(
-      (await repo.findRevision(created.revision.id))?.externalDelivery,
-    ).toBeNull();
+    expect(reloaded?.authoringStage).toBe("requirements");
   });
 
   it("round-trips every persisted element-version field", async () => {

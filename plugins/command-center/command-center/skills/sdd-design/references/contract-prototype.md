@@ -22,7 +22,7 @@ was inspected; Native SDD approval does not fingerprint the referenced source.
 Make the contract available where its consumers will execute. A path in ignored
 session scratch such as `.cc/temp` is only an inspection locator. Transfer its
 needed content through a source in the execution worktrees, a
-[seeded document](../../graph-workflow-planning/references/seeded-documents.md),
+the run-planning method,
 or a complete contract in the pinned design before launch.
 
 Assign adoption, revision, or replacement to the delivery foundation owner and

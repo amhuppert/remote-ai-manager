@@ -32,48 +32,6 @@ export const specKeys = {
     ] as const,
   lint: (projectName: string, slug: string) =>
     [...specKeys.detail(projectName, slug), "lint"] as const,
-  delta: (projectName: string, slug: string, sinceExecutionId?: string) =>
-    [
-      ...specKeys.detail(projectName, slug),
-      "delta",
-      ...(sinceExecutionId === undefined
-        ? []
-        : (["since", sinceExecutionId] as const)),
-    ] as const,
-  deliveryReview: (projectName: string, slug: string, executionId?: string) =>
-    [
-      ...specKeys.detail(projectName, slug),
-      "delivery-review",
-      executionId ?? "current",
-    ] as const,
-  planReview: (projectName: string, slug: string) =>
-    [...specKeys.detail(projectName, slug), "plan-review"] as const,
-  planPreview: (
-    projectName: string,
-    slug: string,
-    stage: "draft" | "approved",
-    expectedDraftRevision?: number,
-  ) =>
-    [
-      ...specKeys.detail(projectName, slug),
-      "plan-preview",
-      stage,
-      ...(expectedDraftRevision === undefined
-        ? []
-        : (["draft-revision", expectedDraftRevision] as const)),
-    ] as const,
-  planDiff: (
-    projectName: string,
-    slug: string,
-    fromSnapshotId: string,
-    toSnapshotId: string,
-  ) =>
-    [
-      ...specKeys.detail(projectName, slug),
-      "plan-diff",
-      fromSnapshotId,
-      toSnapshotId,
-    ] as const,
   integrity: (projectName: string, slug: string) =>
     [...specKeys.detail(projectName, slug), "integrity"] as const,
   search: (projectName: string, slug: string, query: string) =>

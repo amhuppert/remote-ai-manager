@@ -9,9 +9,8 @@ import {
   specPhaseTone,
 } from "@/components/references/SpecRefChips";
 import { Button } from "@/components/ui/Button";
-import { Progress } from "@/components/ui/Progress";
 import { Spinner } from "@/components/ui/Spinner";
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   authoringSpecResultSchema,
@@ -143,7 +142,6 @@ export function LinkedSpecReadThrough({
   spec: TicketSpecReadThrough["specs"][number];
 }): React.JSX.Element {
   const phase = formatSpecPhase(spec.phase);
-  const progressLabel = `${spec.criteriaProgress.proven} of ${spec.criteriaProgress.total} criteria proven`;
   return (
     <article className="flex flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-surface px-[13px] py-[11px]">
       <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim pb-sm">
@@ -185,30 +183,6 @@ export function LinkedSpecReadThrough({
         </div>
       </div>
 
-      <div className="flex items-center gap-sm">
-        {spec.criteriaProgress.total > 0 ? (
-          <Progress
-            value={spec.criteriaProgress.proven}
-            max={spec.criteriaProgress.total}
-            aria-label={progressLabel}
-            layoutClassName="min-w-0 flex-1"
-          />
-        ) : (
-          <span className="h-[4px] min-w-0 flex-1 rounded-[2px] bg-bg-base" />
-        )}
-        <span className="shrink-0 font-mono text-[0.7rem] text-text-secondary">
-          {spec.criteriaProgress.total > 0
-            ? `${spec.criteriaProgress.proven}/${spec.criteriaProgress.total} in-scope criteria proven`
-            : "No criteria in scope"}
-        </span>
-        {spec.criteriaProgress.total > 0 && (
-          <span className="sr-only">
-            {spec.criteriaProgress.proven}/{spec.criteriaProgress.total}{" "}
-            criteria proven
-          </span>
-        )}
-      </div>
-
       {spec.linkedTasks.map((task) => (
         <div
           key={task.taskElementId}
@@ -230,12 +204,7 @@ export function LinkedSpecReadThrough({
                 {task.taskHandle}
               </Link>
             )}
-            <StatusChip
-              tone={taskStatusTone(task.workStatus)}
-              appearance="flat"
-            >
-              {formatTaskStatus(task.workStatus)}
-            </StatusChip>
+
             {task.sourceTaskState !== "current" ? (
               <span
                 title={`The ticket was materialized from ${spec.slug}/${task.taskHandle ?? task.taskElementId}; that source task is ${task.sourceTaskState} in revision ${spec.revision}. Ticket lifecycle remains ticket-owned.`}
@@ -258,8 +227,8 @@ export function LinkedSpecReadThrough({
         </div>
       ))}
       <p className="m-0 font-mono text-[0.64rem] text-text-tertiary">
-        The ticket persists only the link — phase, progress, and element status
-        are read through it.
+        The ticket persists only the link — phase and historical task links are
+        read through it.
       </p>
     </article>
   );
@@ -277,23 +246,4 @@ export function ticketGraduationSlug(number: number, title: string): string {
 
 function specHref(projectName: string, slug: string): string {
   return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}`;
-}
-
-function formatTaskStatus(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1).replaceAll("_", " ");
-}
-
-function taskStatusTone(status: string): StatusChipTone {
-  switch (status) {
-    case "completed":
-      return "green";
-    case "running":
-      return "cyan";
-    case "failed":
-      return "red";
-    case "interrupted":
-      return "amber";
-    default:
-      return "neutral";
-  }
 }

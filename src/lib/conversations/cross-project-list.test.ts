@@ -73,7 +73,6 @@ function makeSession(
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
   };
 }

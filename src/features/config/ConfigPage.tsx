@@ -16,9 +16,7 @@ import {
 import { cn } from "@/lib/ui/cn";
 import { useFullConfigQuery } from "@/lib/config/queries";
 import { useUpdateConfigMutation } from "@/lib/config/mutations";
-import { useValidationCommandOptions } from "@/lib/validation/queries";
 import { ConfigSaveBar } from "./components/ConfigSaveBar";
-import { SEEDED_WORKFLOW_DEFAULTS } from "./form-state";
 import { BackendsSection } from "./sections/BackendsSection";
 import { CapabilitiesSection } from "./sections/CapabilitiesSection";
 import { CompactionSection } from "./sections/CompactionSection";
@@ -26,16 +24,12 @@ import { GeneralSection } from "./sections/GeneralSection";
 import { LimitsSection } from "./sections/LimitsSection";
 import { NamingSection } from "./sections/NamingSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
-import { WorkflowSection } from "./sections/WorkflowSection";
 import { useConfigForm } from "./use-config-form";
-
-export { SEEDED_WORKFLOW_DEFAULTS };
 
 type ConfigNavSection =
   | "general"
   | "capabilities"
   | "backends"
-  | "workflow"
   | "compaction"
   | "naming"
   | "limits"
@@ -45,7 +39,6 @@ const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
   { id: "general", label: "General" },
   { id: "backends", label: "Agent backends" },
   { id: "capabilities", label: "Capabilities" },
-  { id: "workflow", label: "Workflow defaults" },
   { id: "compaction", label: "Compaction" },
   { id: "naming", label: "Naming" },
   { id: "limits", label: "Limits & timeouts" },
@@ -79,9 +72,6 @@ export default function ConfigPage(): React.JSX.Element {
     applySaved,
     revert,
   } = useConfigForm(configQuery.data);
-  // Global scope: the union of every project's registry, since a global
-  // default may reference any project's command.
-  const commandOptions = useValidationCommandOptions(null);
   const [activeSection, setActiveSection] =
     useState<ConfigNavSection>("general");
 
@@ -191,17 +181,7 @@ export default function ConfigPage(): React.JSX.Element {
                   <BackendsSection controller={controller} />
                 </div>
               </TabsContent>
-              <TabsContent
-                value="workflow"
-                layoutClassName="min-h-0 flex-auto overflow-y-auto"
-              >
-                <div className={CONTENT_CLASS}>
-                  <WorkflowSection
-                    controller={controller}
-                    commandOptions={commandOptions}
-                  />
-                </div>
-              </TabsContent>
+
               <TabsContent
                 value="compaction"
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"

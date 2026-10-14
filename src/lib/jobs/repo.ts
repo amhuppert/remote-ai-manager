@@ -8,17 +8,10 @@ import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import { createNotificationsRepo } from "../notifications/repo";
 import {
   backgroundJobSchema,
-  candidateValidationFactSchema,
   jobRecordSchema,
   jobStatusSchema,
 } from "./schemas";
-import type {
-  BackgroundJob,
-  CandidateValidationFact,
-  JobRecord,
-  JobType,
-  JobStatus,
-} from "./schemas";
+import type { BackgroundJob, JobRecord, JobType, JobStatus } from "./schemas";
 import type { JobNotificationType } from "@/lib/notifications/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -52,10 +45,6 @@ const jobRecordRowSchema = registerTrustedSchema(
     conflict_count: z.number().int().nullable(),
     conflict_files: z.string().nullable(),
     error_message: z.string().nullable(),
-    execution_id: z.string().nullable(),
-    spec_execution_id: z.string().nullable(),
-    final_publish: z.number().int(),
-    candidate_validation: z.string().nullable(),
     // Nullish rather than nullable: a row read by a build that has the columns
     // from a connection opened before the floor added them yields `undefined`,
     // and both readings mean the same absent fact.
@@ -80,14 +69,6 @@ const jobIdColumnSchema = registerTrustedSchema(
   "jobRecord.jobIdColumn",
 );
 
-const publishedMergeColumnsSchema = registerTrustedSchema(
-  z.object({
-    merge_hash: z.string().nullable(),
-    expected_target_sha: z.string().nullish(),
-  }),
-  "jobRecord.publishedMergeColumns",
-);
-
 const jobRecordUpdateSchema = z.object({
   status: jobStatusSchema,
   mergeHash: z.string().optional(),
@@ -95,11 +76,9 @@ const jobRecordUpdateSchema = z.object({
   conflictCount: z.number().optional(),
   conflictFiles: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
-  executionId: z.string().optional(),
   parkedRef: z.string().optional(),
   preparedSha: z.string().optional(),
   expectedTargetSha: z.string().optional(),
-  candidateValidation: candidateValidationFactSchema.optional(),
 });
 
 function logAndThrowJobRecordValidationFailure(
@@ -177,43 +156,6 @@ function parseConflictFilesColumn(
   }
 }
 
-function parseCandidateValidationColumn(
-  identifier: string,
-  raw: string | null,
-):
-  | {
-      ok: true;
-      value: BackgroundJob["candidateValidation"] | undefined;
-    }
-  | { ok: false; issues: unknown } {
-  if (raw === null) return { ok: true, value: undefined };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return {
-      ok: false,
-      issues: [
-        {
-          code: "invalid_json",
-          path: ["candidateValidation"],
-          message: getErrorMessage(err),
-          identifier,
-        },
-      ],
-    };
-  }
-  try {
-    return {
-      ok: true,
-      value: parseTrusted(candidateValidationFactSchema, parsed),
-    };
-  } catch (err) {
-    if (err instanceof z.ZodError) return { ok: false, issues: err.issues };
-    throw err;
-  }
-}
-
 function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
   const candidateId =
     typeof rawRow === "object" &&
@@ -236,16 +178,6 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
       conflictFilesResult.issues,
     );
   }
-  const candidateValidationResult = parseCandidateValidationColumn(
-    row.job_id,
-    row.candidate_validation,
-  );
-  if (!candidateValidationResult.ok) {
-    return logAndThrowJobRecordValidationFailure(
-      row.job_id,
-      candidateValidationResult.issues,
-    );
-  }
 
   const candidate: Record<string, unknown> = {
     jobId: row.job_id,
@@ -263,10 +195,6 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
   if (conflictFilesResult.value !== undefined)
     candidate.conflictFiles = conflictFilesResult.value;
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
-  if (row.execution_id !== null) candidate.executionId = row.execution_id;
-  if (row.spec_execution_id !== null)
-    candidate.specExecutionId = row.spec_execution_id;
-  if (row.final_publish === 1) candidate.finalPublish = true;
   if (row.parked_ref != null) candidate.parkedRef = row.parked_ref;
   if (row.prepared_sha != null) candidate.preparedSha = row.prepared_sha;
   if (row.expected_target_sha != null)
@@ -277,9 +205,6 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
     candidate.skipMarkMerged = row.skip_mark_merged === 1;
   if (row.resolution_context != null)
     candidate.resolutionContext = row.resolution_context;
-  if (candidateValidationResult.value !== undefined) {
-    candidate.candidateValidation = candidateValidationResult.value;
-  }
 
   return parseTrusted(backgroundJobSchema, candidate, (issues) =>
     logAndThrowJobRecordValidationFailure(row.job_id, issues),
@@ -311,10 +236,6 @@ function rowToJobRecord(rawRow: unknown): JobRecord {
   if (job.conflictFiles !== undefined)
     durable.conflictFiles = job.conflictFiles;
   if (job.errorMessage !== undefined) durable.errorMessage = job.errorMessage;
-  if (job.executionId !== undefined) durable.executionId = job.executionId;
-  if (job.specExecutionId !== undefined)
-    durable.specExecutionId = job.specExecutionId;
-  if (job.finalPublish !== undefined) durable.finalPublish = job.finalPublish;
   if (job.parkedRef !== undefined) durable.parkedRef = job.parkedRef;
   if (job.preparedSha !== undefined) durable.preparedSha = job.preparedSha;
   if (job.expectedTargetSha !== undefined)
@@ -325,9 +246,6 @@ function rowToJobRecord(rawRow: unknown): JobRecord {
     durable.skipMarkMerged = job.skipMarkMerged;
   if (job.resolutionContext !== undefined)
     durable.resolutionContext = job.resolutionContext;
-  if (job.candidateValidation !== undefined) {
-    durable.candidateValidation = job.candidateValidation;
-  }
   return parseTrusted(jobRecordSchema, durable);
 }
 
@@ -338,8 +256,6 @@ export interface JobRecordUpdate {
   conflictCount?: number;
   conflictFiles?: string[];
   errorMessage?: string;
-  executionId?: string;
-  specExecutionId?: string;
   /**
    * Parked-merge bookkeeping, carried by a `ready-to-land` terminal. Written
    * unconditionally (not COALESCEd) so a later terminal for the same job — a
@@ -349,7 +265,6 @@ export interface JobRecordUpdate {
   parkedRef?: string;
   preparedSha?: string;
   expectedTargetSha?: string;
-  candidateValidation?: BackgroundJob["candidateValidation"];
 }
 
 /**
@@ -411,10 +326,6 @@ export function deriveNotificationTitle(type: JobNotificationType): string {
 export interface JobsRepo {
   createJobRecord(job: BackgroundJob): void;
   updateJobRecord(jobId: string, update: JobRecordUpdate): void;
-  persistCandidateValidation(
-    jobId: string,
-    candidateValidation: CandidateValidationFact,
-  ): void;
   /**
    * Read a single durable job record by id through the production row->domain
    * deserialization boundary (`rowToBackgroundJob`). Returns the durable
@@ -451,24 +362,6 @@ export interface JobsRepo {
    * startup sweep has by then failed every running row whose owner is gone.
    */
   listJobIdsHoldingParkedRefs(): string[];
-  /**
-   * The commit the execution's gated final publish delivered, for the read-path
-   * reconciliation that backstops delivery marking. A no-op publish delivers
-   * the target tip it found the branch already contained in, so a completed
-   * final publish with no merge hash answers with that tip rather than nothing.
-   */
-  findLatestPublishedMergeByExecutionId(workflowExecutionId: string): {
-    mergeHash: string;
-    deliveryGatePassed: true;
-  } | null;
-  findLatestPublishedMergeBySpecExecutionId(specExecutionId: string): {
-    mergeHash: string;
-    deliveryGatePassed: true;
-  } | null;
-  findMergeValidationByExecutionIdAndRef(
-    workflowExecutionId: string,
-    validationRef: string,
-  ): { mergeJobId: string; validation: CandidateValidationFact } | null;
   deleteJobRecordsForSession(projectName: string, sessionName: string): number;
   deleteJobRecordsForProject(projectName: string): number;
   /**
@@ -496,8 +389,8 @@ export function createJobsRepo(db: Db): JobsRepo {
         // for the job, so they are written once here and left alone by the
         // terminal update.
         db.prepare(
-          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, execution_id, spec_execution_id, final_publish, candidate_validation, finalize_session_on_publish, resolution_context, skip_mark_merged)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at, owner_pid, finalize_session_on_publish, resolution_context, skip_mark_merged)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           validated.jobId,
           validated.jobType,
@@ -507,12 +400,6 @@ export function createJobsRepo(db: Db): JobsRepo {
           validated.branchName,
           validated.startedAt,
           process.pid,
-          validated.executionId ?? null,
-          validated.specExecutionId ?? null,
-          validated.finalPublish === true ? 1 : 0,
-          validated.candidateValidation
-            ? JSON.stringify(validated.candidateValidation)
-            : null,
           validated.finalizeSessionOnPublish === undefined
             ? null
             : validated.finalizeSessionOnPublish
@@ -543,11 +430,9 @@ export function createJobsRepo(db: Db): JobsRepo {
        conflict_count = ?,
        conflict_files = ?,
        error_message = ?,
-       execution_id = COALESCE(?, execution_id),
        parked_ref = ?,
        prepared_sha = ?,
-       expected_target_sha = ?,
-       candidate_validation = COALESCE(?, candidate_validation)
+       expected_target_sha = ?
      WHERE job_id = ?`,
         ).run(
           validated.status,
@@ -558,38 +443,11 @@ export function createJobsRepo(db: Db): JobsRepo {
             ? JSON.stringify(validated.conflictFiles)
             : null,
           validated.errorMessage ?? null,
-          validated.executionId ?? null,
           validated.parkedRef ?? null,
           validated.preparedSha ?? null,
           validated.expectedTargetSha ?? null,
-          validated.candidateValidation
-            ? JSON.stringify(validated.candidateValidation)
-            : null,
           jobId,
         );
-      },
-    );
-  }
-
-  function persistCandidateValidation(
-    jobId: string,
-    candidateValidation: CandidateValidationFact,
-  ): void {
-    timedSync(
-      jobRecordLogger,
-      "state-db.persistCandidateValidation",
-      { jobId, validationRef: candidateValidation.validationRef },
-      () => {
-        const validated = parseTrusted(
-          candidateValidationFactSchema,
-          candidateValidation,
-          (issues) => logAndThrowJobRecordValidationFailure(jobId, issues),
-        );
-        db.prepare(
-          `UPDATE job_records
-             SET candidate_validation = ?
-           WHERE job_id = ?`,
-        ).run(JSON.stringify(validated), jobId);
       },
     );
   }
@@ -671,76 +529,6 @@ export function createJobsRepo(db: Db): JobsRepo {
       )
       .all() as unknown[];
     return rows.map((row) => parseTrusted(jobIdColumnSchema, row).job_id);
-  }
-
-  function findLatestPublishedMerge(
-    identityColumn: "execution_id" | "spec_execution_id",
-    executionId: string,
-  ): { mergeHash: string; deliveryGatePassed: true } | null {
-    return timedSync(
-      jobRecordLogger,
-      "state-db.findLatestPublishedMerge",
-      { identityColumn, executionId },
-      () => {
-        const rawRow = db
-          .prepare(
-            `SELECT merge_hash, expected_target_sha
-               FROM job_records
-              WHERE job_type IN ('merge', 'resolve-conflicts')
-                AND status = 'completed'
-                AND ${identityColumn} = ?
-                AND final_publish = 1
-                AND COALESCE(merge_hash, expected_target_sha) IS NOT NULL
-              ORDER BY completed_at DESC, rowid DESC
-              LIMIT 1`,
-          )
-          .get(executionId);
-        if (rawRow === undefined) return null;
-        const row = parseTrusted(publishedMergeColumnsSchema, rawRow);
-        // A merge that landed carries its own commit; one that completed
-        // without a merge hash found the target already containing the branch
-        // and delivered the target tip the gate evaluated as its candidate.
-        const deliveredSha = row.merge_hash ?? row.expected_target_sha;
-        return deliveredSha === undefined || deliveredSha === null
-          ? null
-          : { mergeHash: deliveredSha, deliveryGatePassed: true };
-      },
-      (result) => ({ found: result !== null }),
-    );
-  }
-
-  function findMergeValidationByExecutionIdAndRef(
-    workflowExecutionId: string,
-    validationRef: string,
-  ): { mergeJobId: string; validation: CandidateValidationFact } | null {
-    return timedSync(
-      jobRecordLogger,
-      "state-db.findMergeValidationByExecutionIdAndRef",
-      { workflowExecutionId, validationRef },
-      () => {
-        const rows = db
-          .prepare(
-            `SELECT *
-               FROM job_records
-              WHERE job_type IN ('merge', 'resolve-conflicts')
-                AND execution_id = ?
-                AND candidate_validation IS NOT NULL
-              ORDER BY rowid DESC`,
-          )
-          .all(workflowExecutionId);
-        for (const row of rows) {
-          const job = rowToBackgroundJob(row);
-          if (job.candidateValidation?.validationRef === validationRef) {
-            return {
-              mergeJobId: job.jobId,
-              validation: job.candidateValidation,
-            };
-          }
-        }
-        return null;
-      },
-      (result) => ({ found: result !== null }),
-    );
   }
 
   function deleteJobRecordsForSession(
@@ -842,20 +630,12 @@ export function createJobsRepo(db: Db): JobsRepo {
   }
 
   return {
-    findLatestPublishedMergeBySpecExecutionId(id) {
-      return findLatestPublishedMerge("spec_execution_id", id);
-    },
     createJobRecord,
     updateJobRecord,
-    persistCandidateValidation,
     getJobRecord,
     findLatestJobRecordForSession,
     listParkedJobRecords,
     listJobIdsHoldingParkedRefs,
-    findLatestPublishedMergeByExecutionId(id) {
-      return findLatestPublishedMerge("execution_id", id);
-    },
-    findMergeValidationByExecutionIdAndRef,
     deleteJobRecordsForSession,
     deleteJobRecordsForProject,
     recoverStaleJobs,

@@ -7,7 +7,7 @@
  * are ones the store actually holds, with their passages resolved against the
  * notepad's current canonical text), and the REAL delivery orchestration — the
  * prompt route handler, `deliverNotepadFeedback`, `queueMessage`, the message
- * queue service, the drain conversion, and the actor's pre-turn composition.
+ * queue service, the drain conversion, and the core's pre-turn composition.
  * Only nondeterminism (clock/ids), project resolution, and the execution-layer
  * seam are stubbed.
  *
@@ -186,18 +186,16 @@ describe("notepad comment dispatch (real store)", () => {
     );
   });
 
-  it("forwards the dispatch through the live prompt route to the execution layer", async () => {
+  it("forwards the dispatch through the live prompt route to the core", async () => {
     const payload = await seedDispatchPayload();
     fx.seedConversation(PROJECT_PATH, SESSION, makeConversation("conv-live"));
 
-    // `executePromptStream` is the execution-layer seam, injected at the deps
-    // boundary so the assertion targets what the ROUTE forwards.
+    // Script the core prompt boundary so the assertion targets what the route forwards.
     const promptDeps: PromptRouteDeps = {
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       getSession: fx.store.getSession,
       getConversation: fx.store.getConversation,
-      getActiveGraphWorkflowExecution: async () => null,
       isConversationBusy: () => false,
       admitConversationTurn: async () => ({
         kind: "admit" as const,
@@ -208,11 +206,9 @@ describe("notepad comment dispatch (real store)", () => {
       setConversationPendingPromptText: async () => {},
       clearConversationPendingPromptTextIfMatches: async () => false,
       coreConversations: {
-        owns: () => false,
+        owns: () => true,
         admitCollaboration: async () => null,
-        prompt: async () => {
-          throw new Error("No conversation here runs on the shared core");
-        },
+        prompt: vi.fn(async () => new Response(null, { status: 200 })),
       },
     };
     const handlers = createPromptRouteHandlers(promptDeps);
@@ -232,7 +228,7 @@ describe("notepad comment dispatch (real store)", () => {
           }),
         },
       );
-      // Drain the SSE stream so the handler's executePromptStream call runs.
+      // Consume the response, as the delivery client does for a prompt.
       const reader = res.body?.getReader();
       if (reader) {
         while (!(await reader.read()).done) {
@@ -249,18 +245,20 @@ describe("notepad comment dispatch (real store)", () => {
     });
     expect(outcome).toEqual({ ok: true });
 
-    // executePromptStream(projectPath, session, prompt, emit, conversationId,
-    // modelSelection, images, options) — prompt is arg 2, options is arg 7.
-    const call = vi.mocked(promptDeps.executePromptStream).mock.calls[0]!;
-    const agentText = call[2] as string;
-    expect(agentText).toContain("Name the owner of this migration.");
-    expect(agentText).toContain("migration");
-    expect(agentText).toContain(payload.notepadRefXml);
-
-    const options = call[7] as {
-      notepadFeedback?: NotepadFeedbackPayload[];
-    };
-    expect(options.notepadFeedback).toEqual([payload]);
+    const calls = vi.mocked(promptDeps.coreConversations.prompt).mock.calls;
+    expect(calls).toHaveLength(1);
+    const forwarded = calls[0]![0];
+    expect(forwarded).toMatchObject({
+      projectPath: PROJECT_PATH,
+      conversation: { id: "conv-live" },
+      body: { notepadFeedback: payload },
+    });
+    expect(forwarded.body.prompt).toContain(
+      "Name the owner of this migration.",
+    );
+    expect(forwarded.body.prompt).toContain("migration");
+    expect(forwarded.body.prompt).toContain(payload.notepadRefXml);
+    expect(promptDeps.executePromptStream).not.toHaveBeenCalled();
   });
 
   it("queues the dispatch to a running conversation, persisting the typed block and re-emitting it on drain", async () => {

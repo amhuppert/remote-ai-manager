@@ -1,21 +1,5 @@
-/**
- * Dynamic help-context providers (docs/design/cc-cli/04 §4.3).
- *
- * Each provider owns one top-level command prefix (`dev`, `workflow`, …), reads
- * existing services/repos through injected deps, never mutates, and returns `[]`
- * when it has nothing worth saying — an absent context must not render an empty
- * section. The service (`service.ts`) resolves the calling command's first path
- * segment to a provider in this map, so a broken or slow provider is isolated to
- * its own prefix.
- *
- * The provider factories are pure given their injected deps (no server imports
- * except erased types); the production deps wiring lives in `provider-deps.ts`
- * so this module stays light and directly unit-testable.
- */
-import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "@/lib/workflow-graph/constants";
 import type { DevServerStatusItem } from "@/lib/dev-server/service";
 import type { ArtifactKind } from "@/lib/context-artifacts/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 
 import type { HelpContextBlock } from "./schemas";
 
@@ -65,15 +49,6 @@ export interface DevServerHelpDeps {
   }): Promise<DevServerStatusItem[]>;
 }
 
-/** Graph-workflow execution read for the `workflow` provider. */
-export interface WorkflowHelpDeps {
-  resolveProjectPath(name: string): Promise<string | null>;
-  getActiveGraphWorkflowExecution(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution | null>;
-}
-
 /** Compaction-artifact read for the `conversation` provider. */
 export interface ConversationHelpDeps {
   resolveConversationArtifacts(input: {
@@ -85,7 +60,7 @@ export interface ConversationHelpDeps {
 
 /** The union every v1 provider draws from; `buildHelpContextProviders` takes it whole. */
 export interface HelpContextProviderDeps
-  extends DevServerHelpDeps, WorkflowHelpDeps, ConversationHelpDeps {}
+  extends DevServerHelpDeps, ConversationHelpDeps {}
 
 // --- Providers --------------------------------------------------------------
 
@@ -147,69 +122,6 @@ export function createFixtureProvider(
   };
 }
 
-/** The in-progress task's title for a context, or null when none is running. */
-function currentTaskTitle(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-): string | null {
-  const running = Object.values(execution.taskStates).find(
-    (task) => task.contextId === contextId && task.status === "running",
-  );
-  if (!running) return null;
-  const def = execution.workingDefinition.tasks.find(
-    (task) => task.id === running.taskId,
-  );
-  return def?.title ?? null;
-}
-
-/**
- * `workflow` — lane identity, current task, remaining tasks, iteration budget vs
- * the circuit-breaker threshold, and a reminder that lane-only verbs exist. Only
- * fires inside a lane: `[]` unless BOTH executionId and contextId are present and
- * resolve to the session's active execution.
- */
-export function createWorkflowProvider(
-  deps: WorkflowHelpDeps,
-): HelpContextProvider {
-  return {
-    async provide(request) {
-      if (!request.executionId || !request.contextId) return [];
-      if (!request.project || !request.session) return [];
-      const projectPath = await deps.resolveProjectPath(request.project);
-      if (!projectPath) return [];
-      const execution = await deps.getActiveGraphWorkflowExecution(
-        projectPath,
-        request.session,
-      );
-      if (!execution || execution.id !== request.executionId) return [];
-
-      const contextState = execution.contextStates[request.contextId];
-      if (!contextState) return [];
-      const contextDef = execution.workingDefinition.executionContexts.find(
-        (c) => c.id === request.contextId,
-      );
-
-      const threshold =
-        contextDef?.circuitBreaker.consecutiveFailureThreshold ??
-        DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD;
-      const remaining = Math.max(
-        0,
-        contextState.totalTaskCount - contextState.completedTaskCount,
-      );
-      const title = currentTaskTitle(execution, request.contextId);
-
-      const body = [
-        `lane: ${contextDef?.title ?? request.contextId}`,
-        `current task: ${title ?? "none in progress"}`,
-        `remaining tasks: ${remaining}`,
-        `iterations: ${contextState.iterationCount} of ${threshold} before the circuit breaker halts`,
-        "lane-only verbs: cctl workflow task complete/add, shared-doc upsert, collab request",
-      ].join("\n");
-      return [{ title: "workflow lane", body }];
-    },
-  };
-}
-
 /**
  * `conversation` — the caller's conversation id and whether compaction artifacts
  * exist for it (and whether any are stale). `[]` without a conversation param.
@@ -256,7 +168,6 @@ export function buildHelpContextProviders(
   return new Map<string, HelpContextProvider>([
     ["dev", createDevProvider(deps)],
     ["fixture", createFixtureProvider(deps)],
-    ["workflow", createWorkflowProvider(deps)],
     ["conversation", createConversationProvider(deps)],
   ]);
 }

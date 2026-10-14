@@ -17,7 +17,6 @@
     "cursor-models:check": "bun scripts/cursor-models.ts --check",
     "cursor-models:sync": "bun scripts/cursor-models.ts --sync",
     "cursor-models:refresh": "bun scripts/cursor-models.ts --refresh",
-    "model-selection-migration:preflight": "bun scripts/model-selection-migration-preflight.ts",
     "start": "next start",
     "lint": "npx eslint . && bun run seams:check",
     "lint:ai": "npx eslint . --quiet --no-color --no-warn-ignored",

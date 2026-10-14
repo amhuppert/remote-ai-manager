@@ -22,7 +22,7 @@ import type {
 } from "./types";
 
 import type { StructuredOutputFormat } from "./turn-spec";
-import type { TurnAdmissionRefusal, TurnCancelReason } from "./turn-spec";
+import type { TurnCancelReason } from "./turn-spec";
 
 export interface TurnInterruption {
   reason: TurnCancelReason;
@@ -49,11 +49,6 @@ export type TurnExecutionOutcome = (
       result: AgentCallResult | null;
     }
 ) & { interruption?: TurnInterruption };
-
-/** The outcome belongs to the admitted attempt; refusals contain no preceding turn result. */
-export type ConversationTurnExecution =
-  | TurnAdmissionRefusal
-  | { kind: "settled"; turn: SettledConversationTurn };
 
 export interface SettledConversationTurn {
   attemptId: string;

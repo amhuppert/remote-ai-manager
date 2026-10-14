@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   // Session worktrees live inside the project root; without this exclude,
   // dynamic filesystem tracing walks the nested worktree tree.
   outputFileTracingExcludes: {
-    "*": ["./.worktrees/**"],
+    "*": ["./.worktrees/**", "./.cc/**", "./.config/**"],
   },
   experimental: {
     // `src/middleware.ts` matches `/api/:path*`, so Next buffers a clone of

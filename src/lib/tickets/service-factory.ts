@@ -32,7 +32,7 @@ import {
   appendNotice,
   readTranscriptEntriesWithSeq,
 } from "@/lib/prompt/transcript";
-import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
+import { runConversationTask as executeWorkflowTaskRun } from "@/lib/supervision/handles";
 import {
   createTicketAttachmentService,
   type EnsureConversationCompactionInput,

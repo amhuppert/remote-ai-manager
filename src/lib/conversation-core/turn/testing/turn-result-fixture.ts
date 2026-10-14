@@ -1,4 +1,4 @@
-import type { ConversationTurnExecution } from "@/lib/conversation-core/turn/turn-result";
+import type { SettledConversationTurn } from "@/lib/conversation-core/turn/turn-result";
 import type { AgentCallResult } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 import type { TurnInterruption } from "../turn-result";
@@ -6,7 +6,7 @@ import type { TurnInterruption } from "../turn-result";
 export function settledConversationTurn(
   result: Partial<AgentCallResult> = {},
   interruption?: TurnInterruption,
-): ConversationTurnExecution {
+): { kind: "settled"; turn: SettledConversationTurn } {
   return {
     kind: "settled",
     turn: {

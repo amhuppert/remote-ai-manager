@@ -74,7 +74,7 @@ export const validationStrategySchema = z
   .strict()
   .refine((strategy) => strategy.kinds.some(isMachineValidationEvidenceKind), {
     message:
-      "A validation strategy must include at least one machine-provable evidence kind (test_run or validator_verdict); the delivery gate cannot prove a criterion from commits alone.",
+      "A validation strategy must include at least one machine-provable evidence kind (test_run or validator_verdict); a commit alone does not make a criterion checkable.",
     path: ["kinds"],
   });
 export type ValidationStrategy = z.infer<typeof validationStrategySchema>;
@@ -237,13 +237,7 @@ export const specGatePresetSchema = z.enum([
 ]);
 export type SpecGatePreset = z.infer<typeof specGatePresetSchema>;
 
-export const specGateSchema = z.enum([
-  "requirements",
-  "design",
-  "plan",
-  "execution_start",
-  "delivery",
-]);
+export const specGateSchema = z.enum(["requirements", "design", "plan"]);
 export type SpecGate = z.infer<typeof specGateSchema>;
 
 export const specGateDialSchema = z.enum(["gate", "notify", "off"]);
@@ -283,15 +277,6 @@ export const specGatePolicySchema = z
   .strict();
 export type SpecGatePolicy = z.infer<typeof specGatePolicySchema>;
 
-export const evidenceEvaluatedStateSchema = z
-  .object({
-    commitSha: z.string().optional(),
-    relevantPaths: z.array(z.string()),
-    relevantTreeHash: z.string().optional(),
-    surfaceId: z.string().optional(),
-  })
-  .strict();
-
 export const agentActorProvenanceSchema = z
   .object({
     kind: z.literal("agent"),
@@ -313,44 +298,15 @@ export const actorProvenanceSchema = z.discriminatedUnion("kind", [
 ]);
 export type ActorProvenance = z.infer<typeof actorProvenanceSchema>;
 
-/**
- * The claim that an imported spec's work already shipped outside this system.
- * It carries who recorded the claim and which source it came from, and nothing
- * else: there is no verdict, evidence ref, or criterion closure here, because
- * external delivery is testimony rather than proof and the delivery gate never
- * reads it.
- */
-export const externalDeliverySchema = z
-  .object({
-    /**
-     * Stricter than this module's general `timestampSchema`, which only demands
-     * a non-empty string. Every other spec timestamp is minted by this system;
-     * this one arrives from an external document by way of an authoring agent,
-     * so it is the one date nothing here has already validated. Free text would
-     * persist an unorderable value no surface could honestly render beside the
-     * system's own timestamps.
-     */
-    at: z.iso.datetime(),
-    actor: actorProvenanceSchema,
-    source: z.object({ label: z.string().min(1) }).strict(),
-  })
-  .strict();
-
 export const refusalCodeSchema = z.enum([
   "gate_blocked",
   "stage_blocked",
+  "amendment_required",
   "stale_stage",
   "lint_blocked",
   "stale_element",
-  "unresolvable_evidence",
-  "invalid_scope",
-  "revision_not_approved",
-  "execution_active",
   "human_act_required",
-  "amendment_required",
   "integrity_mismatch",
-  "region_locked",
-  "delivery_gate_failed",
   "slug_taken",
   "element_id_taken",
   // A write that names an element id THIS spec already owns but whose versions
@@ -386,32 +342,11 @@ export const refusalCodeSchema = z.enum([
   "gate_not_applicable",
   "invalid_subject",
   "already_satisfied",
-  // A delivery-plan draft edit whose compare-and-swap token is behind the
-  // attempt's current draft revision. Distinct from `stale_element`, which is
-  // element-granular within a revision: this one guards the whole plan
-  // document, and its remedy is a re-read of the attempt rather than of one
-  // element.
-  "stale_plan_draft",
-  // A delivery-plan act asked for in an attempt status that cannot serve it —
-  // editing a signed candidate, reopening a launched run, opening a second
-  // attempt. Every one names the act that IS available from that status.
-  "plan_status_conflict",
-  "authoring_unsettled",
-  // A launch whose spec-side records committed but whose workflow start did
-  // not take. Distinct from `integrity_mismatch`: nothing about the approved
-  // candidate is wrong, so the remedy is a retry or an abandon of the run that
-  // now exists — never a re-approval.
-  "workflow_unavailable",
   "authoring_agent_required",
   "stale_attention_record",
   "stale_citation_set",
   "attention_state_conflict",
   "idempotency_conflict",
-  // An execution-addressing verb handed the internal spec execution row id
-  // where the workflow execution id belongs. Distinct from `not_found`, which
-  // reports an id that names nothing: this one names a real row an agent is
-  // never meant to hold, so its remedy is the id that IS addressable.
-  "spec_side_execution_id",
   "not_found",
   "validation",
 ]);
@@ -440,10 +375,7 @@ export const specSseEventTypeSchema = z.enum([
   "spec-changed",
   "spec-revision-changed",
   "spec-approval-changed",
-  "spec-execution-changed",
-  "spec-evidence-changed",
   "spec-attention-changed",
-  "spec-delivery-plan-changed",
 ]);
 export type SpecSseEventType = z.infer<typeof specSseEventTypeSchema>;
 
@@ -469,20 +401,6 @@ export const specInterventionEventTypeSchema = z.enum([
 
 export const specAuthoringEventTypeSchema = z.enum([
   "spec-authoring-returned-to-requirements",
-]);
-
-/**
- * Durable audit trail for `DeliveryPlanAttempt` transitions. The matching
- * typed SSE event refreshes live plan review surfaces after these rows commit.
- */
-export const specDeliveryPlanEventTypeSchema = z.enum([
-  "spec-delivery-plan-opened",
-  "spec-delivery-plan-proposed",
-  "spec-delivery-plan-reopened",
-  "spec-delivery-plan-transitioned",
-  "spec-delivery-plan-commented",
-  "spec-delivery-plan-reaffirmed",
-  "spec-delivery-plan-candidate-migrated",
 ]);
 
 /**
@@ -528,7 +446,6 @@ export const specEventTypeSchema = z.union([
   specReviewEventTypeSchema,
   specInterventionEventTypeSchema,
   specAuthoringEventTypeSchema,
-  specDeliveryPlanEventTypeSchema,
   specImportEventTypeSchema,
 ]);
 export type SpecEventType = z.infer<typeof specEventTypeSchema>;
@@ -1184,79 +1101,10 @@ export const specCommentResolutionSchema = z.enum([
   "dismissed",
 ]);
 
-export const specProofVerdictKindSchema = z.enum([
-  "deterministic_validator",
-  "agent_validator",
-  "human",
-]);
-
-export const specCriterionDispositionSchema = z.enum([
-  "in_scope",
-  "deferred",
-  "waived",
-  "delivered_elsewhere",
-]);
-export type SpecCriterionDisposition = z.infer<
-  typeof specCriterionDispositionSchema
->;
-
-export const specTaskClaimStatusSchema = z.enum(["accepted", "reopened"]);
-
-export const specExecutionStateSchema = z.enum([
-  "definition_review",
-  "running",
-  "delivered",
-  "abandoned",
-  /**
-   * Cleanup is in flight (design §10): the abandonment was accepted and its
-   * coordinator is working through `cleanup_phase`. A durable, resumable state
-   * rather than an in-memory step because a crash between aborting the linked
-   * workflow and releasing its slot is exactly the orphan this replaces —
-   * `abandoned` is reachable only after the final phase.
-   */
-  "abandoning",
-]);
-export type SpecExecutionState = z.infer<typeof specExecutionStateSchema>;
-
-/**
- * The abandon coordinator's ordered cleanup phases (design §10). This exact
- * vocabulary is what downstream orphan verification reads, so no other
- * cleanup-state naming exists anywhere. The transition table lives in
- * `abandon-coordinator.ts`.
- */
-export const specExecutionCleanupPhaseSchema = z.enum([
-  "abort_workflow",
-  "finalize",
-]);
-export type SpecExecutionCleanupPhase = z.infer<
-  typeof specExecutionCleanupPhaseSchema
->;
-
-/**
- * The linked graph-workflow execution's live status, as the reconcile read
- * reports it. A spec execution stays `running` between workflow completion
- * and the session's delivering merge, so this is the only field that lets a
- * reader tell "lanes are working" from "everything finished; merge pending"
- * and from "halted awaiting attention".
- */
-export const specWorkflowLaneStatusSchema = z.enum([
-  "pending",
-  "running",
-  "paused",
-  "completed",
-  "halted",
-  "aborted",
-]);
-export type SpecWorkflowLaneStatus = z.infer<
-  typeof specWorkflowLaneStatusSchema
->;
-
 export const specLinkObjectKindSchema = z.enum([
   "ticket",
   "conversation",
   "session",
-  "workflow_execution",
-  "merge_job",
 ]);
 export type SpecLinkObjectKind = z.infer<typeof specLinkObjectKindSchema>;
 
@@ -1315,8 +1163,6 @@ export const specRevisionRowSchema = z.object({
   citation_hash: sha256Schema,
   proposed_at: nullableTimestampSchema,
   approved_at: nullableTimestampSchema,
-  /** `externalDeliverySchema`; null for every revision authored here. */
-  external_delivery_json: jsonColumnSchema.nullable(),
   created_at: timestampSchema,
 });
 
@@ -1396,20 +1242,6 @@ export const specRevisionSchema = z
     citationHash: sha256Schema,
     proposedAt: nullableTimestampSchema,
     approvedAt: nullableTimestampSchema,
-    /**
-     * The external-delivery claim an import carried in, or null. It sits beside
-     * the lifecycle timestamps rather than among them because it proves
-     * nothing: `approvedAt` is this system's own act, this is testimony about
-     * another one.
-     *
-     * Defaulted rather than required so a payload producer older than the field
-     * still satisfies the strict parse, reading as the claim it actually makes:
-     * none. Absent can only ever mean null here — the sole writer is the import
-     * path, and defaulting the other way would invent a delivery nobody
-     * claimed. The row schema keeps the column required, so a repository that
-     * stopped mapping it still fails the round-trip contract.
-     */
-    externalDelivery: externalDeliverySchema.nullable().default(null),
     createdAt: timestampSchema,
   })
   .strict();
@@ -1553,7 +1385,6 @@ export const specGateAdmissionRowSchema = z.object({
   basis: specGateAdmissionBasisSchema,
   approval_id: nullableIdSchema,
   revision_id: nullableIdSchema,
-  execution_id: nullableIdSchema,
   actor_json: jsonColumnSchema,
   created_at: timestampSchema,
 });
@@ -1660,152 +1491,6 @@ export const specCommentRowSchema = z.object({
 });
 export type SpecCommentRow = z.infer<typeof specCommentRowSchema>;
 
-export const specEvidenceRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  criterion_element_id: idSchema,
-  revision_id: idSchema,
-  kind: evidenceKindSchema,
-  ref_json: jsonColumnSchema,
-  evaluated_state_json: jsonColumnSchema,
-  producer_json: jsonColumnSchema,
-  execution_id: nullableIdSchema,
-  source_event_id: z.number().int().positive().nullable(),
-  created_at: timestampSchema,
-});
-export type SpecEvidenceRow = z.infer<typeof specEvidenceRowSchema>;
-
-export const specProofVerdictRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  criterion_element_id: idSchema,
-  revision_id: idSchema,
-  execution_id: nullableIdSchema,
-  verdict_kind: specProofVerdictKindSchema,
-  evidence_ids_json: jsonColumnSchema,
-  verdict_at: timestampSchema,
-  stale_at: nullableTimestampSchema,
-  stale_reason: z.string().nullable(),
-});
-export type SpecProofVerdictRow = z.infer<typeof specProofVerdictRowSchema>;
-
-export const specDeliveryVerdictRowSchema = z.object({
-  id: idSchema,
-  spec_execution_id: idSchema,
-  workflow_execution_id: idSchema,
-  candidate_id: idSchema,
-  candidate_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  criterion_element_id: idSchema,
-  satisfying_context_id: idSchema,
-  verdict_at: timestampSchema,
-});
-export type SpecDeliveryVerdictRow = z.infer<
-  typeof specDeliveryVerdictRowSchema
->;
-
-export const specWaiverRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  criterion_element_id: idSchema,
-  revision_id: idSchema,
-  reason: z.string().min(1),
-  waived_at: timestampSchema,
-  stale: sqliteBooleanSchema,
-});
-export type SpecWaiverRow = z.infer<typeof specWaiverRowSchema>;
-
-export const specAcceptanceReviewSchema = z.object({
-  id: idSchema,
-  specId: idSchema,
-  revisionId: idSchema,
-  decision: z.enum(["satisfied", "waived", "revoked"]),
-  note: z.string(),
-  actor: actorProvenanceSchema,
-  criteria: z
-    .array(
-      z.object({
-        criterionId: idSchema,
-        contentHash: z.string().min(1),
-      }),
-    )
-    .min(1),
-  createdAt: timestampSchema,
-});
-export type SpecAcceptanceReview = z.infer<typeof specAcceptanceReviewSchema>;
-
-export const specDeliveryBasisSchema = z.object({
-  kind: z.enum(["session", "external"]),
-  sourceSpecExecutionIds: z.array(idSchema),
-  sourceWorkflowExecutionIds: z.array(idSchema),
-  commitRefs: z.array(z.string().min(1)),
-  note: z.string(),
-  actor: actorProvenanceSchema,
-  createdAt: timestampSchema,
-});
-
-export const specCriterionDispositionRowSchema = z.object({
-  execution_id: idSchema,
-  criterion_element_id: idSchema,
-  disposition: specCriterionDispositionSchema,
-  waiver_id: nullableIdSchema,
-  delivered_by_execution_id: nullableIdSchema,
-  created_at: timestampSchema,
-  updated_at: timestampSchema,
-});
-export type SpecCriterionDispositionRow = z.infer<
-  typeof specCriterionDispositionRowSchema
->;
-
-export const specTaskClaimRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  task_element_id: idSchema,
-  execution_id: nullableIdSchema,
-  actor_json: jsonColumnSchema,
-  evidence_ids_json: jsonColumnSchema,
-  claimed_at: timestampSchema,
-  status: specTaskClaimStatusSchema,
-});
-export type SpecTaskClaimRow = z.infer<typeof specTaskClaimRowSchema>;
-
-export const specExecutionRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  revision_id: idSchema,
-  scope_json: jsonColumnSchema,
-  state: specExecutionStateSchema,
-  execution_start_dial: specGateDialSchema.nullable(),
-  workflow_definition_id: nullableIdSchema,
-  workflow_definition_revision: z.number().int().positive().nullable(),
-  workflow_seed_source_json: jsonColumnSchema.nullable().optional(),
-  workflow_execution_binding_json: jsonColumnSchema.nullable().optional(),
-  workflow_execution_id: nullableIdSchema,
-  delivery_basis_json: jsonColumnSchema.nullable().optional(),
-  session_name: z.string().nullable(),
-  delivered_at: nullableTimestampSchema,
-  abandoned_reason: z.string().nullable(),
-  /** Non-null exactly while `state` is `abandoning` (design §10). */
-  cleanup_phase: specExecutionCleanupPhaseSchema.nullable(),
-  /**
-   * The cleanup target, pinned when the coordinator enters `abandoning`. Every
-   * phase, every retry, and the downstream orphan verification read this one
-   * id, so the run being released can never drift from the run the abandonment
-   * accepted responsibility for.
-   */
-  linked_workflow_execution_id: nullableIdSchema,
-  /**
-   * Why the last cleanup attempt stopped, and when. Durable because a
-   * coordinator that fails mid-chain is resumed by re-running the SAME
-   * command: without the recorded cause, the operator sees only a row parked
-   * in `abandoning` with no way to tell a live-run refusal from an infra fault.
-   */
-  cleanup_last_error: z.string().nullable(),
-  cleanup_last_error_at: nullableTimestampSchema,
-  created_at: timestampSchema,
-  updated_at: timestampSchema,
-});
-export type SpecExecutionRow = z.infer<typeof specExecutionRowSchema>;
-
 export const specLinkRowSchema = z.object({
   id: idSchema,
   spec_id: idSchema,
@@ -1819,155 +1504,6 @@ export const specLinkRowSchema = z.object({
   created_at: timestampSchema,
 });
 export type SpecLinkRow = z.infer<typeof specLinkRowSchema>;
-
-/**
- * A `DeliveryPlanAttempt`'s lifecycle. A human reviews the draft and signs it
- * off, which freezes the candidate and approves it in one act. The unlaunched
- * states a reopen returns to draft are `approved` and `parked`; `launched` is
- * the one that refuses, because the compiled candidate is already running.
- */
-export const deliveryPlanAttemptStatusSchema = z.enum([
-  "draft",
-  "approved",
-  "parked",
-  "launched",
-  "abandoned",
-]);
-export type DeliveryPlanAttemptStatus = z.infer<
-  typeof deliveryPlanAttemptStatusSchema
->;
-
-/**
- * The attempt is keyed by its own id, independently of both evergreen
- * revisions and workflow executions: it exists before the execution does, and
- * a later evergreen amendment can never fork or block it (design §4). The
- * pinned revision and the delta basis are references, not identity.
- */
-export const specDeliveryPlanAttemptRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  pinned_revision_id: idSchema,
-  /** The earlier delivered execution the seeding delta was computed against. */
-  delta_basis_execution_id: nullableIdSchema,
-  status: deliveryPlanAttemptStatusSchema,
-  /** Compare-and-swap token for draft edits; bumped by every edit and reopen. */
-  draft_revision: z.number().int().positive(),
-  content_json: jsonColumnSchema,
-  /** The snapshot sign-off froze; null while drafting. */
-  proposed_snapshot_id: nullableIdSchema,
-  approval_json: jsonColumnSchema.nullable(),
-  /**
-   * The durable prelaunch review record `spec start --park` writes. It
-   * outlives the approval a reopen clears, because the parked candidate's hash
-   * is what a later launch refusal names as the old one.
-   */
-  prelaunch_json: jsonColumnSchema.nullable(),
-  launched_execution_id: nullableIdSchema,
-  workflow_definition_id: nullableIdSchema,
-  created_at: timestampSchema,
-  updated_at: timestampSchema,
-});
-export type SpecDeliveryPlanAttemptRow = z.infer<
-  typeof specDeliveryPlanAttemptRowSchema
->;
-
-/**
- * An immutable candidate snapshot. Nothing ever updates a row here: a reopen
- * bumps the attempt's draft revision and clears its approval, and the prior
- * snapshots stay readable exactly as signed.
- */
-/**
- * The immutable candidate snapshot. `content_json` carries the canonical frozen
- * candidate record itself — the finalized launch, binding, pinned revision and
- * draft revision — so `candidate_hash` addresses exactly the bytes sign-off
- * approves and start launches, with no second candidate artifact to drift
- * against (`exact-approval`).
- */
-export const specDeliveryPlanSnapshotRowSchema = z.object({
-  id: idSchema,
-  attempt_id: idSchema,
-  candidate_id: idSchema,
-  candidate_hash: z.string().min(1),
-  /** The attempt draft revision this snapshot froze. */
-  draft_revision: z.number().int().positive(),
-  content_json: jsonColumnSchema,
-  pinned_revision_id: idSchema,
-  proposed_at: timestampSchema,
-  proposed_by_json: jsonColumnSchema,
-  workflow_definition_id: nullableIdSchema,
-  workflow_definition_revision: z.number().int().positive().nullable(),
-  workflow_definition_hash: z.string().min(1).nullable(),
-  binding_hash: z.string().min(1).nullable(),
-});
-export type SpecDeliveryPlanSnapshotRow = z.infer<
-  typeof specDeliveryPlanSnapshotRowSchema
->;
-
-export const specDeliveryPlanCandidateApprovalRowSchema = z.object({
-  snapshot_id: idSchema,
-  candidate_id: idSchema,
-  candidate_hash: z.string().min(1),
-  approved_at: timestampSchema,
-  approved_by_json: jsonColumnSchema,
-});
-export type SpecDeliveryPlanCandidateApprovalRow = z.infer<
-  typeof specDeliveryPlanCandidateApprovalRowSchema
->;
-
-/**
- * A review note anchored to one context of one attempt. `context_id` is
- * deliberately NOT a foreign key: contexts live inside the attempt's document
- * blob, and a comment must outlive the context it discusses so a later edit
- * that removes that context surfaces the note as a visible orphan anchor
- * rather than silently deleting reviewed work.
- */
-export const specDeliveryPlanCommentRowSchema = z.object({
-  id: idSchema,
-  attempt_id: idSchema,
-  context_id: z.string().min(1),
-  body: z.string().min(1),
-  author_json: jsonColumnSchema,
-  created_at: timestampSchema,
-});
-export type SpecDeliveryPlanCommentRow = z.infer<
-  typeof specDeliveryPlanCommentRowSchema
->;
-
-/**
- * Work a running execution found and deliberately did not do (design §11). It
- * is the durable half of the non-blocking capture path: the run keeps its
- * pinned scope, and the next seeded attempt places the discovery as a task.
- *
- * It is stored against the execution rather than as a task element on an
- * evergreen amendment because a discovery is plan content, not spec content —
- * the evergreen spec carries requirements, decisions, and criteria, and the
- * `DeliveryPlanAttempt` carries the work.
- */
-export const specDeliveryDiscoveryRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  /** The running execution the discovery was captured against. */
-  execution_id: idSchema,
-  /** The launched attempt behind that execution; null for a legacy run. */
-  attempt_id: nullableIdSchema,
-  /** The revision the run pinned — where the discovery's ids resolve. */
-  pinned_revision_id: idSchema,
-  /** The `taskElementPayloadSchema` body, minus its fixed kind. */
-  discovered_task_json: jsonColumnSchema,
-  /** Non-null when this capture also abandoned the run it was found in. */
-  blocking_reason: z.string().min(1).nullable(),
-  captured_by_json: jsonColumnSchema,
-  captured_at: timestampSchema,
-});
-export type SpecDeliveryDiscoveryRow = z.infer<
-  typeof specDeliveryDiscoveryRowSchema
->;
-
-/** The capture payload a discovery row carries, parsed out of its column. */
-export const discoveredTaskSchema = taskElementPayloadSchema.omit({
-  kind: true,
-});
-export type DiscoveredTask = z.infer<typeof discoveredTaskSchema>;
 
 export const specEventRowSchema = z.object({
   id: z.number().int().positive(),
@@ -2052,7 +1588,7 @@ export const importBundleDecisionSchema = z
  * imported revision is born at the design stage, so it may carry intent and
  * design content in the same bundle.
  */
-export const importBundleSchema = z
+const importBundleContentSchema = z
   .object({
     slug: specSlugSchema,
     name: z.string().min(1),
@@ -2083,12 +1619,6 @@ export const importBundleSchema = z
         .strict(),
     ),
     /**
-     * Whether the external source already shipped. It defaults to true because
-     * a spec worth importing has usually been delivered; the record it produces
-     * is external-delivery provenance, never machine proof.
-     */
-    delivered: z.boolean().default(true),
-    /**
      * Rehearse the import instead of performing it: run every validation the
      * real import runs, report the findings and the handles it would allocate,
      * and write nothing.
@@ -2102,4 +1632,19 @@ export const importBundleSchema = z
     dryRun: z.boolean().default(false),
   })
   .strict();
+export const importBundleSchema = z
+  .unknown()
+  .transform((input, context) => {
+    if (typeof input === "object" && input !== null && "delivered" in input) {
+      context.addIssue({
+        code: "custom",
+        path: ["delivered"],
+        message:
+          "The delivered field is retired. Remove it; imports create approved requirements and design.",
+      });
+      return z.NEVER;
+    }
+    return input;
+  })
+  .pipe(importBundleContentSchema);
 export type ImportBundle = z.infer<typeof importBundleSchema>;

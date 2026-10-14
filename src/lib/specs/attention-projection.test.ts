@@ -42,7 +42,6 @@ function revision(
     citationHash: "b".repeat(64),
     proposedAt: state === "draft" ? null : AT,
     approvedAt: state === "approved" ? AT : null,
-    externalDelivery: null,
     createdAt: AT,
   };
 }

@@ -18,7 +18,7 @@ import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
 import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
-import { graphWorkflowExecutionKeys } from "@/lib/workflows/query-keys";
+import {} from "@/lib/collaboration/query-keys";
 import ConversationList from "./ConversationList";
 
 const routerPush = vi.fn();
@@ -83,7 +83,6 @@ function renderPage() {
     source: "cc",
     creationMode: "normal",
     tddEnabled: true,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
   });
   queryClient.setQueryData(
@@ -92,14 +91,8 @@ function renderPage() {
   );
   queryClient.setQueryData(conversationKeys.active(), {
     conversations: [],
-    graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
-    specExecutions: [],
   });
-  queryClient.setQueryData(
-    graphWorkflowExecutionKeys.detail("my-app", "build-hotkeys"),
-    null,
-  );
   render(
     <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
       <QueryClientProvider client={queryClient}>

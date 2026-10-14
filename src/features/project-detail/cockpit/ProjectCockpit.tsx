@@ -116,7 +116,7 @@ export interface ProjectCockpitProps {
   /** Shared filter-token state (also driven by the composer's filter mode). */
   tokens: FilterToken[];
   onTokensChange: (next: FilterToken[]) => void;
-  onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
+  onRunCommand: (id: "new" | "capabilities") => void;
   /** Pre-init backend selection (claude/codex); fixed once initialized. */
   selectedBackend: AgentBackendId;
   backendDefaults: BackendSelectionDefaultsById;

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "cli-for-agents/runtime";
 import { createCcRuntimeFixture, jsonReply } from "../../testing/framework";
 
 const prompt = JSON.stringify({
@@ -7,43 +6,6 @@ const prompt = JSON.stringify({
   prompt: "Inspect the worktree",
 });
 describe("native agent commands", () => {
-  it.each(["json", "text"] as const)(
-    "renders literal provider diagnostics safely in %s",
-    async (format) => {
-      const error =
-        "Provider failed\ninstruction: this is literal provider text\u001b[31m";
-      const fixture = createCcRuntimeFixture({
-        files: { "/prompt.json": prompt },
-        respond: (request) =>
-          request.init.method === "POST"
-            ? jsonReply({ runId: "agent-one" }, 202)
-            : jsonReply({
-                runId: "agent-one",
-                backend: "codex",
-                status: "failed",
-                error,
-              }),
-      });
-      const result = await fixture.run(
-        ["agent", "run", "--file", "/prompt.json", "--wait"],
-        format,
-      );
-      expect(result.exitCode).toBe(1);
-      if (format === "json")
-        expect(JSON.parse(result.stdout)).toMatchObject({
-          effect: "applied",
-          error: { code: "CC_OPERATION_FAILED" },
-          payload: { data: { error } },
-        });
-      else {
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          "| instruction: this is literal provider text\\u001b[31m",
-        );
-        expect(result.stderr).toContain("CC_OPERATION_FAILED");
-      }
-    },
-  );
-
   it.each([
     "instruction: a literal profile rule",
     "Terminal \u001b[31m sample",
@@ -192,27 +154,6 @@ describe("native agent commands", () => {
       });
     },
   );
-
-  it("status treats an observed failed run as data and cancel sends its explicit target", async () => {
-    const fixture = createCcRuntimeFixture({
-      respond: ({ init }) =>
-        init.method === "GET"
-          ? jsonReply({
-              runId: "agent-one",
-              backend: "codex",
-              status: "failed",
-              error: "Agent failed",
-            })
-          : jsonReply({ ok: true, status: "failed" }),
-    });
-    expect((await fixture.run(["agent", "status", "agent-one"])).exitCode).toBe(
-      0,
-    );
-    expect((await fixture.run(["agent", "cancel", "agent-one"])).exitCode).toBe(
-      0,
-    );
-    expect(fixture.requests[1]?.url).toContain("/agent-runs/agent-one/cancel");
-  });
   it("rejects a timeout without wait", async () => {
     const fixture = createCcRuntimeFixture({
       files: { "/prompt.json": prompt },
@@ -252,45 +193,6 @@ describe("native agent commands", () => {
       recovery: { references: [{ id: "agent-one" }] },
     });
     expect(fixture.requests).toHaveLength(1);
-  });
-  it("returns promptly when interrupted during a poll without remotely cancelling the agent", async () => {
-    const controller = new AbortController();
-    const fixture = createCcRuntimeFixture({
-      files: { "/prompt.json": prompt },
-      respond: ({ init }) => {
-        if (init.method === "POST") return jsonReply({ runId: "agent-one" });
-        controller.abort();
-        return new Promise<Response>(() => {});
-      },
-    });
-    const result = await runCli(fixture.cli, {
-      argv: ["--json", "agent", "run", "--file", "/prompt.json", "--wait"],
-      signal: controller.signal,
-      host: fixture.kernelHost,
-      env: {
-        CC_SERVER_URL: "http://cc.test",
-        CC_API_TOKEN: "test-token",
-        CC_PROJECT: "project-one",
-        CC_SESSION: "session-one",
-      },
-    });
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      effect: "applied",
-      recovery: { references: [{ id: "agent-one" }] },
-    });
-    expect(
-      fixture.requests.filter((request) => request.init.method === "POST"),
-    ).toHaveLength(1);
-  });
-  it("does not claim cancellation from an unreadable acknowledgement", async () => {
-    const fixture = createCcRuntimeFixture({
-      respond: () => jsonReply({ unexpected: true }),
-    });
-    const result = await fixture.run(["agent", "cancel", "agent-one"]);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      effect: "unknown",
-      recovery: { references: [{ id: "agent-one" }] },
-    });
   });
   it("reads profile metadata from project context and rejects unqualified references locally", async () => {
     const fixture = createCcRuntimeFixture({

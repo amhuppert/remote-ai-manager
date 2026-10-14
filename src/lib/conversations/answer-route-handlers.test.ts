@@ -5,7 +5,6 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import type { RecordAnswersResult } from "@/lib/workflow-graph/user-input-gate";
 import { withTracing } from "@/lib/logging";
 import {
   createCapturingLogger,
@@ -103,8 +102,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     sendEvent: ReturnType<typeof vi.fn>;
     drain: ReturnType<typeof vi.fn>;
     queueMessageSpy: ReturnType<typeof vi.fn>;
-    recordLaneAnswers: ReturnType<typeof vi.fn>;
-    clearPendingQuestion: ReturnType<typeof vi.fn>;
   } {
     const svc = createMessageQueueService({
       mutateConversation: (
@@ -137,8 +134,12 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       claimLiveDelivery: (input) => svc.claimLiveDelivery(input),
       markDelivered: (input) => svc.markDelivered(input),
       markPending: (input) => svc.markPending(input),
+      core: {
+        owns: async () => true,
+        acceptsLive: async () => false,
+        deliverLive: async () => "not_sent",
+      },
       getRuntime: () => undefined,
-      appendTranscriptEntry: async () => {},
       getProjectDisplayName: () => "repo",
       ...queueDepsOverrides,
     };
@@ -148,33 +149,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     const queueMessageSpy = vi.fn((p: Parameters<typeof queueMessage>[0]) =>
       queueMessage({ ...p, deps: queueDeps }),
     );
-    const recordLaneAnswers = vi.fn(
-      async (): Promise<RecordAnswersResult> => ({ ok: true }),
-    );
-    // The real durable clear, over the fixture's SQLite-backed store, so a test
-    // can reload the row and see whether the marker actually went away.
-    const clearPendingQuestion = vi.fn(
-      async (input: {
-        projectPath: string;
-        sessionName: string;
-        conversationId: string;
-        questionBatchId: string;
-      }): Promise<void> => {
-        await fixture.deps.mutateConversation(
-          input.projectPath,
-          input.sessionName,
-          input.conversationId,
-          "answer.clear_pending_question",
-          (conversation) => {
-            if (conversation.pendingQuestionId !== input.questionBatchId)
-              return;
-            conversation.pendingQuestionId = null;
-            conversation.pendingQuestions = null;
-          },
-        );
-      },
-    );
-
     const deps: AnswerRouteDeps = {
       async resolveProjectPath() {
         return PROJECT;
@@ -183,8 +157,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       clearConversationQuestion: sendEvent,
       queueMessage: queueMessageSpy,
       ensureConversationActorAndDrain: drain,
-      recordLaneAnswers,
-      clearPendingQuestion,
       async readConfig() {
         return { defaultAgentBackend: "claude" as const };
       },
@@ -196,8 +168,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       sendEvent,
       drain,
       queueMessageSpy,
-      recordLaneAnswers,
-      clearPendingQuestion,
     };
   }
 
@@ -210,7 +180,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         seedConversation({ role, pendingQuestionId: "cc-in-turn-request" }),
       );
       let received = false;
-      const { deps, queueMessageSpy, recordLaneAnswers } = makeDeps({
+      const { deps, queueMessageSpy } = makeDeps({
         answerInTurnQuestion: async (_scope, reply) => {
           received = reply.questionId === "cc-in-turn-request";
           return true;
@@ -223,7 +193,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       expect(response.status).toBe(200);
       expect(received).toBe(true);
       expect(queueMessageSpy).not.toHaveBeenCalled();
-      expect(recordLaneAnswers).not.toHaveBeenCalled();
     },
   );
 
@@ -489,241 +458,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     expect(queueMessageSpy).not.toHaveBeenCalled();
   });
 
-  describe("lane conversation (graph-workflow role) diverts to the gate", () => {
-    it("iteration lane: records answers on the gate, clears the marker, NEVER queues or drains", async () => {
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      const { deps, sendEvent, drain, queueMessageSpy, recordLaneAnswers } =
-        makeDeps();
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-
-      expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toEqual({ ok: true });
-
-      // Diverted to the execution record — never the conversation queue.
-      expect(recordLaneAnswers).toHaveBeenCalledTimes(1);
-      expect(recordLaneAnswers).toHaveBeenCalledWith({
-        projectPath: PROJECT,
-        sessionName: SESSION,
-        conversationId: CONV,
-        questionBatchId: "q_b1",
-        answers,
-      });
-      expect(queueMessageSpy).not.toHaveBeenCalled();
-      expect(drain).not.toHaveBeenCalled();
-
-      // The conversation's pending marker is cleared via a machine transition.
-      expect(sendEvent).toHaveBeenCalledWith(PROJECT, SESSION, CONV, {
-        questionId: "q_b1",
-      });
-
-      // No message was enqueued — the lane conversation's queue stays empty —
-      // and the marker is gone from the durable row, not merely from a live
-      // actor's memory.
-      const reloaded = await fixture.deps.getConversation(
-        PROJECT,
-        SESSION,
-        CONV,
-      );
-      expect(reloaded?.pendingQueue).toHaveLength(0);
-      expect(reloaded?.pendingQuestionId).toBeNull();
-    });
-
-    it("clears the marker durably when no live actor accepts the transition", async () => {
-      // The lane's asking turn has already ended, so its actor is gone and
-      // `clearConversationQuestion` refuses. Nothing else clears the marker on this
-      // path — no message is queued — so a marker left standing makes the
-      // execution loop re-park the resumed lane on the batch just answered.
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      const { deps } = makeDeps({
-        clearConversationQuestion: vi.fn(async () => false),
-      });
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-
-      expect(res.status).toBe(200);
-
-      const reloaded = await fixture.deps.getConversation(
-        PROJECT,
-        SESSION,
-        CONV,
-      );
-      expect(reloaded?.pendingQuestionId).toBeNull();
-      expect(reloaded?.pendingQuestions).toBeNull();
-    });
-
-    it("leaves the marker standing when the gate rejects the answer", async () => {
-      // A rejected answer was never recorded, so the question is still live and
-      // the user must be able to retry it.
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      const { deps } = makeDeps({
-        clearConversationQuestion: vi.fn(async () => false),
-        recordLaneAnswers: vi.fn(
-          async (): Promise<RecordAnswersResult> => ({
-            ok: false,
-            reason: "not_found",
-          }),
-        ),
-      });
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-
-      expect(res.status).toBe(410);
-
-      const reloaded = await fixture.deps.getConversation(
-        PROJECT,
-        SESSION,
-        CONV,
-      );
-      expect(reloaded?.pendingQuestionId).toBe("q_b1");
-    });
-
-    it("validator lane: also diverts to the gate", async () => {
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "validator" }),
-      );
-      const { deps, queueMessageSpy, recordLaneAnswers } = makeDeps();
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-
-      expect(res.status).toBe(200);
-      expect(recordLaneAnswers).toHaveBeenCalledTimes(1);
-      expect(queueMessageSpy).not.toHaveBeenCalled();
-    });
-
-    it("preserves a skipped answer entry verbatim in the gate payload (Req 4.4)", async () => {
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      const skippedAnswers: Record<string, AskQuestionAnswer> = {
-        approach: {
-          selected: [],
-          note: "",
-          skipped: true,
-          question: "Which approach?",
-        },
-      };
-      const { deps, recordLaneAnswers } = makeDeps();
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(
-        makeRequest({ questionId: "q_b1", answers: skippedAnswers }),
-        { params },
-      );
-
-      expect(res.status).toBe(200);
-      expect(recordLaneAnswers).toHaveBeenCalledWith(
-        expect.objectContaining({ answers: skippedAnswers }),
-      );
-    });
-
-    it("a duplicate lane answer (gate reports already_answered) gets 410", async () => {
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      const recordLaneAnswers = vi.fn(
-        async (): Promise<RecordAnswersResult> => ({
-          ok: false,
-          reason: "already_answered",
-        }),
-      );
-      const { deps, queueMessageSpy, drain } = makeDeps({ recordLaneAnswers });
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-
-      expect(res.status).toBe(410);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toContain("already answered or superseded");
-      expect(queueMessageSpy).not.toHaveBeenCalled();
-      expect(drain).not.toHaveBeenCalled();
-    });
-
-    it("a not_found lane answer (superseded batch) gets 410", async () => {
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      const recordLaneAnswers = vi.fn(
-        async (): Promise<RecordAnswersResult> => ({
-          ok: false,
-          reason: "not_found",
-        }),
-      );
-      const { deps } = makeDeps({ recordLaneAnswers });
-      const { POST } = createAnswerHandlers(deps);
-
-      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-
-      expect(res.status).toBe(410);
-    });
-
-    it("second lane submission is rejected after the first clears the marker", async () => {
-      await fixture.seedConversation(
-        PROJECT,
-        SESSION,
-        seedConversation({ role: "iteration" }),
-      );
-      // The real gate rejects a second recordAnswers for the same batch; model
-      // that with a stateful fake so the route's observable status is 410.
-      let answered = false;
-      const recordLaneAnswers = vi.fn(
-        async (): Promise<RecordAnswersResult> => {
-          if (answered) return { ok: false, reason: "already_answered" };
-          answered = true;
-          return { ok: true };
-        },
-      );
-      const { deps } = makeDeps({ recordLaneAnswers });
-      const { POST } = createAnswerHandlers(deps);
-
-      const first = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-      expect(first.status).toBe(200);
-
-      const second = await POST(makeRequest({ questionId: "q_b1", answers }), {
-        params,
-      });
-      expect(second.status).toBe(410);
-    });
-  });
-
   describe("project-scoped adapter (R1.1)", () => {
     const projectParams = Promise.resolve({
       name: "repo",
@@ -748,11 +482,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     } {
       const { deps, drain } = makeDeps();
       const log = createCapturingLogger();
-      const {
-        getConversation: _ignored,
-        recordLaneAnswers: _laneGate,
-        ...shared
-      } = deps;
+      const { getConversation: _ignored, ...shared } = deps;
       return {
         deps: {
           ...shared,
@@ -927,72 +657,6 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       );
       expect(reloaded?.pendingQuestionId).toBeNull();
       expect(reloaded?.pendingQueue).toHaveLength(1);
-    });
-
-    // R4.6: lane answer recording is session-only by spec non-goal, and the
-    // guarantee is structural — the project adapter has no lane branch and
-    // `ProjectAnswerRouteDeps` has no gate to divert to. A lane branch grown
-    // here would have to fail one of these.
-    describe("never enters the graph-workflow lane path (R4.6)", () => {
-      for (const role of ["iteration", "validator"] as const) {
-        it(`treats a ${role}-role project conversation as an ordinary conversation`, async () => {
-          await fixture.seedProjectConversation(
-            PROJECT,
-            seedConversation({ scope: "project", role }),
-          );
-          const { deps, drain } = makeProjectDeps();
-          // A gate the project adapter must never reach. It is absent from
-          // `ProjectAnswerRouteDeps`, so spreading it in is the only way to
-          // observe that it stays unreached.
-          const recordLaneAnswers = vi.fn(
-            async (): Promise<RecordAnswersResult> => ({ ok: true }),
-          );
-          const { POST } = createProjectAnswerHandlers({
-            ...deps,
-            recordLaneAnswers,
-          } as ProjectAnswerRouteDeps);
-
-          const res = await POST(
-            makeProjectRequest({ questionId: "q_b1", answers }),
-            { params: projectParams },
-          );
-
-          expect(res.status).toBe(200);
-          expect(recordLaneAnswers).not.toHaveBeenCalled();
-
-          // The ordinary path ran instead: the marker is consumed and the
-          // answers block is queued for the next turn — a lane divert would
-          // have recorded on the gate and queued nothing.
-          const reloaded = await fixture.deps.getConversation(
-            PROJECT,
-            PROJECT_CONVERSATION_SESSION_SENTINEL,
-            CONV,
-          );
-          expect(reloaded?.pendingQuestionId).toBeNull();
-          expect(reloaded?.pendingQueue).toHaveLength(1);
-          expect(drain).toHaveBeenCalled();
-        });
-      }
-
-      it("the session adapter still diverts the same role to the gate", async () => {
-        // Contrast, so the assertions above cannot pass because lane answering
-        // is broken everywhere.
-        await fixture.seedConversation(
-          PROJECT,
-          SESSION,
-          seedConversation({ role: "iteration" }),
-        );
-        const { deps, recordLaneAnswers, drain } = makeDeps();
-        const { POST } = createAnswerHandlers(deps);
-
-        const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
-          params,
-        });
-
-        expect(res.status).toBe(200);
-        expect(recordLaneAnswers).toHaveBeenCalled();
-        expect(drain).not.toHaveBeenCalled();
-      });
     });
   });
 });

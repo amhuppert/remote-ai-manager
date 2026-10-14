@@ -9,7 +9,6 @@ import {
   resolveConfigDir,
 } from "./loader";
 import { resolveMemoryConfig } from "./schemas";
-import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 const tempDirs: string[] = [];
 
@@ -54,65 +53,6 @@ describe("createConfigReader", () => {
       concurrencyLimit: 4,
       defaultTimeoutMs: 600_000,
     });
-  });
-
-  /**
-   * The global fallback and `SEEDED_WORKFLOW_DEFAULTS` must be the SAME
-   * defaults, not two literals that happen to agree today. A second copy is how
-   * a newly-seeded workflow default (`mutability.allowAgentContextAdd`, the
-   * D4 expansion authority flag) silently means one thing to the cascade
-   * resolver and another to a config file that never mentions it.
-   */
-  it("falls back to the canonical seeded workflow defaults, not a second copy", async () => {
-    const configDir = await createTempConfigDir();
-    const reader = createConfigReader(configDir);
-
-    const config = await reader.readConfig();
-
-    expect(config.workflowDefaults).toEqual(SEEDED_WORKFLOW_DEFAULTS);
-  });
-
-  it("merges partial workflowDefaults from disk with seeded defaults", async () => {
-    const configDir = await createTempConfigDir();
-    await writeFile(
-      path.join(configDir, "config.json"),
-      JSON.stringify({
-        workflowDefaults: {
-          scriptValidator: { commands: ["pre-merge"] },
-        },
-      }),
-      "utf-8",
-    );
-
-    const reader = createConfigReader(configDir);
-    const config = await reader.readConfig();
-    expect(config.workflowDefaults).toBeDefined();
-
-    expect(config.workflowDefaults?.scriptValidator).toEqual({
-      commands: ["pre-merge"],
-    });
-    expect(config.workflowDefaults?.implementer).toBeDefined();
-    expect(config.workflowDefaults?.iterationPolicy).toBeDefined();
-    expect(config.workflowDefaults?.circuitBreaker).toBeDefined();
-    expect(config.workflowDefaults?.mutability).toBeDefined();
-  });
-
-  it("returns partial workflowDefaults from readRawConfig without rejecting them", async () => {
-    const configDir = await createTempConfigDir();
-    const rawConfig = {
-      workflowDefaults: {
-        scriptValidator: { commands: ["pre-merge"] },
-      },
-    };
-    await writeFile(
-      path.join(configDir, "config.json"),
-      JSON.stringify(rawConfig),
-      "utf-8",
-    );
-
-    const reader = createConfigReader(configDir);
-
-    await expect(reader.readRawConfig()).resolves.toEqual(rawConfig);
   });
 
   it("materializes independent Claude and Codex defaults", async () => {
@@ -401,20 +341,6 @@ describe("createConfigReader", () => {
         conversationNaming: {
           backend: "claude",
           modelSelection: { modelId: "opus", parameters: {} },
-        },
-      },
-    ],
-    [
-      "workflow defaults",
-      {
-        workflowDefaults: {
-          implementer: {
-            ...SEEDED_WORKFLOW_DEFAULTS.implementer,
-            agent: {
-              backend: "claude",
-              modelSelection: { modelId: "opus", parameters: {} },
-            },
-          },
         },
       },
     ],

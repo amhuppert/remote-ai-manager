@@ -11,7 +11,6 @@ import {
   type ActorProvenance,
   type SpecApprovalRequestScope,
   type SpecApprovalRow,
-  type SpecExecutionRow,
   type SpecGate,
   type SpecRevision,
   type SpecRevisionElement,
@@ -29,12 +28,6 @@ export interface PendingApproval {
   subject: string;
   elementId: string | null;
 }
-
-/** The gates whose admissions are per-execution rather than per-revision. */
-export const EXECUTION_SCOPED_GATES: ReadonlySet<string> = new Set([
-  "execution_start",
-  "delivery",
-]);
 
 /**
  * The revision every read projection calls "current": the highest-numbered
@@ -96,55 +89,6 @@ export function elementHandle(
 }
 
 /**
- * Whether a human act exists right now for an execution-scoped gate. Before a
- * run exists there is nothing to approve, so a pending entry would be a Needs
- * You no act can clear — the same rule authoring subjects already obey.
- * Execution start is approvable exactly while the compiled definition parks
- * with its workflow lane linked (the grant path refuses in every other
- * position); delivery is grantable for any run that has not ended.
- */
-export function executionGateActionable(
-  gate: "execution_start" | "delivery",
-  execution: Pick<SpecExecutionRow, "state" | "workflow_execution_id"> | null,
-): boolean {
-  if (execution === null) return false;
-  if (gate === "execution_start") {
-    return (
-      execution.state === "definition_review" &&
-      execution.workflow_execution_id !== null
-    );
-  }
-  return (
-    execution.state === "definition_review" || execution.state === "running"
-  );
-}
-
-/**
- * The run a gate reads against: the one still in flight, otherwise the most
- * recent, so a delivered run's admissions stay visible after it ends.
- */
-export function currentExecution(
-  executions: readonly SpecExecutionRow[],
-): SpecExecutionRow | null {
-  const active = executions.find(
-    (execution) =>
-      execution.state === "definition_review" || execution.state === "running",
-  );
-  if (active !== undefined) return active;
-  let latest: SpecExecutionRow | null = null;
-  for (const execution of executions) {
-    if (
-      latest === null ||
-      execution.created_at > latest.created_at ||
-      (execution.created_at === latest.created_at && execution.id > latest.id)
-    ) {
-      latest = execution;
-    }
-  }
-  return latest;
-}
-
-/**
  * Actor provenance is stored as JSON text, so a row written by an older build
  * (or hand-edited) may not parse, and the read surface must not 500 on one bad
  * record — it degrades to null.
@@ -171,8 +115,6 @@ export interface ApprovalRequestContext {
   /** The revision the authoring gates are evaluated against right now. */
   currentRevisionId: string | null;
   snapshot: SpecRevisionSnapshot | null;
-  /** The run's pinned revision, where an execution-gate subject is addressed. */
-  executionSnapshot: SpecRevisionSnapshot | null;
   approvals: readonly SpecApprovalRow[];
   applies: ApprovalApplicability;
   gate: SpecGate;
@@ -237,9 +179,13 @@ function refuse(
 export function validateApprovalRequest(
   context: ApprovalRequestContext,
 ): ApprovalRequestValidation {
-  const authoringScoped = !EXECUTION_SCOPED_GATES.has(context.gate);
+  if (context.snapshot?.revision.authoringStage === "plan")
+    return refuse(
+      "gate_not_applicable",
+      "Legacy plan revisions are read-only.",
+      "Open a design amendment.",
+    );
   if (
-    authoringScoped &&
     context.currentRevisionId !== null &&
     context.requestedRevisionId !== context.currentRevisionId
   ) {
@@ -334,16 +280,6 @@ export function validateApprovalRequest(
   // An execution gate admits the run as a whole, so every request at one is
   // gate-scoped: a named subject is a deep-link pointer at the element the run
   // is blocked on, not an item a human can approve on its own.
-  if (!authoringScoped) {
-    if (subject === context.gate) return gateScoped(subject, null);
-    const target = elementForSubject(context.executionSnapshot, subject);
-    if (target !== null) return gateScoped(subject, target);
-    return refuse(
-      "invalid_subject",
-      `${subject} addresses nothing in the revision this run pinned.`,
-      `Name the element the ${context.gate} gate is blocked on, or the gate itself: ${context.gate}.`,
-    );
-  }
 
   const matched = forGate.find((candidate) => candidate.subject === subject);
   if (matched !== undefined) {

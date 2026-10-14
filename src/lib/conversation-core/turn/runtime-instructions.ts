@@ -23,67 +23,6 @@ import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import { registerFocusMemoryIfPresent } from "@/lib/conversation-core/contributions/focus-memory";
 import { resolveAlignmentInstructionForNewRuntime } from "@/lib/conversation-core/contributions/alignment-gate";
 import { resolveConversationProfileInjection } from "@/lib/conversation-core/contributions/profile-injection";
-import { isPromptNotDeliveredFailure } from "@/lib/agent-backends/errors";
-import type { PreparedSubscriptionBriefing } from "@/lib/subscriptions/service";
-
-export type RuntimeRecoveryInstructions = Awaited<
-  ReturnType<typeof prepareRuntimeRecoveryInstructions>
->;
-
-/** Only operational loss context belongs in the new runtime's instructions. */
-export async function prepareRuntimeRecoveryInstructions(
-  deps: Pick<
-    ConversationTurnDependencies["effects"],
-    "prepareRuntimeLossNotice"
-  >,
-  input: {
-    recipient: Parameters<typeof deps.prepareRuntimeLossNotice>[0]["recipient"];
-    attemptId: string;
-  },
-  closeUnacceptedRuntime: () => Promise<void>,
-  ownReceipt: (finish: () => Promise<void>) => void,
-) {
-  const briefing: PreparedSubscriptionBriefing =
-    await deps.prepareRuntimeLossNotice(input);
-  let accepted = false;
-  let dispatched = false;
-  let provenUndelivered = false;
-  let finalized = false;
-  const finish = async () => {
-    finalized = true;
-    try {
-      await briefing.finish({
-        disposition:
-          !dispatched || provenUndelivered ? "not_sent" : "uncertain",
-      });
-    } finally {
-      // A warmed runtime must never later carry context whose delivery was
-      // finalized without acceptance. The receipt preserves whether input
-      // was proven unsent or requires inspection as uncertain.
-      if (briefing.block && !accepted) await closeUnacceptedRuntime();
-    }
-  };
-  if (briefing.block) ownReceipt(finish);
-  return {
-    get block() {
-      return accepted ? null : briefing.block;
-    },
-    async onInputAccepted() {
-      accepted = true;
-      await briefing.onInputAccepted();
-    },
-    markDispatched() {
-      if (finalized && briefing.block)
-        throw new Error("Runtime recovery input already finalized");
-      dispatched = true;
-      provenUndelivered = false;
-    },
-    markDispatchFailure(error: unknown) {
-      provenUndelivered = isPromptNotDeliveredFailure(error);
-    },
-    finish,
-  };
-}
 
 type RuntimeInstructionDependencies = {
   execution: Pick<
@@ -91,14 +30,11 @@ type RuntimeInstructionDependencies = {
     | "getSessionState"
     | "fileExists"
     | "getConversation"
-    | "getCodexToolPromptHint"
     | "getRunToolPromptHint"
   >;
   context: Pick<
     ConversationTurnDependencies["context"],
-    | "getReferenceDocuments"
-    | "getActiveAlignmentInjection"
-    | "getWorkflowLaneInstructions"
+    "getReferenceDocuments" | "getActiveAlignmentInjection"
   >;
   effects: Pick<
     ConversationTurnDependencies["effects"],
@@ -106,12 +42,7 @@ type RuntimeInstructionDependencies = {
   >;
 };
 
-/**
- * A conversation that may own a run is told to launch one. A project
- * conversation has no session to launch into, a finished session takes no new
- * run, and a run seat cannot own a run, so each keeps the one-shot
- * `cctl agent run` hint.
- */
+/** Only an eligible session conversation receives delegation instructions. */
 async function delegationHint(
   execution: RuntimeInstructionDependencies["execution"],
   input: Pick<ExecutePromptInput, "projectPath" | "target">,
@@ -122,7 +53,7 @@ async function delegationHint(
     sessionState === null ||
     sessionState.finished
   )
-    return execution.getCodexToolPromptHint();
+    return "";
   const conversation = await execution.getConversation(
     input.projectPath,
     input.target.sessionName,
@@ -131,7 +62,7 @@ async function delegationHint(
   return conversation !== null &&
     isEligibleOwner(conversation, sessionState.archived)
     ? execution.getRunToolPromptHint()
-    : execution.getCodexToolPromptHint();
+    : "";
 }
 
 export async function readRuntimeInstructions(
@@ -194,14 +125,6 @@ export async function readRuntimeInstructions(
       conversationId: input.target.conversationId,
     }));
 
-  const workflowLaneInstructions = isProjectConversation
-    ? null
-    : await deps.context.getWorkflowLaneInstructions({
-        projectPath: input.projectPath,
-        sessionName: conversationTargetStoreSessionName(input.target),
-        conversationId: input.target.conversationId,
-      });
-
   // Build session instructions (baked into the runtime once). Project
   // conversations run in the main worktree, so they use a CC context that
   // omits the per-session dev-server promise.
@@ -229,7 +152,6 @@ export async function readRuntimeInstructions(
     sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
     await delegationHint(deps.execution, input, sessionState),
     referenceDocsPrompt,
-    workflowLaneInstructions,
   ].filter((s): s is string => s != null && s.length > 0);
 
   const sessionInstructions = [

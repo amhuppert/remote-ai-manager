@@ -61,7 +61,6 @@ const currentProjectConversation: ProjectActiveConversationWithOpen = {
   worktreePath: "/home/alex/github/remote-ai-manager",
   lastActivitySummary: "Checking current project focus routing.",
   unread: false,
-  pendingApproval: null,
   backgroundActivity: null,
   open: true,
 };
@@ -96,9 +95,7 @@ const openWaitingProjectConversation: ProjectActiveConversationWithOpen = {
 
 const activeConversations: ActiveConversationsResponse = {
   conversations: [currentProjectConversation, otherProjectConversation],
-  graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
-  specExecutions: [],
 };
 
 function renderSidebarWithActiveData(
@@ -246,7 +243,7 @@ describe("ConversationSidebar", () => {
     expect(screen.queryByText("workflow-running")).not.toBeInTheDocument();
     expect(screen.queryByText("older-unread")).not.toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("switch", { name: "Show graph workflow conversations" }),
+      screen.getByRole("switch", { name: "Show agent conversation history" }),
     );
     expect(screen.getByText("workflow-running")).toBeInTheDocument();
     expect(screen.getAllByText("workflow-input")).toHaveLength(1);
@@ -360,18 +357,6 @@ describe("ConversationSidebar", () => {
   it("surfaces an active spec execution from the feed in the Active work rail", () => {
     renderSidebarWithActiveData({
       ...activeConversations,
-      specExecutions: [
-        {
-          executionId: "spec-execution-1",
-          state: "definition_review",
-          specSlug: "native-sdd",
-          specName: "Native SDD",
-          projectPath: "/home/alex/github/remote-ai-manager",
-          projectName: "remote-ai-manager",
-          sessionName: "spec-session",
-          createdAt: "2026-05-15T12:00:00.000Z",
-        },
-      ],
     });
 
     const section = screen.getByRole("region", { name: "Active work" });
@@ -483,9 +468,7 @@ describe("ConversationSidebar", () => {
             open: true,
           },
         ],
-        graphWorkflowExecutions: [],
         activeCollaborationExecutions: [],
-        specExecutions: [],
       });
 
       // The OK button only renders when an acknowledge handler is wired — it
@@ -504,101 +487,6 @@ describe("ConversationSidebar", () => {
         );
         expect(hitMarkRead).toBe(true);
       });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  const gatedSessionConversation = {
-    scope: "session" as const,
-    id: "gated-session-convo",
-    name: "Gated session conversation",
-    status: "awaiting" as const,
-    lastActivityAt: "2026-05-15T12:36:00.000Z",
-    projectName: "remote-ai-manager",
-    projectPath: "/home/alex/github/remote-ai-manager",
-    sessionName: "gated-session",
-    branchName: "csm/gated-session",
-    worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/gated",
-    agentBackend: "claude" as const,
-    summary: null,
-    pendingQuestion: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    forkedFrom: null,
-    debugActive: false,
-    role: "iteration" as const,
-    lastActivitySummary: "Awaiting your review.",
-    unread: false,
-    pendingApproval: {
-      contextId: "ctx-1",
-      contextTitle: "Implement feature",
-      requestedAt: "2026-05-15T12:30:00.000Z",
-      workflowName: null,
-      executionSuspended: false,
-      enveloped: false,
-      tasksCompleted: 6,
-      tasksTotal: 6,
-    },
-    backgroundActivity: null,
-  };
-
-  it("hides the archive affordance in the context menu while an approval gate is pending", () => {
-    renderSidebarWithActiveData({
-      conversations: [gatedSessionConversation, currentProjectConversation],
-      graphWorkflowExecutions: [],
-      activeCollaborationExecutions: [],
-      specExecutions: [],
-    });
-
-    fireEvent.contextMenu(
-      screen.getByLabelText("Gated session conversation — awaiting"),
-    );
-    expect(screen.queryByText("Archive conversation")).toBeNull();
-    expect(screen.getByText("Rename…")).not.toBeNull();
-    fireEvent.keyDown(document, { key: "Escape" });
-
-    fireEvent.contextMenu(
-      screen.getByLabelText("Current project cockpit — running"),
-    );
-    expect(screen.getByText("Archive conversation")).not.toBeNull();
-  });
-
-  it("shows the suspended hint in the peek for a gated row whose execution is halted", async () => {
-    const fetchMock = vi.fn<(url: RequestInfo | URL) => Promise<Response>>(
-      async () =>
-        new Response(JSON.stringify({ messages: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      renderSidebarWithActiveData({
-        conversations: [
-          {
-            ...gatedSessionConversation,
-            pendingApproval: {
-              ...gatedSessionConversation.pendingApproval,
-              executionSuspended: true,
-              enveloped: false,
-            },
-          },
-        ],
-        // A halted execution is excluded from the active execution list, so
-        // the suspended flag must come from the row's standing payload.
-        graphWorkflowExecutions: [],
-        activeCollaborationExecutions: [],
-        specExecutions: [],
-      });
-
-      fireEvent.click(
-        screen.getByLabelText("Gated session conversation — awaiting"),
-      );
-
-      expect(
-        await screen.findByText(/Execution suspended/),
-      ).toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -626,7 +514,6 @@ describe("ConversationSidebar", () => {
       role: null,
       lastActivitySummary: "Awaiting your review.",
       unread: false,
-      pendingApproval: null,
       backgroundActivity: null,
     };
 
@@ -664,9 +551,7 @@ describe("ConversationSidebar", () => {
 
     const sessionActiveData: ActiveConversationsResponse = {
       conversations: [sessionScopedConversation, currentProjectConversation],
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
-      specExecutions: [],
     };
 
     function jsonResponse(body: unknown): Response {
@@ -1090,9 +975,7 @@ describe("ConversationSidebar", () => {
           status: "running",
         },
       ],
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
-      specExecutions: [],
     });
 
     expect(screen.getByRole("radio", { name: "Needs Input 1" })).not.toBeNull();
@@ -1116,9 +999,7 @@ describe("ConversationSidebar", () => {
     });
     queryClient.setQueryData(conversationKeys.active(), {
       conversations: [currentProjectConversation],
-      graphWorkflowExecutions: [],
       activeCollaborationExecutions: [],
-      specExecutions: [],
     } satisfies ActiveConversationsResponse);
 
     render(

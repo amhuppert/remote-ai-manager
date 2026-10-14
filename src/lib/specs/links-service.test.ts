@@ -11,15 +11,6 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import type { TicketDetail } from "@/lib/tickets/schemas";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
-import {
-  createSpecDeliveryRepo,
-  type SpecDeliveryRepo,
-} from "@/lib/state-store/spec-delivery-repo";
-import {
-  createSpecExecutionBindingRepo,
-  type SpecExecutionBindingRepo,
-} from "@/lib/state-store/spec-execution-binding-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import {
   createSpecLinksRepo,
@@ -49,12 +40,9 @@ const AGENT = { kind: "agent", conversationId: "conversation-author" } as const;
 let db: Db;
 let specs: SpecsRepo;
 let linksRepo: SpecLinksRepo;
-let delivery: SpecDeliveryRepo;
-let executionBindings: SpecExecutionBindingRepo;
 let authoring: AuthoringService;
 let service: LinksService;
 let secondService: LinksService;
-let workflowEventsByExecution: Map<string, GraphWorkflowExecutionEvent[]>;
 let sourceText: string;
 let sourceAttachmentText: string;
 let captured: Map<string, Uint8Array>;
@@ -72,8 +60,6 @@ beforeEach(() => {
   specs = createSpecsRepo(db, writeQueue);
   const review = createSpecReviewRepo(db);
   linksRepo = createSpecLinksRepo(db);
-  delivery = createSpecDeliveryRepo(db);
-  executionBindings = createSpecExecutionBindingRepo(db);
   const eventsRepo = createSpecEventsRepo(db);
   const events = createSpecEventsPublisher({
     appendInTransaction: eventsRepo.appendInTransaction,
@@ -106,7 +92,6 @@ beforeEach(() => {
   createTicketCalls = 0;
   updateTicketCalls = 0;
   captureFailures = 0;
-  workflowEventsByExecution = new Map();
 
   const ticketOne: TicketDetail = {
     id: "ticket-1",
@@ -138,15 +123,8 @@ beforeEach(() => {
   const serviceDeps: LinksServiceDeps = {
     specs,
     links: linksRepo,
-    delivery,
-    executionBindings,
     authoring,
     events,
-    workflowEvents: {
-      findByExecution(_projectPath, _sessionName, executionId) {
-        return workflowEventsByExecution.get(executionId) ?? [];
-      },
-    },
     tickets: {
       async get(identity) {
         const ticket = tickets.get(identity.number);
@@ -545,28 +523,6 @@ describe("LinksService entry paths and read-through", () => {
     expect(links[0]?.snapshot_json).not.toBeNull();
   });
 
-  it("materializes approved tasks as linked tickets", async () => {
-    const created = await createApprovedTaskSpec();
-    const materialized = await service.materializeApprovedTasks({
-      specId: created.spec.id,
-      projectName: PROJECT_NAME,
-      actor: AGENT,
-    });
-    expect(materialized).toEqual([
-      expect.objectContaining({
-        title: "Build materialized work",
-        description: "Implement the approved task.",
-      }),
-    ]);
-    expect(createTicketCalls).toBe(1);
-    expect(linksRepo.findBySpecId(created.spec.id)).toEqual([
-      expect.objectContaining({
-        category: "materialized_from",
-        element_ids_json: JSON.stringify(["task-1"]),
-      }),
-    ]);
-  });
-
   it("links an existing ticket directly to a spec with optional requirement and task scope", async () => {
     const created = await createApprovedTaskSpec();
     const linked = await service.linkTicket({
@@ -598,7 +554,6 @@ describe("LinksService entry paths and read-through", () => {
               taskElementId: "task-1",
               taskHandle: "T1",
               sourceTaskState: "current",
-              workStatus: "pending",
             },
           ],
         },
@@ -613,338 +568,6 @@ describe("LinksService entry paths and read-through", () => {
         number: 1,
         title: "Graduate this ticket",
       },
-    ]);
-  });
-
-  it("keeps proof-only phase Approved and projects workflow task events", async () => {
-    const created = await createApprovedTaskSpec();
-    const [ticket] = await service.materializeApprovedTasks({
-      specId: created.spec.id,
-      projectName: PROJECT_NAME,
-      actor: AGENT,
-    });
-    if (ticket === undefined) throw new Error("expected a materialized ticket");
-    delivery.saveProofVerdict({
-      id: "verdict-1",
-      spec_id: created.spec.id,
-      criterion_element_id: "criterion-1",
-      revision_id: created.draft.id,
-      execution_id: null,
-      verdict_kind: "deterministic_validator",
-      evidence_ids_json: "[]",
-      verdict_at: "2026-07-18T17:30:00.000Z",
-      stale_at: null,
-      stale_reason: null,
-    });
-
-    const proofOnly = await service.getTicketReadThrough({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-    });
-    expect(proofOnly.specs[0]).toMatchObject({
-      name: "Materialize spec",
-      revision: 1,
-      phase: { primary: "approved" },
-      criteriaProgress: { proven: 1, total: 1 },
-      linkedTasks: [{ workStatus: "pending", taskHandle: "T1" }],
-    });
-
-    delivery.insertExecution({
-      id: "execution-1",
-      spec_id: created.spec.id,
-      revision_id: created.draft.id,
-      scope_json: JSON.stringify({
-        taskElementIds: ["task-1"],
-        criterionElementIds: ["criterion-1"],
-      }),
-      state: "running",
-      execution_start_dial: "gate",
-      workflow_definition_id: "workflow-definition-1",
-      workflow_definition_revision: 1,
-      workflow_execution_binding_json: null,
-      workflow_execution_id: "workflow-execution-1",
-      session_name: "native-sdd-execution",
-      delivered_at: null,
-      abandoned_reason: null,
-      cleanup_phase: null,
-      linked_workflow_execution_id: null,
-      cleanup_last_error: null,
-      cleanup_last_error_at: null,
-      created_at: "2026-07-18T17:31:00.000Z",
-      updated_at: "2026-07-18T17:31:00.000Z",
-    });
-    // The typed link is the only place a task's accountable contexts are
-    // stated: the claim names the context and the criteria T1 covers.
-    executionBindings.insert({
-      specExecutionId: "execution-1",
-      workflowExecutionId: "workflow-execution-1",
-      binding: {
-        schemaVersion: 2,
-        candidateId: "candidate-1",
-        candidateHash: `sha256:${"c".repeat(64)}`,
-        pinnedRevisionId: created.draft.id,
-        dispositions: [],
-        claims: [
-          { contextId: "context-1", criterionElementIds: ["criterion-1"] },
-        ],
-      },
-      createdAt: "2026-07-18T17:31:00.000Z",
-    });
-    workflowEventsByExecution.set("workflow-execution-1", [
-      {
-        occurredAt: "2026-07-18T17:32:00.000Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-task-status",
-          projectName: PROJECT_NAME,
-          sessionName: "native-sdd-execution",
-          executionId: "workflow-execution-1",
-          contextId: "context-1",
-          taskId: "spec-task-task-1",
-          status: "running",
-          source: "user",
-          order: 1,
-        },
-      },
-    ]);
-
-    const running = await service.getTicketReadThrough({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-    });
-    expect(running.specs[0]).toMatchObject({
-      phase: { primary: "executing" },
-      linkedTasks: [{ workStatus: "running" }],
-    });
-  });
-
-  it("projects a v2-only delivered criterion through its bound candidate identity", async () => {
-    const created = await createApprovedTaskSpec();
-    const [ticket] = await service.materializeApprovedTasks({
-      specId: created.spec.id,
-      projectName: PROJECT_NAME,
-      actor: AGENT,
-    });
-    if (ticket === undefined) throw new Error("expected a materialized ticket");
-
-    delivery.insertExecution({
-      id: "execution-v2-delivered",
-      spec_id: created.spec.id,
-      revision_id: created.draft.id,
-      scope_json: JSON.stringify({
-        selectedTaskIds: ["task-1"],
-        selectedCriterionIds: ["criterion-1"],
-        exclusionDispositions: [],
-      }),
-      state: "delivered",
-      execution_start_dial: "gate",
-      workflow_definition_id: "workflow-definition-v2",
-      workflow_definition_revision: 1,
-      workflow_execution_binding_json: null,
-      workflow_execution_id: "workflow-execution-v2",
-      session_name: "native-sdd-execution",
-      delivered_at: "2026-07-18T17:32:00.000Z",
-      abandoned_reason: null,
-      cleanup_phase: null,
-      linked_workflow_execution_id: null,
-      cleanup_last_error: null,
-      cleanup_last_error_at: null,
-      created_at: "2026-07-18T17:31:00.000Z",
-      updated_at: "2026-07-18T17:32:00.000Z",
-    });
-    delivery.saveCriterionDisposition({
-      execution_id: "execution-v2-delivered",
-      criterion_element_id: "criterion-1",
-      disposition: "in_scope",
-      waiver_id: null,
-      delivered_by_execution_id: null,
-      created_at: "2026-07-18T17:31:00.000Z",
-      updated_at: "2026-07-18T17:31:00.000Z",
-    });
-    executionBindings.insert({
-      specExecutionId: "execution-v2-delivered",
-      workflowExecutionId: "workflow-execution-v2",
-      binding: {
-        schemaVersion: 2,
-        candidateId: "candidate-v2",
-        candidateHash: `sha256:${"a".repeat(64)}`,
-        pinnedRevisionId: created.draft.id,
-        dispositions: [],
-        claims: [],
-      },
-      createdAt: "2026-07-18T17:31:00.000Z",
-    });
-    delivery.saveDeliveryVerdict({
-      id: "delivery-verdict-v2",
-      specExecutionId: "execution-v2-delivered",
-      workflowExecutionId: "workflow-execution-v2",
-      candidateId: "candidate-v2",
-      candidateHash: `sha256:${"a".repeat(64)}`,
-      criterionElementId: "criterion-1",
-      satisfyingContextId: "stable-spawner",
-      recordedAt: "2026-07-18T17:32:00.000Z",
-    });
-
-    const readThrough = await service.getTicketReadThrough({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-    });
-
-    expect(readThrough.specs[0]).toMatchObject({
-      phase: { primary: "delivered" },
-      criteriaProgress: { proven: 1, total: 1 },
-    });
-
-    db.prepare("DELETE FROM spec_delivery_verdicts").run();
-    delivery.saveDeliveryVerdict({
-      id: "delivery-verdict-wrong-candidate",
-      specExecutionId: "execution-v2-delivered",
-      workflowExecutionId: "workflow-execution-v2",
-      candidateId: "candidate-other",
-      candidateHash: `sha256:${"b".repeat(64)}`,
-      criterionElementId: "criterion-1",
-      satisfyingContextId: "stable-spawner",
-      recordedAt: "2026-07-18T17:33:00.000Z",
-    });
-    const wrongCandidate = await service.getTicketReadThrough({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-    });
-    expect(wrongCandidate.specs[0]).toMatchObject({
-      phase: { primary: "approved" },
-      criteriaProgress: { proven: 0, total: 1 },
-    });
-  });
-
-  it("computes ticket display from current spec state without storing a mirror or updating ticket fields", async () => {
-    const created = await createApprovedTaskSpec();
-    const [ticket] = await service.materializeApprovedTasks({
-      specId: created.spec.id,
-      projectName: PROJECT_NAME,
-      actor: AGENT,
-    });
-    expect(ticket).toBeDefined();
-    if (ticket === undefined) throw new Error("expected a materialized ticket");
-    const before = structuredClone(ticket);
-    const amendment = await specs.createDraftFromBase({
-      id: "revision-legacy-plan-replacement",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "plan",
-      createdAt: "2026-07-18T17:45:00.000Z",
-    });
-    await authoring.removeDraftElement({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elementId: "task-1",
-      baseElementVersion: 1,
-      actor: AGENT,
-    });
-
-    expect(await authoring.lintDraft(created.spec.id, amendment.id)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          ruleId: "9.9.materialized-task-change",
-          severity: "advisory",
-        }),
-      ]),
-    );
-
-    const display = await service.getTicketReadThrough({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-    });
-    expect(display).toMatchObject({
-      ticket: before,
-      specs: [
-        {
-          specId: created.spec.id,
-          phase: { primary: "draft" },
-          criteriaProgress: { proven: 0, total: 1 },
-          linkedTasks: [
-            {
-              taskElementId: "task-1",
-              taskHandle: "T1",
-              sourceTaskState: "removed",
-              workStatus: "pending",
-            },
-          ],
-        },
-      ],
-    });
-    expect(tickets.get(ticket.number)).toEqual(before);
-    expect(updateTicketCalls).toBe(0);
-    expect(
-      db
-        .prepare(
-          "SELECT name FROM pragma_table_info('tickets') WHERE name LIKE 'spec_%'",
-        )
-        .all(),
-    ).toEqual([]);
-  });
-
-  it("keeps the spec handle of a materialized task that is absent from every loaded snapshot", async () => {
-    const created = await createApprovedTaskSpec();
-    const [ticket] = await service.materializeApprovedTasks({
-      specId: created.spec.id,
-      projectName: PROJECT_NAME,
-      actor: AGENT,
-    });
-    if (ticket === undefined) throw new Error("expected a materialized ticket");
-
-    // A later approved revision replaces the task: the linked task element is
-    // in neither the current nor the approved snapshot, only its immutable
-    // element row remains.
-    const amendment = await specs.createDraftFromBase({
-      id: "revision-legacy-plan-handle",
-      specId: created.spec.id,
-      baseRevisionId: created.draft.id,
-      authoringStage: "plan",
-      createdAt: "2026-07-18T17:45:00.000Z",
-    });
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elementId: "task-replacement",
-      kind: "task",
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task",
-        title: "Replacement work",
-        instructions: "Cover the criterion instead of task-1.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
-      },
-      baseElementVersion: null,
-      actor: AGENT,
-    });
-    await authoring.removeDraftElement({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      elementId: "task-1",
-      baseElementVersion: 1,
-      actor: AGENT,
-    });
-    const proposed = await authoring.proposeRevision({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      actor: AGENT,
-    });
-    expect(proposed.ok).toBe(true);
-
-    const display = await service.getTicketReadThrough({
-      projectName: PROJECT_NAME,
-      number: ticket.number,
-    });
-    expect(display.specs[0]?.linkedTasks).toEqual([
-      expect.objectContaining({
-        taskElementId: "task-1",
-        taskHandle: "T1",
-        sourceTaskState: "removed",
-      }),
     ]);
   });
 });

@@ -2,7 +2,7 @@
 name: cc-cli
 description: >-
   Use the cctl CLI for Command Center actions: questions, notifications,
-  documents, validation, dev servers, runs, workflows, memory, and conversation
+  documents, validation, dev servers, runs, memory, and conversation
   evidence. Also use when a cctl command fails or its identity, output,
   or asynchronous handoff needs explanation.
 ---
@@ -36,16 +36,15 @@ is available when an offline catalog is useful.
 | Read transcripts, images, compactions, or continuation checkpoints | [Conversations](references/conversations.md) |
 | Discover sources, manage subscriptions or inspect pending updates | [Subscriptions and inbox](references/subscriptions.md) |
 | Launch, follow or steer a supervised run; work a run's context; save a run template | [Runs](references/runs.md) |
-| Author or operate graph workflows; finish a lane task | [Workflows](references/workflows.md) |
 | Read native specs and artifact receipts | [Spec reads](references/spec-reads.md) |
 | Submit an authorized Alignment charter or decision batch | [Alignment](references/alignment.md) |
-| Delegate a one-shot agent task or inspect agent profiles | [Agents](references/agents.md) |
+| Inspect agent profiles | `cctl agent list/get --help` |
 | Analyze local logs and export a trace | [Logs](references/logs.md) |
 | Diagnose identity, connectivity, build skew, or help output | [Environment and help](references/environment-and-help.md) |
 
-To plan a run, use [run-planning](../run-planning/SKILL.md). For a graph
-workflow plan, including managed spec delivery, use
-[graph-workflow-planning](../graph-workflow-planning/SKILL.md).
+To plan a run, use [run-planning](../run-planning/SKILL.md).
+Project conversations cannot delegate runs.
+
 For native spec authoring and its human gates, use
 [native-sdd-authoring](../native-sdd-authoring/SKILL.md).
 
@@ -115,9 +114,6 @@ worktree, so until the result arrives, edit no file the run may change (with
 no `scope`, every file): read, plan or end the turn. Each question, halt and
 result arrives as a later prompt, so nothing needs polling.
 
-Workflow lane commands may also require ending the turn for a halt,
-or collaboration. Follow the explicit instruction; consult
-the workflow reference for the command's continuation contract.
 
 ## Exit codes
 

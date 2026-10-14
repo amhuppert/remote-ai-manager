@@ -37,24 +37,6 @@ const ROLE_LABEL: Record<NonNullable<ActiveConversation["role"]>, string> = {
   planner: "planner",
 };
 
-function formatGateStatusLine(
-  pendingApproval: NonNullable<ActiveConversation["pendingApproval"]>,
-): string {
-  const segments = ["approval required"];
-  if (
-    pendingApproval.tasksCompleted !== null &&
-    pendingApproval.tasksTotal !== null
-  ) {
-    segments.push(
-      `${pendingApproval.tasksCompleted}/${pendingApproval.tasksTotal} tasks`,
-    );
-  }
-  // The gate only parks after all validators pass, so a pending gate implies
-  // a green validator outcome.
-  segments.push("validators ✓");
-  return segments.join(" · ");
-}
-
 function formatSidebarTime(isoDate: string): string {
   const timestamp = new Date(isoDate).getTime();
   if (!Number.isFinite(timestamp)) return "";
@@ -147,7 +129,6 @@ export default function ConversationSidebarRow({
     role,
     pendingQuestion,
     unread,
-    pendingApproval,
     backgroundActivity,
     custody,
   } = conversation;
@@ -159,44 +140,37 @@ export default function ConversationSidebarRow({
       ? [conversation.projectName, contextLabel]
       : [contextLabel];
   const title = name ?? summary ?? "Unnamed conversation";
-  const gateStatusLine =
-    pendingApproval !== null ? formatGateStatusLine(pendingApproval) : null;
-  const activityText = gateStatusLine ?? pendingQuestion ?? lastActivitySummary;
+  const activityText = pendingQuestion ?? lastActivitySummary;
   const showActivity =
     !conversation.archived &&
     (status === "running" ||
       status === "waiting_for_input" ||
-      (unread && status === "awaiting") ||
-      pendingApproval !== null) &&
+      (unread && status === "awaiting")) &&
     activityText !== null &&
     activityText.trim() !== "" &&
     activityText.trim() !== title.trim();
   const timeLabel = formatSidebarTime(conversation.lastActivityAt);
   const isUnreadFinished =
     !isClosed && !conversation.archived && unread && status === "awaiting";
-  // A pending approval gate owns the row's resolution: dismissing (mark-read)
-  // is suppressed until the gate is decided.
-  const showAck =
-    isUnreadFinished && pendingApproval === null && onAcknowledge !== undefined;
+  const showAck = isUnreadFinished && onAcknowledge !== undefined;
 
   // A settled turn with harness background work still running, or custody of
   // the runtime owing work with no visible task: the row would otherwise read
   // as finished-and-idle. Only meaningful for `awaiting` — a running row
-  // already advertises activity, and a gated/unread row's amber standing takes
+  // already advertises activity, and an unread row's amber standing takes
   // precedence over an ambient background signal.
   const hasBackgroundActivity =
     !isClosed &&
     (backgroundActivity !== null || custody === true) &&
     status === "awaiting";
 
-  const gated = !isClosed && pendingApproval !== null;
   const rowClassName = cn(
     "group relative flex w-full cursor-pointer flex-col gap-sm rounded-md border border-solid pl-sm py-sm text-left no-underline transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]",
     showAck ? "pr-3xl" : "pr-sm",
     isActive
       ? "border-border-default bg-bg-raised hover:bg-bg-elevated shadow-[inset_2px_0_0_var(--color-cyan)]"
       : "border-transparent bg-bg-base hover:bg-bg-surface",
-    (gated || status === "waiting_for_input") &&
+    status === "waiting_for_input" &&
       !isActive &&
       "shadow-[inset_2px_0_0_var(--color-amber)]",
   );
@@ -205,11 +179,9 @@ export default function ConversationSidebarRow({
     ? "text-text-tertiary"
     : status === "waiting_for_input"
       ? "text-amber"
-      : gateStatusLine !== null
-        ? "text-amber"
-        : isUnreadFinished
-          ? "text-green-dim"
-          : "text-text-secondary";
+      : isUnreadFinished
+        ? "text-green-dim"
+        : "text-text-secondary";
 
   const isCurrentConversation =
     currentConversationId !== null &&
@@ -288,7 +260,7 @@ export default function ConversationSidebarRow({
             ) : (
               <StatusDot
                 tone={
-                  gated || status === "waiting_for_input"
+                  status === "waiting_for_input"
                     ? "amber"
                     : status === "running" || hasBackgroundActivity
                       ? "cyan"
@@ -332,7 +304,7 @@ export default function ConversationSidebarRow({
             <span
               className={cn(
                 "font-mono text-[0.7rem]",
-                gated || status === "waiting_for_input"
+                status === "waiting_for_input"
                   ? "text-amber"
                   : status === "running" || hasBackgroundActivity
                     ? "text-cyan"
@@ -340,27 +312,19 @@ export default function ConversationSidebarRow({
                       ? "text-green"
                       : "text-text-secondary",
               )}
-              aria-label={
-                gated
-                  ? "approval required"
-                  : isUnreadFinished
-                    ? "unread"
-                    : undefined
-              }
+              aria-label={isUnreadFinished ? "unread" : undefined}
             >
-              {gated
-                ? "Approval"
-                : status === "waiting_for_input"
-                  ? "Needs input"
-                  : status === "running"
-                    ? "Running"
-                    : hasBackgroundActivity
-                      ? "Background"
-                      : isUnreadFinished
-                        ? "Unread"
-                        : status === "new"
-                          ? "New"
-                          : "Ready"}
+              {status === "waiting_for_input"
+                ? "Needs input"
+                : status === "running"
+                  ? "Running"
+                  : hasBackgroundActivity
+                    ? "Background"
+                    : isUnreadFinished
+                      ? "Unread"
+                      : status === "new"
+                        ? "New"
+                        : "Ready"}
             </span>
           )}
           {forkedFrom !== null && (
@@ -393,13 +357,11 @@ export default function ConversationSidebarRow({
           <span
             className={cn(
               "pl-lg font-mono text-[0.72rem] leading-[1.5]",
-              status === "waiting_for_input" || gated
-                ? "line-clamp-2"
-                : "line-clamp-1",
+              status === "waiting_for_input" ? "line-clamp-2" : "line-clamp-1",
               activityColor,
             )}
           >
-            {!isClosed && !gated && status === "waiting_for_input" && (
+            {!isClosed && status === "waiting_for_input" && (
               <span>Asks › </span>
             )}
             {activityText}

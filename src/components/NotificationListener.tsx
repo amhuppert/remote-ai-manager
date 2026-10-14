@@ -28,7 +28,7 @@ import { registerTicketSseReactions } from "@/lib/tickets/sse-reactions";
 import { registerValidationSseReactions } from "@/lib/validation/sse-reactions";
 import { registerRunSseReactions } from "@/lib/runs/sse-reactions";
 import { registerRunTemplateSseReactions } from "@/lib/run-templates/sse-reactions";
-import { registerWorkflowSseReactions } from "@/lib/workflows/sse-reactions";
+import { registerCollaborationSseReactions } from "@/lib/collaboration/sse-reactions";
 import {
   useAddOrUpdateJob,
   useReconcileJobs,
@@ -107,11 +107,7 @@ export default function NotificationListener(): null {
     });
     registerDebugLogSseReactions(es, { queryClient });
     registerDevServerSseReactions(es, { queryClient });
-    registerWorkflowSseReactions(es, {
-      queryClient,
-      enqueueInputToast: (item) => actionsRef.current.enqueueInputToast(item),
-      showBrowserNotification,
-    });
+    registerCollaborationSseReactions(es, { queryClient });
     registerMcpSseReactions(es, { queryClient });
     registerNotepadSseReactions(es, {
       queryClient,

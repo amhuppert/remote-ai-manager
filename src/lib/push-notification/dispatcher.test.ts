@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   pushForNotification,
   pushForConversationStatus,
-  pushForGraphWorkflowEvent,
   pushForCollaborationEvent,
 } from "./dispatcher";
 import type {
@@ -34,7 +33,6 @@ const pushConfig: PushNotificationConfig = {
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
-    planRepair: true,
   },
 };
 
@@ -228,8 +226,6 @@ describe("pushForNotification", () => {
     ["spec-approval-requested", "spec-approval-requested"],
     ["spec-approval-granted", "spec-approval-granted"],
     ["spec-policy-admitted", "spec-policy-admitted"],
-    // Waiver/attention rows reuse the existing spec approval trigger config.
-    ["spec-waiver-requested", "spec-approval-requested"],
     ["spec-attention-resolved", "spec-approval-granted"],
   ] as const)(
     "maps %s to its user-configurable trigger",
@@ -369,175 +365,6 @@ describe("pushForConversationStatus", () => {
     });
 
     expect(sendPushNotification).toHaveBeenCalledOnce();
-  });
-});
-
-describe("pushForGraphWorkflowEvent", () => {
-  beforeEach(() => {
-    sendPushNotification.mockReset();
-  });
-
-  it("sends push when workflow completes", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "workflow-completed",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "workflow-completed",
-      title: "Graph workflow completed",
-      message: "Graph workflow completed for session sess",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("preserves the durable delivery identity on a workflow completion push", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "workflow-completed",
-      projectName: "proj",
-      sessionName: "sess",
-      dedupeKey: "graph-workflow-result:execution-1:17",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledExactlyOnceWith(pushConfig, {
-      trigger: "workflow-completed",
-      title: "Graph workflow completed",
-      message: "Graph workflow completed for session sess",
-      projectName: "proj",
-      sessionName: "sess",
-      dedupeKey: "graph-workflow-result:execution-1:17",
-    });
-  });
-
-  it("sends push when workflow is halted", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "workflow-halted",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "workflow-halted",
-      title: "Graph workflow halted",
-      message: "Graph workflow halted for session sess",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("sends push when circuit breaker trips", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "circuit-breaker",
-      projectName: "proj",
-      sessionName: "sess",
-      contextTitle: "Setup Infrastructure",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "workflow-halted",
-      title: "Circuit breaker tripped",
-      message:
-        'Circuit breaker tripped in context "Setup Infrastructure" for session sess',
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("sends push when execution context completes", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "context-completed",
-      projectName: "proj",
-      sessionName: "sess",
-      contextTitle: "Setup Infrastructure",
-      completedContexts: 3,
-      totalContexts: 8,
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "workflow-completed",
-      title: "Context completed (3/8)",
-      message: 'Context "Setup Infrastructure" completed for session sess',
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("sends waiting-for-input push when a context awaits approval", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "approval-pending",
-      projectName: "proj",
-      sessionName: "sess",
-      contextTitle: "Setup Infrastructure",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "waiting-for-input",
-      title: "Approval required",
-      message:
-        'Context "Setup Infrastructure" passed validators — review to continue',
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("does not send push when config is undefined", async () => {
-    await pushForGraphWorkflowEvent(undefined, {
-      kind: "workflow-completed",
-      projectName: "proj",
-      sessionName: "sess",
-    });
-
-    expect(sendPushNotification).not.toHaveBeenCalled();
-  });
-
-  it("sends a plan-repaired push for a repaired round", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "plan-repair",
-      projectName: "proj",
-      sessionName: "sess",
-      contextTitle: "implement",
-      planRepairOutcome: "repaired",
-      planRepairAttempt: 1,
-      planRepairDiagnosis: "AC referenced a removed endpoint\nmore detail",
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "plan-repaired",
-      title: "Plan repair applied — resumed",
-      message:
-        'Context "implement" (attempt 1): AC referenced a removed endpoint',
-      projectName: "proj",
-      sessionName: "sess",
-    });
-  });
-
-  it("sends a plan-repair-declined push for declined and exhausted outcomes", async () => {
-    await pushForGraphWorkflowEvent(pushConfig, {
-      kind: "plan-repair",
-      projectName: "proj",
-      sessionName: "sess",
-      contextTitle: "implement",
-      planRepairOutcome: "exhausted",
-      planRepairAttempt: 2,
-      planRepairDiagnosis: null,
-    });
-
-    expect(sendPushNotification).toHaveBeenCalledOnce();
-    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
-      trigger: "plan-repair-declined",
-      title: "Plan repair exhausted — human review needed",
-      message: 'Context "implement" (attempt 2)',
-      projectName: "proj",
-      sessionName: "sess",
-    });
   });
 });
 

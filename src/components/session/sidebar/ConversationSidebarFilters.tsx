@@ -20,8 +20,8 @@ interface Props {
   onProjectChange: (project: string | null) => void;
   includeArchived: boolean;
   onArchivedChange: (include: boolean) => void;
-  includeGraphWorkflows: boolean;
-  onGraphWorkflowsChange: (include: boolean) => void;
+  includeRoleHistory: boolean;
+  onRoleHistoryChange: (include: boolean) => void;
 }
 
 export default function ConversationSidebarFilters({
@@ -30,8 +30,8 @@ export default function ConversationSidebarFilters({
   onProjectChange,
   includeArchived,
   onArchivedChange,
-  includeGraphWorkflows,
-  onGraphWorkflowsChange,
+  includeRoleHistory,
+  onRoleHistoryChange,
 }: Props): React.JSX.Element {
   const sessionFilter = useSidebarSessionFilter();
   const setSessionFilter = useSetSidebarSessionFilter();
@@ -66,11 +66,11 @@ export default function ConversationSidebarFilters({
         <label className="flex min-h-[36px] shrink-0 cursor-pointer items-center gap-sm font-mono text-[0.72rem] text-text-primary max-768:min-h-[44px]">
           <Switch
             size="sm"
-            checked={includeGraphWorkflows}
-            onCheckedChange={onGraphWorkflowsChange}
-            aria-label="Show graph workflow conversations"
+            checked={includeRoleHistory}
+            onCheckedChange={onRoleHistoryChange}
+            aria-label="Show agent conversation history"
           />
-          Workflows
+          Agent history
         </label>
         <label className="flex min-h-[36px] shrink-0 cursor-pointer items-center gap-sm font-mono text-[0.72rem] text-text-primary max-768:min-h-[44px]">
           <Switch

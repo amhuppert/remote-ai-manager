@@ -56,26 +56,16 @@ function summary(phase: SpecSummaryView["phase"]["primary"]): SpecSummaryView {
       citationHash: "0".repeat(64),
       proposedAt: null,
       approvedAt: null,
-      externalDelivery: null,
       createdAt: "2026-07-18T00:00:00Z",
     },
     counts: { requirements: 2, criteria: 5, decisions: 1, tasks: 3 },
     pendingApprovalCount: phase === "approved" ? 0 : 2,
     approvalState: phase === "approved" ? "complete" : "pending",
-    delivery: {
-      allWaived: false,
-      deliveredCount: 0,
-      provenCount: 0,
-      deliveredExternallyCriterionIds: [],
-      totalInScope: 0,
-    },
     imported: false,
     linkedWork: {
       tickets: 0,
       conversations: 0,
       sessions: 0,
-      workflowExecutions: 0,
-      mergeJobs: 0,
     },
   };
 }
@@ -100,7 +90,6 @@ function elementView(
       citationHash: "0".repeat(64),
       proposedAt: null,
       approvedAt: null,
-      externalDelivery: null,
       createdAt: "2026-07-18T00:00:00Z",
     },
     handle: "R5",
@@ -130,7 +119,6 @@ function elementView(
       },
     },
     approvals: [],
-    evidenceState: [],
     referenceState: {
       observedRevision: 1,
       observedPayloadHash: "observed-hash",

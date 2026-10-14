@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   conversationTurnRequestSchema,
-  normalizeTurn,
+  conversationTurnSpecSchema,
+  taskTurnSpecSchema,
   taskTurnRequestSchema,
 } from "./turn-spec";
 
@@ -12,16 +13,16 @@ describe("turn normalization", () => {
       z.object({ title: z.string(), description: z.string() }),
     );
     const expected = JSON.parse(JSON.stringify(schema));
-    const turn = normalizeTurn(
-      {
+    const turn = taskTurnSpecSchema.parse({
+      ...{
         kind: "task_run",
         executionClass: "nongoverned-task",
         promptText: "Generate a ticket",
         outputFormat: { type: "json_schema", schema },
         structuredOutputTurns: "single",
       },
-      "cursor",
-    );
+      backend: "cursor",
+    });
     expect(turn.outputFormat?.schema).toEqual(expected);
     expect(turn.structuredOutputTurns).toBe("single");
     expect(structuredClone(turn).outputFormat?.schema).toEqual(expected);
@@ -29,10 +30,10 @@ describe("turn normalization", () => {
   });
 
   it("preserves the structured-output mode on a conversation turn", () => {
-    const turn = normalizeTurn(
-      { promptText: "Review", structuredOutputTurns: "work_then_format" },
-      "claude",
-    );
+    const turn = conversationTurnSpecSchema.parse({
+      ...{ promptText: "Review", structuredOutputTurns: "work_then_format" },
+      backend: "claude",
+    });
     expect(turn.structuredOutputTurns).toBe("work_then_format");
     expect(structuredClone(turn).structuredOutputTurns).toBe(
       "work_then_format",
@@ -41,10 +42,10 @@ describe("turn normalization", () => {
 
   it("normalizes defaults without losing an explicit disabled asking policy", () => {
     expect(
-      normalizeTurn(
-        { promptText: "", askUserQuestionsEnabled: false },
-        "claude",
-      ),
+      conversationTurnSpecSchema.parse({
+        ...{ promptText: "", askUserQuestionsEnabled: false },
+        backend: "claude",
+      }),
     ).toEqual({
       kind: "conversation_turn",
       promptText: "",
@@ -58,16 +59,16 @@ describe("turn normalization", () => {
 
   it("keeps task authority and a zero timeout on the task variant", () => {
     expect(
-      normalizeTurn(
-        {
+      taskTurnSpecSchema.parse({
+        ...{
           kind: "task_run",
           promptText: "inspect",
           executionClass: "governed-execution",
           requiresPrivilegedInstructions: true,
           timeoutMs: 0,
         },
-        "codex",
-      ),
+        backend: "codex",
+      }),
     ).toEqual({
       kind: "task_run",
       promptText: "inspect",

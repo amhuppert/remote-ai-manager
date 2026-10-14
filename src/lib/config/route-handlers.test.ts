@@ -3,11 +3,8 @@ import { withTasklessBackend } from "@/lib/agent-backends/testing/taskless-backe
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createConfigReader } from "./loader";
-import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
-import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
-import { createAssignmentReferenceChecker } from "@/lib/workflow-graph/assignment-references";
 import {
   createConfigRouteHandlers,
   type ConfigRouteDeps,
@@ -37,7 +34,6 @@ const fullConfig = {
     },
   },
   defaultAgentBackend: "claude" as const,
-  preMergeTimeoutMs: 300_000,
   maxConcurrentQueries: 3,
   validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
   tailscaleEnabled: true,
@@ -53,21 +49,11 @@ const rawConfig = {
 // Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
 
-function createTestDeps(profileConfigDir: string): ConfigRouteDeps {
+function createTestDeps(): ConfigRouteDeps {
   return {
     readConfig: vi.fn().mockResolvedValue(fullConfig),
     readRawConfig: vi.fn().mockResolvedValue(rawConfig),
     writeRawConfig: vi.fn().mockResolvedValue(undefined),
-    // A real library over an empty temp tier: the builtin tier still resolves
-    // (built-ins are constants), and every global-tier id is genuinely absent,
-    // which is exactly the dangling case under test.
-    assignmentReferences: createAssignmentReferenceChecker({
-      library: createAgentProfileLibraryService({
-        storage: createAgentProfileStorage({
-          resolveConfigDir: () => profileConfigDir,
-        }),
-      }),
-    }),
   };
 }
 
@@ -90,17 +76,10 @@ function makePutRequest(body: unknown): Request {
 let deps: ConfigRouteDeps;
 let handlers: ReturnType<typeof createConfigRouteHandlers>;
 
-let profileConfigDir: string;
-
-beforeEach(async () => {
+beforeEach(() => {
   vi.clearAllMocks();
-  profileConfigDir = await mkdtemp(path.join(tmpdir(), "cc-config-profiles-"));
-  deps = createTestDeps(profileConfigDir);
+  deps = createTestDeps();
   handlers = createConfigRouteHandlers(deps);
-});
-
-afterEach(async () => {
-  await rm(profileConfigDir, { recursive: true, force: true });
 });
 
 // ===========================================================================
@@ -203,29 +182,6 @@ describe("PUT /api/config", () => {
     expect(body.raw).toEqual(updatedRaw);
   });
 
-  it("accepts partial workflowDefaults bodies with only changed blocks", async () => {
-    const input = {
-      workflowDefaults: {
-        implementer: {
-          id: "implementer",
-          profile: { tier: "builtin" as const, id: "general-implementer" },
-          agent: {
-            backend: "claude" as const,
-            modelSelection: {
-              modelId: "sonnet",
-              parameters: { effort: "medium" },
-            },
-          },
-        },
-      },
-    };
-
-    const response = await handlers.PUT(makePutRequest(input));
-
-    expect(response.status).toBe(200);
-    expect(deps.writeRawConfig).toHaveBeenCalledWith(input);
-  });
-
   it("persists both validation settings and reads back raw and resolved values", async () => {
     const configDir = await mkdtemp(path.join(tmpdir(), "cc-config-route-"));
     try {
@@ -281,84 +237,6 @@ describe("PUT /api/config", () => {
     const body = await response.json();
     expect(body.error).toContain(`validation.${field}`);
     expect(deps.writeRawConfig).not.toHaveBeenCalled();
-  });
-
-  describe("workflowDefaults assignment references (R4.2)", () => {
-    function assignment(profile: { tier: string; id: string }) {
-      return {
-        id: "implementer",
-        profile,
-        agent: {
-          backend: "claude" as const,
-          modelSelection: {
-            modelId: "sonnet",
-            parameters: { effort: "medium" },
-          },
-        },
-      };
-    }
-
-    it("refuses a project-tier profile reference, naming the scope rule", async () => {
-      const response = await handlers.PUT(
-        makePutRequest({
-          workflowDefaults: {
-            implementer: assignment({ tier: "project", id: "repo-reviewer" }),
-          },
-        }),
-      );
-
-      expect(response.status).toBe(400);
-      const body = await response.json();
-      expect(body.error).toMatch(/project-tier/i);
-      expect(body.error).toContain("project:repo-reviewer");
-      expect(deps.writeRawConfig).not.toHaveBeenCalled();
-    });
-
-    it("refuses a dangling reference in a validator cohort", async () => {
-      const response = await handlers.PUT(
-        makePutRequest({
-          workflowDefaults: {
-            contextValidator: {
-              enabled: true,
-              assignments: [
-                {
-                  id: "org",
-                  profile: { tier: "global", id: "never-created" },
-                  agent: {
-                    backend: "claude",
-                    modelSelection: {
-                      modelId: "sonnet",
-                      parameters: { effort: "medium" },
-                    },
-                  },
-                },
-              ],
-            },
-          },
-        }),
-      );
-
-      expect(response.status).toBe(400);
-      const body = await response.json();
-      expect(body.error).toContain("global:never-created");
-      expect(deps.writeRawConfig).not.toHaveBeenCalled();
-    });
-
-    it("accepts a builtin reference", async () => {
-      const response = await handlers.PUT(
-        makePutRequest({
-          workflowDefaults: {
-            implementer: assignment({
-              tier: "builtin",
-              id: "general-implementer",
-            }),
-          },
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      expect(deps.writeRawConfig).toHaveBeenCalled();
-    });
   });
 
   it("rejects invalid config body with 400 status and { error }", async () => {

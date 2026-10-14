@@ -83,17 +83,6 @@ export const CONSUMER_LOCALITY_MAP: readonly ConsumerLocalityEntry[] = [
     category: "E1",
     status: "enforced",
   },
-  // E2 — Machines
-  {
-    file: "workflows/conversation/machine.ts",
-    category: "E2",
-    status: "enforced",
-  },
-  {
-    file: "workflows/conversation/actor-implementations.ts",
-    category: "E2",
-    status: "enforced",
-  },
   {
     file: "conversation-core/contributions/resolve-model-effort.ts",
     category: "E2",
@@ -101,11 +90,6 @@ export const CONSUMER_LOCALITY_MAP: readonly ConsumerLocalityEntry[] = [
   },
   {
     file: "conversation-core/contributions/capability-cascade.ts",
-    category: "E2",
-    status: "enforced",
-  },
-  {
-    file: "workflows/conversation/pre-turn/capability-apply.ts",
     category: "E2",
     status: "enforced",
   },
@@ -145,65 +129,10 @@ export const CONSUMER_LOCALITY_MAP: readonly ConsumerLocalityEntry[] = [
     category: "E3",
     status: "enforced",
   },
-  {
-    file: "workflow-graph/graph-lane-store.ts",
-    category: "E3",
-    status: "enforced",
-  },
-  {
-    file: "workflow-graph/lane-continuity.ts",
-    category: "E3",
-    status: "enforced",
-  },
-  // E4 — Transcript consumers
-  {
-    file: "workflow-graph/execution-logger.ts",
-    category: "E4",
-    status: "enforced",
-  },
-  {
-    file: "workflow-graph/validator-runner.ts",
-    category: "E4",
-    status: "enforced",
-  },
-  {
-    file: "workflows/conversation/types.ts",
-    category: "E4",
-    status: "enforced",
-  },
   // E5 — MCP apply (disposition derives from the descriptor's betweenTurnApply)
   { file: "mcp/runtime-apply.ts", category: "E5", status: "enforced" },
-  // E6 — Orchestration (graph runners migrate in 3.2/3.3; conversations/service
-  // fork is behaviorally enforced from 1.6 but the file still carries
-  // default-backend literals)
-  {
-    file: "workflow-graph/iteration-orchestrator.ts",
-    category: "E6",
-    status: "enforced",
-  },
-  {
-    file: "workflow-graph/implementer-runner.ts",
-    category: "E6",
-    status: "enforced",
-  },
-  {
-    file: "workflow-graph/workflow-collaborator-caller.ts",
-    category: "E6",
-    status: "enforced",
-  },
-  {
-    file: "workflow-graph/execution-events.ts",
-    category: "E6",
-    status: "enforced",
-  },
-  {
-    file: "workflow-graph/execution-tool-context.ts",
-    category: "E6",
-    status: "enforced",
-  },
   { file: "prompt/sdk-driver.ts", category: "E6", status: "enforced" },
   { file: "conversations/service.ts", category: "E6", status: "enforced" },
-  { file: "agent-runs/service.ts", category: "E6", status: "enforced" },
   // E7 — Conversation-start capability composition (cascade taxonomy derives
   // from descriptor capabilityKinds; discovery selection goes through the
   // explicit per-cascade provider interface)
@@ -329,10 +258,7 @@ function listLibSources(dir: string): string[] {
       (rel) =>
         rel.endsWith(".ts") &&
         !rel.includes(".test.") &&
-        !rel.startsWith("agent-backends/") &&
-        // Frozen one-way translation, not a runtime consumer. Keep this exact
-        // exception aligned with the migration boundary in seam-adoption.ts.
-        rel !== "state-store/migrations/0051-retire-stored-shape-readers.ts",
+        !rel.startsWith("agent-backends/"),
     )
     .map((rel) => path.join(dir, rel));
 }

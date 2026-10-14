@@ -1,6 +1,11 @@
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
 import { getCurrentBranch } from "@/lib/git/commits";
-import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+export interface ExecutionTarget {
+  worktreePath: string;
+  branchName: string;
+  isolation: "session" | "worktree";
+  laneId: string | null;
+}
 
 export interface ProjectExecutionTargetDeps {
   /** Current branch of the repo-root checkout; null on detached HEAD. */

@@ -18,7 +18,6 @@ import {
   getSession,
   mutateConversation,
   getStateDb,
-  getGraphWorkflowExecutionById,
 } from "@/lib/state-store";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
@@ -94,7 +93,6 @@ const resolveWork = createCheckpointWorkResolver({
     createSpecsRepo(getStateDb(), getSharedWriteQueue()).getRevisionSnapshot(
       id,
     ),
-  execution: getGraphWorkflowExecutionById,
 });
 
 export function getCheckpointForkService() {

@@ -31,7 +31,6 @@ Place `CommandCenter.json` at the repository root. It is optional; projects with
       }
     },
     "preMerge": ["lint", "test"],
-    "laneMerge": ["test"]
   },
   "devServers": [
     {
@@ -57,9 +56,8 @@ Place `CommandCenter.json` at the repository root. It is optional; projects with
 |---|---|---|---|
 | `commands` | `Record<string, ValidationCommand>` | Yes | Commands keyed by stable kebab-case names |
 | `preMerge` | `string[]` | No | Ordered selection for Smart Merge and Smart Commit; defaults to `[]` |
-| `laneMerge` | `string[]` | No | Ordered graph lane-merge selection; inherits `preMerge` when omitted |
 
-Every name selected by `preMerge` or `laneMerge` must exist in `validation.commands`.
+Every name selected by `preMerge` must exist in `validation.commands`.
 
 ### ValidationCommand
 

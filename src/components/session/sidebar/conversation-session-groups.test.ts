@@ -15,7 +15,7 @@ const options: SessionGroupOptions = {
   query: "",
   project: null,
   includeArchived: false,
-  includeGraphWorkflows: false,
+  includeRoleHistory: false,
   filter: "all",
   sessionScope: null,
   expandedKeys: new Set(),
@@ -159,7 +159,7 @@ describe("input pinning and workflow visibility", () => {
     ]);
     const shown = buildSidebarContent(workflowRows, {
       ...options,
-      includeGraphWorkflows: true,
+      includeRoleHistory: true,
       expandedKeys: new Set(["/cc::panel"]),
     });
     expect(shown.groups.flatMap((g) => g.items.map((r) => r.id))).toEqual([

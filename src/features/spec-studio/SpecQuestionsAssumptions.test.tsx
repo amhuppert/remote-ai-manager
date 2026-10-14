@@ -17,7 +17,7 @@ import SpecQuestionsAssumptionsPanel, {
 import { SpecDetailContent } from "./SpecDetailPage";
 import {
   SPEC_CONTROLS_FIXTURE_NOW as NOW,
-  importedDeliveredSpecDetailFixture,
+  importedSpecDetailFixture,
   specControlsDetailFixture as detailFixture,
 } from "./SpecControls.fixtures";
 
@@ -1062,7 +1062,7 @@ describe("SpecQuestionsAssumptionsPanel", () => {
   ])(
     "reads the import instant off the admissions when %s",
     (_case, withRecord) => {
-      const imported = importedDeliveredSpecDetailFixture();
+      const imported = importedSpecDetailFixture();
       const detail = {
         ...imported,
         importRecord: withRecord ? imported.importRecord : null,
@@ -1083,7 +1083,7 @@ describe("SpecQuestionsAssumptionsPanel", () => {
   );
 
   it("marks nothing when no gate was admitted by import", () => {
-    const imported = importedDeliveredSpecDetailFixture();
+    const imported = importedSpecDetailFixture();
 
     render(
       <QueryClientProvider client={new QueryClient()}>

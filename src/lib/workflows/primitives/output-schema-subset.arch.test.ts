@@ -1,7 +1,5 @@
-// @vitest-inputs src/components/workflow-config/OutputSchemaField.tsx
-// @vitest-inputs src/features/workflows-builder/components/WorkflowBuilderEditor.tsx
-// @vitest-inputs src/lib/workflow-graph/definition-validation.ts
-// @vitest-inputs src/lib/workflow-graph/output-schema-validation.ts
+// @vitest-inputs src/features/runs/components/template/TemplateEditor.tsx
+// @vitest-inputs src/lib/runs/workflow-definition.ts
 // @vitest-inputs src/lib/workflows/primitives/output-schema-subset.ts
 // @vitest-inputs src/lib/workflows/primitives/structured-output-gate.ts
 import { describe, expect, it } from "vitest";
@@ -13,12 +11,10 @@ import path from "node:path";
  * possible: the output-schema subset module — descriptor, guidance messages and
  * declaration walker — must stay importable from a `"use client"` component.
  *
- * The definition validator reaches it from `definition-validation.ts`, which the builder
- * editor (a client component) imports. If any module on that path pulls a
- * Node-only dependency, the browser bundle breaks — and nothing but
- * `bun run build` reports it, long after the change looks green. So the path is
- * pinned here: every module from the client entry point down to the subset
- * carries no `node:` import, and the subset itself carries no import at all.
+ * The run template editor and run definition validator import the subset
+ * directly. Node-only dependencies on those paths would break the browser
+ * bundle, so both consumers and the subset are pinned here. Each carries no
+ * `node:` import, and the subset itself carries no import at all.
  *
  * The alternative — letting the UI re-derive its own keyword list to dodge the
  * import — is precisely the lint/validator drift R1.3 forbids.
@@ -31,16 +27,13 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
  * explicitly rather than crawled: the point is that THIS path stays clean, and
  * a new hop appearing on it should be a deliberate addition here.
  */
+const SCHEMA_FIELD = "src/features/runs/components/template/TemplateEditor.tsx";
+const DEFINITION_VALIDATOR = "src/lib/runs/workflow-definition.ts";
 const CLIENT_REACHABLE_CHAIN = [
-  "src/features/workflows-builder/components/WorkflowBuilderEditor.tsx",
-  "src/lib/workflow-graph/definition-validation.ts",
-  "src/lib/workflow-graph/output-schema-validation.ts",
-  "src/components/workflow-config/OutputSchemaField.tsx",
+  SCHEMA_FIELD,
+  DEFINITION_VALIDATOR,
   "src/lib/workflows/primitives/output-schema-subset.ts",
 ] as const;
-
-/** The editor whose red lines must BE the server's refusals (R1.3). */
-const SCHEMA_FIELD = "src/components/workflow-config/OutputSchemaField.tsx";
 
 const SUBSET_MODULE = "src/lib/workflows/primitives/output-schema-subset.ts";
 
@@ -63,30 +56,15 @@ describe("output-schema subset module stays browser-safe (D2, R1.3)", () => {
     expect(imports).toEqual([]);
   });
 
-  it("the definition validator reaches the subset directly, not through the logging gate", () => {
-    // `structured-output-gate.ts` re-exports the same functions but creates a
-    // logger at module scope, which imports `node:fs`.
-    const source = read("src/lib/workflow-graph/output-schema-validation.ts");
-    expect(source).toContain("primitives/output-schema-subset");
-    expect(source).not.toContain("primitives/structured-output-gate");
-  });
-
-  it("the schema editor lints through the subset walker, not a list of its own", () => {
-    const source = read(SCHEMA_FIELD);
-    expect(source).toContain("primitives/output-schema-subset");
-    expect(source).toContain("validateOutputSchemaDeclaration");
-    // Going through the gate would drag `node:fs` into the browser bundle; a
-    // literal keyword list would reintroduce exactly the drift D2 removed.
-    expect(source).not.toContain("primitives/structured-output-gate");
-    for (const keyword of [
-      "anyOf",
-      "allOf",
-      "prefixItems",
-      "patternProperties",
-    ]) {
-      expect(source).not.toContain(keyword);
-    }
-  });
+  it.each([SCHEMA_FIELD, DEFINITION_VALIDATOR])(
+    "%s validates declarations through the browser-safe subset owner",
+    (file) => {
+      const source = read(file);
+      expect(source).toContain("primitives/output-schema-subset");
+      expect(source).toContain("validateOutputSchemaDeclaration");
+      expect(source).not.toContain("primitives/structured-output-gate");
+    },
+  );
 
   it("the gate module still re-exports the subset for server callers", () => {
     const source = read(

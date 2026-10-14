@@ -20,11 +20,7 @@ import {
 import { listDevServers } from "@/lib/dev-server/service";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getTranscriptMaxSeq } from "@/lib/prompt/transcript";
-import {
-  getActiveGraphWorkflowExecution,
-  getConversation,
-  getProjectConversation,
-} from "@/lib/state-store";
+import { getConversation, getProjectConversation } from "@/lib/state-store";
 import { getStateDb } from "@/lib/state-store/store";
 
 import type {
@@ -95,7 +91,6 @@ export function createDefaultProviderDeps(): HelpContextProviderDeps {
   return {
     resolveProjectPath,
     listDevServers: (input) => listDevServers(input),
-    getActiveGraphWorkflowExecution,
     resolveConversationArtifacts,
   };
 }

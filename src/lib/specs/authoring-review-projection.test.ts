@@ -36,7 +36,6 @@ function revision(
     citationHash: "a".repeat(64),
     proposedAt: null,
     approvedAt: null,
-    externalDelivery: null,
     createdAt: AT,
     ...overrides,
   };
@@ -196,7 +195,6 @@ function admission(
     spec_id: SPEC_ID,
     basis: "human_approval",
     approval_id: null,
-    execution_id: null,
     actor_json: JSON.stringify({ kind: "human" }),
     created_at: AT,
     ...overrides,
@@ -221,7 +219,6 @@ function withdrawnAttemptChain(requirementStatement: string): Chain {
     state: "approved",
     authoringStage: "requirements",
     approvedAt: AT,
-    externalDelivery: null,
   });
   const withdrawn = revision({
     id: "revision-2",
@@ -485,7 +482,6 @@ function project(
               importBaselineSnapshot.revision.citationContractVersion,
             citations: toDiffCitations(importBaselineSnapshot),
           },
-    currentExecution: null,
     revisionNumberById: new Map(
       chain.revisions.map((candidate) => [candidate.id, candidate.number]),
     ),
@@ -719,7 +715,6 @@ describe("authoringReviewProjection", () => {
       {
         revisionId: "revision-1",
         revisionNumber: 1,
-        executionId: null,
         basis: "human_approval",
         actor: { kind: "human" },
         admittedAt: AT,

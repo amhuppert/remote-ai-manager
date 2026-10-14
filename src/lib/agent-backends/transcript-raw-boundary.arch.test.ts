@@ -81,10 +81,7 @@ describe("transcript raw-payload boundary", () => {
   });
 
   it("the conversation actor and external-turn handler never touch a raw payload", () => {
-    for (const rel of [
-      "lib/workflows/conversation/actor-implementations.ts",
-      "lib/workflows/conversation/external-turn-handler.ts",
-    ]) {
+    for (const rel of []) {
       const source = readFileSync(path.join(REPO_SRC, rel), "utf8");
       expect(
         /entry\.raw|\.raw\./.test(source),

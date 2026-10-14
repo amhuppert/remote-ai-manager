@@ -508,9 +508,8 @@ export const FullDossier: Story = {
 };
 
 /**
- * Linked spec state is read through live: composite phase, criterion proof
- * progress, workflow status, and an amendment-changed source task share one
- * card without changing the ticket's own In Progress lifecycle.
+ * Linked spec authoring phase and historical task provenance are read live
+ * without changing the ticket's own In Progress lifecycle.
  */
 export const LinkedSpecReadThrough: Story = {
   render: () => (
@@ -522,14 +521,12 @@ export const LinkedSpecReadThrough: Story = {
           slug: "native-sdd",
           name: "Native spec-driven development",
           revision: 5,
-          phase: { primary: "executing", authoringFacet: "draft" },
-          criteriaProgress: { proven: 7, total: 12 },
+          phase: { primary: "draft", authoringStage: "plan" },
           linkedTasks: [
             {
               taskElementId: "task-ticket-read-through",
               taskHandle: "T7",
               sourceTaskState: "changed",
-              workStatus: "running",
             },
           ],
         },

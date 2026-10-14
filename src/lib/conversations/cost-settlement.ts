@@ -27,15 +27,6 @@ export interface CostSettlementDeps {
     label: string,
     mutate: (conversation: ConversationState) => void,
   ): Promise<void>;
-  /**
-   * Fold the delta into the hosted actor's totals when the conversation is
-   * live in memory. `applied: false` means no actor holds it, and the row is
-   * written directly instead — never both, which would count the delta twice.
-   */
-  applyToHostedActor(
-    identity: CostSettlementIdentity,
-    costUsdDelta: number,
-  ): { applied: true; totalCostUsd: number | null } | { applied: false };
   publish: PublishFn;
   /** Idempotent by entry id; a failure here is logged, never fatal. */
   appendTranscriptEntryOnce?(
@@ -69,8 +60,7 @@ export function costSettlementFrame(
 
 /**
  * Apply a provider cost settlement that arrived outside a turn result to the
- * conversation's durable total, its live actor when hosted, its transcript,
- * and the SSE bus. The backend runtime owns exactly-once reporting; this seam
+ * conversation's durable total, its transcript, and the SSE bus. The backend runtime owns exactly-once reporting; this seam
  * owns where each reported cent lands.
  */
 export async function recordConversationCostSettlement(
@@ -78,21 +68,18 @@ export async function recordConversationCostSettlement(
   settlement: ConversationCostSettlement,
   deps: CostSettlementDeps,
 ): Promise<{ totalCostUsd: number | null }> {
-  const hosted = deps.applyToHostedActor(identity, settlement.costUsdDelta);
-  let totalCostUsd: number | null = hosted.applied ? hosted.totalCostUsd : null;
-  if (!hosted.applied) {
-    await deps.mutateConversation(
-      identity.projectPath,
-      identity.storeSessionName,
-      identity.conversationId,
-      "conversation.cost-settled",
-      (conversation) => {
-        conversation.totalCostUsd =
-          (conversation.totalCostUsd ?? 0) + settlement.costUsdDelta;
-        totalCostUsd = conversation.totalCostUsd;
-      },
-    );
-  }
+  let totalCostUsd: number | null = null;
+  await deps.mutateConversation(
+    identity.projectPath,
+    identity.storeSessionName,
+    identity.conversationId,
+    "conversation.cost-settled",
+    (conversation) => {
+      conversation.totalCostUsd =
+        (conversation.totalCostUsd ?? 0) + settlement.costUsdDelta;
+      totalCostUsd = conversation.totalCostUsd;
+    },
+  );
 
   if (deps.appendTranscriptEntryOnce !== undefined) {
     try {
@@ -129,7 +116,7 @@ export async function recordConversationCostSettlement(
     ),
     costUsdDelta: settlement.costUsdDelta,
     totalCostUsd,
-    appliedTo: hosted.applied ? "actor" : "row",
+    appliedTo: "row",
     published: outcome.delivered,
   });
   return { totalCostUsd };

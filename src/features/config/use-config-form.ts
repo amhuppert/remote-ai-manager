@@ -3,17 +3,15 @@ import type {
   FullConfigResponse,
   GlobalConfig,
   RawGlobalConfig,
-  WorkflowDefaults,
 } from "@/lib/config/schemas";
 import {
   ALL_FIELD_PATHS,
   deepEqual,
   deepGet,
   deepSet,
-  SEEDED_WORKFLOW_DEFAULTS,
   stripUndefinedDeep,
 } from "./form-state";
-import type { FieldPath, WorkflowDefaultsBlock } from "./form-state";
+import type { FieldPath } from "./form-state";
 import type { ConfigFormController } from "./sections/types";
 
 export interface UseConfigFormResult {
@@ -54,21 +52,6 @@ export function useConfigForm(
           state = deepSet(state, path, value);
         }
         return state;
-      });
-    },
-    [],
-  );
-
-  const handleChangeBlock = useCallback(
-    <K extends WorkflowDefaultsBlock>(block: K, value: WorkflowDefaults[K]) => {
-      setFormState((prev) => {
-        if (!prev) return prev;
-        const existing =
-          prev.workflowDefaults ?? structuredClone(SEEDED_WORKFLOW_DEFAULTS);
-        return {
-          ...prev,
-          workflowDefaults: { ...existing, [block]: value },
-        };
       });
     },
     [],
@@ -123,7 +106,6 @@ export function useConfigForm(
       formRevision,
       handleChange,
       handleChangeMulti,
-      handleChangeBlock,
       isDefault,
       isModified,
       handleValidityChange,
@@ -133,7 +115,6 @@ export function useConfigForm(
     formRevision,
     handleChange,
     handleChangeMulti,
-    handleChangeBlock,
     isDefault,
     isModified,
     handleValidityChange,

@@ -1,4 +1,4 @@
-import { createHostedBackendFixture } from "@/lib/workflows/conversation/testing/hosted-backend-fixture";
+import { createHostedBackendFixture } from "@/lib/conversation-core/testing/hosted-backend-fixture";
 let fixture: ReturnType<typeof createHostedBackendFixture>;
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
@@ -62,10 +62,7 @@ describe("installRuntimeShutdownHook", () => {
   it("registers for both terminating signals", () => {
     const source = fakeSignalSource();
 
-    installRuntimeShutdownHook(
-      fixture.manager.stopAllConversationActors,
-      source,
-    );
+    installRuntimeShutdownHook(fixture.shutdown, source);
 
     expect(source.registered()).toEqual(["SIGINT", "SIGTERM"]);
   });
@@ -87,10 +84,7 @@ describe("installRuntimeShutdownHook", () => {
         }),
       );
       const source = fakeSignalSource();
-      installRuntimeShutdownHook(
-        fixture.manager.stopAllConversationActors,
-        source,
-      );
+      installRuntimeShutdownHook(fixture.shutdown, source);
 
       await source.fire(signal);
 
@@ -113,10 +107,7 @@ describe("installRuntimeShutdownHook", () => {
       }),
     );
     const source = fakeSignalSource();
-    installRuntimeShutdownHook(
-      fixture.manager.stopAllConversationActors,
-      source,
-    );
+    installRuntimeShutdownHook(fixture.shutdown, source);
 
     await source.fire("SIGTERM");
 
@@ -141,10 +132,7 @@ describe("installRuntimeShutdownHook", () => {
       }),
     );
     const source = fakeSignalSource();
-    installRuntimeShutdownHook(
-      fixture.manager.stopAllConversationActors,
-      source,
-    );
+    installRuntimeShutdownHook(fixture.shutdown, source);
 
     let handlerSettled = false;
     const firing = source.fire("SIGTERM").then(() => {
@@ -171,10 +159,7 @@ describe("installRuntimeShutdownHook", () => {
         makeRuntime(async () => {}),
       );
       const source = fakeSignalSource();
-      installRuntimeShutdownHook(
-        fixture.manager.stopAllConversationActors,
-        source,
-      );
+      installRuntimeShutdownHook(fixture.shutdown, source);
 
       await source.fire("SIGTERM");
 

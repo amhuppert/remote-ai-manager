@@ -28,7 +28,6 @@ function makeConfig(
       specApprovalRequested: true,
       specApprovalGranted: true,
       specPolicyAdmitted: true,
-      planRepair: true,
     },
     ...overrides,
   };
@@ -65,7 +64,6 @@ describe("shouldSendPush", () => {
         specApprovalRequested: true,
         specApprovalGranted: true,
         specPolicyAdmitted: true,
-        planRepair: true,
       },
     });
     expect(shouldSendPush(config, "conversation-idle")).toBe(false);
@@ -82,7 +80,6 @@ describe("shouldSendPush", () => {
         specApprovalRequested: true,
         specApprovalGranted: true,
         specPolicyAdmitted: true,
-        planRepair: true,
       },
     });
     expect(shouldSendPush(config, "job-completed")).toBe(false);

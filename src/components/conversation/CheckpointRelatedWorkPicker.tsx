@@ -17,15 +17,8 @@ import {
 } from "@/components/ui/Select";
 import { ticketQueries } from "@/lib/tickets/queries";
 import { specReferenceQueries } from "@/lib/specs/reference-queries";
-import { useGraphWorkflowExecutionByIdQuery } from "@/lib/workflows/queries";
-import { apiFetch } from "@/lib/api/fetcher";
-import { executionReferenceInventorySchema } from "@/lib/workflow-graph/references";
+import {} from "@/lib/api/fetcher";
 import type { CheckpointRelatedWork } from "@/lib/conversation-checkpoints/fork-schemas";
-
-import {
-  checkpointAssignmentKey,
-  checkpointWorkflowAssignments,
-} from "@/lib/conversation-checkpoints/fork-workflow-assignments";
 
 interface Option {
   id: string;
@@ -86,12 +79,6 @@ export default function CheckpointRelatedWorkPicker({
   );
   const [search, setSearch] = useState("");
   const [specSlug, setSpecSlug] = useState("");
-  const [selectedExecution, setSelectedExecution] = useState<{
-    executionId: string;
-    sessionName: string;
-    title: string;
-  } | null>(null);
-  const executionId = selectedExecution?.executionId ?? "";
   const tickets = useQuery({
     ...ticketQueries.list({ projectName }),
     enabled: kind === "ticket",
@@ -104,22 +91,6 @@ export default function CheckpointRelatedWorkPicker({
     ...specReferenceQueries.pickerDetail(projectName, specSlug),
     enabled: kind === "spec_task" && specSlug !== "",
   });
-  const executions = useQuery({
-    queryKey: ["checkpoint-fork-executions", projectName, search],
-    queryFn: ({ signal }) =>
-      apiFetch(
-        `/api/live-references/executions?q=${encodeURIComponent(search)}`,
-        executionReferenceInventorySchema,
-        { signal },
-      ),
-    enabled: kind === "workflow_assignment",
-  });
-  const executionItem = selectedExecution;
-  const execution = useGraphWorkflowExecutionByIdQuery(
-    projectName,
-    executionItem?.sessionName ?? "",
-    executionItem?.executionId ?? null,
-  );
   const matches = (label: string) =>
     label.toLowerCase().includes(search.toLowerCase());
   const ticketOptions = (tickets.data ?? []).map((ticket) => ({
@@ -138,19 +109,7 @@ export default function CheckpointRelatedWorkPicker({
     detail.data?.currentRevision?.elements.filter(
       (row) => row.version.payload.kind === "task",
     ) ?? [];
-  const assignments = execution.data
-    ? checkpointWorkflowAssignments(execution.data)
-    : [];
-  const relevantQuery =
-    kind === "ticket"
-      ? tickets
-      : kind === "spec_task"
-        ? specSlug
-          ? detail
-          : specs
-        : executionId
-          ? execution
-          : executions;
+  const relevantQuery = kind === "ticket" ? tickets : specSlug ? detail : specs;
   return (
     <div>
       <WorkSelect
@@ -160,7 +119,6 @@ export default function CheckpointRelatedWorkPicker({
         options={[
           { id: "ticket", label: "Ticket" },
           { id: "spec_task", label: "Spec task" },
-          { id: "workflow_assignment", label: "Workflow assignment" },
         ]}
         onChange={(next) => {
           setKind(next as CheckpointRelatedWork["kind"]);
@@ -226,64 +184,6 @@ export default function CheckpointRelatedWorkPicker({
               }}
             />
           )}
-        </>
-      )}
-      {kind === "workflow_assignment" && (
-        <>
-          <WorkSelect
-            label="Workflow execution"
-            value={executionId}
-            disabled={disabled || executions.isPending}
-            options={[
-              ...(selectedExecution ? [selectedExecution] : []),
-              ...(executions.data?.items ?? []).filter(
-                (item) =>
-                  item.projectName === projectName &&
-                  item.executionId !== executionId,
-              ),
-            ].map((item) => ({
-              id: item.executionId,
-              label: `${item.title} · ${item.sessionName}`,
-            }))}
-            onChange={(id) => {
-              setSelectedExecution(
-                executions.data?.items.find(
-                  (item) =>
-                    item.executionId === id && item.projectName === projectName,
-                ) ?? null,
-              );
-              setSearch("");
-              onChange(null);
-            }}
-          />
-          {executionId && (
-            <WorkSelect
-              label="Assignment"
-              value={
-                value?.kind === "workflow_assignment"
-                  ? checkpointAssignmentKey(value)
-                  : ""
-              }
-              disabled={disabled || execution.isPending}
-              options={assignments.filter((option) => matches(option.label))}
-              onChange={(id) => {
-                const assignment = assignments.find((item) => item.id === id);
-                if (assignment && executionItem)
-                  onChange({
-                    kind,
-                    executionId,
-                    sessionName: executionItem.sessionName,
-                    owner: assignment.owner,
-                    useSite: assignment.useSite,
-                    assignmentId: assignment.assignmentId,
-                  });
-              }}
-            />
-          )}
-          <FormHint>
-            Linked for context. Workflow execution stays with its assigned
-            conversation.
-          </FormHint>
         </>
       )}
       {relevantQuery.isPending && (

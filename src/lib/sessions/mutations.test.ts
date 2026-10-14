@@ -48,7 +48,6 @@ function activeConvo(
     worktreePath: overrides.worktreePath ?? "/w",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
-    pendingApproval: overrides.pendingApproval ?? null,
     backgroundActivity: overrides.backgroundActivity ?? null,
   };
 }
@@ -58,9 +57,7 @@ function activeResponse(
 ): ActiveConversationsResponse {
   return {
     conversations,
-    graphWorkflowExecutions: [],
     activeCollaborationExecutions: [],
-    specExecutions: [],
   };
 }
 
@@ -85,7 +82,6 @@ function sessionListItem(
     derivedLastActivityAt:
       overrides.derivedLastActivityAt ?? "2025-01-01T00:00:00.000Z",
     collabContribution: overrides.collabContribution ?? null,
-    hasActiveGraphWorkflow: overrides.hasActiveGraphWorkflow ?? false,
   };
 }
 

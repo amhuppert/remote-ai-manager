@@ -5,7 +5,6 @@ import { createNotificationsRepo } from "@/lib/notifications/repo";
 import type { SpecNotification } from "@/lib/notifications/schemas";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -62,7 +61,6 @@ describe("propose route files the gate asks it leaves pending", () => {
     const specs = createSpecsRepo(db, createWriteQueue());
     const reviewRepo = createSpecReviewRepo(db);
     const linksRepo = createSpecLinksRepo(db);
-    const deliveryRepo = createSpecDeliveryRepo(db);
     const eventsRepo = createSpecEventsRepo(db);
     const events = createSpecEventsPublisher({
       appendInTransaction: eventsRepo.appendInTransaction,
@@ -86,7 +84,6 @@ describe("propose route files the gate asks it leaves pending", () => {
     const review = createReviewService({
       specs,
       review: reviewRepo,
-      delivery: deliveryRepo,
       links: linksRepo,
       events,
       attention: eventsRepo,
@@ -101,7 +98,6 @@ describe("propose route files the gate asks it leaves pending", () => {
       review: reviewRepo,
       links: linksRepo,
       events,
-      waivers: deliveryRepo,
       policyNotifier: notifier,
       approvalRequests: {
         requestApproval: (input) => review.requestApproval(input),

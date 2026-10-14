@@ -24,7 +24,6 @@ const BASE_CONVERSATION: SessionActiveConversation = {
   worktreePath: "/home/alex/github/command-center/.worktrees/sidebar-row",
   lastActivitySummary: "Refactoring the badge layout to use cc-badge tokens.",
   unread: false,
-  pendingApproval: null,
   backgroundActivity: null,
 };
 

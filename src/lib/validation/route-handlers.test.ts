@@ -189,8 +189,6 @@ describe("validation route composition", () => {
           commandName: "test",
           queueIfBusy: true,
           scopePaths: ["src/example.test.ts"],
-          workflowExecutionId: "exec-1",
-          workflowContextId: "api",
         }),
       }),
       context(),
@@ -214,10 +212,6 @@ describe("validation route composition", () => {
           projectPath: PROJECT_PATH,
           sessionName: SESSION_NAME,
           conversationId: CONVERSATION_ID,
-          claimedWorkflow: {
-            executionId: "exec-1",
-            contextId: "api",
-          },
         },
       },
     ]);

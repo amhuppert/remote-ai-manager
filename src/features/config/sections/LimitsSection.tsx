@@ -109,27 +109,7 @@ export function LimitsSection({
             integer
           />
         </ConfigField>
-        <ConfigField
-          label="Pre-merge timeout"
-          fieldPath="preMergeTimeoutMs"
-          isDefault={isDefault("preMergeTimeoutMs")}
-          isModified={isModified("preMergeTimeoutMs")}
-          hint="minutes"
-        >
-          <ConfigNumericInput
-            value={formState.preMergeTimeoutMs}
-            onChange={(value) => handleChange("preMergeTimeoutMs", value)}
-            name="preMergeTimeoutMs"
-            aria-label="Pre-merge timeout"
-            aria-describedby="preMergeTimeoutMs-hint"
-            onValidityChange={(valid) =>
-              handleValidityChange("preMergeTimeoutMs", valid)
-            }
-            resetKey={formRevision}
-            displayAsMinutes
-            positive
-          />
-        </ConfigField>
+
         <ConfigField
           label="Idle session TTL"
           fieldPath="idleQuerySessionTtlMs"

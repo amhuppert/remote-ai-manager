@@ -482,10 +482,6 @@ describe("every import refusal leaves no trace of the attempted spec (R1.2)", ()
     const before = rowCounts(harness.fixture);
     const result = await importBundle(
       bundle({
-        // Opted out of delivered marking so the bundle reaches the lint at all:
-        // a criteria-less bundle claiming delivery is refused before the first
-        // write (R4.2), which would prove nothing about the rollback.
-        delivered: false,
         requirements: [
           {
             ref: "unreviewable",
@@ -521,7 +517,7 @@ describe("every import refusal leaves no trace of the attempted spec (R1.2)", ()
   it("refuses a bundle of sections alone and rolls the whole write back", async () => {
     const before = rowCounts(harness.fixture);
     const result = await importBundle(
-      bundle({ delivered: false, requirements: [], decisions: [] }),
+      bundle({ requirements: [], decisions: [] }),
     );
 
     expect(result.ok).toBe(false);
@@ -642,12 +638,11 @@ describe("an import records provenance, never approval (R3.2, R7.3, R7.4, R10)",
 
     const admissions = harness.review
       .findGateAdmissionsBySpecId(receipt.spec.id)
-      .map(({ gate, basis, approval_id, revision_id, execution_id }) => ({
+      .map(({ gate, basis, approval_id, revision_id }) => ({
         gate,
         basis,
         approval_id,
         revision_id,
-        execution_id,
       }));
     expect(admissions).toEqual([
       {
@@ -655,14 +650,12 @@ describe("an import records provenance, never approval (R3.2, R7.3, R7.4, R10)",
         basis: "import",
         approval_id: null,
         revision_id: receipt.revision.id,
-        execution_id: null,
       },
       {
         gate: "design",
         basis: "import",
         approval_id: null,
         revision_id: receipt.revision.id,
-        execution_id: null,
       },
     ]);
     expect(harness.review.findApprovalsBySpecId(receipt.spec.id)).toEqual([]);
@@ -745,25 +738,6 @@ describe("an import records provenance, never approval (R3.2, R7.3, R7.4, R10)",
     ]);
   });
 
-  it("records external delivery as testimony on the imported revision by default (R4.1)", async () => {
-    const receipt = await expectImported();
-
-    const revisions = await harness.fixture.specs.listRevisions(
-      receipt.spec.id,
-    );
-    expect(revisions[0]?.externalDelivery).toEqual({
-      // The instant the import committed, not one the bundle chose: the claim
-      // is that the source shipped before this import, and the only date this
-      // system can honestly stamp is its own.
-      at: revisions[0]?.approvedAt,
-      actor: AGENT,
-      source: { label: "kiro:.kiro/specs/legacy-feature" },
-    });
-    expect(receipt.revision.externalDelivery).toEqual(
-      revisions[0]?.externalDelivery,
-    );
-  });
-
   it("records typed import history without approval-request notifications (R10.2)", async () => {
     const receipt = await expectImported();
 
@@ -793,70 +767,6 @@ describe("an import records provenance, never approval (R3.2, R7.3, R7.4, R10)",
     expect(
       harness.notifications.findSpecNotificationsBySpecId(receipt.spec.id),
     ).toEqual([]);
-  });
-});
-
-describe("delivered marking is decided explicitly, never silently (R4.2)", () => {
-  /**
-   * The delivered claim is carried by the imported criteria — the phase reads
-   * delivered because every criterion does. A bundle with none would leave the
-   * claim with nothing to attach to, so it is refused rather than imported as
-   * approved: dropping the marking silently is exactly what R4.2 forbids.
-   */
-  it("refuses a criteria-less bundle whose delivered marking is in effect by default", async () => {
-    const before = rowCounts(harness.fixture);
-
-    const result = await importBundle(
-      bundle({ requirements: [], decisions: [] }),
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.ok ? null : result.refusal.code).toBe("validation");
-    // The remedy names the opt-out, so a criteria-less source is importable in
-    // one retry rather than by guessing which field to change.
-    expect(result.ok ? "" : result.refusal.instruction).toContain(
-      '"delivered": false',
-    );
-    expect(rowCounts(harness.fixture)).toEqual(before);
-    expect(
-      await harness.fixture.specs.resolve(PROJECT_PATH, "imported-feature"),
-    ).toBeNull();
-  });
-
-  it("refuses a criteria-less bundle that marks delivered explicitly", async () => {
-    const result = await importBundle(
-      bundle({ delivered: true, requirements: [], decisions: [] }),
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.ok ? null : result.refusal.code).toBe("validation");
-  });
-
-  /**
-   * Opting out clears the delivered refusal, which is all the opt-out decides.
-   * A criteria-less bundle is still refused — by the propose-parity lint (R1.2)
-   * that blocks every spec with no reviewable requirement, imported or
-   * authored. The two refusals are distinguishable here so a later change that
-   * let the delivered check swallow the lint would fail this test.
-   */
-  it("opting out replaces the delivered refusal with the propose-parity lint alone", async () => {
-    const result = await importBundle(
-      bundle({ delivered: false, requirements: [], decisions: [] }),
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.ok ? null : result.refusal.code).toBe("lint_blocked");
-  });
-
-  it("imports as approved with no external-delivery record when the bundle opts out", async () => {
-    const receipt = await expectImported(bundle({ delivered: false }));
-
-    const revisions = await harness.fixture.specs.listRevisions(
-      receipt.spec.id,
-    );
-    expect(revisions[0]?.state).toBe("approved");
-    expect(revisions[0]?.externalDelivery).toBeNull();
-    expect(receipt.revision.externalDelivery).toBeNull();
   });
 });
 
@@ -999,7 +909,6 @@ describe("a dry run validates the whole bundle and writes nothing (R6.1)", () =>
     const preview = await expectPreviewed(
       bundle({
         dryRun: true,
-        delivered: false,
         requirements: [
           {
             ref: "unreviewable",
@@ -1065,4 +974,20 @@ describe("a dry run validates the whole bundle and writes nothing (R6.1)", () =>
 
     expect(dumpDatabase(harness.fixture)).toEqual(before);
   });
+});
+
+describe("retired delivered import claim", () => {
+  it.each([true, false])(
+    "refuses delivered=%s before writing",
+    async (delivered) => {
+      const before = rowCounts(harness.fixture);
+      const result = await importBundle(bundle({ delivered }));
+      expect(result.ok).toBe(false);
+      expect(result.ok ? null : result.refusal.code).toBe("validation");
+      expect(result.ok ? "" : result.refusal.instruction).toContain(
+        "delivered",
+      );
+      expect(rowCounts(harness.fixture)).toEqual(before);
+    },
+  );
 });

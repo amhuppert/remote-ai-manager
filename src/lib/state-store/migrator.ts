@@ -67,7 +67,10 @@ export function createMigrator(
  * Runs at server startup (instrumentation) before any request touches a repo.
  * The synchronous schema floor in `state-db.ts` has already guaranteed current
  * table shapes, so a fresh database records every migration as a fast no-op and
- * is stamped; only an older on-disk database does real work here.
+ * is stamped; only an older on-disk database does real work here. The history
+ * retired at overhaul-deploy-1.5 is not in the registry: the floor stamps it on
+ * a fresh database and refuses one that has not finished it
+ * (`migration-history.ts`), and Umzug ignores ledger names it does not know.
  *
  * A migration failure rejects (the startup registrar treats it as fatal). The
  * failed migration is not ledgered — Umzug writes the ledger after `up` — so

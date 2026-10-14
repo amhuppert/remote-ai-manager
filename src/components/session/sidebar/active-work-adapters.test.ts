@@ -1,16 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { BackgroundJob } from "@/lib/jobs/schemas";
-import type {
-  ActiveCollaborationExecution,
-  ActiveGraphWorkflowExecution,
-} from "@/lib/active-conversations/schemas";
+import type { ActiveCollaborationExecution } from "@/lib/active-conversations/schemas";
 import type { Notification } from "@/lib/notifications/schemas";
 import type { ActiveRun } from "@/lib/runs/schemas";
 import {
   adaptCollaborations,
-  adaptGraphWorkflows,
   adaptRuns,
-  adaptSpecExecutions,
   adaptStoreJobs,
   deriveNotificationOutcomes,
 } from "./active-work-adapters";
@@ -24,30 +19,6 @@ function makeJob(overrides: Partial<BackgroundJob> = {}): BackgroundJob {
     sessionName: "session-12",
     branchName: "csm/auth-fix",
     startedAt: "2026-07-11T10:00:00.000Z",
-    ...overrides,
-  };
-}
-
-function makeWorkflow(
-  overrides: Partial<ActiveGraphWorkflowExecution> = {},
-): ActiveGraphWorkflowExecution {
-  return {
-    executionId: "exec-1",
-    status: "running",
-    projectName: "command-center",
-    projectPath: "/repo",
-    sessionName: "session-12",
-    activeContextIds: ["c1", "c2"],
-    activeContextTitles: ["Impl service", "Validation"],
-    activeBatchIds: [],
-    pendingHaltReason: null,
-    contextMergeProgress: [],
-    activeJoinIds: [],
-    joinProgress: [],
-    finalPublishState: null,
-    completedContexts: 4,
-    totalContexts: 7,
-    startedAt: "2026-07-11T09:00:00.000Z",
     ...overrides,
   };
 }
@@ -150,43 +121,6 @@ describe("adaptStoreJobs", () => {
   });
 });
 
-describe("adaptGraphWorkflows", () => {
-  it("maps a running execution with context titles and progress", () => {
-    const items = adaptGraphWorkflows([makeWorkflow()]);
-    expect(items[0]).toMatchObject({
-      id: "workflow:exec-1",
-      kind: "workflow",
-      title: "Impl service + Validation",
-      phase: "2 contexts active",
-      progress: { completed: 4, total: 7 },
-      href: "/projects/command-center/session-12/workflow",
-    });
-  });
-
-  it("labels paused and pending executions and falls back on empty titles", () => {
-    const items = adaptGraphWorkflows([
-      makeWorkflow({ executionId: "p1", status: "paused" }),
-      makeWorkflow({ executionId: "p2", status: "pending" }),
-      makeWorkflow({
-        executionId: "p3",
-        activeContextIds: [],
-        activeContextTitles: [],
-      }),
-    ]);
-    expect(items.map((i) => [i.title, i.phase])).toEqual([
-      ["Impl service + Validation", "Paused"],
-      ["Impl service + Validation", "Queued"],
-      ["Graph workflow", "Running"],
-    ]);
-  });
-
-  it("labels halted executions as halted", () => {
-    const items = adaptGraphWorkflows([makeWorkflow({ status: "halted" })]);
-
-    expect(items[0]?.phase).toBe("Halted");
-  });
-});
-
 describe("adaptCollaborations", () => {
   it("maps a running collaboration to its conversation", () => {
     const items = adaptCollaborations([makeCollab()]);
@@ -206,55 +140,6 @@ describe("adaptCollaborations", () => {
     ]);
     expect(items[0]?.phase).toBe("Paused");
     expect(items[0]?.href).toBe("/projects/command-center/session-12");
-  });
-});
-
-describe("adaptSpecExecutions", () => {
-  it("surfaces only definition-review and running executions in Active Work", () => {
-    const items = adaptSpecExecutions([
-      {
-        executionId: "execution-review",
-        state: "definition_review",
-        specSlug: "native-sdd",
-        specName: "Native SDD",
-        projectName: "command-center",
-        sessionName: "native-sdd",
-        createdAt: "2026-07-18T10:00:00.000Z",
-      },
-      {
-        executionId: "execution-running",
-        state: "running",
-        specSlug: "native-sdd",
-        specName: "Native SDD",
-        projectName: "command-center",
-        sessionName: "native-sdd",
-        createdAt: "2026-07-18T11:00:00.000Z",
-      },
-      {
-        executionId: "execution-delivered",
-        state: "delivered",
-        specSlug: "native-sdd",
-        specName: "Native SDD",
-        projectName: "command-center",
-        sessionName: "native-sdd",
-        createdAt: "2026-07-18T09:00:00.000Z",
-      },
-    ]);
-
-    expect(items).toEqual([
-      expect.objectContaining({
-        id: "spec-execution:execution-review",
-        kind: "spec",
-        title: "Native SDD",
-        phase: "Definition review",
-        href: "/specs/command-center/native-sdd",
-      }),
-      expect.objectContaining({
-        id: "spec-execution:execution-running",
-        kind: "spec",
-        phase: "Running",
-      }),
-    ]);
   });
 });
 
@@ -379,41 +264,6 @@ describe("deriveNotificationOutcomes", () => {
     expect(needsAction).toEqual([]);
   });
 
-  it("surfaces a waiver request as an actionable item until an attention-resolved row clears it", () => {
-    const request = makeSpecNotification({
-      type: "spec-waiver-requested",
-      gate: "delivery",
-      gateRequestId: "attention-1",
-      deepLinkId: "criterion-9",
-    });
-    const pending = deriveNotificationOutcomes([request], []);
-    expect(pending.needsAction).toEqual([
-      expect.objectContaining({
-        kind: "spec",
-        phase: "Waiver decision required",
-        href: "/specs/command-center/native-sdd?el=criterion-9",
-        needsAction: { primary: { label: "Review", kind: "review" } },
-      }),
-    ]);
-
-    const resolved = deriveNotificationOutcomes(
-      [
-        request,
-        makeSpecNotification({
-          id: "spec-notif-2",
-          type: "spec-attention-resolved",
-          gate: "delivery",
-          gateRequestId: "attention-1",
-          deepLinkId: "criterion-9",
-          createdAt: "2026-07-18T12:01:00.000Z",
-        }),
-      ],
-      [],
-    );
-    expect(resolved.needsAction).toEqual([]);
-    expect(resolved.attention).toEqual([]);
-  });
-
   it("collapses repeats of one request, and its resolving row clears them all", () => {
     const repeats = [
       makeSpecNotification({ id: "n1", gateRequestId: "request-1" }),
@@ -485,31 +335,6 @@ describe("deriveNotificationOutcomes", () => {
     expect(afterItemApproval.needsAction).toMatchObject([
       { id: "notification:n2" },
     ]);
-  });
-
-  /**
-   * A waiver ask mints a new id every time, so the criterion is the only thing
-   * that tells two asks for one decision apart.
-   */
-  it("collapses repeated waiver requests for one criterion", () => {
-    const first = makeSpecNotification({
-      id: "n1",
-      type: "spec-waiver-requested",
-      gate: "delivery",
-      gateRequestId: "attention-1",
-      deepLinkId: "R1.1",
-    });
-    const second = makeSpecNotification({
-      id: "n2",
-      type: "spec-waiver-requested",
-      gate: "delivery",
-      gateRequestId: "attention-2",
-      deepLinkId: "R1.1",
-      createdAt: "2026-07-18T12:02:00.000Z",
-    });
-
-    const { needsAction } = deriveNotificationOutcomes([first, second], []);
-    expect(needsAction).toMatchObject([{ id: "notification:n2" }]);
   });
 
   it("keeps requests for different subjects independent", () => {

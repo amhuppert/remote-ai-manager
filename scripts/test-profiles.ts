@@ -58,19 +58,15 @@ export const PURE_NODE_TEST_FILES = [
   "src/lib/shared/close-tab-selection.test.ts",
   "src/lib/shared/decode-route-segment.test.ts",
   "src/lib/shared/deep-equal.test.ts",
-  "src/lib/shared/diagnostic-text.test.ts",
   "src/lib/shared/errors.test.ts",
   "src/lib/shared/fuzzy.test.ts",
-  "src/lib/shared/testing/same-bytes.test.ts",
   "src/lib/shared/truncate.test.ts",
 ] as const;
 
 export const ARCHITECTURE_TOOLCHAIN_TEST_FILES = [
-  "src/cli/commands/workflow/routes.contract.test.ts",
   "src/cli/testing/source-scan.test.ts",
   "src/components/markdown/Markdown.import-boundary.test.ts",
   "src/components/markdown/markdown-boundary.test.ts",
-  "src/components/workflow-graph/workflow-graph-css.test.ts",
   "src/features/_root/pwa-manifest.test.ts",
   "src/lib/agent-backends/codex/managed-skills-bridge.test.ts",
   "src/lib/agent-backends/codex/native-sdd-authoring-packaging.test.ts",
@@ -92,10 +88,6 @@ export const ARCHITECTURE_TOOLCHAIN_TEST_FILES = [
   "src/lib/shared/theme-surface.test.ts",
   "src/lib/state-store/reset-installed-state-db.test.ts",
   "src/lib/state-store/write-queue.async-ratchet.test.ts",
-  "src/lib/workflow-graph/lifecycle-contract-consumers.test.ts",
-  "src/lib/workflow-graph/maximal-authored-launch.contract.test.ts",
-  "src/lib/workflow-graph/pending-artifacts-wiring.test.ts",
-  "src/lib/workflows/collaboration/workflow-envelope-invariants.test.ts",
 ] as const;
 
 function sortedUnique(values: readonly string[], label: string): string[] {

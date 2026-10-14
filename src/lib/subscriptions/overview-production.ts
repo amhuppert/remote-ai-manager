@@ -10,9 +10,6 @@ import {
   projectNameFromPath,
 } from "@/lib/state-store/tickets-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
-import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
-import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
-import { createSubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
@@ -21,7 +18,6 @@ import { conversationTargetStoreSessionName } from "@/lib/conversations/conversa
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { readSubscriptionWakeHold } from "@/lib/conversations/message-queue-subscription-admission";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
-import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
 import { getSubscriptionRuntime } from "./service-factory";
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
 import {
@@ -45,12 +41,6 @@ export interface SubscriptionSourcePresentationDeps {
   findSpec(
     id: string,
   ): Promise<{ name: string; slug: string; projectPath: string } | null>;
-  findWorkflowAddress(
-    id: string,
-  ): { projectPath: string; sessionName: string } | null;
-  findWorkflow(
-    id: string,
-  ): { id: string; launchDocument?: { name: string } | null } | null;
   findValidation(id: string): {
     projectPath: string;
     commandName: string;
@@ -103,21 +93,6 @@ export function createSubscriptionSourcePresentationReader(
             }
           : missing;
       }
-      case "workflow": {
-        const address = deps.findWorkflowAddress(source.id);
-        if (address?.projectPath !== recipient.projectPath) return missing;
-        const row = deps.findWorkflow(source.id);
-        return row
-          ? {
-              title: row.launchDocument?.name ?? `Workflow ${row.id}`,
-              href: buildGraphWorkflowExecutionDeepLink({
-                projectName,
-                sessionName: address.sessionName,
-                executionId: source.id,
-              }),
-            }
-          : missing;
-      }
       case "validation": {
         const row = deps.findValidation(source.id);
         if (row?.projectPath !== recipient.projectPath) return missing;
@@ -162,9 +137,6 @@ export function getSubscriptionOverviewService() {
     const notepads = createNotepadsRepo(db, writeQueue);
     const tickets = createTicketsRepo(db, writeQueue);
     const specs = createSpecsRepo(db, writeQueue);
-    const workflows = createGraphWorkflowExecutionsRepo(db);
-    const archivedWorkflows = createGraphWorkflowArchivedExecutionsRepo(db);
-    const queries = createSubscriptionSourceQueriesRepo(db);
     const validations = createValidationRunsRepo(db);
     const jobs = createJobsRepo(db);
     const runs = createRunsRepo(db);
@@ -172,10 +144,6 @@ export function getSubscriptionOverviewService() {
       findNotepad: (id) => notepads.findListItem(id),
       findTicket: (id) => tickets.findById(id),
       findSpec: (id) => specs.findById(id),
-      findWorkflowAddress: (id) => queries.findWorkflowAddress(id),
-      findWorkflow: (id) =>
-        workflows.findByExecutionId(id) ??
-        archivedWorkflows.findByExecutionId(id),
       findValidation: (id) => validations.findById(id),
       findJob: (id) => jobs.getJobRecord(id),
       findRun: (id) => {

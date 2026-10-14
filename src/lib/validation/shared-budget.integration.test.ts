@@ -152,16 +152,14 @@ describe("ValidationService shared global budget", () => {
         targetBranch: "main",
       };
       const disabledLaneCaller: ResolvedValidationCaller = {
-        kind: "graph_lane",
+        kind: "run_seat",
         worktreePath: "/projects/app/.worktrees/session-1.lane-api",
         sessionName: "session-1",
         branchName: "csm/session-1-lane-api",
         targetBranch: "csm/session-1",
-        executionId: "execution-1",
         contextId: "api",
         role: "implementer",
         allowedCommands: [],
-        scriptGateCommands: ["format"],
       };
       let id = 0;
       const service = createValidationService({

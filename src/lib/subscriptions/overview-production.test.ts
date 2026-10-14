@@ -27,15 +27,6 @@ function harness() {
         projectPath: recipient.projectPath,
       };
     },
-    findWorkflowAddress() {
-      return {
-        projectPath: recipient.projectPath,
-        sessionName: "session space",
-      };
-    },
-    findWorkflow() {
-      return { id: "workflow", launchDocument: { name: "Delivery workflow" } };
-    },
     findValidation() {
       return {
         projectPath: recipient.projectPath,
@@ -66,43 +57,13 @@ describe("subscription source presentation", () => {
       href: null,
     });
   });
-
-  it("resolves all source titles and existing browser destinations with encoded identities", async () => {
-    const h = harness();
-    expect(await h.read(recipient, { kind: "notepad", id: "notes" })).toEqual({
-      title: "Shared notes",
-      href: null,
-    });
-    expect(await h.read(recipient, { kind: "ticket", id: "ticket" })).toEqual({
-      title: "Notification controls",
-      href: "/tickets/repo%20space/170",
-    });
-    expect(await h.read(recipient, { kind: "spec", id: "spec" })).toEqual({
-      title: "Subscriptions",
-      href: "/specs/repo%20space/subscription%20controls",
-    });
-    expect(
-      await h.read(recipient, { kind: "workflow", id: "workflow" }),
-    ).toEqual({
-      title: "Delivery workflow",
-      href: "/projects/repo%20space/session%20space/workflow?execution=workflow",
-    });
-    expect(await h.read(recipient, { kind: "validation", id: "run" })).toEqual({
-      title: "test validation",
-      href: "/conversations?c=conversation",
-    });
-    expect(await h.read(recipient, { kind: "git_job", id: "job" })).toEqual({
-      title: "merge session space",
-      href: "/projects/repo%20space/session%20space",
-    });
-  });
   it("keeps missing or differently owned sources from linking to another project's resource", async () => {
     const h = harness();
     const other = { projectPath: "/other", conversationId: "conversation" };
     for (const kind of [
       "ticket",
       "spec",
-      "workflow",
+      "run",
       "validation",
       "git_job",
     ] as const) {

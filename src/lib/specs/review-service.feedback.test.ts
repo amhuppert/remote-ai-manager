@@ -8,8 +8,6 @@ vi.mock("@/lib/logging", () => ({
     error: vi.fn(),
   }),
 }));
-
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -86,7 +84,6 @@ beforeEach(() => {
   authoring = createAuthoringService(deps);
   reviewing = createReviewService({
     ...deps,
-    delivery: createSpecDeliveryRepo(db),
     notifier,
   });
 });

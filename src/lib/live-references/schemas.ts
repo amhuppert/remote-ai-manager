@@ -4,11 +4,6 @@ const targetFields = { projectName: z.string().min(1), id: z.string().min(1) };
 export const liveReferenceTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ticket"), ...targetFields }),
   z.object({ kind: z.literal("conversation"), ...targetFields }),
-  z.object({
-    kind: z.literal("execution"),
-    ...targetFields,
-    sessionName: z.string().min(1),
-  }),
 ]);
 export type LiveReferenceTarget = z.infer<typeof liveReferenceTargetSchema>;
 
@@ -39,10 +34,5 @@ export const liveReferenceRequestSchema = z.object({
 });
 
 export function liveReferenceKey(target: LiveReferenceTarget): string {
-  return JSON.stringify([
-    target.kind,
-    target.projectName,
-    target.id,
-    target.kind === "execution" ? target.sessionName : null,
-  ]);
+  return JSON.stringify([target.kind, target.projectName, target.id, null]);
 }

@@ -12,6 +12,16 @@ import { productionEntryFiles } from "./module-graph-roots";
 
 export const CORE_BOUNDARIES = [
   {
+    roots: [
+      "src/lib/conversation-core/executor.ts",
+      "src/lib/conversation-core/turn/runtime-binding.ts",
+    ],
+    forbidden: [
+      "src/lib/supervision/production.ts",
+      "src/lib/conversation-core/production-turn-dependencies.ts",
+    ],
+  },
+  {
     roots: ["src/lib/tickets/storage-production.ts"],
     forbidden: [
       "src/lib/tickets/service-factory.ts",
@@ -20,18 +30,6 @@ export const CORE_BOUNDARIES = [
       "src/lib/sessions/service.ts",
       "src/lib/prompt/sdk-driver.ts",
       "src/lib/context-artifacts/production.ts",
-      "src/lib/workflows/conversation/lifecycle.ts",
-    ],
-  },
-  {
-    roots: [
-      "src/lib/workflows/plan-review/schemas.ts",
-      "src/lib/state-store/graph-plan-reviews-repo.ts",
-    ],
-    forbidden: [
-      "src/lib/workflows/plan-review/definition-hash.ts",
-      "src/lib/workflows/plan-validation.ts",
-      "src/lib/workflow-graph/working-definition-hash.ts",
     ],
   },
   {
@@ -40,7 +38,6 @@ export const CORE_BOUNDARIES = [
       "src/lib/context-artifacts/production.ts",
       "src/lib/context-artifacts/service.ts",
       "src/lib/context-artifacts/route-handlers.ts",
-      "src/lib/workflows/conversation/lifecycle.ts",
       "src/lib/agent-gateway/token.ts",
     ],
   },
@@ -48,7 +45,6 @@ export const CORE_BOUNDARIES = [
     roots: [
       "src/lib/context-artifacts/production.ts",
       "src/lib/tickets/service-factory.ts",
-      "src/lib/workflows/conversation/production.ts",
       "src/lib/conversations/naming-context.ts",
     ],
     forbidden: ["src/lib/context-artifacts/route-handlers.ts"],
@@ -70,43 +66,6 @@ export const CORE_BOUNDARIES = [
       "src/lib/prompt/sdk-driver.ts",
       "src/lib/jobs/queue.ts",
       "src/lib/notifications/service.ts",
-      "src/lib/workflows/production.ts",
-    ],
-  },
-  {
-    roots: [
-      "src/lib/workflows/conversation/manager.ts",
-      "src/lib/workflows/conversation/testing/lifecycle-fixture.ts",
-    ],
-    forbidden: [
-      "src/lib/workflows/conversation/lifecycle.ts",
-      "src/lib/workflows/conversation/production.ts",
-      "src/lib/workflows/production.ts",
-    ],
-  },
-  {
-    roots: [
-      "src/lib/workflow-graph/workflow-manager.ts",
-      "src/lib/workflow-graph/testing/cohort-engine-harness.ts",
-    ],
-    forbidden: [
-      "src/lib/workflow-graph/production.ts",
-      "src/lib/workflows/production.ts",
-      "src/lib/workflows/conversation/lifecycle.ts",
-      "src/lib/workflows/conversation/production.ts",
-    ],
-  },
-  {
-    roots: ["src/lib/specs/delivery-plan-policy.ts"],
-    forbidden: ["src/lib/state-store/"],
-  },
-  {
-    roots: ["src/lib/workflow-graph/boundary-event-projection.ts"],
-    forbidden: [
-      "src/lib/workflow-graph/execution-events.ts",
-      "src/lib/events/",
-      "src/lib/notifications/",
-      "src/lib/push-notification/",
     ],
   },
 ];

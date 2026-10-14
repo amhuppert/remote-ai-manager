@@ -2335,6 +2335,64 @@
       ]
     },
     {
+      "id": "gemini-4-argon",
+      "label": "Gemini 4 Argon",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning_effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-4-argon",
+            "parameters": {
+              "reasoning_effort": "low"
+            }
+          },
+          "label": "Gemini 4 Argon Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gemini-4-argon",
+            "parameters": {
+              "reasoning_effort": "medium"
+            }
+          },
+          "label": "Gemini 4 Argon Medium",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gemini-4-argon",
+            "parameters": {
+              "reasoning_effort": "high"
+            }
+          },
+          "label": "Gemini 4 Argon High",
+          "isDefault": false
+        }
+      ]
+    },
+    {
       "id": "gpt-5.5",
       "label": "GPT-5.5",
       "aliases": [
@@ -6876,6 +6934,312 @@
       ]
     },
     {
+      "id": "claude-haiku-5-5",
+      "label": "Claude Haiku 5.5",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning_effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5  Low No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5  Medium No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5  High No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "xhigh",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5  Extra High No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5  Max No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Low No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Medium No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M High No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "xhigh",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Extra High No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Max No Thinking",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5  Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5  Medium",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5  High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "xhigh",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5  Extra High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "300k",
+              "reasoning_effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5  Max",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Low",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Medium",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M High",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "xhigh",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Extra High",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-5-5",
+            "parameters": {
+              "context": "1m",
+              "reasoning_effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 5.5 1M Max",
+          "isDefault": false
+        }
+      ]
+    },
+    {
       "id": "claude-haiku-4-5",
       "label": "Claude Haiku 4.5",
       "aliases": [
@@ -7406,7 +7770,7 @@
   ],
   "provenance": {
     "source": "Cursor.models.list",
-    "generatedAt": "2026-09-29T19:00:25.504Z",
+    "generatedAt": "2026-10-14T02:00:29.309Z",
     "sdkVersion": "1.0.31"
   }
 }

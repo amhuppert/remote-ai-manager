@@ -8,16 +8,13 @@
 // in the same saga supersedes every persisted row.
 
 import type { BackgroundJob } from "@/lib/jobs/schemas";
-import type {
-  ActiveCollaborationExecution,
-  ActiveGraphWorkflowExecution,
-} from "@/lib/active-conversations/schemas";
+import type { ActiveCollaborationExecution } from "@/lib/active-conversations/schemas";
 import type { Notification } from "@/lib/notifications/schemas";
 import { runStatus } from "@/components/runs/present";
 import { runsPageHref } from "@/lib/runs/hrefs";
 import type { ActiveRun } from "@/lib/runs/schemas";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import type { SpecExecutionState, SpecGate } from "@/lib/specs/schemas";
+import type { SpecGate } from "@/lib/specs/schemas";
 import type { ActiveWorkItem, AttentionItem } from "./active-work";
 
 function sessionHref(projectName: string, sessionName: string): string {
@@ -68,41 +65,6 @@ export function adaptStoreJobs(jobs: BackgroundJob[]): ActiveWorkItem[] {
   return items;
 }
 
-export function adaptGraphWorkflows(
-  executions: ActiveGraphWorkflowExecution[],
-): ActiveWorkItem[] {
-  return executions.map((execution) => {
-    const contexts = execution.activeContextTitles.length;
-    const phase =
-      execution.status === "halted"
-        ? "Halted"
-        : execution.status === "paused"
-          ? "Paused"
-          : execution.status === "pending"
-            ? "Queued"
-            : contexts > 0
-              ? `${contexts} context${contexts === 1 ? "" : "s"} active`
-              : "Running";
-    return {
-      id: `workflow:${execution.executionId}`,
-      kind: "workflow",
-      title:
-        contexts > 0
-          ? execution.activeContextTitles.join(" + ")
-          : "Graph workflow",
-      projectName: execution.projectName,
-      sessionName: execution.sessionName,
-      phase,
-      href: `${sessionHref(execution.projectName, execution.sessionName)}/workflow`,
-      startedAt: execution.startedAt,
-      progress: {
-        completed: execution.completedContexts,
-        total: execution.totalContexts,
-      },
-    };
-  });
-}
-
 function humanizePhase(phase: string): string {
   const spaced = phase.replaceAll("_", " ").replaceAll("-", " ").trim();
   if (spaced === "") return "Running";
@@ -127,50 +89,12 @@ export function adaptCollaborations(
   }));
 }
 
-export interface ActiveSpecExecution {
-  executionId: string;
-  state: SpecExecutionState;
-  specSlug: string;
-  specName: string;
-  projectName: string;
-  sessionName: string;
-  createdAt: string;
-}
-
 function specHref(projectName: string, specSlug: string): string {
   return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(specSlug)}`;
 }
 
 function specGateLabel(gate: SpecGate): string {
   return humanizePhase(gate);
-}
-
-export function adaptSpecExecutions(
-  executions: ActiveSpecExecution[],
-): ActiveWorkItem[] {
-  const items: ActiveWorkItem[] = [];
-  for (const execution of executions) {
-    if (
-      execution.state !== "definition_review" &&
-      execution.state !== "running"
-    ) {
-      continue;
-    }
-    items.push({
-      id: `spec-execution:${execution.executionId}`,
-      kind: "spec",
-      title: execution.specName,
-      projectName: execution.projectName,
-      sessionName: execution.sessionName,
-      phase:
-        execution.state === "definition_review"
-          ? "Definition review"
-          : "Running",
-      href: specHref(execution.projectName, execution.specSlug),
-      startedAt: execution.createdAt,
-    });
-  }
-  return items;
 }
 
 // Pending gate requests intentionally have no adapter: there is no
@@ -324,7 +248,7 @@ export function deriveNotificationOutcomes(
   );
   const latestSpecRows = latestBy(
     specRows,
-    specAskKey(specRows),
+    (row) => `${row.specId}\0${row.gateRequestId}`,
     (row) => row.createdAt,
     (row) => (isOpenSpecRequest(row) ? 0 : 1),
   );
@@ -344,20 +268,6 @@ export function deriveNotificationOutcomes(
           primary: { label: "Review", kind: "review" },
         },
       });
-    } else if (row.type === "spec-waiver-requested") {
-      needsAction.push({
-        id: `notification:${row.id}`,
-        kind: "spec",
-        title: row.specName,
-        projectName: row.projectName,
-        sessionName: row.sessionName ?? "main",
-        phase: "Waiver decision required",
-        href: `${specHref(row.projectName, row.specSlug)}?el=${encodeURIComponent(row.deepLinkId)}`,
-        startedAt: row.createdAt,
-        needsAction: {
-          primary: { label: "Review", kind: "review" },
-        },
-      });
     }
   }
 
@@ -365,37 +275,7 @@ export function deriveNotificationOutcomes(
 }
 
 function isOpenSpecRequest(row: SpecNotification): boolean {
-  return (
-    row.type === "spec-approval-requested" ||
-    row.type === "spec-waiver-requested"
-  );
-}
-
-/**
- * Which ask a spec notification row belongs to, so a repeat of one ask and the
- * row that answers it collapse into a single queue item.
- *
- * An approval request carries a durable identity, and every row that answers
- * it repeats that request id, so the id is the ask. Deriving the ask from
- * (gate, subject) instead merges two different ones wherever they share a word
- * — at the plan gate the item subject and the gate name are both "plan" — and
- * lets an item approval hide the ask still waiting on the revision sign-off.
- *
- * A waiver request has no such identity: each ask mints a new id, so repeats
- * for one criterion are told apart only by the criterion they name.
- */
-function specAskKey(
-  rows: readonly SpecNotification[],
-): (row: SpecNotification) => string {
-  const waiverRequestIds = new Set(
-    rows
-      .filter((row) => row.type === "spec-waiver-requested")
-      .map((row) => row.gateRequestId),
-  );
-  return (row) =>
-    waiverRequestIds.has(row.gateRequestId)
-      ? `${row.specId}\0waiver\0${row.gate}\0${row.deepLinkId}`
-      : `${row.specId}\0${row.gateRequestId}`;
+  return row.type === "spec-approval-requested";
 }
 
 /**

@@ -12,9 +12,9 @@ const revision = {
 } as const;
 export const specStatusSpec = {
   path: "spec status",
-  summary: "Read lifecycle gates and delivery progress",
+  summary: "Read authoring gates and review progress",
   description:
-    "Read the authoring revision, editable objects and revision guards, pinned delivery attempt, and next actor with review links. Collections are bounded; full returns every row. Executing may mean a parked review or a completed lane waiting for its merge.",
+    "Read the authoring revision, revision guards, and next actor with review links. Collections are bounded; full returns every row.",
   requires: "cc",
   effects: "read",
   args: [slug],
@@ -41,16 +41,6 @@ export const specListSpec = {
   path: "spec list",
   summary: "List the project's specs",
   description: "Read each spec's identity and lifecycle phase.",
-  requires: "cc",
-  effects: "read",
-  args: [],
-  flags: {},
-} as const;
-export const specMeasuresSpec = {
-  path: "spec measures",
-  summary: "Read spec quality and delivery measures",
-  description:
-    "Read requirement rework, approval friction, traceability, automatic evidence capture, and navigation chains.",
   requires: "cc",
   effects: "read",
   args: [],
@@ -167,22 +157,6 @@ export const specDiffSpec = {
   },
   levels: { full: { output: "artifact-eligible" } },
 } as const;
-export const specDeltaSpec = {
-  path: "spec delta",
-  summary: "Read changes since delivery",
-  description:
-    "Read element changes, criterion freshness, and advisories against a delivered execution. Full returns all rows and allows --out.",
-  requires: "cc",
-  effects: "read",
-  args: [slug],
-  flags: {
-    since: {
-      description: "Execution id to compare against",
-      value: { kind: "string", minLength: 1 },
-    },
-  },
-  levels: { full: { output: "artifact-eligible" } },
-} as const;
 export const specExportSpec = {
   path: "spec export",
   summary: "Export a canonical spec bundle",
@@ -213,53 +187,6 @@ export const specVerifySpec = {
       value: { kind: "string", minLength: 1 },
     },
   },
-} as const;
-export const specPlanGetSpec = {
-  path: "spec plan get",
-  summary: "Read the authored delivery plan",
-  description:
-    "Read a bounded plan summary and coverage claims. Full returns the complete authored document.",
-  requires: "cc",
-  effects: "read",
-  args: [slug],
-  flags: {},
-  levels: { full: { output: "artifact-eligible" } },
-} as const;
-export const specPlanStatusSpec = {
-  path: "spec plan status",
-  summary: "Read delivery plan obligations",
-  description:
-    "Read the binding ledger, unresolved criteria, lint findings, review state, and who acts next. Full returns all findings and snapshots.",
-  requires: "cc",
-  effects: "read",
-  args: [slug],
-  flags: {},
-  levels: { full: { output: "artifact-eligible" } },
-} as const;
-export const specPlanPreviewSpec = {
-  path: "spec plan preview",
-  summary: "Read the authored draft or the signed launch candidate",
-  description:
-    "Draft reads the editable content a human reviews and signs off. Approved reads the immutable candidate that sign-off froze and launch binds to. Outline returns a navigation map of its graph.",
-  requires: "cc",
-  effects: "read",
-  args: [slug],
-  flags: {
-    stage: {
-      description: "Editable draft or signed candidate",
-      value: { kind: "enum", values: ["draft", "approved"] },
-      required: true,
-    },
-    "expected-draft-revision": {
-      description: "Expected editable draft revision; applies only to draft",
-      value: { kind: "integer", min: 1 },
-    },
-    outline: {
-      description: "Return graph navigation instead of the launch content",
-      value: { kind: "boolean" },
-    },
-  },
-  levels: { full: { output: "artifact-eligible" } },
 } as const;
 
 export const specSchemaSpec = {
@@ -296,12 +223,6 @@ export const specListCommand = ccCommands.defineCommand(specListSpec, {
   examples: [{ why: "Find current specs before starting new work" }],
   handler: async () => ({
     default: (await import("./native-read")).listHandler,
-  }),
-});
-export const specMeasuresCommand = ccCommands.defineCommand(specMeasuresSpec, {
-  examples: [{ why: "Inspect current project evidence and review measures" }],
-  handler: async () => ({
-    default: (await import("./native-read")).measuresHandler,
   }),
 });
 export const specCommentsCommand = ccCommands.defineCommand(specCommentsSpec, {
@@ -398,17 +319,6 @@ export const specDiffCommand = ccCommands.defineCommand(specDiffSpec, {
     default: (await import("./native-analysis")).diffHandler,
   }),
 });
-export const specDeltaCommand = ccCommands.defineCommand(specDeltaSpec, {
-  examples: [
-    {
-      args: { slug: "native-sdd" },
-      why: "Find work changed since the last delivery",
-    },
-  ],
-  handler: async () => ({
-    default: (await import("./native-analysis")).deltaHandler,
-  }),
-});
 export const specExportCommand = ccCommands.defineCommand(specExportSpec, {
   examples: [
     {
@@ -431,50 +341,9 @@ export const specVerifyCommand = ccCommands.defineCommand(specVerifySpec, {
     default: (await import("./native-analysis")).verifyHandler,
   }),
 });
-export const specPlanGetCommand = ccCommands.defineCommand(specPlanGetSpec, {
-  examples: [
-    {
-      args: { slug: "native-sdd" },
-      why: "Read the current authored delivery plan",
-    },
-  ],
-  handler: async () => ({
-    default: (await import("./native-plan")).planGetHandler,
-  }),
-});
-export const specPlanStatusCommand = ccCommands.defineCommand(
-  specPlanStatusSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        why: "Read the acts needed before plan approval",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-plan")).planStatusHandler,
-    }),
-  },
-);
-export const specPlanPreviewCommand = ccCommands.defineCommand(
-  specPlanPreviewSpec,
-  {
-    examples: [
-      {
-        args: { slug: "native-sdd" },
-        flags: { stage: "draft" },
-        why: "Inspect an editable launch candidate",
-      },
-    ],
-    handler: async () => ({
-      default: (await import("./native-plan")).planPreviewHandler,
-    }),
-  },
-);
 export const specCommands = [
   specSchemaCommand,
   specListCommand,
-  specMeasuresCommand,
   specCommentsCommand,
   specLintCommand,
   specGetCommand,
@@ -483,19 +352,15 @@ export const specCommands = [
   specStatusCommand,
   specShowCommand,
   specDiffCommand,
-  specDeltaCommand,
   specExportCommand,
   specVerifyCommand,
-  specPlanGetCommand,
-  specPlanStatusCommand,
-  specPlanPreviewCommand,
 ] as const;
 export const specGroups = [
   defineGroup({
     path: "spec",
     summary: "Author and inspect native specifications",
     description:
-      "Read requirements, design, review state, and delivery evidence; server policy governs every transition.",
+      "Read requirements, design, and review state; server policy governs every transition.",
   }),
   defineGroup({
     path: "spec section",

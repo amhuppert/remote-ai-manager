@@ -14,9 +14,7 @@ import {
 } from "@/lib/state-store";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
-import type { ConversationBinding } from "@/lib/conversation-core/turn/turn-spec";
-import { projectConversationTarget } from "@/lib/conversations/conversation-target";
-import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import type { ExecutionTarget } from "@/lib/project-conversations/execution-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -130,9 +128,8 @@ function defaultDeps(): ExecuteProjectPromptStreamDeps {
  * Session-less prompt entry for project conversations. Resolves the repo-root
  * execution target, get-or-creates the project conversation, enforces the
  * backend lock on the project record, synthesizes a sentinel `SessionState`,
- * and delegates the turn to the shared `executePromptStream` — supplying an
- * explicit durable binding so the conversation machine binds to the repo-root
- * worktree without a host session. Performs NO worktree creation, clean check,
+ * and delegates the turn to the shared core prompt entry, which resolves the
+ * durable project conversation and its repo-root workplace. Performs NO worktree creation, clean check,
  * init-script, dev-server, or pre-merge flow.
  */
 export function createProjectPromptExecutor(
@@ -233,19 +230,6 @@ export function createProjectPromptExecutor(
       lastActivityAt: conversation.lastActivityAt,
     });
 
-    const binding: ConversationBinding = {
-      // A real project ConversationState record backs this lane.
-      kind: "durable",
-      address: {
-        projectPath,
-        target: projectConversationTarget(
-          deps.getProjectDisplayName(projectPath),
-          conversation.id,
-        ),
-      },
-      worktreePath: projectPath,
-    };
-
     return deps.executePromptStream(
       projectPath,
       sentinelSession,
@@ -255,8 +239,6 @@ export function createProjectPromptExecutor(
       input.modelSelection,
       input.images,
       {
-        executionTarget,
-        binding,
         inputOrigin: input.inputOrigin,
       },
     );

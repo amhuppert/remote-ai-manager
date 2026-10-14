@@ -61,7 +61,6 @@ function buildSessionState(sessionName: string): SessionState {
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
     referenceDocuments: [],
   };
 }

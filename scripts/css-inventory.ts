@@ -113,14 +113,6 @@ const OWNERS: readonly OwnerSpec[] = [
     residual:
       "None (no DOM-targeting rules). The Tailwind v4 `@theme` token surface — currently a minimal sanity token + a spike `@source inline` safelist; the token-bridge context populates the full alias + extract lanes. Imported by globals.css alongside the Tailwind layer imports.",
   },
-  // ---- Vendor ----
-  {
-    path: "src/components/workflow-graph/workflow-graph.css",
-    taxonomy: "vendor",
-    alsoContains: ["animation"],
-    residual:
-      "PRESERVED (whole file): targets React Flow (`@xyflow/react`) vendor DOM (`.react-flow__*`, handles, edges, minimap, controls) + its own scrollbars + 7 graph `@keyframes`. Stays bespoke forever (decision 4 / R6.1). Migrated LAST and only its JSX-authored chrome — never the vendor DOM (Stage B 9.1).",
-  },
   // ---- Feature-layout (with preserved residuals where present) ----
   {
     path: "src/features/_root/styles/conversation.css",

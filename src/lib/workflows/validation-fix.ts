@@ -17,7 +17,7 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createLogger } from "../logging";
-import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/lifecycle";
+import { runConversationTask as defaultExecuteWorkflowTaskRun } from "@/lib/supervision/handles";
 import { executeFreshTaskRun as defaultExecuteFreshTaskRun } from "@/lib/workflows/merge/fresh-task-run";
 import type {
   AgentTurnDispatch,

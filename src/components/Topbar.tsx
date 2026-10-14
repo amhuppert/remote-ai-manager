@@ -226,8 +226,6 @@ export default function Topbar({
       enabled: hydrated && needsYouItems.length > 0,
     },
   );
-
-  const templatesActive = pathname?.startsWith("/templates") ?? false;
   const configActive = pathname === "/config";
   // The mobile budget sheet is opened from the overflow menu but mounted
   // outside it: Radix unmounts the menu content on close, which would take a
@@ -426,42 +424,7 @@ export default function Topbar({
             <span className="leading-none max-768:hidden">Tickets</span>
           </Link>
           <DevServersNavLink active={pathname === "/dev-servers"} />
-          <Link
-            href="/templates"
-            className={cn(
-              "inline-flex h-[28px] items-center gap-[6px] rounded-sm border border-solid bg-transparent px-[10px] font-mono text-[0.7rem] font-medium tracking-[0.06em] uppercase no-underline [transition:all_0.15s_ease] hover:border-cyan hover:bg-bg-hover hover:text-text-primary! max-768:hidden",
-              templatesActive
-                ? "border-cyan text-text-primary!"
-                : "border-border-default text-text-secondary!",
-            )}
-            title="Global Workflow Templates"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <rect
-                x="2"
-                y="4.5"
-                width="9"
-                height="9"
-                rx="1.4"
-                stroke="currentColor"
-                strokeWidth="1.2"
-              />
-              <path
-                d="M5 4.5 V3.4 A1.4 1.4 0 0 1 6.4 2 H13 A1 1 0 0 1 14 3 V9.6 A1.4 1.4 0 0 1 12.6 11 H11.5"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span className="leading-none max-768:hidden">Templates</span>
-          </Link>
+
           <Link
             href="/config"
             className={cn(
@@ -524,9 +487,7 @@ export default function Topbar({
                 <Link href={specsHref}>Specs</Link>
               </DropdownMenuItem>
               <DevServersMenuItem />
-              <DropdownMenuItem asChild touch>
-                <Link href="/templates">Workflow Templates</Link>
-              </DropdownMenuItem>
+              <DropdownMenuItem asChild touch></DropdownMenuItem>
               <DropdownMenuItem asChild touch>
                 <Link href="/config">System Configuration</Link>
               </DropdownMenuItem>

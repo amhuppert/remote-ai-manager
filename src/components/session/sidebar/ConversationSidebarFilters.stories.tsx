@@ -12,8 +12,8 @@ function FiltersHarness() {
         projects={["command-center", "active-recall"]}
         project={project}
         onProjectChange={setProject}
-        includeGraphWorkflows={workflows}
-        onGraphWorkflowsChange={setWorkflows}
+        includeRoleHistory={workflows}
+        onRoleHistoryChange={setWorkflows}
         includeArchived={archived}
         onArchivedChange={setArchived}
       />

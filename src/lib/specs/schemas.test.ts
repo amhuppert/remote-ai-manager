@@ -5,9 +5,7 @@ import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   executionLaneSchema,
   actorProvenanceSchema,
-  evidenceEvaluatedStateSchema,
   evidenceKindSchema,
-  externalDeliverySchema,
   importBundleSchema,
   isMachineValidationEvidenceKind,
   refusalCodeSchema,
@@ -190,7 +188,6 @@ describe("spec authoring stage schema", () => {
         citation_hash: "a".repeat(64),
         proposed_at: null,
         approved_at: null,
-        external_delivery_json: null,
         created_at: "2026-07-22T12:00:00.000Z",
       }).authoring_stage,
     ).toBe("design");
@@ -208,7 +205,6 @@ describe("spec authoring stage schema", () => {
         citationHash: "a".repeat(64),
         proposedAt: null,
         approvedAt: null,
-        externalDelivery: null,
         createdAt: "2026-07-22T12:00:00.000Z",
       }).authoringStage,
     ).toBe("design");
@@ -221,7 +217,6 @@ describe("spec gate policy schema", () => {
       preset: "exploratory",
       overrides: {
         requirements: "gate",
-        delivery: "notify",
       },
     } as const;
 
@@ -279,16 +274,6 @@ describe("shared spec contracts", () => {
     expect(isMachineValidationEvidenceKind("test_run")).toBe(true);
     expect(isMachineValidationEvidenceKind("validator_verdict")).toBe(true);
     expect(isMachineValidationEvidenceKind("commit")).toBe(false);
-  });
-
-  it("keeps the retained-historical surfaceId readable in evaluated state", () => {
-    const state = {
-      commitSha: "abc123",
-      relevantPaths: ["src/lib/specs/schemas.ts"],
-      relevantTreeHash: "tree123",
-      surfaceId: "spec-studio/review",
-    };
-    expect(evidenceEvaluatedStateSchema.parse(state)).toEqual(state);
   });
 
   it.each([
@@ -544,7 +529,6 @@ describe("revision citation integrity metadata", () => {
     citation_hash: "a".repeat(64),
     proposed_at: null,
     approved_at: null,
-    external_delivery_json: null,
     created_at: "2026-08-23T10:00:00.000Z",
   } as const;
 
@@ -561,7 +545,6 @@ describe("revision citation integrity metadata", () => {
     citationHash: "a".repeat(64),
     proposedAt: null,
     approvedAt: null,
-    externalDelivery: null,
     createdAt: "2026-08-23T10:00:00.000Z",
   } as const;
 
@@ -693,7 +676,6 @@ describe("revision-owned assumption citation schemas", () => {
       citationHash: "a".repeat(64),
       proposedAt: null,
       approvedAt: null,
-      externalDelivery: null,
       createdAt: "2026-08-23T10:00:00.000Z",
     } as const;
     const later = {
@@ -1105,57 +1087,12 @@ describe("import provenance contracts", () => {
   it("registers the durable spec_imported event type", () => {
     expect(specEventTypeSchema.safeParse("spec_imported").success).toBe(true);
   });
-
-  it("carries the external-delivery record as actor-attributed source provenance", () => {
-    const record = {
-      at: "2026-08-10T09:00:00.000Z",
-      actor: { kind: "agent", conversationId: "conversation-import" },
-      source: { label: "kiro:.kiro/specs/imported-feature" },
-    };
-
-    expect(externalDeliverySchema.parse(record)).toEqual(record);
-  });
-
-  it("refuses an external-delivery record without a source label or with unknown keys", () => {
-    const base = {
-      at: "2026-08-10T09:00:00.000Z",
-      actor: { kind: "human" },
-      source: { label: "external" },
-    };
-
-    expect(
-      externalDeliverySchema.safeParse({ ...base, source: { label: "" } })
-        .success,
-    ).toBe(false);
-    expect(
-      externalDeliverySchema.safeParse({ ...base, verdict: "passed" }).success,
-    ).toBe(false);
-  });
-
-  it.each([
-    "not-an-iso-timestamp",
-    "2026-08-10",
-    "10/08/2026",
-    "2026-08-10 09:00:00",
-    "",
-  ])("refuses %j as an external-delivery timestamp", (at) => {
-    // The claim's whole content is when the work shipped and who says so. A
-    // free-text `at` would persist an unorderable, uncomparable date that no
-    // surface could honestly render against this system's own timestamps.
-    expect(
-      externalDeliverySchema.safeParse({
-        at,
-        actor: { kind: "human" },
-        source: { label: "external" },
-      }).success,
-    ).toBe(false);
-  });
 });
 
 const maximalBundle = {
   slug: "imported-feature",
   name: "Imported feature",
-  gatePolicy: { preset: "exploratory", overrides: { delivery: "notify" } },
+  gatePolicy: { preset: "exploratory", overrides: {} },
   source: { label: "kiro:.kiro/specs/imported-feature" },
   sections: [
     {
@@ -1209,7 +1146,6 @@ const maximalBundle = {
     },
     { text: "External delivery already shipped." },
   ],
-  delivered: false,
   dryRun: true,
 } as const;
 
@@ -1218,7 +1154,7 @@ describe("import bundle schema", () => {
     expect(importBundleSchema.parse(maximalBundle)).toEqual(maximalBundle);
   });
 
-  it("defaults the gate policy to the contract-bearing preset and delivered to true", () => {
+  it("defaults the gate policy to the contract-bearing preset", () => {
     const parsed = importBundleSchema.parse({
       slug: "minimal-import",
       name: "Minimal import",
@@ -1231,7 +1167,6 @@ describe("import bundle schema", () => {
     });
 
     expect(parsed.gatePolicy).toEqual({ preset: "contract-bearing" });
-    expect(parsed.delivered).toBe(true);
     // A bundle that says nothing about rehearsing must import for real. The
     // opposite default would let a caller believe it had imported a spec that
     // was only ever previewed.

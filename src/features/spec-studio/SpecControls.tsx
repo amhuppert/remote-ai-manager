@@ -65,8 +65,6 @@ const logger = createClientLogger("spec-studio-controls");
 const ACTIVE_GATES = [
   "requirements",
   "design",
-  "execution_start",
-  "delivery",
 ] as const satisfies readonly SpecGate[];
 
 const presetLabels: Record<SpecGatePreset, string> = {
@@ -76,16 +74,14 @@ const presetLabels: Record<SpecGatePreset, string> = {
 };
 
 const presetDescriptions: Record<SpecGatePreset, string> = {
-  "contract-bearing": "Human review for authoring, launch, and delivery.",
-  exploratory: "Notify while authoring; preserve the delivery gate.",
+  "contract-bearing": "Human review for requirements and design.",
+  exploratory: "Notify while authoring.",
   "fast-path": "One combined approval for Requirements and Design.",
 };
 
 const gateDescriptions: Record<(typeof ACTIVE_GATES)[number], string> = {
   requirements: "Admits the requirements contract.",
   design: "Admits the design narrative and decisions.",
-  execution_start: "Admits the approved delivery candidate for launch.",
-  delivery: "Admits delivery claims and merge readiness.",
 };
 
 type GateSelection = SpecGateDial | "inherit";
@@ -186,9 +182,6 @@ export function PolicyDialog({
               {gateLabels[gate]}
             </FormLabel>
             <FormHint>{gateDescriptions[gate]}</FormHint>
-            {gate === "delivery" && (
-              <FormHint>Delivery can never be Off.</FormHint>
-            )}
             <Select
               value={selections[gate] ?? "inherit"}
               onValueChange={(value) =>
@@ -215,9 +208,7 @@ export function PolicyDialog({
                 </SelectItem>
                 <SelectItem value="gate">Gate</SelectItem>
                 <SelectItem value="notify">Notify</SelectItem>
-                <SelectItem value="off" disabled={gate === "delivery"}>
-                  Off
-                </SelectItem>
+                <SelectItem value="off">Off</SelectItem>
               </SelectContent>
             </Select>
           </FormGroup>
@@ -415,8 +406,7 @@ function AbandonSpecControl({
         <AlertDialogContent>
           <AlertDialogTitle>Abandon this spec?</AlertDialogTitle>
           <AlertDialogDescription>
-            The spec becomes read-only. Existing definitions and execution
-            history remain available.
+            The spec becomes read-only. Its authoring history remain available.
           </AlertDialogDescription>
           <AlertDialogActions>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

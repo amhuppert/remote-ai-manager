@@ -1,6 +1,5 @@
 import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import { createNotepadDeliveryWatermarksRepo } from "@/lib/state-store/notepad-delivery-watermarks-repo";
-import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import {
@@ -13,7 +12,6 @@ import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { createSubscriptionSourceQueriesRepo } from "@/lib/state-store/subscription-source-queries-repo";
 import { createTicketStatusChangesRepo } from "@/lib/state-store/ticket-status-changes-repo";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { createSubscriptionSourceReader } from "./source-adapters";
 
@@ -29,13 +27,9 @@ function reader() {
       fixture.db,
       createWriteQueue(),
     ),
-    resultDeliveries: createGraphWorkflowResultDeliveriesRepo(fixture.db),
     tickets: createTicketsRepo(fixture.db, createWriteQueue()),
     specs: fixture.specs,
     specEvents: createSpecEventsRepo(fixture.db),
-    workflows: fixture.graphWorkflowExecutions,
-    archivedWorkflows: fixture.graphWorkflowArchivedExecutions,
-    workflowEvents: fixture.graphWorkflowEvents,
     validations: createValidationRunsRepo(fixture.db),
     jobs: createJobsRepo(fixture.db),
     queries: createSubscriptionSourceQueriesRepo(fixture.db),
@@ -328,100 +322,6 @@ describe("durable subscription sources", () => {
         )
       ).missing,
     ).toBe(true);
-  });
-
-  it("reads workflow boundary IDs across keyset pages and after archival", async () => {
-    fixture.seedSession(projectPath, "session");
-    const execution = createWorkflowExecution({
-      id: "workflow",
-      ownerConversationId: recipient.conversationId,
-    });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      execution,
-      "2026-09-30T10:00:00.000Z",
-    );
-    const source = { kind: "workflow", id: "workflow" } as const;
-    const baseline = await reader()(recipient, source, null);
-    expect(baseline.missing).toBe(false);
-    fixture.graphWorkflowEvents.appendMany(
-      projectPath,
-      "session",
-      "workflow",
-      "2026-09-30T10:01:00.000Z",
-      Array.from({ length: 501 }, () => ({
-        occurredAt: "2026-09-30T10:01:00.000Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-status",
-          projectName: "source-adapters",
-          sessionName: "session",
-          executionId: "workflow",
-          workflowStatus: "running",
-          activeContextIds: [],
-          activeBatchIds: [],
-          activeJoinIds: [],
-          haltReason: null,
-          pendingHaltReason: null,
-          secondaryHaltReasons: [],
-        },
-      })),
-    );
-    const boundary = fixture.graphWorkflowEvents.append(
-      projectPath,
-      "session",
-      "workflow",
-      "2026-09-30T10:02:00.000Z",
-      {
-        occurredAt: "2026-09-30T10:02:00.000Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-boundary",
-          projectName: "source-adapters",
-          sessionName: "session",
-          executionId: "workflow",
-          boundaryKind: "completion",
-          workflowStatus: "completed",
-          completedAt: "2026-09-30T10:02:00.000Z",
-          contextId: null,
-          pendingActions: [],
-          outputProjection: { kind: "no_declared_structured_result" },
-        },
-      },
-    );
-    const updated = await reader()(recipient, source, baseline.cursor);
-    expect(updated.cursor).toBe(String(boundary.id));
-    expect(updated.facts).toMatchObject([
-      {
-        occurrenceId: String(boundary.id),
-        category: "outcome",
-        outcome: "completed",
-      },
-    ]);
-    fixture.graphWorkflowArchivedExecutions.insert({
-      projectPath,
-      sessionName: "session",
-      executionId: "workflow",
-      archivedAt: "2026-09-30T10:03:00.000Z",
-      status: "completed",
-      startedAt: execution.startedAt,
-      completedAt: "2026-09-30T10:02:00.000Z",
-      execution: {
-        ...execution,
-        status: "completed",
-        completedAt: "2026-09-30T10:02:00.000Z",
-      },
-    });
-    fixture.graphWorkflowExecutions.setActive(
-      projectPath,
-      "session",
-      null,
-      "2026-09-30T10:03:00.000Z",
-    );
-    expect((await reader()(recipient, source, updated.cursor)).missing).toBe(
-      false,
-    );
   });
 
   it("retains committed ticket status provenance and every post across pages", async () => {

@@ -1,7 +1,7 @@
 {
   "overrides": [
     {
-      "comment": "Tailwind class-sorting is scoped to MIGRATED, utility-first surfaces only. Applying prettier-plugin-tailwindcss repo-wide would mangle CC's pervasive legacy `${cond ? ' suffix' : ''}` conditional-className idiom (the plugin trims the significant join space). Append a path here as each feature wave migrates to utilities — same spirit as the utility-collisions allowlist and the CSS ratchet.",
+      "comment": "Tailwind class-sorting is scoped to MIGRATED, utility-first surfaces only. Applying prettier-plugin-tailwindcss repo-wide would mangle CC's pervasive legacy `${cond ? ' suffix' : ''}` conditional-className idiom (the plugin trims the significant join space). Append a path here as each feature wave migrates to utilities \u2014 same spirit as the utility-collisions allowlist and the CSS ratchet.",
       "files": [
         "src/components/ui/**/*.{ts,tsx}",
         "src/components/markdown/**/*.{ts,tsx}",
@@ -74,7 +74,6 @@
         "src/features/session/conversation/ConversationMentionChip.stories.tsx",
         "src/features/session/conversation/DocsPanel.tsx",
         "src/features/session/conversation/FileMentionChip.tsx",
-        "src/features/session/conversation/GraphWorkflowCard.tsx",
         "src/features/session/conversation/RightPane.tsx",
         "src/features/session/conversation/SpecBrowser.tsx",
         "src/features/session/conversation/SyntheticForkBadge.tsx",
@@ -83,7 +82,6 @@
         "src/features/session/mobile/MobilePromptToolbar.stories.tsx",
         "src/features/session/panes/**/*.{ts,tsx}",
         "src/features/session/conversation/ConversationLinkChip.tsx",
-        "src/components/CollapsibleText.tsx",
         "src/components/MergeToast.tsx",
         "src/components/InputNeededToast.tsx",
         "src/components/PromptErrorToast.tsx",
@@ -96,9 +94,6 @@
         "src/components/DevServerDrawer.tsx",
         "src/features/session/conversation/DevServersButton.tsx",
         "src/components/agent-capabilities/**/*.{ts,tsx}",
-        "src/features/workflows-builder/**/*.{ts,tsx}",
-        "src/features/session-workflow/**/*.{ts,tsx}",
-        "src/components/workflow-graph/**/*.{ts,tsx}",
         "src/features/session/mobile/MobileInfoPanel.tsx",
         "src/components/ToolUseGroup.tsx",
         "src/components/CommandIndicator.tsx",
@@ -113,11 +108,7 @@
         "src/features/session/conversation/**/*.{ts,tsx}",
         "src/features/session/ConversationWorkspace.tsx",
         "src/app/projects/[name]/[session]/conflicts/page.tsx",
-        "src/components/WorkflowLaunchForm.tsx",
-        "src/features/workflow-templates/**/*.{ts,tsx}",
         "src/components/context-artifacts/**/*.{ts,tsx}",
-        "src/components/workflow-config/**/*.{ts,tsx}",
-        "src/components/workflow-config-panel/**/*.{ts,tsx}",
         "src/features/tickets/**/*.{ts,tsx}",
         "src/components/SessionTicketIndicator.tsx",
         "src/components/MultilineInput.tsx",
@@ -146,9 +137,13 @@
         "src/features/session/conversation/SessionRuns.tsx"
       ],
       "options": {
-        "plugins": ["prettier-plugin-tailwindcss"],
+        "plugins": [
+          "prettier-plugin-tailwindcss"
+        ],
         "tailwindStylesheet": "./src/app/globals.css",
-        "tailwindFunctions": ["cn"]
+        "tailwindFunctions": [
+          "cn"
+        ]
       }
     }
   ]

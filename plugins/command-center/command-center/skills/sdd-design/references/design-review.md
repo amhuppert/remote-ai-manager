@@ -4,13 +4,7 @@ Assess the current design against approved requirements, the user's appetite,
 and the cited project evidence. The result is actionable findings and a readiness
 recommendation for the existing human Design gate.
 
-Apply the **Feasibility** lens from
-[graph-workflow-review](../../graph-workflow-review/SKILL.md#three-lenses-weighted-equally)
-and the existing **Premise rule** it references. Verify the author's evidence;
-a "verified" label alone proves nothing. Apply runtime-fact and breadth checks
-to design claims, using domain owners until delivery assigns contexts. The graph
-skill's plan validation and verdict commands apply to plan revisions, not native
-Design approval.
+Use three equally weighted lenses: correctness and feasibility, complexity and maintainability, and alignment with requirements and principal journeys. Verify runtime premises against their sources and observed facts; a verified label alone proves nothing. Distinguish existing capabilities, supported inferences, and proposed new behavior. Judge the breadth of the promised behavior against the operating envelope and appetite.
 
 ## Demonstrate the claims
 

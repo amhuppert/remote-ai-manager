@@ -1,5 +1,4 @@
 import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
-import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import { withdrawSubscriptionWakeFromQueue } from "./wake-queue-control";
 import { validateSubscriptionSelection } from "./catalog";
 import { createConversationSubscriptionPreferencesRepo } from "@/lib/state-store/conversation-subscription-preferences-repo";
@@ -24,9 +23,6 @@ import { createNotepadsRepo } from "@/lib/state-store/notepads-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
-import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
-import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
-import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createValidationRunsRepo } from "@/lib/state-store/validation-runs-repo";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { createRunsRepo } from "@/lib/state-store/runs-repo";
@@ -90,13 +86,9 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
     notepads,
     comments: createNotepadCommentsRepo(db, writeQueue),
     watermarks: createNotepadDeliveryWatermarksRepo(db, writeQueue),
-    resultDeliveries: createGraphWorkflowResultDeliveriesRepo(db),
     tickets: createTicketsRepo(db, writeQueue),
     specs: createSpecsRepo(db, writeQueue),
     specEvents: createSpecEventsRepo(db),
-    workflows: createGraphWorkflowExecutionsRepo(db),
-    archivedWorkflows: createGraphWorkflowArchivedExecutionsRepo(db),
-    workflowEvents: createGraphWorkflowEventsRepo(db),
     validations: createValidationRunsRepo(db),
     jobs: createJobsRepo(db),
     queries,

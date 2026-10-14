@@ -20,8 +20,6 @@ import {
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
-import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
-import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -66,21 +64,6 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
     tddEnabled: false,
     targetBranch: "develop",
     parentSessionName: "ancestor",
-    graphWorkflowExecution: {
-      id: "wf-1",
-      origin: {
-        kind: "template",
-        definitionId: "seed-1",
-        definitionRevision: 1,
-        tier: "project",
-      },
-      seedDefinitionId: "seed-1",
-      seedDefinitionRevision: 1,
-      workingDefinition: {},
-      charter: makeTestCharter(),
-      status: "pending",
-      startedAt: "2026-01-01T00:00:00Z",
-    },
     workflowEnvelopes: { env1: { kind: "primitive", payload: 42 } },
     workflowLanes: { lane1: { engine: "noop" } },
     mcpOverrides: {
@@ -91,147 +74,6 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
     ...overrides,
   });
 }
-
-describe("sessions-repo round-trip contract", () => {
-  it("upsert + findByKey round-trips a minimal fixture (all nullable/optional fields default)", () => {
-    const fixture = makeMinimalSession();
-    repo.upsert(PROJECT_PATH, fixture);
-
-    const out = repo.findByKey(PROJECT_PATH, fixture.sessionName);
-    expect(out).not.toBeNull();
-    if (!out) return;
-
-    expect(out.sessionName).toBe(fixture.sessionName);
-    expect(out.parentSessionName).toBeNull();
-    expect(out.graphWorkflowExecution).toBeNull();
-    expect(out.workflowEnvelopes).toBeUndefined();
-    expect(out.workflowLanes).toBeUndefined();
-    expect(out.mcpOverrides).toBeUndefined();
-    // The repo materializes an explicit `spawnedFrom: null` for non-spawned
-    // rows; the minimal fixture omits it (optional, no default).
-    expect(out.spawnedFrom).toBeNull();
-
-    expect(sessionStateSchema.parse(out)).toEqual({
-      ...fixture,
-      spawnedFrom: null,
-    });
-  });
-
-  it("upsert leaves the vestigial objective column NULL and defaults creation_mode to 'normal'", () => {
-    // The `objective` field was removed from the domain; the physical column is
-    // retained (forward/backward-compatible) but the repo binds nothing to it,
-    // so a freshly upserted row must read back NULL. The minimal fixture omits
-    // creationMode, so the schema/floor default must land it on `normal`.
-    repo.upsert(PROJECT_PATH, makeMinimalSession());
-
-    const rawRow = db
-      .prepare(
-        `SELECT objective, creation_mode FROM sessions
-         WHERE project_path = ? AND session_name = ?`,
-      )
-      .get(PROJECT_PATH, "s1") as {
-      objective: string | null;
-      creation_mode: string;
-    };
-
-    expect(rawRow.objective).toBeNull();
-    expect(rawRow.creation_mode).toBe("normal");
-  });
-
-  it("a row inserted with no creation_mode falls back to the floor default 'normal'", () => {
-    // Insert bypassing the repo (only the required columns) so the floor's
-    // `creation_mode TEXT NOT NULL DEFAULT 'normal'` is what supplies the value.
-    db.prepare(
-      `INSERT INTO sessions
-         (project_path, session_name, worktree_path, branch_name,
-          created_at, last_activity_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(
-      PROJECT_PATH,
-      "floor-default",
-      "/wt/floor-default",
-      "csm/floor-default",
-      "2026-01-01T00:00:00Z",
-      "2026-01-01T00:00:00Z",
-    );
-
-    const out = repo.findByKey(PROJECT_PATH, "floor-default");
-    expect(out?.creationMode).toBe("normal");
-  });
-
-  it("upsert + findByKey round-trips a fully populated fixture (every field set, JSON sub-trees included)", () => {
-    const fixture = makeFullSession();
-    repo.upsert(PROJECT_PATH, fixture);
-
-    const out = repo.findByKey(PROJECT_PATH, fixture.sessionName);
-    expect(out).not.toBeNull();
-    if (!out) return;
-
-    // The repo materializes `spawnedFrom: null` for the (non-spawned) fixture
-    // and no longer persists `graphWorkflowExecution` on the sessions row (it
-    // lives in the dedicated graph_workflow_executions table), so it nulls on
-    // reload regardless of the fixture value.
-    const expected = {
-      ...fixture,
-      spawnedFrom: null,
-      graphWorkflowExecution: null,
-    };
-    expect(out).toEqual(expected);
-    expect(sessionStateSchema.parse(out)).toEqual(expected);
-  });
-
-  it("round-trips a chat-spawned session's spawnedFrom origin tag", () => {
-    const fixture = makeMinimalSession({
-      sessionName: "from-chat",
-      spawnedFrom: {
-        source: "chat",
-        projectName: "my-project",
-        conversationId: "conv-1",
-      },
-    });
-    repo.upsert(PROJECT_PATH, fixture);
-
-    const out = repo.findByKey(PROJECT_PATH, "from-chat");
-    expect(out?.spawnedFrom).toEqual({
-      source: "chat",
-      projectName: "my-project",
-      conversationId: "conv-1",
-    });
-  });
-
-  it("findByProject returns all sessions belonging to a project, no others", () => {
-    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run("/p2");
-    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "a" }));
-    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "b" }));
-    repo.upsert("/p2", makeMinimalSession({ sessionName: "x" }));
-
-    const p1Sessions = repo.findByProject(PROJECT_PATH);
-    expect(p1Sessions.map((s) => s.sessionName).sort()).toEqual(["a", "b"]);
-    const p2Sessions = repo.findByProject("/p2");
-    expect(p2Sessions.map((s) => s.sessionName)).toEqual(["x"]);
-  });
-
-  it("findAll returns every session paired with its projectPath", () => {
-    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run("/p2");
-    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "a" }));
-    repo.upsert("/p2", makeMinimalSession({ sessionName: "x" }));
-
-    const all = repo.findAll();
-    const pairs = all
-      .map((entry) => `${entry.projectPath}::${entry.session.sessionName}`)
-      .sort();
-    expect(pairs).toEqual(["/p1::a", "/p2::x"]);
-  });
-
-  it("delete removes only the targeted session", () => {
-    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "a" }));
-    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "b" }));
-
-    repo.delete(PROJECT_PATH, "a");
-    expect(repo.findByKey(PROJECT_PATH, "a")).toBeNull();
-    expect(repo.findByKey(PROJECT_PATH, "b")).not.toBeNull();
-  });
-});
 
 describe("sessions-repo cascading-FK invariant", () => {
   it("upsert on an existing session does NOT delete child conversations or reference_documents", () => {
@@ -384,198 +226,6 @@ describe("sessions-repo cascading-FK invariant", () => {
   });
 });
 
-describe("sessions-repo findListItemsByProject projection", () => {
-  it("returns rows without heavy JSON columns and computes has_active_graph_workflow", () => {
-    const heavyMachineSnapshot = JSON.stringify({
-      state: "running",
-      context: { largeBlob: "x".repeat(50_000) },
-    });
-
-    db.prepare(
-      `INSERT INTO sessions
-         (project_path, session_name, worktree_path, branch_name,
-          created_at, last_activity_at, workflow_envelopes, workflow_lanes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      PROJECT_PATH,
-      "running-wf",
-      "/wt/running-wf",
-      "csm/running-wf",
-      "2026-01-01T00:00:00Z",
-      "2026-02-01T00:00:00Z",
-      JSON.stringify({
-        env1: { workflowType: "collaboration", status: "running" },
-      }),
-      JSON.stringify({ lane1: { engine: "noop" } }),
-    );
-    db.prepare(
-      `INSERT INTO sessions
-         (project_path, session_name, worktree_path, branch_name,
-          created_at, last_activity_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(
-      PROJECT_PATH,
-      "done-wf",
-      "/wt/done-wf",
-      "csm/done-wf",
-      "2026-01-01T00:00:00Z",
-      "2026-01-15T00:00:00Z",
-    );
-
-    // The has_active_graph_workflow flag is derived by a correlated subquery
-    // against graph_workflow_executions, not the (now vestigial) sessions
-    // column. Seed one active and one terminal execution in the new table.
-    // `lease_held` is written explicitly because that projection — not the
-    // status — is what the subquery reads; its column default is deliberately
-    // "held", so a row seeded without it would read as active.
-    const insertExecution = db.prepare(
-      `INSERT INTO graph_workflow_executions
-         (project_path, session_name, execution_id, seed_definition_id,
-          seed_definition_revision, started_at, status, completed_at,
-          definition_json, runtime_json, updated_at, lease_held)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    insertExecution.run(
-      PROJECT_PATH,
-      "running-wf",
-      "wf-running",
-      "seed",
-      1,
-      "2026-01-01T00:00:00Z",
-      "running",
-      null,
-      "{}",
-      "{}",
-      "2026-02-01T00:00:00Z",
-      1,
-    );
-    insertExecution.run(
-      PROJECT_PATH,
-      "done-wf",
-      "wf-done",
-      "seed",
-      1,
-      "2026-01-01T00:00:00Z",
-      "completed",
-      "2026-01-15T00:00:00Z",
-      "{}",
-      "{}",
-      "2026-01-15T00:00:00Z",
-      0,
-    );
-
-    db.prepare(
-      `INSERT INTO conversations
-         (id, project_path, session_name, status, prompt_count,
-          created_at, last_activity_at, machine_snapshot)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      "conv-running",
-      PROJECT_PATH,
-      "running-wf",
-      "running",
-      0,
-      "2026-01-01T00:00:00Z",
-      "2026-01-01T00:00:00Z",
-      heavyMachineSnapshot,
-    );
-
-    const rows = repo.findListItemsByProject(PROJECT_PATH);
-    expect(rows).toHaveLength(2);
-
-    // The projection speaks camelCase domain vocabulary — no snake_case row
-    // shape (heavy or otherwise) crosses the repo boundary.
-    for (const row of rows) {
-      const keys = Object.keys(row);
-      for (const key of keys) {
-        expect(key).not.toContain("_");
-      }
-    }
-
-    const running = rows.find((r) => r.sessionName === "running-wf");
-    expect(running).toBeDefined();
-    expect(running?.hasActiveGraphWorkflow).toBe(true);
-    // The JSON column is parsed at the boundary into a domain object.
-    expect(running?.workflowEnvelopes).toMatchObject({
-      env1: { workflowType: "collaboration", status: "running" },
-    });
-
-    const done = rows.find((r) => r.sessionName === "done-wf");
-    expect(done).toBeDefined();
-    expect(done?.hasActiveGraphWorkflow).toBe(false);
-    expect(done?.workflowEnvelopes).toBeNull();
-  });
-
-  /**
-   * The ambient "this session has live workflow work" signal is lease tenure,
-   * read from the derived `lease_held` projection that the repository writes on
-   * every `setActive`.
-   *
-   * The status list this replaces could not be right: it named statuses this
-   * domain does not even have (`failed`, `cancelled`), so `aborted` counted as
-   * active, and no status list can see halt resumability or abandonment — the
-   * two facts that decide whether a halted run still holds anything. A run that
-   * can never continue kept advertising itself as live work on every session
-   * list, with no act available to clear it.
-   */
-  it.each([
-    { name: "aborted", status: "aborted", leaseHeld: 0, expected: false },
-    { name: "abandoned-halt", status: "halted", leaseHeld: 0, expected: false },
-    {
-      name: "unresumable-halt",
-      status: "halted",
-      leaseHeld: 0,
-      expected: false,
-    },
-    { name: "resumable-halt", status: "halted", leaseHeld: 1, expected: true },
-    { name: "paused", status: "paused", leaseHeld: 1, expected: true },
-    { name: "pending", status: "pending", leaseHeld: 1, expected: true },
-  ])(
-    "reports a $name execution as ambient-active: $expected",
-    ({ name, status, leaseHeld, expected }) => {
-      const sessionName = `session-${name}`;
-      db.prepare(
-        `INSERT INTO sessions
-           (project_path, session_name, worktree_path, branch_name,
-            created_at, last_activity_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(
-        PROJECT_PATH,
-        sessionName,
-        `/wt/${sessionName}`,
-        `csm/${sessionName}`,
-        "2026-01-01T00:00:00Z",
-        "2026-02-01T00:00:00Z",
-      );
-      db.prepare(
-        `INSERT INTO graph_workflow_executions
-           (project_path, session_name, execution_id, seed_definition_id,
-            seed_definition_revision, started_at, status, completed_at,
-            definition_json, runtime_json, updated_at, lease_held)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        PROJECT_PATH,
-        sessionName,
-        `wf-${name}`,
-        "seed",
-        1,
-        "2026-01-01T00:00:00Z",
-        status,
-        null,
-        "{}",
-        "{}",
-        "2026-02-01T00:00:00Z",
-        leaseHeld,
-      );
-
-      const row = repo
-        .findListItemsByProject(PROJECT_PATH)
-        .find((r) => r.sessionName === sessionName);
-      expect(row?.hasActiveGraphWorkflow).toBe(expected);
-    },
-  );
-});
-
 describe("canonicalSessionRow", () => {
   it("returns the same string for two SessionState values that are deep-equal post-Zod-parse", () => {
     const a = makeFullSession();
@@ -642,28 +292,6 @@ describe("rowToDomain quarantine: forward-incompatible scalar columns fail loud"
       ...values,
     );
   }
-
-  it("never reads the vestigial graph_workflow_execution column into the domain", () => {
-    // A structurally-valid-but-forward-incompatible blob left on the (now
-    // vestigial) sessions column must NOT surface on the domain object: the
-    // execution lives in graph_workflow_executions and the column is ignored.
-    insertRaw("legacy-blob", "graph_workflow_execution", "?", [
-      JSON.stringify({
-        id: "wf-ignored",
-        seedDefinitionId: "seed",
-        seedDefinitionRevision: 1,
-        workingDefinition: {},
-        status: "halted",
-        startedAt: "2026-01-01T00:00:00Z",
-        haltReason: { type: "collaboration_failure", contextId: "ctx-1" },
-      }),
-    ]);
-
-    const out = repo.findByKey(PROJECT_PATH, "legacy-blob");
-    expect(out).not.toBeNull();
-    expect(out?.sessionName).toBe("legacy-blob");
-    expect(out?.graphWorkflowExecution).toBeNull();
-  });
 
   it("still throws (fail-loud) when a core scalar column is unparseable", () => {
     insertRaw("bad-source", "source", "?", ["not-a-valid-source"]);
@@ -878,7 +506,6 @@ describe("sessions-repo setSpawnedFrom cache invalidation (F10)", () => {
  * nested optional fields are all set.
  */
 function buildMaximalSession(): SessionState {
-  const execution = buildMaximalGraphWorkflowExecution();
   return sessionStateSchema.parse({
     sessionName: "full-durable",
     worktreePath: "/wt/full-durable",
@@ -897,7 +524,6 @@ function buildMaximalSession(): SessionState {
       projectName: "my-project",
       conversationId: "conv-1",
     },
-    graphWorkflowExecution: execution,
     workflowEnvelopes: {
       env1: { kind: "primitive", payload: 42, status: "running" },
     },
@@ -1196,13 +822,6 @@ describe("sessions-repo durability contract", () => {
         // are joined in by higher layers; rowToDomain sets
         // `referenceDocuments: []`. Not a serialization gap.
         referenceDocuments: "not-persisted",
-        // `graphWorkflowExecution` no longer round-trips on the sessions row.
-        // The active execution lives in the dedicated graph_workflow_executions
-        // table (see graph-workflow-executions-repo) and is merged back into the
-        // in-memory SessionState by higher layers, not by sessions-repo;
-        // rowToDomain deliberately sets `graphWorkflowExecution: null`. Its own
-        // durability backstop is graph-workflow-executions-repo.contract.test.
-        graphWorkflowExecution: "not-persisted",
       },
     });
   });

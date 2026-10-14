@@ -3,11 +3,6 @@ import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatc
 import type { ConversationQueueDeps } from "./message-queue-drain";
 
 const defaultConversationQueueDeps: ConversationQueueDeps = {
-  submitTurn: async (input) => {
-    const { submitConversationTurn } =
-      await import("@/lib/workflows/conversation/lifecycle");
-    return submitConversationTurn(input);
-  },
   claimNextTurnBatch: (input) => messageQueueService.claimNextTurnBatch(input),
   markPending: (input) => messageQueueService.markPending(input),
   markDelivered: (input) => messageQueueService.markDelivered(input),

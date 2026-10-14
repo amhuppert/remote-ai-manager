@@ -8,7 +8,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 - `src/lib/projects/repo-config.ts` — `readRepoConfig()`
 - `src/lib/validation/singleton.ts` — process-wide `ValidationService` entry point
 - `src/lib/sessions/service.ts` — init script execution lives **in `createSession()`**, not in `repo-config.ts`
-- `src/lib/workspace/parallel-worktrees.ts` — `provision()` runs the same init script after each graph-workflow parallel-context worktree is created
+- `src/lib/workspace/parallel-worktrees.ts` — `provision()` runs the same init script after each run parallel-context worktree is created
 - `src/lib/dev-server/registry.ts` — spawn/stop, CC-assigned port injection (`CC_ASSIGNED_PORT`/`PORT`)
 - `src/lib/dev-server/port-selection.ts` — port scan + ownership (`selectPort`)
 - `src/lib/dev-server/liveness.ts` — liveness polling
@@ -19,7 +19,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 ### `initScriptPath` — Worktree init
 
-- Runs after worktree creation in `createSession()` **and** after each graph-workflow parallel-context worktree is created in `parallel-worktrees.ts:provision()`
+- Runs after worktree creation in `createSession()` **and** after each run parallel-context worktree is created in `parallel-worktrees.ts:provision()`
 - Direct exec (`execFile`, **shebang required**)
 - cwd = worktree, no timeout (relies on script's own bounding)
 - Failure → rollback: session path removes worktree and deletes session state; parallel-context path disposes the worktree (and branch) so the next iteration can retry
@@ -43,7 +43,7 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 ### `devServers` — Dev server declarations
 
 - Array of `{ name, command, port: { base, range? }, cwd? }` — started on demand through the UI or `cctl dev ensure`, not automatically at session creation. `port` is required.
-- Owners: a session worktree, a graph-workflow lane worktree, or the project root. Project-root servers are keyed in the registry by the project sentinel session name with `worktreePath = projectPath`; the service resolves that owner without a session lookup, and the project routes live at `/api/projects/[name]/dev-servers/...` (same handlers as the session routes, which refuse the sentinel).
+- Owners: a session worktree, a run lane worktree, or the project root. Project-root servers are keyed in the registry by the project sentinel session name with `worktreePath = projectPath`; the service resolves that owner without a session lookup, and the project routes live at `/api/projects/[name]/dev-servers/...` (same handlers as the session routes, which refuse the sentinel).
 - `GET /api/dev-servers` (`dev-server/overview.ts`) projects every project's root servers plus active session/lane servers; `POST /api/dev-servers/stop` stops one listed instance by its exact registry identity.
 - Port ownership (`dev-server/port-ownership.ts`) never counts the CC server's own PID or a cwd under `<worktree>/.worktrees/` as owned — without both, a project-root start would offer to kill CC or a session's server.
 - Spawned with `shell: true` (unlike init and validation wrappers)

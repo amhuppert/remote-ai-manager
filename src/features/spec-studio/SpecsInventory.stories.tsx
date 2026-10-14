@@ -13,17 +13,12 @@ function fixture(
   overrides: {
     authoringFacet?: "draft";
     exploratory?: boolean;
-    /** Criteria delivered outside this system, on an import's testimony. */
-    deliveredExternally?: number;
+    imported?: boolean;
     pendingApprovals?: number;
-    proven?: number;
-    scope?: number;
-    workflows?: number;
   } = {},
 ): SpecSummaryView {
   const slug = `${phase.replace("_", "-")}-spec`;
   const pendingApprovals = overrides.pendingApprovals ?? 0;
-  const deliveredExternally = overrides.deliveredExternally ?? 0;
 
   return {
     spec: {
@@ -55,23 +50,11 @@ function fixture(
     },
     pendingApprovalCount: pendingApprovals,
     approvalState: pendingApprovals > 0 ? "pending" : "complete",
-    delivery: {
-      allWaived: false,
-      deliveredCount: (overrides.proven ?? 0) + deliveredExternally,
-      provenCount: overrides.proven ?? 0,
-      deliveredExternallyCriterionIds: Array.from(
-        { length: deliveredExternally },
-        (_unused, position) => `criterion-${position + 1}`,
-      ),
-      totalInScope: overrides.scope ?? 5,
-    },
-    imported: deliveredExternally > 0,
+    imported: overrides.imported ?? false,
     linkedWork: {
       tickets: index % 3,
       conversations: index % 2,
       sessions: 0,
-      workflowExecutions: overrides.workflows ?? 0,
-      mergeJobs: phase === "delivered" ? 1 : 0,
     },
   };
 }
@@ -79,14 +62,11 @@ function fixture(
 const allPhaseFixtures = [
   fixture("draft", 1, { pendingApprovals: 3 }),
   fixture("approved", 3),
-  fixture("executing", 4, {
+  fixture("draft", 4, {
     authoringFacet: "draft",
     pendingApprovals: 1,
-    proven: 7,
-    scope: 12,
-    workflows: 1,
   }),
-  fixture("delivered", 5, { proven: 8, scope: 8 }),
+  fixture("approved", 5, {}),
   fixture("abandoned", 6),
 ];
 
@@ -114,7 +94,7 @@ type Story = StoryObj<typeof meta>;
 export const AllPhases: Story = {};
 
 export const PhaseFiltered: Story = {
-  args: { initialPhase: "executing" },
+  args: { initialPhase: "draft" },
 };
 
 export const Exploratory: Story = {
@@ -123,9 +103,9 @@ export const Exploratory: Story = {
   },
 };
 
-export const ImportedDelivered: Story = {
+export const Imported: Story = {
   args: {
-    specs: [fixture("delivered", 8, { deliveredExternally: 4, scope: 4 })],
+    specs: [fixture("approved", 8, { imported: true })],
   },
 };
 

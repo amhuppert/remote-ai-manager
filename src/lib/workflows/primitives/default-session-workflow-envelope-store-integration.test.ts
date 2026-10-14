@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { collaborationSessionContextSchema } from "@/lib/workflows/collaboration/session-context";
+import { collaborationAgentsMapSchema } from "@/lib/workflows/collaboration/types";
 /**
  * Integration test for the production WorkflowEnvelopeStore wiring.
  *
@@ -27,7 +30,6 @@ import {
   createDefaultSessionWorkflowEnvelopeStore,
 } from "./default-session-workflow-envelope-store";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
-import { collaborationFeatureSnapshotSchema } from "@/lib/workflows/collaboration/feature-snapshot";
 import { parseSessionContextForExecution } from "@/lib/workflows/collaboration/session-context";
 import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
@@ -80,7 +82,6 @@ function seedStateWithSession(): ManagerState {
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,
-            graphWorkflowExecution: null,
             referenceDocuments: [],
           },
         },
@@ -262,9 +263,13 @@ describe("durable workflow wiring through production factory", () => {
 
     // The reloaded blob must satisfy both the storage decoder (display) and
     // the strict execution parser (resume), not just deep-equal the input.
-    const decoded = collaborationFeatureSnapshotSchema.parse(
-      reloaded?.featureSnapshot,
-    );
+    const decoded = z
+      .object({
+        origin: z.literal("user"),
+        sessionContext: collaborationSessionContextSchema,
+        agents: collaborationAgentsMapSchema,
+      })
+      .parse(reloaded?.featureSnapshot);
     expect(decoded.origin).toBe("user");
     if (decoded.origin !== "user") return;
     expect(decoded.sessionContext).toEqual(sessionContext);

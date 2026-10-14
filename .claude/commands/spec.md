@@ -103,15 +103,10 @@ refuses with `slug_taken`, including one an abandoned spec holds; change
 an existing spec with `cctl spec amend <slug>` instead. Import is never an
 approval shortcut for work authored here — content drafted in this
 conversation earns its approval through `cctl spec propose` and human
-sign-off, never through a bundle. Open a delivery attempt only after the
-imported spec is ready for its ordinary plan lifecycle.
+sign-off, never through a bundle.
 
 Author the bundle to preserve the source's actual state.
-`delivered` defaults to true and records external-delivery provenance
-rather than machine proof; the delivery gate never reads it. Set
-`"delivered": false` unless the source establishes that the work shipped.
-Delivered imports require at least one acceptance criterion to record
-delivery against; a criteria-less source must opt out of that claim.
+The delivered field is retired and refused. Import approved requirements and design.
 Import a question already answered when the source holds the answer, and
 import an assumption with its real disposition — confirmed included —
 when the source shows it held. Carrying a source's disposition across is
@@ -126,9 +121,8 @@ as unresolved, and report any review items the import receipt lists.
 the server-enforced write boundary: requirements admits intent and context
 prose, requirements, and acceptance criteria; design admits decisions and
 design narrative only. Each stage has its own revision checkpoint;
-requirements cannot be edited in a design draft. Design is the final evergreen stage. Delivery work
-belongs to a managed workflow definition opened with `cctl spec plan open
-<slug>`. A `stage_blocked` refusal names the correct authoring surface —
+requirements cannot be edited in a design draft. Design is the final authoring stage.
+A `stage_blocked` refusal names the correct authoring surface —
 follow it instead of authoring ahead.
 
 What would refuse a propose is readable before you attempt one:
@@ -162,10 +156,6 @@ under the same applicable gate, so a draft owes re-approval only on what
 was edited after approval, and a pending count is work never done rather
 than work undone.
 
-Delivery is planned in an attempt (`cctl spec plan open --help`). What to
-author into its managed workflow is covered by "Delivering a native spec"
-in the graph-workflow-planning skill's `references/native-spec-delivery.md`.
-Each receipt on that path names the act that follows it.
 
 ## Continuing an approved spec
 
@@ -182,67 +172,20 @@ opens a requirements draft from the revision it amended, keeping the
 approved design but none of the withdrawn draft's design edits. Once the
 requirements are signed off, `cctl spec amend <slug>` opens design again.
 Approved legacy Plan revisions remain readable as history, but their tasks are not
-copied forward. Use Continue delivery in Spec Studio when the delivery
-path changes without changing the approved requirements and design.
-
-## Execution start launches the approved candidate
-
-Managed graph execution requires an approved DeliveryPlanAttempt. The human
-reviews the draft in Builder and signs it off; sign-off freezes one immutable
-finalized candidate and approves its `candidateId` and `candidateHash` rather
-than a recipe for rebuilding it.
-
-`cctl spec start <slug> --file .cc/temp/inputs.json` is the one-off start
-that launches the stored approved candidate and creates the graph-workflow
-execution in that same act. The JSON object goes unchanged to the shared
-graph start boundary, which applies the authored input contract. Use {}
-when it requires no parameters. Start
-checks the approved `candidateHash` against the stored canonical candidate
-bytes before launch.
-
-Use `cctl spec start <slug> --file .cc/temp/inputs.json --park` only for explicit prelaunch review; it
-creates no execution and takes no session slot. A stale candidate or draft
-revision refuses with the next valid lifecycle act rather than launching
-different bytes.
+copied forward. Continue with requirements and design amendments.
 
 ## Human-only acts
 
-Approvals, sign-off, acceptance decisions, delivery continuation, external
-delivery records, assumption disposition, rename, and gate
-policy changes are human-only Spec Studio acts; a delivery plan is signed
-off in Builder instead. No `cctl spec` verb
+Approvals, sign-off, assumption disposition, rename, and gate policy changes are human-only Spec Studio acts. No `cctl spec` verb
 changes gate policy, and an agent transport that reaches a human-only
 action receives a typed `human_act_required` refusal telling it to
 perform the action from the authenticated browser session.
 
-Never approve, sign off, record human acceptance or delivery, dispose
+Never approve, sign off, dispose
 assumptions, or change gate policy on
 the user's behalf. Ask the operator to act in Spec Studio and continue
 with whatever remains authorable.
 
-Proof verdicts are recorded only by the delivery gate from machine
-evidence (test runs, validator verdicts, commits). No one records them
-by hand. Spec Studio → Delivery records human judgment separately:
-Mark satisfied accepts a criterion with an optional note; Waive evidence
-accepts delivery without its proof and requires one reason for the batch.
-Either action supports individual, selected, unresolved, or all criteria.
-
-## Delivery review and continuation
-
-Continue delivery lets the human choose Finish in this session, reference
-another workflow as a source, or start a replacement workflow through
-the existing planning flow. This also works after an abandoned run or
-for approved design that never launched a graph. Original attempts retain
-their actual outcomes; source references do not fabricate proof mappings.
-Session delivery stays pending until a successful merge. Record external
-delivery is for work already shipped outside this merge flow and records
-an attributed human assertion with optional workflow or commit references.
-
-Merge checks delivery readiness before validation and conflict resolution.
-Follow its revision-pinned review link to settle known blockers together.
-The human can approve delivery and continue merge, or waive remaining
-evidence and approve with one reason. A final check before publication
-catches changed scope or revoked decisions; failed merges are not delivery.
 
 ## Elicitation
 
@@ -276,53 +219,5 @@ submit it with `cctl ask --file <payload>`. When `cctl ask` accepts a
 batch, end the turn as required by the ask protocol and continue authoring
 after the answers arrive. Author spec element payload files under
 `.cc/temp/` as well.
-
-## Managed delivery workflow
-
-An attempt owns one managed workflow definition and one binding-only
-`schemaVersion: 4` plan document; `cctl spec plan get <slug>` is the
-bounded read over both. The definition is authored as an ordinary graph
-`plan.json` and written with `cctl workflow replace <definitionId>`,
-omitting the fields the server stamps. Author criterion coverage in the
-definition's `acceptanceCriteria[].covers`. `cctl spec plan open <slug>`
-seeds the binding's dispositions from the delivery delta; an agent never
-writes the binding. Native SDD has no alternate graph shape.
-
-What is specific to a spec delivery — the pinned revision, how criteria
-reach contexts, phase-scoped authoring, and the preflight that reports
-what would refuse a sign-off — is owned by the "Delivering a native
-spec" reference in the graph-workflow-planning skill:
-`references/native-spec-delivery.md`. Every receipt on this
-path names the act that follows it, so follow the hint rather than a
-sequence restated here. Workflow Builder is the human's review surface,
-not a second authoring path.
-
-`binding` supplies a total disposition for each pinned criterion. Sign-off
-derives claims from graph coverage against stable authored source contexts.
-A claim means at least one named stable source context provides accountability; dynamic contexts and their
-outcomes remain graph semantics, so SDD never infers accountability from
-expansion or topology. There is no modality-proof field: the graph's
-validators and execution outcomes supply evidence.
-
-When the draft is ready, `cctl spec plan propose <slug>` asks for review;
-under a human execution-start dial it changes nothing, and the human signs
-the draft off in Builder. Sign-off freezes the exact workflow definition id,
-`revision`, `definitionHash`, `bindingHash`, and `candidateHash` that start
-addresses. To change a signed plan before launch, reopen it, edit the
-draft, and ask for review again; never pretend a draft has a candidate
-identity.
-
-A running execution's working copy is edited through the ordinary
-`cctl workflow live edit` surface. For discovery outside the approved
-scope, use `cctl spec
-capture`; `--blocking-reason` abandons the run and opens a replacement
-attempt. Those acts preserve the approved candidate rather than changing it
-in place.
-
-The managed-workflow transition is a destructive cutover: the dedicated
-legacy-retirement boundary removes the inactive historical planning
-runtime and obsolete plan command surfaces. Do not retain or reintroduce a
-parallel reader, compatibility branch, or alternate plan dialect after
-that boundary.
 
 <!-- END SHARED SPEC GUIDANCE -->

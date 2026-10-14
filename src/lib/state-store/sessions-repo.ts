@@ -47,7 +47,6 @@ interface SessionListItemRow {
   source: string;
   creation_mode: string;
   tdd_enabled: 0 | 1;
-  has_active_graph_workflow: 0 | 1;
   workflow_envelopes: string | null;
   spawned_from: string | null;
 }
@@ -73,7 +72,6 @@ export interface SessionListItemProjection {
   source: SessionState["source"];
   creationMode: SessionState["creationMode"];
   tddEnabled: boolean;
-  hasActiveGraphWorkflow: boolean;
   workflowEnvelopes: Record<string, unknown> | null;
   spawnedFrom: SpawnedFrom | null;
 }
@@ -608,7 +606,6 @@ function rowToDomain(rawRow: unknown): {
     tddEnabled: row.tdd_enabled === 1,
     targetBranch: row.target_branch,
     parentSessionName: row.parent_session_name,
-    graphWorkflowExecution: null,
     conversations: [],
     referenceDocuments: [],
     spawnedFrom,
@@ -695,7 +692,6 @@ function sessionListRowToProjection(
     source: row.source as SessionState["source"],
     creationMode: row.creation_mode as SessionState["creationMode"],
     tddEnabled: row.tdd_enabled === 1,
-    hasActiveGraphWorkflow: row.has_active_graph_workflow === 1,
     workflowEnvelopes,
     spawnedFrom,
   };
@@ -761,23 +757,11 @@ export function createSessionsRepo(db: Db): SessionsRepo {
      WHERE project_path = ?
      ORDER BY created_at ASC, session_name ASC`,
   );
-  // The ambient "this session has live workflow work" signal is lease tenure,
-  // read from the derived `lease_held` column the executions repository writes
-  // on every `setActive`. The status list this replaces named statuses this
-  // domain does not have (`failed`, `cancelled`), so `aborted` counted as
-  // active — and no status list can see halt resumability or abandonment, the
-  // two facts that decide whether a halted run still holds anything.
   const findListItemsByProjectStmt = db.prepare(
     `SELECT
        session_name, worktree_path, branch_name, target_branch,
        parent_session_name, created_at, last_activity_at,
        archived, finished, source, creation_mode, tdd_enabled,
-       COALESCE((
-         SELECT e.lease_held
-           FROM graph_workflow_executions e
-          WHERE e.project_path = sessions.project_path
-            AND e.session_name = sessions.session_name
-       ), 0) AS has_active_graph_workflow,
        workflow_envelopes, spawned_from
      FROM sessions
      WHERE project_path = ?
@@ -789,12 +773,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        session_name, worktree_path, branch_name, target_branch,
        parent_session_name, created_at, last_activity_at,
        archived, finished, source, creation_mode, tdd_enabled,
-       COALESCE((
-         SELECT e.lease_held
-           FROM graph_workflow_executions e
-          WHERE e.project_path = sessions.project_path
-            AND e.session_name = sessions.session_name
-       ), 0) AS has_active_graph_workflow,
        workflow_envelopes, spawned_from
      FROM sessions
      ORDER BY project_path ASC, last_activity_at DESC`,

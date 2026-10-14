@@ -21,7 +21,6 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
     configMod,
     transcriptImagesMod,
     registryMod,
-    codexToolMod,
     runToolMod,
     projectResolverMod,
     debugLogMod,
@@ -36,14 +35,11 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
     notepadServiceFactoryMod,
     modelSelectionAdmissionMod,
     memoryServiceFactoryMod,
-    validatorInstructionsMod,
-    repoConfigMod,
   ] = await Promise.all([
     import("@/lib/prompt/transcript"),
     import("@/lib/config/loader"),
     import("@/lib/images/transcript-images"),
     import("@/lib/agent-backends/registry"),
-    import("@/lib/agent-runs/tool-hint"),
     import("@/lib/runs/tool-hint"),
     import("@/lib/projects/resolver"),
     import("@/lib/debug-log/service"),
@@ -58,8 +54,6 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
     import("@/lib/notepads/service-factory"),
     import("@/lib/agent-backends/model-selection-admission"),
     import("@/lib/memory/service-factory"),
-    import("@/lib/workflow-graph/validator-runtime-instructions"),
-    import("@/lib/projects/repo-config"),
   ]);
 
   // The alignment service holds a repo bound to the live DB; construct it once
@@ -98,7 +92,6 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
       getConversationBackendFactory: registryMod.getConversationBackendFactory,
       admitConfiguredModelSelection: (input) =>
         modelSelectionAdmissionMod.admitConfiguredModelSelection(input),
-      getCodexToolPromptHint: codexToolMod.getCodexToolPromptHint,
       getRunToolPromptHint: runToolMod.getRunToolPromptHint,
       getProjectDisplayName: projectResolverMod.getProjectDisplayName,
       getConversation: stateMod.getConversation,
@@ -188,12 +181,6 @@ export async function loadConversationTurnDependencies(): Promise<ConversationTu
       markQueuedUncertain: messageQueueMod.messageQueueService.markUncertain,
     },
     context: {
-      getWorkflowLaneInstructions:
-        validatorInstructionsMod.createValidatorRuntimeInstructionReader({
-          getActiveExecution: stateMod.getActiveGraphWorkflowExecution,
-          readValidationConfig: async (projectPath) =>
-            (await repoConfigMod.readRepoConfig(projectPath))?.validation,
-        }),
       getActiveAlignmentInjection: (projectPath: string, sessionName: string) =>
         alignmentService.getActiveInjection(projectPath, sessionName),
       getActiveAlignmentVersion: (projectPath: string, sessionName: string) =>

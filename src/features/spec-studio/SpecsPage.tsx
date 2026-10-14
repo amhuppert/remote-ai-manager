@@ -43,9 +43,6 @@ function SpecsPageInner(): React.JSX.Element {
     (total, item) => total + item.pendingApprovalCount,
     0,
   );
-  const executingCount = specs.filter(
-    (item) => item.phase.primary === "executing",
-  ).length;
 
   return (
     <div className="app" data-page="specs">
@@ -99,26 +96,6 @@ function SpecsPageInner(): React.JSX.Element {
                     >
                       <span className="text-text-secondary">
                         {pendingApprovalCount} approvals pending
-                      </span>
-                    </StatusChip>
-                  </>
-                )}
-                {executingCount > 0 && (
-                  <>
-                    <span className="font-mono text-[0.72rem] text-text-tertiary">
-                      ·
-                    </span>
-                    <StatusChip
-                      tone="neutral"
-                      icon={
-                        <span
-                          aria-hidden="true"
-                          className="size-[6px] rounded-full bg-cyan [box-shadow:0_0_6px_var(--cyan-glow)]"
-                        />
-                      }
-                    >
-                      <span className="text-text-secondary">
-                        {executingCount} executing
                       </span>
                     </StatusChip>
                   </>

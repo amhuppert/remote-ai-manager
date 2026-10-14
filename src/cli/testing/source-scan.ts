@@ -16,7 +16,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface CliSourceFile {
-  /** Path relative to the scan root, POSIX-style, e.g. `commands/workflow.ts`. */
+  /** Path relative to the scan root, POSIX-style, e.g. `commands/run.ts`. */
   readonly relativePath: string;
   readonly source: string;
 }
@@ -147,8 +147,8 @@ export function lineLeadingLabels(literal: string): string[] {
 
 /**
  * The command-shaped token runs that follow `cctl` in a literal, e.g.
- * `cctl workflow live get exec-7 --full` yields
- * `["workflow","live","get","exec-7"]`. A run stops at the first token that
+ * `cctl run show run-7 --full` yields
+ * `["run","show","run-7"]`. A run stops at the first token that
  * cannot be a command segment — a flag, a placeholder, an interpolation — so a
  * templated command still contributes the fixed path it names.
  */

@@ -3,9 +3,6 @@ import { z } from "zod";
 
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import { createLogger } from "@/lib/logging";
-import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
-import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
-import type { SpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import {
   computeSpecElementPayloadHash,
@@ -29,15 +26,9 @@ import {
   type AuthoringSpecResult,
 } from "./authoring-service";
 import type { SpecEventsPublisher } from "./events";
-import { isEarlierMergedDelivery } from "./delivery-history";
-import { findDeliveryVerdictForExecution } from "./delivery-verdict-identity";
 import { formatElementHandle, parseSpecSlug } from "./handles";
 import { openDraftAuthoringStage } from "./transitions";
-import {
-  projectSpecPhase,
-  projectTaskWorkStatus,
-  type SpecPhaseProjection,
-} from "./phase";
+import { projectSpecPhase, type SpecPhaseProjection } from "./phase";
 import {
   actorProvenanceSchema,
   specGatePolicySchema,
@@ -92,17 +83,6 @@ export const graduateTicketInputSchema = z
   .strict();
 export type GraduateTicketInput = z.infer<typeof graduateTicketInputSchema>;
 
-export const materializeApprovedTasksInputSchema = z
-  .object({
-    specId: z.string().min(1),
-    projectName: z.string().min(1),
-    actor: actorProvenanceSchema,
-  })
-  .strict();
-export type MaterializeApprovedTasksInput = z.infer<
-  typeof materializeApprovedTasksInputSchema
->;
-
 export const linkTicketInputSchema = z
   .object({
     specId: z.string().min(1),
@@ -146,7 +126,6 @@ export interface LinkedTaskReadThrough {
    */
   readonly taskHandle: string | null;
   readonly sourceTaskState: SourceTaskState;
-  readonly workStatus: ReturnType<typeof projectTaskWorkStatus>["status"];
 }
 
 export interface LinkedSpecReadThrough {
@@ -155,10 +134,6 @@ export interface LinkedSpecReadThrough {
   readonly name: string;
   readonly revision: number;
   readonly phase: SpecPhaseProjection;
-  readonly criteriaProgress: {
-    readonly proven: number;
-    readonly total: number;
-  };
   readonly linkedTasks: LinkedTaskReadThrough[];
 }
 
@@ -212,11 +187,8 @@ interface LinkedTicketService {
 export interface LinksServiceDeps {
   specs: SpecsRepo;
   links: SpecLinksRepo;
-  delivery: SpecDeliveryRepo;
-  executionBindings: Pick<SpecExecutionBindingRepo, "findBySpecExecutionId">;
   authoring: Pick<AuthoringService, "createSpec" | "upsertDraftElement">;
   events: SpecEventsPublisher;
-  workflowEvents: Pick<GraphWorkflowEventsRepo, "findByExecution">;
   tickets: LinkedTicketService;
   contentStore: Pick<TicketContentStore, "capture" | "captureText">;
   loadConversationSource(
@@ -235,9 +207,6 @@ export interface LinksService {
     input: PromoteConversationInput,
   ): Promise<AuthoringSpecResult>;
   graduateTicket(input: GraduateTicketInput): Promise<AuthoringSpecResult>;
-  materializeApprovedTasks(
-    input: MaterializeApprovedTasksInput,
-  ): Promise<TicketDetail[]>;
   linkTicket(input: LinkTicketInput): Promise<SpecLinkRow>;
   getTicketReadThrough(
     input: TicketReadThroughInput,
@@ -915,85 +884,6 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
     return link;
   }
 
-  async function materializeApprovedTasks(
-    rawInput: MaterializeApprovedTasksInput,
-  ): Promise<TicketDetail[]> {
-    const input = materializeApprovedTasksInputSchema.parse(rawInput);
-    const [spec, approved] = await Promise.all([
-      deps.specs.findById(input.specId),
-      deps.specs.findLatestApproved(input.specId),
-    ]);
-    if (spec === null || approved === null) {
-      throw new LinksServiceError(
-        "not_found",
-        `approved spec ${input.specId} is unavailable`,
-      );
-    }
-    const snapshot = await deps.specs.getRevisionSnapshot(approved.id);
-    if (snapshot === null) {
-      throw new LinksServiceError(
-        "not_found",
-        `approved revision ${approved.id} is unavailable`,
-      );
-    }
-
-    const existingLinks = deps.links
-      .findBySpecId(spec.id)
-      .filter((link) => link.category === "materialized_from");
-    const tickets: TicketDetail[] = [];
-    for (const { element, version } of snapshot.elements) {
-      if (version.payload.kind !== "task") continue;
-      const existingLink = existingLinks.find((link) =>
-        parseElementIds(link).includes(element.id),
-      );
-      if (existingLink !== undefined) {
-        tickets.push(
-          requireTicket(
-            await deps.tickets.get(
-              parseTicketObjectRef(existingLink.object_ref_json),
-            ),
-          ),
-        );
-        continue;
-      }
-
-      const ticket = requireTicket(
-        await deps.tickets.create({
-          projectName: input.projectName,
-          title: version.payload.title,
-          description: version.payload.instructions,
-          workType: "feature",
-          status: "not_started",
-        }),
-      );
-      const createdAt = now();
-      const link: SpecLinkRow = {
-        id: newId("spec-link"),
-        spec_id: spec.id,
-        object_kind: "ticket",
-        object_ref_json: ticketObjectRef(ticket),
-        direction: "outbound",
-        category: "materialized_from",
-        snapshot_json: stableStringify({
-          approvedRevisionId: approved.id,
-          taskElementId: element.id,
-          taskPayloadHash: version.payloadHash,
-        } satisfies MaterializedTaskSnapshot),
-        element_ids_json: stableStringify([element.id]),
-        actor_json: stableStringify(input.actor),
-        created_at: createdAt,
-      };
-      await persistLink(spec, link, input.actor);
-      tickets.push(ticket);
-    }
-    logger.info("specs.links.tasks_materialized", {
-      specId: spec.id,
-      approvedRevisionId: approved.id,
-      ticketCount: tickets.length,
-    });
-    return tickets;
-  }
-
   async function getSpecReadThrough(
     spec: Spec,
     links: SpecLinkRow[],
@@ -1009,99 +899,6 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
         ? Promise.resolve(null)
         : deps.specs.getRevisionSnapshot(approved.id),
     ]);
-    const criterionSnapshot = approvedSnapshot ?? currentSnapshot;
-    const criteria =
-      criterionSnapshot?.elements.filter(
-        ({ version }) => version.payload.kind === "criterion",
-      ) ?? [];
-    const executions = deps.delivery.findExecutionsBySpecId(spec.id);
-    const linkedBindings = new Map(
-      executions.flatMap((execution) => {
-        const linkedBinding = deps.executionBindings.findBySpecExecutionId(
-          execution.id,
-        );
-        return linkedBinding === null
-          ? []
-          : [[execution.id, linkedBinding] as const];
-      }),
-    );
-    const hasCurrentV2Attempt = executions.some(
-      (execution) =>
-        execution.revision_id === approved?.id &&
-        linkedBindings.has(execution.id),
-    );
-    const legacyVerdicts =
-      approved === null || hasCurrentV2Attempt
-        ? []
-        : deps.delivery
-            .findProofVerdictsByRevision(approved.id)
-            .filter((verdict) => verdict.stale_at === null);
-    const waivers =
-      approved === null
-        ? []
-        : deps.delivery
-            .findWaiversByRevision(approved.id)
-            .filter((waiver) => waiver.stale === 0);
-    const waivedCriterionIds = new Set(
-      waivers.map((waiver) => waiver.criterion_element_id),
-    );
-    const provenCriterionIds = new Set(
-      hasCurrentV2Attempt
-        ? []
-        : legacyVerdicts.map((verdict) => verdict.criterion_element_id),
-    );
-    const mergedCriterionIds = new Set<string>();
-    for (const criterion of criteria) {
-      const criterionId = criterion.element.id;
-      if (
-        !hasCurrentV2Attempt &&
-        legacyVerdicts.some(
-          (verdict) =>
-            verdict.criterion_element_id === criterionId &&
-            verdict.execution_id !== null &&
-            executions.some(
-              (execution) =>
-                execution.id === verdict.execution_id &&
-                execution.state === "delivered",
-            ),
-        )
-      ) {
-        mergedCriterionIds.add(criterionId);
-        continue;
-      }
-      for (const execution of executions) {
-        const disposition = deps.delivery.findCriterionDisposition(
-          execution.id,
-          criterionId,
-        );
-        const linkedBinding = linkedBindings.get(execution.id) ?? null;
-        const deliveredInScope =
-          linkedBinding === null
-            ? !hasCurrentV2Attempt &&
-              execution.state === "delivered" &&
-              disposition?.disposition === "in_scope" &&
-              provenCriterionIds.has(criterionId)
-            : execution.state === "delivered" &&
-              execution.revision_id === approved?.id &&
-              disposition?.disposition === "in_scope" &&
-              findDeliveryVerdictForExecution(
-                deps.delivery.findDeliveryVerdictsBySpecExecutionId(
-                  execution.id,
-                ),
-                execution,
-                linkedBinding,
-                criterionId,
-              ) !== null;
-        const deliveredElsewhere =
-          disposition?.disposition === "delivered_elsewhere" &&
-          isEarlierMergedDelivery(deps.delivery, execution, disposition);
-        if (deliveredInScope || deliveredElsewhere) {
-          if (deliveredInScope) provenCriterionIds.add(criterionId);
-          mergedCriterionIds.add(criterionId);
-          break;
-        }
-      }
-    }
     const knownTaskIds = new Set(
       [currentSnapshot, approvedSnapshot].flatMap(
         (snapshot) =>
@@ -1167,44 +964,6 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
         // the contexts accountable for the criteria it covers. Both the claims
         // and the criterion coverage are read from the typed execution link
         // and the pinned revision, never from graph metadata.
-        const coveredCriterionIds = new Set(
-          current?.coveredCriterionElementIds ?? [],
-        );
-        const executionEvents = executions.flatMap((execution) => {
-          if (
-            execution.workflow_execution_id === null ||
-            execution.session_name === null
-          ) {
-            return [];
-          }
-          const linked = deps.executionBindings.findBySpecExecutionId(
-            execution.id,
-          );
-          if (linked === null || coveredCriterionIds.size === 0) return [];
-          const contextIds = new Set(
-            linked.binding.claims
-              .filter((claim) =>
-                claim.criterionElementIds.some((criterionElementId) =>
-                  coveredCriterionIds.has(criterionElementId),
-                ),
-              )
-              .map((claim) => claim.contextId),
-          );
-          if (contextIds.size === 0) return [];
-          return deps.workflowEvents
-            .findByExecution(
-              spec.projectPath,
-              execution.session_name,
-              execution.workflow_execution_id,
-            )
-            .flatMap(({ event }) =>
-              event.type === "graph-workflow-task-status" &&
-              contextIds.has(event.contextId)
-                ? [{ status: event.status }]
-                : [],
-            );
-        });
-        const work = projectTaskWorkStatus({ executionEvents });
         let sourceTaskState: SourceTaskState = "current";
         if (current === null) {
           sourceTaskState = "removed";
@@ -1218,17 +977,9 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           taskElementId,
           taskHandle: taskHandleFor(taskElementId),
           sourceTaskState,
-          workStatus: work.status,
         };
       },
     );
-    const deliveryCriteria = criteria.map(({ element }) => ({
-      state: mergedCriterionIds.has(element.id)
-        ? ("proven_and_merged" as const)
-        : waivedCriterionIds.has(element.id)
-          ? ("waived" as const)
-          : ("pending" as const),
-    }));
     return {
       specId: spec.id,
       slug: spec.slug,
@@ -1240,20 +991,7 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           state: revision.state,
           authoringStage: revision.authoringStage,
         })),
-        executionStates: executions.map((execution) => execution.state),
-        deliveryCriteria,
-        deliveryPending: executions.some(
-          (execution) =>
-            execution.state === "definition_review" ||
-            execution.state === "running",
-        ),
       }),
-      criteriaProgress: {
-        proven: criteria.filter(({ element }) =>
-          provenCriterionIds.has(element.id),
-        ).length,
-        total: criteria.length,
-      },
       linkedTasks,
     };
   }
@@ -1337,7 +1075,6 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
     promoteConversation,
     graduateTicket,
     linkTicket,
-    materializeApprovedTasks,
     getTicketReadThrough,
     getSpecLinkedTickets,
   };

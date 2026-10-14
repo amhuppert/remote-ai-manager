@@ -1,9 +1,7 @@
-import { graphWorkflowBoundaryKindSchema } from "@/lib/workflow-graph/event-schemas";
 import {
   specSseEventTypeSchema,
   specReviewEventTypeSchema,
   specAuthoringEventTypeSchema,
-  specDeliveryPlanEventTypeSchema,
 } from "@/lib/specs/schemas";
 import { runBoundaryKindSchema } from "@/lib/runs/schemas";
 import type { SubscriptionSourceRef } from "./schemas";
@@ -39,29 +37,14 @@ export const subscriptionCatalog = subscriptionCatalogSchema.parse({
     {
       kind: "spec",
       label: "Native SDD spec",
-      description:
-        "Revision, review, approval, evidence and delivery-plan changes.",
+      description: "Revision, review and approval changes.",
       identityDescription: "Spec ID (from spec get)",
       allowedModes: ["passive"],
       eventKinds: events([
         ...specSseEventTypeSchema.options,
         ...specReviewEventTypeSchema.options,
         ...specAuthoringEventTypeSchema.options,
-        ...specDeliveryPlanEventTypeSchema.options,
       ]),
-    },
-    {
-      kind: "workflow",
-      label: "Workflow",
-      description:
-        "Follow recorded boundaries or wake once when an execution ends.",
-      identityDescription: "Execution ID",
-      allowedModes: ["passive", "active"],
-      eventKinds: events(
-        graphWorkflowBoundaryKindSchema.options.map(
-          (kind) => `graph-workflow-boundary:${kind}`,
-        ),
-      ),
     },
     {
       kind: "run",

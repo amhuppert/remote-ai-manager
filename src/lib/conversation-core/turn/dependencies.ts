@@ -52,9 +52,6 @@ export interface TurnExecutionDependencies {
     config?: ActorConfig;
   }): Promise<ProjectModelSelectionValidation>;
 
-  /** The one-shot `cctl agent run` hint, for a conversation that cannot own a run. */
-  getCodexToolPromptHint(): string;
-
   /** The `cctl run launch` hint, for a conversation that may own a run. */
   getRunToolPromptHint(): string;
 
@@ -146,13 +143,6 @@ export interface TranscriptDependencies {
 }
 
 export interface TurnContextDependencies {
-  /** Governing role instructions resolved from the durable graph lane, if any. */
-  getWorkflowLaneInstructions(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): Promise<string | null>;
-
   // Active-charter governing injection for the per-turn prompt seam (R7).
   // Returns null when the session has no active charter. Gated by the turn to
   // attended normal sessions only (R12.1) before being called.

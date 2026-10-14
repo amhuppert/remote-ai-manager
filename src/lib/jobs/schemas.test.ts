@@ -104,7 +104,6 @@ describe("jobRecordSchema", () => {
       conflictCount: 2,
       conflictFiles: ["a.ts", "b.ts"],
       errorMessage: "terminal details",
-      finalPublish: true,
     });
 
     expect(parsed).toEqual({
@@ -115,7 +114,6 @@ describe("jobRecordSchema", () => {
       conflictCount: 2,
       conflictFiles: ["a.ts", "b.ts"],
       errorMessage: "terminal details",
-      finalPublish: true,
     });
   });
 
@@ -150,7 +148,20 @@ describe("jobRecordSchema", () => {
     ["lastProgressAt", "2026-01-01T00:03:00Z"],
     ["upToDate", true],
     ["intentSource", "graph-join"],
-  ])("rejects live-only field %s", (field, value) => {
+    ["executionId", "retired-execution"],
+    ["specExecutionId", "retired-spec-execution"],
+    ["finalPublish", true],
+    [
+      "candidateValidation",
+      {
+        validationRef: "retired-validation",
+        validatedSha: "candidate-sha",
+        validatedTreeHash: "candidate-tree",
+        commandIdentity: "test",
+        outcome: "pass",
+      },
+    ],
+  ])("rejects fields outside the durable contract: %s", (field, value) => {
     const result = jobRecordSchema.safeParse({ ...base, [field]: value });
 
     expect(result.success).toBe(false);
@@ -211,7 +222,7 @@ describe("jobStatusEventSchema", () => {
     expect(parsed.refreshWarning).toBe("worktree refresh failed");
   });
 
-  it("round-trips a typed delivery-gate halt reason", () => {
+  it("rejects a retired delivery-gate halt reason", () => {
     const haltReason = {
       type: "delivery_gate_failed" as const,
       unmet: [
@@ -224,18 +235,16 @@ describe("jobStatusEventSchema", () => {
       ],
       instruction: "Re-dispatch the merge to validate the candidate again.",
     };
-    const parsed = jobStatusEventSchema.parse({
+    const parsed = jobStatusEventSchema.safeParse({
       ...base,
       status: "failed",
       haltReason,
     });
 
-    // Rows persisted before the approval presentation existed carry neither
-    // refusalCode nor spec — they must keep parsing unchanged.
-    expect(parsed.haltReason).toEqual(haltReason);
+    expect(parsed.success).toBe(false);
   });
 
-  it("round-trips the delivery-gate approval presentation fields", () => {
+  it("rejects retired delivery-gate approval presentation", () => {
     const haltReason = {
       type: "delivery_gate_failed" as const,
       unmet: [
@@ -255,13 +264,13 @@ describe("jobStatusEventSchema", () => {
       },
     };
 
-    const parsed = jobStatusEventSchema.parse({
+    const parsed = jobStatusEventSchema.safeParse({
       ...base,
       status: "failed",
       haltReason,
     });
 
-    expect(parsed.haltReason).toEqual(haltReason);
+    expect(parsed.success).toBe(false);
   });
 
   it("round-trips a resolution-infrastructure halt reason", () => {
@@ -274,7 +283,7 @@ describe("jobStatusEventSchema", () => {
         retryable: false,
         retryAfterHint: "Aug 19th, 2026 11:29 PM",
       },
-      conflictFiles: ["src/lib/specs/execution-binding-service.ts"],
+      conflictFiles: ["src/lib/specs/authoring-service.ts"],
     };
 
     const parsed = jobStatusEventSchema.parse({

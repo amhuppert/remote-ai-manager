@@ -11,11 +11,7 @@ import {
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
-import {
-  executionReferenceInventorySchema,
-  type ExecutionReferenceItem,
-} from "@/lib/workflow-graph/references";
-import { apiFetch } from "@/lib/api/fetcher";
+import {} from "@/lib/api/fetcher";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   AutocompleteKbd,
@@ -37,7 +33,6 @@ import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   buildPickerView,
   parseSpecDrillInQuery,
-  parseScopeQuery,
   PICKER_ELEMENT_ORDER,
   PICKER_SCOPE_CYCLE,
   scopeForTrigger,
@@ -108,7 +103,6 @@ interface QueryShape<T> {
 }
 
 export interface ReferencePickerPopupDeps {
-  useExecutions(query: string): QueryShape<readonly ExecutionReferenceItem[]>;
   useAllConversations(params: {
     includeArchived: boolean;
   }): QueryShape<AllConversationsResponse>;
@@ -161,9 +155,6 @@ export function createReferencePickerPopup(
         includeArchived: true,
       });
       const ticketsQuery = deps.useTickets();
-      const executionsQuery = deps.useExecutions(
-        parseScopeQuery(query).searchQuery,
-      );
       const specsQuery = deps.useSpecs({ currentProjectName, query });
       const filesQuery = deps.useFiles({
         projectName: currentProjectName,
@@ -179,7 +170,6 @@ export function createReferencePickerPopup(
           tickets: ticketsQuery.data ?? [],
           specs: specsQuery.data ?? [],
           notepads: notepadsQuery.data ?? [],
-          executions: executionsQuery.data ?? [],
           selectedSpec: null,
           includeFinishedTickets: includeDone,
           includeArchivedConversations: includeArchived,
@@ -193,7 +183,6 @@ export function createReferencePickerPopup(
           notepadsQuery.data,
           specsQuery.data,
           ticketsQuery.data,
-          executionsQuery.data,
         ],
       );
       const files = useMemo(
@@ -409,14 +398,13 @@ export function createReferencePickerPopup(
         specsQuery.isLoading ||
         filesQuery.isLoading ||
         notepadsQuery.isLoading ||
-        executionsQuery.isLoading;
+        false;
       const failure = firstError([
         [conversationsQuery, "Failed to load conversations"],
         [ticketsQuery, "Failed to load tickets"],
         [specsQuery, "Failed to load specs"],
         [filesQuery, "Failed to load files"],
         [notepadsQuery, "Failed to load notepads"],
-        [executionsQuery, "Failed to load workflow executions"],
       ]);
       const hasRows = view.rows.length > 0;
 
@@ -897,20 +885,6 @@ function revisionPickerElements(
 }
 
 export const ReferencePickerPopup = createReferencePickerPopup({
-  useExecutions: (query) => {
-    const search = query;
-    return useQuery({
-      queryKey: ["execution-reference-inventory", search],
-      queryFn: async () =>
-        (
-          await apiFetch(
-            `/api/live-references/executions?q=${encodeURIComponent(search)}`,
-            executionReferenceInventorySchema,
-          )
-        ).items,
-      staleTime: 3000,
-    });
-  },
   useAllConversations: useAllConversationsQuery,
   useTickets: () => useTicketListQuery({}),
   useSpecs: useSpecPickerSpecs,
