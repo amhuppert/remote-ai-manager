@@ -423,6 +423,73 @@ describe("Codex app-server client", () => {
   );
 
   it.each([false, true])(
+    "collects verified group members after the leader exits (capture=%s)",
+    async (captureCleanup) => {
+      vi.useFakeTimers();
+      const { client, child, host, signals, failures } = fixture({
+        captureCleanup,
+      });
+      child.childrenAlive = true;
+      host.observeGroup = async () => async () => true;
+      host.signalGroup = (_pgid, signal) => {
+        signals.push(signal);
+        child.childrenAlive = false;
+      };
+      const verdict = client.close().then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      await vi.advanceTimersByTimeAsync(captureCleanup ? 3000 : 50);
+
+      expect(await verdict).toBeNull();
+      expect(signals).toEqual(["SIGTERM"]);
+      expect(failures).toEqual([]);
+    },
+  );
+
+  it("rechecks group ownership before KILL when members survive TERM", async () => {
+    vi.useFakeTimers();
+    const { client, child, host, signals } = fixture();
+    child.childrenAlive = true;
+    let owned = true;
+    host.observeGroup = async () => async () => owned;
+    host.signalGroup = (_pgid, signal) => {
+      signals.push(signal);
+      owned = false;
+    };
+    const verdict = client.close().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(await verdict).toMatchObject({ code: "cleanup_unverified" });
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  it("accepts group exit during the ownership check without signalling", async () => {
+    vi.useFakeTimers();
+    const { client, child, host, signals, failures } = fixture();
+    child.childrenAlive = true;
+    host.observeGroup = async () => async () => {
+      child.childrenAlive = false;
+      return false;
+    };
+    const verdict = client.close().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(await verdict).toBeNull();
+    expect(signals).toEqual([]);
+    expect(failures).toEqual([]);
+  });
+
+  it.each([false, true])(
     "counts leader shutdown against the group's grace deadline (capture=%s)",
     async (captureCleanup) => {
       vi.useFakeTimers();

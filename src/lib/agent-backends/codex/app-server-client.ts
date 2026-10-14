@@ -35,6 +35,11 @@ export interface AppServerProcessHost {
   processGroupId(pid: number): number | null;
   startTicks(pid: number): Promise<string | null>;
   isGroupAlive(pgid: number): boolean;
+  /** Snapshot a verified leader's group; recheck member identities before signalling after its exit. */
+  observeGroup?(
+    pgid: number,
+    leaderStart: string,
+  ): Promise<(() => Promise<boolean>) | null>;
   /**
    * Snapshot the leader's descendants. The returned check waits until each has
    * exited or `deadline` (epoch ms) passes, resolving with the survivors (empty
@@ -533,6 +538,15 @@ export function createCodexAppServerClient(
       settleFlush();
     }
     const originalIdentity = await identity;
+    const ownedGroup =
+      groupId === child.pid && originalIdentity !== null
+        ? await bounded(
+            host.observeGroup?.(groupId, originalIdentity).catch(() => null) ??
+              Promise.resolve(null),
+            remaining(1, limits.exitGraceMs),
+            null,
+          )
+        : null;
     const children = options.captureCleanup
       ? await bounded(
           host.observeChildren?.(child.pid).catch(() => null) ??
@@ -557,18 +571,31 @@ export function createCodexAppServerClient(
         ["SIGKILL", limits.killGraceMs, 3],
       ] as const) {
         if (gone) break;
-        const currentIdentity = await bounded(
-          host.startTicks(child.pid).catch(() => null),
-          remaining(phase, limits.exitGraceMs),
-          null,
-        );
-        if (
-          groupId !== child.pid ||
-          originalIdentity === null ||
-          currentIdentity !== originalIdentity ||
-          host.processGroupId(child.pid) !== groupId
-        )
+        const currentIdentity = exited
+          ? null
+          : await bounded(
+              host.startTicks(child.pid).catch(() => null),
+              remaining(phase, limits.exitGraceMs),
+              null,
+            );
+        const canSignal =
+          groupId === child.pid &&
+          (exited
+            ? ownedGroup !== null &&
+              (await bounded(
+                ownedGroup().catch(() => false),
+                remaining(phase, limits.exitGraceMs),
+                false,
+              ))
+            : originalIdentity !== null &&
+              currentIdentity === originalIdentity &&
+              host.processGroupId(child.pid) === groupId);
+        if (!canSignal) {
+          // A helper may finish while the ownership snapshot is being read.
+          gone = await waitForExit(0);
+          if (gone) break;
           throw unverified("leader_identity_lost");
+        }
         if (turnMayBeActive) unverified("signaled_active_turn");
         host.signalGroup(groupId, signal);
         gone = await waitForExit(remaining(phase, timeout));

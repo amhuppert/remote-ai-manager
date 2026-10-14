@@ -84,19 +84,26 @@ const execFileAsync = promisify(execFile);
 /** A bounded snapshot of owned descendants, including terminal groups outside the leader group. */
 async function processTable(): Promise<Map<
   number,
-  { parent: number; start: string }
+  { parent: number; group: number; start: string }
 > | null> {
   try {
     const { stdout } = await execFileAsync(
       "ps",
-      ["-axo", "pid=,ppid=,lstart="],
+      ["-axo", "pid=,ppid=,pgid=,lstart="],
       { encoding: "utf8", timeout: 250, maxBuffer: 1024 * 1024 },
     );
-    const rows = new Map<number, { parent: number; start: string }>();
+    const rows = new Map<
+      number,
+      { parent: number; group: number; start: string }
+    >();
     for (const line of stdout.trim().split("\n")) {
-      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
-      if (!match?.[1] || !match[2] || !match[3]) return null;
-      rows.set(Number(match[1]), { parent: Number(match[2]), start: match[3] });
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      if (!match?.[1] || !match[2] || !match[3] || !match[4]) return null;
+      rows.set(Number(match[1]), {
+        parent: Number(match[2]),
+        group: Number(match[3]),
+        start: match[4],
+      });
     }
     return rows;
   } catch {
@@ -204,6 +211,29 @@ export function createAppServerProcessHost(): AppServerProcessHost {
       };
     },
     processGroupId: readProcessGroupIdSync,
+    async observeGroup(pgid, leaderStart) {
+      const before = await processTable();
+      const leader = before?.get(pgid);
+      // Linux's start marker uses ticks, while the table uses lstart on both hosts.
+      const currentStart = await readProcessStartTicks(pgid);
+      if (!before || leader?.group !== pgid || currentStart !== leaderStart)
+        return null;
+      const owned = new Map(
+        [...before]
+          .filter(([, row]) => row.group === pgid)
+          .map(([pid, row]) => [pid, row.start]),
+      );
+      return async () => {
+        const after = await processTable();
+        if (!after) return false;
+        const members = [...after].filter(([, row]) => row.group === pgid);
+        // An empty or reused group never grants permission to signal a stored ID.
+        return (
+          members.length > 0 &&
+          members.every(([pid, row]) => owned.get(pid) === row.start)
+        );
+      };
+    },
     startTicks: readProcessStartTicks,
     isGroupAlive(pgid) {
       try {
