@@ -90,11 +90,8 @@ export interface AgentProfileRouteDeps {
  * deletion-reference reporter is wired.
  *
  * The library declares the reporter port and refuses to answer a delete or a
- * preview without one; the workflow and run template domains each implement
- * their share of it; this module, which already depends on all three, is
- * where they meet. That is what lets `agent-profiles` stay ignorant of
- * `workflow-graph` and `run-templates`: the dependency exists only in the
- * composition, never in the domain.
+ * preview without one. Wiring the run template reporter here keeps template
+ * persistence out of the profile library domain.
  */
 const defaultDeps: AgentProfileRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
@@ -114,6 +111,10 @@ const defaultDeps: AgentProfileRouteDeps = {
 };
 
 type RouteContext = { params: Promise<Record<string, string>> };
+type HttpRouteHandler = (
+  request: Request,
+  context: RouteContext,
+) => Promise<Response>;
 
 // ---------------------------------------------------------------------------
 // Request bodies
@@ -577,26 +578,46 @@ export function createAgentProfileRouteHandlers(
 
 const _handlers = createAgentProfileRouteHandlers();
 
-export const listGlobalAgentProfiles = withTracing(_handlers.global.list);
-export const createGlobalAgentProfile = withTracing(_handlers.global.create);
-export const duplicateGlobalAgentProfile = withTracing(
+export const listGlobalAgentProfiles: HttpRouteHandler = withTracing(
+  _handlers.global.list,
+);
+export const createGlobalAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.global.create,
+);
+export const duplicateGlobalAgentProfile: HttpRouteHandler = withTracing(
   _handlers.global.duplicate,
 );
-export const getGlobalAgentProfile = withTracing(_handlers.global.get);
-export const updateGlobalAgentProfile = withTracing(_handlers.global.update);
-export const previewGlobalAgentProfileDeletion = withTracing(
+export const getGlobalAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.global.get,
+);
+export const updateGlobalAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.global.update,
+);
+export const previewGlobalAgentProfileDeletion: HttpRouteHandler = withTracing(
   _handlers.global.deletionPreview,
 );
-export const deleteGlobalAgentProfile = withTracing(_handlers.global.remove);
+export const deleteGlobalAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.global.remove,
+);
 
-export const listProjectAgentProfiles = withTracing(_handlers.project.list);
-export const createProjectAgentProfile = withTracing(_handlers.project.create);
-export const duplicateProjectAgentProfile = withTracing(
+export const listProjectAgentProfiles: HttpRouteHandler = withTracing(
+  _handlers.project.list,
+);
+export const createProjectAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.project.create,
+);
+export const duplicateProjectAgentProfile: HttpRouteHandler = withTracing(
   _handlers.project.duplicate,
 );
-export const getProjectAgentProfile = withTracing(_handlers.project.get);
-export const updateProjectAgentProfile = withTracing(_handlers.project.update);
-export const previewProjectAgentProfileDeletion = withTracing(
+export const getProjectAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.project.get,
+);
+export const updateProjectAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.project.update,
+);
+export const previewProjectAgentProfileDeletion: HttpRouteHandler = withTracing(
   _handlers.project.deletionPreview,
 );
-export const deleteProjectAgentProfile = withTracing(_handlers.project.remove);
+export const deleteProjectAgentProfile: HttpRouteHandler = withTracing(
+  _handlers.project.remove,
+);
