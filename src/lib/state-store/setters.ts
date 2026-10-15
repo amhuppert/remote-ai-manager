@@ -862,6 +862,69 @@ export function createSetters(
     );
   }
 
+  async function markConversationRead(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<void> {
+    return writeQueue.withWriteQueue(
+      `markConversationRead[${sessionName}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "markConversationRead",
+            projectPath,
+            sessionName,
+            conversationId,
+          },
+          async () => {
+            const updated = repos.conversations.markRead(
+              projectPath,
+              sessionName,
+              conversationId,
+            );
+            if (!updated) {
+              throw new Error(
+                `Conversation "${conversationId}" not found in session "${sessionName}"`,
+              );
+            }
+          },
+        ),
+    );
+  }
+
+  async function markProjectConversationRead(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<void> {
+    return writeQueue.withWriteQueue(
+      `markProjectConversationRead[${conversationId}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "markProjectConversationRead",
+            projectPath,
+            conversationId,
+          },
+          async () => {
+            const updated = repos.projectConversations.markRead(
+              projectPath,
+              conversationId,
+            );
+            if (!updated) {
+              throw new Error(
+                `Project conversation "${conversationId}" not found in project "${projectPath}"`,
+              );
+            }
+          },
+        ),
+    );
+  }
+
   async function setProjectArchived(
     projectPath: string,
     archived: boolean,
@@ -1207,6 +1270,8 @@ export function createSetters(
     setProjectConversationPendingPromptText,
     setProjectConversationArchived,
     setProjectConversationOpen,
+    markConversationRead,
+    markProjectConversationRead,
     setProjectArchived,
     setProjectPinned,
     setSessionSpawnedFrom,

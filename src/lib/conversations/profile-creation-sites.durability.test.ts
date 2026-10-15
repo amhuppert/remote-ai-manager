@@ -59,6 +59,7 @@ function projectConversationService() {
     mutateProjectConversation: store.mutateProjectConversation,
     setProjectConversationArchived: store.setProjectConversationArchived,
     setProjectConversationOpen: store.setProjectConversationOpen,
+    markProjectConversationRead: store.markProjectConversationRead,
     readConfig: async () => ({}),
     getProjectDisplayName: () => "repo-profile-creation",
     newId: () => `project-conv-${Math.random().toString(16).slice(2)}`,

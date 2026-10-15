@@ -1,10 +1,15 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, beforeEach } from "vitest";
 import {
   createProjectConversationService,
   type ProjectConversationServiceDeps,
 } from "./service";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { BackgroundWorkUnstoppedError } from "@/lib/conversation-core/background-work";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 
 /**
  * In-memory persistence fake so the service's real orchestration (title
@@ -47,6 +52,11 @@ function makeDeps(
       const c = rows.get(key(projectPath, id));
       if (!c) throw new Error("not found");
       c.open = open;
+    },
+    async markProjectConversationRead(projectPath, id) {
+      const c = rows.get(key(projectPath, id));
+      if (!c) throw new Error("not found");
+      c.unread = false;
     },
     async readConfig() {
       return { defaultAgentBackend: "claude" as const };
@@ -201,5 +211,62 @@ describe("archiving a project conversation that keeps background work (design C5
     expect(
       (await service.getProjectConversation("/repo", c.id))?.archived,
     ).toBe(false);
+  });
+});
+
+describe("marking a project conversation read", () => {
+  const PROJECT_PATH = "/repo-mark-read";
+  let fixture: PersistenceFixture;
+
+  beforeEach(() => {
+    fixture = createPersistenceFixture();
+    fixture.seedProject(PROJECT_PATH);
+  });
+
+  afterEach(() => {
+    fixture.close();
+  });
+
+  function storeBackedService() {
+    const { store } = fixture;
+    return createProjectConversationService(
+      makeDeps({
+        createProjectConversationRecord: store.createProjectConversation,
+        getProjectConversation: store.getProjectConversation,
+        getProjectConversations: store.getProjectConversations,
+        mutateProjectConversation: store.mutateProjectConversation,
+        setProjectConversationArchived: store.setProjectConversationArchived,
+        setProjectConversationOpen: store.setProjectConversationOpen,
+        markProjectConversationRead: store.markProjectConversationRead,
+      }),
+    );
+  }
+
+  it("clears unread without changing the conversation's last activity", async () => {
+    await fixture.seedProjectConversation(
+      PROJECT_PATH,
+      makeConversationState({
+        id: "older",
+        scope: "project",
+        unread: true,
+        lastActivityAt: "2026-01-01T00:01:00.000Z",
+      }),
+    );
+    const before = await fixture.store.getProjectConversation(
+      PROJECT_PATH,
+      "older",
+    );
+
+    await storeBackedService().markProjectConversationRead(
+      PROJECT_PATH,
+      "older",
+    );
+
+    const reloaded = await fixture.store.getProjectConversation(
+      PROJECT_PATH,
+      "older",
+    );
+    expect(reloaded?.unread).toBe(false);
+    expect(reloaded?.lastActivityAt).toBe(before?.lastActivityAt);
   });
 });

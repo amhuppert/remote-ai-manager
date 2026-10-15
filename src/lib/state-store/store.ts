@@ -513,6 +513,8 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     createProjectConversation: setters.createProjectConversation,
     setProjectConversationArchived: setters.setProjectConversationArchived,
     setProjectConversationOpen: setters.setProjectConversationOpen,
+    markConversationRead: setters.markConversationRead,
+    markProjectConversationRead: setters.markProjectConversationRead,
     setProjectConversationPendingPromptText:
       setters.setProjectConversationPendingPromptText,
     setProjectArchived: setters.setProjectArchived,

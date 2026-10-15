@@ -9,6 +9,7 @@ import {
   mutateProjectConversation,
   setProjectConversationArchived,
   setProjectConversationOpen,
+  markProjectConversationRead,
 } from "@/lib/state-store";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -47,6 +48,11 @@ export interface ProjectConversationServiceDeps {
     projectPath: string,
     conversationId: string,
     open: boolean,
+  ): Promise<void>;
+  /** Clears `unread` without restamping `lastActivityAt`. */
+  markProjectConversationRead(
+    projectPath: string,
+    conversationId: string,
   ): Promise<void>;
   readConfig(): Promise<{ defaultAgentBackend?: AgentBackendId }>;
   getProjectDisplayName(projectPath: string): string;
@@ -123,6 +129,7 @@ const defaultDeps: ProjectConversationServiceDeps = {
   mutateProjectConversation,
   setProjectConversationArchived,
   setProjectConversationOpen,
+  markProjectConversationRead,
   readConfig,
   getProjectDisplayName,
   async closeBackgroundWork(scope, commit, options) {
@@ -199,20 +206,6 @@ export function createProjectConversationService(
     );
   }
 
-  async function markProjectConversationRead(
-    projectPath: string,
-    conversationId: string,
-  ): Promise<void> {
-    await deps.mutateProjectConversation(
-      projectPath,
-      conversationId,
-      "markProjectConversationRead",
-      (conversation) => {
-        conversation.unread = false;
-      },
-    );
-  }
-
   async function getOpenProjectConversationCount(
     projectPath: string,
   ): Promise<number> {
@@ -249,7 +242,8 @@ export function createProjectConversationService(
     },
     setProjectConversationOpen: (projectPath, conversationId, open) =>
       deps.setProjectConversationOpen(projectPath, conversationId, open),
-    markProjectConversationRead,
+    markProjectConversationRead: (projectPath, conversationId) =>
+      deps.markProjectConversationRead(projectPath, conversationId),
     getOpenProjectConversationCount,
   };
 }

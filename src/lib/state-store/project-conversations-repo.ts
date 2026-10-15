@@ -65,6 +65,12 @@ export interface ProjectConversationsRepo {
   setArchived(projectPath: string, id: string, archived: boolean): boolean;
   setOpen(projectPath: string, id: string, open: boolean): boolean;
   /**
+   * Focused single-column clear of `unread`, leaving `last_activity_at`
+   * untouched: reading a conversation is not conversation activity and must not
+   * reorder the PLC. Returns whether a row matched.
+   */
+  markRead(projectPath: string, id: string): boolean;
+  /**
    * Focused single-column write of `agent_capability_overrides` (JSON, or NULL
    * when the overrides are cleared). Never restamps `last_activity_at` — a
    * capability-override edit is configuration, not conversation activity, and
@@ -473,6 +479,11 @@ export function createProjectConversationsRepo(
      SET open = ?
      WHERE project_path = ? AND id = ?`,
   );
+  const markReadStmt = db.prepare(
+    `UPDATE project_conversations
+     SET unread = 0
+     WHERE project_path = ? AND id = ?`,
+  );
   const setMcpOverridesStmt = db.prepare(
     `UPDATE project_conversations
      SET mcp_overrides = ?
@@ -570,6 +581,14 @@ export function createProjectConversationsRepo(
     setOpen(projectPath, id, open) {
       return timed("setOpen", { id, projectPath }, () => {
         const info = setOpenStmt.run(open ? 1 : 0, projectPath, id);
+        const changed = info.changes > 0;
+        if (changed) cache.bump();
+        return changed;
+      });
+    },
+    markRead(projectPath, id) {
+      return timed("markRead", { id, projectPath }, () => {
+        const info = markReadStmt.run(projectPath, id);
         const changed = info.changes > 0;
         if (changed) cache.bump();
         return changed;

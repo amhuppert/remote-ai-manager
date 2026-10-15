@@ -4,6 +4,8 @@
  * Clears the `unread` flag set when an agent turn finished, broadcasts a
  * `conversation-unread` SSE event (unread=false) so subscribed clients drop
  * the conversation from the "Needs you" pinned slot, and acks the request.
+ * Reading is not conversation activity, so the conversation's and session's
+ * `lastActivityAt` (which order the sidebar) stay unchanged.
  *
  * Factory-pattern DI so the route handler can be tested without booting the
  * state store, the SSE bus, or project resolution.
@@ -16,13 +18,10 @@ import {
 } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
-  mutateConversation as defaultMutateConversation,
+  markConversationRead as defaultMarkConversationRead,
 } from "@/lib/state-store";
 import { publishEvent, type PublishFn } from "@/lib/events/publication";
-import {
-  conversationUnreadEventSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import { conversationUnreadEventSchema } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import { createLogger, withTracing } from "@/lib/logging";
@@ -37,12 +36,10 @@ export interface MarkReadRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  mutateConversation(
+  markConversationRead(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    label: string,
-    mutate: (conversation: ConversationState) => void | Promise<void>,
   ): Promise<void>;
   broadcast: PublishFn;
 }
@@ -51,7 +48,7 @@ const defaultDeps: MarkReadRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getProjectDisplayName: defaultGetProjectDisplayName,
   getSession: defaultGetSession,
-  mutateConversation: defaultMutateConversation,
+  markConversationRead: defaultMarkConversationRead,
   broadcast: publishEvent,
 };
 
@@ -68,15 +65,7 @@ export function createMarkReadRouteHandlers(
     if (!resolved.ok) return resolved.response;
     const { projectPath, sessionName, conversationId } = resolved.value;
 
-    await deps.mutateConversation(
-      projectPath,
-      sessionName,
-      conversationId,
-      "conversation.mark-read",
-      (c) => {
-        c.unread = false;
-      },
-    );
+    await deps.markConversationRead(projectPath, sessionName, conversationId);
 
     const projectName = deps.getProjectDisplayName(projectPath);
     try {

@@ -159,6 +159,17 @@ export interface ConversationsRepo {
     text: string | null,
   ): boolean;
   /**
+   * Focused single-column clear of `unread`, leaving the conversation's and the
+   * session's activity timestamps untouched: reading a conversation is not
+   * conversation activity and must not reorder the list. Returns whether a row
+   * matched.
+   */
+  markRead(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): boolean;
+  /**
    * Focused single-column clear of `backend_ref`, leaving the conversation's
    * activity timestamp untouched: retiring a runtime is not conversation
    * activity and must not reorder the list. Synchronous and statement-level so
@@ -569,6 +580,11 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
      SET pending_prompt_text = ?
      WHERE project_path = ? AND session_name = ? AND id = ?`,
   );
+  const markReadStmt = db.prepare(
+    `UPDATE conversations
+     SET unread = 0
+     WHERE project_path = ? AND session_name = ? AND id = ?`,
+  );
   const clearBackendRefStmt = db.prepare(
     `UPDATE conversations
      SET backend_ref = NULL
@@ -907,6 +923,22 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         () => {
           const info = setPendingPromptTextStmt.run(
             text,
+            projectPath,
+            sessionName,
+            conversationId,
+          );
+          const changed = info.changes > 0;
+          if (changed) cache.bump();
+          return changed;
+        },
+      );
+    },
+    markRead(projectPath, sessionName, conversationId) {
+      return timed(
+        "markRead",
+        { id: conversationId, projectPath, sessionName },
+        () => {
+          const info = markReadStmt.run(
             projectPath,
             sessionName,
             conversationId,

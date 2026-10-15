@@ -32,6 +32,7 @@ beforeEach(() => {
     setProjectConversationArchived:
       fixture.store.setProjectConversationArchived,
     setProjectConversationOpen: fixture.store.setProjectConversationOpen,
+    markProjectConversationRead: fixture.store.markProjectConversationRead,
     readConfig: async () => ({ defaultAgentBackend: "claude" as const }),
     getProjectDisplayName: () => "repo-durable",
     newId: () => "plc-durable",

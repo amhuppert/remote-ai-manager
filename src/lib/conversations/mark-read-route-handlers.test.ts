@@ -4,10 +4,11 @@
  * Verifies behavioral contract: 404 chains for missing project/session/conv,
  * 200 + unread=false mutation + conversation-unread broadcast on success.
  *
- * The success path mutates through the REAL conversation seam
- * (`createPersistenceFixture().deps.mutateConversation`) and asserts the new
- * `unread` value by RELOADING from the store, so the test fails if `unread`
- * stops serializing. Project resolution, session lookup, and SSE broadcast do
+ * The success path writes through the REAL store
+ * (`createPersistenceFixture().store.markConversationRead`) and asserts the new
+ * `unread` value and the unchanged activity timestamps by RELOADING from the
+ * store, so the test fails if `unread` stops serializing or reading restamps
+ * activity. Project resolution, session lookup, and SSE broadcast do
  * not depend on persistence and remain injected stubs. No vi.mock on internal
  * modules.
  */
@@ -78,6 +79,22 @@ async function reloadUnread(): Promise<boolean | undefined> {
   return reloaded?.unread;
 }
 
+async function reloadLastActivity(): Promise<{
+  conversation: string | undefined;
+  session: string | undefined;
+}> {
+  const conversation = await fixture.deps.getConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    CONVERSATION_ID,
+  );
+  const session = await fixture.store.getSession(PROJECT_PATH, SESSION_NAME);
+  return {
+    conversation: conversation?.lastActivityAt,
+    session: session?.lastActivityAt,
+  };
+}
+
 function makeDeps(overrides: Partial<MarkReadRouteDeps> = {}): {
   deps: MarkReadRouteDeps;
   broadcastedEvents: SSEEvent[];
@@ -89,7 +106,7 @@ function makeDeps(overrides: Partial<MarkReadRouteDeps> = {}): {
     resolveProjectPath: vi.fn(async () => PROJECT_PATH),
     getProjectDisplayName: vi.fn(() => PROJECT_NAME),
     getSession: vi.fn(async () => session),
-    mutateConversation: fixture.deps.mutateConversation,
+    markConversationRead: fixture.store.markConversationRead,
     broadcast: vi.fn((event: SSEEvent) => {
       broadcastedEvents.push(event);
       return { delivered: true as const };
@@ -147,6 +164,26 @@ describe("POST /conversations/[id]/mark-read", () => {
         unread: false,
       });
     }
+  });
+
+  it("leaves the conversation's and its session's last activity unchanged", async () => {
+    await seedConversation({ unread: true });
+    const before = await reloadLastActivity();
+    const { deps } = makeDeps();
+    const { POST } = createMarkReadRouteHandlers(deps);
+
+    const response = await POST(
+      plainRequest(),
+      context({
+        name: PROJECT_NAME,
+        session: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await reloadUnread()).toBe(false);
+    expect(await reloadLastActivity()).toEqual(before);
   });
 
   it("returns 404 when the project does not resolve", async () => {

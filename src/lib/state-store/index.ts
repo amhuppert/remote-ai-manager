@@ -90,6 +90,9 @@ export const setProjectConversationArchived =
   defaultStore.setProjectConversationArchived;
 export const setProjectConversationOpen =
   defaultStore.setProjectConversationOpen;
+export const markConversationRead = defaultStore.markConversationRead;
+export const markProjectConversationRead =
+  defaultStore.markProjectConversationRead;
 export const setProjectPinned = defaultStore.setProjectPinned;
 export const setSessionSpawnedFrom = defaultStore.setSessionSpawnedFrom;
 export const addPlcSpawnedSessionIds = defaultStore.addPlcSpawnedSessionIds;
