@@ -11,6 +11,9 @@ cctl run launch --file .cc/temp/run.json
 cctl run workflow-check --file .cc/temp/workflow.json
 cctl run workflow --file .cc/temp/workflow.json
 cctl run show <run-id>
+cctl run audit <run-id>
+cctl run audit <run-id> --context <context-id>
+cctl run audit <run-id> --full --out run-audit.json
 cctl run answer <run-id> --question <question-id> --text "<answer>"
 cctl run resume <run-id> --context <context-id> --occurrence <occurrence> --disposition <kind>
 cctl run retry <run-id> --lane <key>
@@ -25,7 +28,9 @@ cctl run cancel <run-id>
 The conversation that launches a run owns it. Only the owner answers its
 questions and amends it; the owner and the user in Command Center pause,
 resume, cancel and retry it; only the user decides an approval. Any
-conversation of the session can read it with `run show`.
+authenticated conversation can read it with `run show`, `run definition` or
+`run audit`, including from another project or session. Bare run ids resolve
+their target; explicit project/session flags constrain reads to that target.
 
 ### Payload files and check verbs
 
@@ -75,6 +80,41 @@ writes the workflow definition as written to a JSON file under
 its `artifact:` line names the file. Copy it, edit the copy and amend with
 that: the written file is never overwritten, so an edited one would block
 reading the same revision again. An agent run has none.
+
+### Audit evidence
+
+Start with `run audit <run-id>`. Its bounded overview counts all invocations,
+historical agent conversations, candidate versions, reviews, workspace
+operations and wake deliveries. Every context row gives an exact detail
+command; pagination reports the total and next command. A past loop pass has
+its own context id, and replaced agents remain in its history.
+
+`--context <context-id>` reads that context's work report, candidate and review
+history, advice dispositions, acceptance and agent seats. The output links to
+each agent's transcript. Use `conversation read <id> --outline`, then the
+returned message or seq window with `--include-tools full`; `conversation entry
+get` exports an entry without excerpts. `--full` includes every context and the
+durable boundary, workspace and wake evidence. Large output becomes an artifact;
+read it from the path in the receipt.
+
+Conversation coverage includes every recorded context seat, including replaced
+agents. Lane conflict-resolution and validation-fix tasks have no conversation
+transcript; use their workspace outcomes and server logs. The audit states this
+coverage limit in both text and JSON.
+
+Prompt dispatch evidence records the exact work, formatting and repair input
+CC sent to its backend adapter. It does not reconstruct provider wire requests
+or provider-injected instructions. Older transcripts may lack these records;
+the audit distinguishes absent records from unavailable transcripts. Neither
+condition proves that no formatting or repair turn happened.
+
+The audit's timestamps, project/session and conversation ids also identify the
+scope for `cctl logs report --help`. Use logs to investigate runtime failures
+beyond the durable evidence; audit output is not a bundle of every server log.
+
+When a context halts with `output_invalid`, inspect its work report before
+choosing a remedy. `retry_capture` only formats its existing result again;
+`continue` resumes work, then captures and reviews a new result.
 
 ### Wakes
 

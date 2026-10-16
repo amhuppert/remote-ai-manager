@@ -180,6 +180,14 @@ export function remedy(
 ): PresentedRemedy {
   switch (r.kind) {
     case "continue":
+      if (haltKind === "output_invalid")
+        return {
+          label: "Resume work",
+          consequence:
+            "The implementer works again before reporting its result for review.",
+          needsNote: null,
+          emphasis: "primary",
+        };
       if (haltKind === "effect_uncertain")
         return {
           label: "Try again without evidence",
@@ -227,9 +235,9 @@ export function remedy(
       };
     case "retry_capture":
       return {
-        label: "Ask for the result again",
+        label: "Retry result formatting",
         consequence:
-          "The implementer reports its result again; its work is kept.",
+          "The implementer formats its existing result again. This does not resume work.",
         needsNote: null,
         emphasis: "primary",
       };

@@ -75,7 +75,22 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
   run: {
     support: "session-only",
     reason:
-      "A supervised run places its contexts in a session worktree and belongs to the session conversation that launched it; the `context task` verbs declared beside it come from that run's seat conversations. No project-root run route exists.",
+      "Launching and steering a supervised run require its session worktree and owner. Read leaves resolve a run globally by id; the context task verbs come from that run's seat conversations.",
+  },
+  "run show": {
+    support: "project-supported",
+    reason:
+      "A bare run id resolves globally for reads; explicit scope constrains the target.",
+  },
+  "run definition": {
+    support: "project-supported",
+    reason:
+      "Reading a run's definition does not require its owner's session identity.",
+  },
+  "run audit": {
+    support: "project-supported",
+    reason:
+      "An auditor reads historical run evidence by id across projects and sessions.",
   },
   "run template": {
     support: "project-supported",

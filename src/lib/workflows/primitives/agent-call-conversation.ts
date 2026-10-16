@@ -59,6 +59,7 @@ export interface DispatchConversationTurnDeps {
   promptContext?: string;
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
+  onDispatch?(input: ConversationBackendTurnInput): Promise<void> | void;
   /** Pre-known artifact references the caller wants attached to the result. */
   artifacts?: readonly ArtifactRef[];
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
@@ -143,6 +144,15 @@ export async function dispatchConversationTurn(
   };
 
   let turnResult: ConversationBackendTurnResult;
+  try {
+    await deps.onDispatch?.(turnInput);
+  } catch (error) {
+    // Transcript evidence is observational; a failed sink must not prevent the turn.
+    log.warn("agent_call.conversation.dispatch_observer_failed", {
+      ...baseLogFields,
+      error: getErrorMessage(error),
+    });
+  }
   try {
     turnResult = await runtime.sendTurn(turnInput);
   } catch (err) {

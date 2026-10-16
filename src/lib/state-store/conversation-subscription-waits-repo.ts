@@ -55,6 +55,12 @@ export interface ConversationSubscriptionWaitsRepo {
     at: string,
     releaseBatchId?: string,
   ): void;
+  /** Withdraws a proven-unsent wake and releases surviving members for rebatching. */
+  supersedeBatchFollowsWithinWrite(
+    batchId: string,
+    deliveryIds: string[],
+    at: string,
+  ): number;
   isBatchDispatchable(batchId: string): Promise<boolean>;
   rateLimitUntil(
     recipient: SubscriptionRecipient,
@@ -95,6 +101,12 @@ export interface ConversationSubscriptionWaitsRepo {
     batch: SubscriptionWakeBatch,
   ): Promise<SubscriptionWakeBatch | null>;
   listPendingBatches(): Promise<SubscriptionWakeBatch[]>;
+  listBatchesForDeliveries(
+    deliveryIds: string[],
+  ): Promise<SubscriptionWakeBatch[]>;
+  getPendingBatch(
+    recipient: SubscriptionRecipient,
+  ): Promise<SubscriptionWakeBatch | null>;
   getBatch(batchId: string): Promise<SubscriptionWakeBatch | null>;
   markBatchQueued(batchId: string, at: string): Promise<void>;
   settleBatch(
@@ -494,6 +506,50 @@ export function createConversationSubscriptionWaitsRepo(
       );
     });
   }
+  function releasePendingBatch(
+    batch: SubscriptionWakeBatch,
+    at: string,
+    reason: string,
+  ) {
+    if (batch.state === "accepted" || batch.state === "cancelled")
+      throw new ActiveWaitConflictError();
+    writeBatch({
+      ...batch,
+      state: "cancelled",
+      updatedAt: at,
+      finishedAt: at,
+      lastError: reason,
+    });
+    for (const id of batch.waitIds) {
+      const member = readWait(id);
+      if (!member || member.batchId !== batch.id)
+        throw new Error("Wake batch lost its wait ownership");
+      writeWait({ ...member, batchId: null, updatedAt: at });
+    }
+    releaseBatchClaims(db, batch.recipient, batch.id);
+  }
+  const supersedeBatchFollowsTx = db.transaction(
+    (batchId: string, deliveryIds: string[], at: string) => {
+      const batch = readBatch(batchId);
+      if (
+        !batch ||
+        deliveryIds.length === 0 ||
+        deliveryIds.some((id) => !batch.followDeliveryIds.includes(id))
+      )
+        throw new ActiveWaitConflictError();
+      const reason = "Source fact withdrawn before input acceptance";
+      releasePendingBatch(batch, at, reason);
+      const supersede = db.prepare(
+        "UPDATE conversation_subscription_deliveries SET state='superseded',finished_at=@at,last_error=@reason WHERE id=@id AND project_path=@project_path AND conversation_id=@conversation_id AND state='pending'",
+      );
+      return deliveryIds.reduce(
+        (count, id) =>
+          count +
+          supersede.run({ id, ...scope(batch.recipient), at, reason }).changes,
+        0,
+      );
+    },
+  );
   const controlTx = db.transaction(
     (
       recipient: SubscriptionRecipient,
@@ -510,20 +566,11 @@ export function createConversationSubscriptionWaitsRepo(
           (batch.state !== "planned" && batch.state !== "queued")
         )
           throw new ActiveWaitConflictError();
-        writeBatch({
-          ...batch,
-          state: "cancelled",
-          updatedAt: at,
-          finishedAt: at,
-          lastError: "Pending wake withdrawn for subscription control",
-        });
-        for (const id of batch.waitIds) {
-          const member = readWait(id);
-          if (!member || member.batchId !== batch.id)
-            throw new Error("Wake batch lost its wait ownership");
-          writeWait({ ...member, batchId: null, updatedAt: at });
-        }
-        releaseBatchClaims(db, batch.recipient, batch.id);
+        releasePendingBatch(
+          batch,
+          at,
+          "Pending wake withdrawn for subscription control",
+        );
       }
       const current = readRecipientWait(recipient, subscriptionId);
       if (
@@ -716,6 +763,9 @@ export function createConversationSubscriptionWaitsRepo(
     return true;
   });
   return {
+    supersedeBatchFollowsWithinWrite(batchId, deliveryIds, at) {
+      return supersedeBatchFollowsTx.immediate(batchId, deliveryIds, at);
+    },
     async applyControl(recipient, subscriptionId, change, at, releaseBatchId) {
       await writeQueue.withWriteQueueSync("subscriptions.wait.control", () =>
         controlTx.immediate(
@@ -823,6 +873,21 @@ export function createConversationSubscriptionWaitsRepo(
         reserveTx.immediate(parsed),
       );
     },
+    async listBatchesForDeliveries(deliveryIds) {
+      if (deliveryIds.length === 0) return [];
+      return db
+        .prepare(
+          `SELECT b.* FROM conversation_subscription_wake_batches b WHERE EXISTS (
+          SELECT 1 FROM json_each(b.payload_json, '$.followDeliveryIds') member
+          WHERE member.value IN (SELECT value FROM json_each(@delivery_ids))
+          UNION ALL
+          SELECT 1 FROM json_each(b.payload_json, '$.deliveryIds') member
+          WHERE member.value IN (SELECT value FROM json_each(@delivery_ids))
+        ) ORDER BY b.created_at,b.rowid`,
+        )
+        .all({ delivery_ids: JSON.stringify(deliveryIds) })
+        .map(batchFromRow);
+    },
     async listPendingBatches() {
       return (
         db
@@ -831,6 +896,9 @@ export function createConversationSubscriptionWaitsRepo(
           )
           .all() as unknown[]
       ).map(batchFromRow);
+    },
+    async getPendingBatch(recipient) {
+      return pendingBatch(recipient);
     },
     async getBatch(batchId) {
       return readBatch(batchId);

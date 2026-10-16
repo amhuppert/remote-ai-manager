@@ -2,11 +2,10 @@
  * Codex's translation of a server-derived {@link FsWritePolicy} onto its native
  * sandbox.
  *
- * `workspace-write` makes the run's WORKING DIRECTORY writable by construction,
- * so the first thing this does is move the run out of the candidate worktree:
- * the cwd becomes the lane's own writable root and the worktree is reached by
- * absolute path instead. Everything else follows from "nothing outside CC's
- * composition may widen the sandbox":
+ * `workspace-write` makes the working directory writable by construction.
+ * The composer places that root first: supervised seats use their whole
+ * assigned worktree. Explicit task policies may use a different root.
+ * Nothing outside CC's composition should widen the sandbox:
  *
  *  - `writable_roots` is set to exactly the policy allowlist, so the writable
  *    set is enumerated rather than inherited;
@@ -116,8 +115,8 @@ export function buildCodexFsWriteEnvelope(
 }
 
 /**
- * The same sandbox for a CONVERSATION turn — a graph-workflow implementer
- * confined to the prefixes its context owns.
+ * The same outside-worktree boundary for a conversation turn. Supervised
+ * seats receive the whole assigned worktree, independent of their task scope.
  *
  * The hermetic half is deliberately absent. A review lane executes CC's
  * composition and nothing else, so blanking the machine's project docs, skills,

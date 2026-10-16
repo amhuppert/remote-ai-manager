@@ -10,6 +10,8 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ConversationSubscriptionsRepo } from "@/lib/state-store/conversation-subscriptions-repo";
+import type { ConversationSubscriptionWaitsRepo } from "@/lib/state-store/conversation-subscription-waits-repo";
+import type { SubscriptionWakeBatch } from "./active-wait-schemas";
 import {
   conversationSubscriptionSchema,
   sourceReadResultSchema,
@@ -50,6 +52,11 @@ export interface RecordSubscriptionNoticeInput {
 }
 export interface SubscriptionServiceDeps {
   repo: ConversationSubscriptionsRepo;
+  waits?: ConversationSubscriptionWaitsRepo;
+  withdrawPendingWake?(
+    batch: SubscriptionWakeBatch,
+    commit: () => void,
+  ): Promise<boolean>;
   isRecipientEligible(recipient: SubscriptionRecipient): Promise<boolean>;
   readSource(
     recipient: SubscriptionRecipient,
@@ -324,6 +331,44 @@ export function createSubscriptionService(
       lastError: null,
     };
   }
+  async function withdrawQueuedOccurrences(
+    recipient: SubscriptionRecipient,
+    source: SubscriptionSourceRef,
+    occurrenceIds: string[],
+    at: string,
+  ): Promise<number> {
+    const waits = deps.waits;
+    if (!waits || !deps.withdrawPendingWake) return 0;
+    const batch = await waits.getPendingBatch(recipient);
+    if (!batch) return 0;
+    const deliveries = await Promise.all(
+      batch.followDeliveryIds.map((id) => deps.repo.getDelivery(recipient, id)),
+    );
+    const obsoleteIds = deliveries.flatMap((delivery) =>
+      delivery &&
+      delivery.source.kind === source.kind &&
+      delivery.source.id === source.id &&
+      occurrenceIds.includes(delivery.fact.occurrenceId)
+        ? [delivery.id]
+        : [],
+    );
+    if (obsoleteIds.length === 0) return 0;
+    let superseded = 0;
+    const withdrawn = await deps.withdrawPendingWake(batch, () => {
+      superseded = waits.supersedeBatchFollowsWithinWrite(
+        batch.id,
+        obsoleteIds,
+        at,
+      );
+    });
+    if (withdrawn)
+      logger.info("subscription.obsolete_wake_withdrawn", {
+        conversationId: recipient.conversationId,
+        batchId: batch.id,
+        superseded,
+      });
+    return superseded;
+  }
   async function reconcile(recipient: SubscriptionRecipient, discover = true) {
     subscriptionRecipientSchema.parse(recipient);
     const report: {
@@ -367,13 +412,20 @@ export function createSubscriptionService(
           if (superseded > 0) deps.onChange?.(recipient, subscription.source);
         }
         if (read.withdrawnOccurrenceIds?.length) {
+          const withdrawn = await withdrawQueuedOccurrences(
+            recipient,
+            subscription.source,
+            read.withdrawnOccurrenceIds,
+            at,
+          );
           const superseded = await deps.repo.supersedePending(
             recipient,
             subscription.source,
             read.withdrawnOccurrenceIds,
             at,
           );
-          if (superseded > 0) deps.onChange?.(recipient, subscription.source);
+          if (withdrawn + superseded > 0)
+            deps.onChange?.(recipient, subscription.source);
         }
         // A null cursor establishes the baseline even after a failed initial read.
         const facts =

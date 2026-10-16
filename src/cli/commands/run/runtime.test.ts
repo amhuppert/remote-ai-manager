@@ -77,6 +77,31 @@ function artifactText(
 }
 
 describe("run commands", () => {
+  it("reads a bare run id without requiring or inheriting a session target", async () => {
+    const fixture = createCcRuntimeFixture({
+      env: { ...identityEnv, CC_SESSION: "", CC_CONVERSATION_SCOPE: "project" },
+      respond: () => jsonReply(view),
+    });
+    const result = await fixture.run(["run", "show", "run-1"]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(fixture.requests[0]?.url).toBe("http://cc.test/api/runs/run-1");
+  });
+
+  it("keeps an explicitly addressed session on run reads", async () => {
+    const fixture = createCcRuntimeFixture({ respond: () => jsonReply(view) });
+    const result = await fixture.run([
+      "run",
+      "show",
+      "run-1",
+      "--session",
+      "other-session",
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(fixture.requests[0]?.url).toBe(
+      "http://cc.test/api/projects/project-one/sessions/other-session/runs/run-1",
+    );
+  });
+
   it("launches from a brief as the calling conversation and points at run show", async () => {
     const fixture = createCcRuntimeFixture({
       env: identityEnv,
@@ -774,7 +799,7 @@ describe("run commands", () => {
 
     expect(read.exitCode, read.stderr).toBe(0);
     expect(fixture.requests[0]?.url).toBe(
-      "http://cc.test/api/projects/project-one/sessions/session-one/runs/run-1/definition",
+      "http://cc.test/api/runs/run-1/definition",
     );
     const { payload } = JSON.parse(read.stdout);
     expect(payload).toMatchObject({

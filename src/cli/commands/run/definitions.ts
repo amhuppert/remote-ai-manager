@@ -59,7 +59,7 @@ export const runLaunchSpec = {
   path: "run launch",
   summary: "Launch a supervised agent run in this session",
   description:
-    "Start an agent that works in the session worktree under supervision. The file needs only a brief; tasks, checks, reviewers, output schema and approval are opt-in. documents: [{path, from or contents, description, readWhen}] are frozen at launch (from is a file path relative to the session worktree's root, read once; at most 256 KB each and 1 MB together) and the agent and its reviewers read them as read-only copies under .cc/run-docs/<context>/ in their working directory. checks name validation commands registered for this project (cctl validate list); run launch-check works locally and cannot see that registry, so run launch itself refuses an unregistered name. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones).",
+    "Start an agent that works in the session worktree under supervision. The file needs only a brief; tasks, checks, reviewers, output schema and approval are opt-in. documents: [{path, from or contents, description, readWhen}] are frozen at launch (from is a file path relative to the session worktree's root, read once; at most 256 KB each and 1 MB together) and the agent and its reviewers receive writable copies under .cc/run-docs/<context>/ in their working directory; editing a local copy does not change the frozen document revision. checks name validation commands registered for this project (cctl validate list); run launch-check works locally and cannot see that registry, so run launch itself refuses an unregistered name. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones).",
   requires: "cc",
   effects: "write",
   args: [],
@@ -70,7 +70,7 @@ export const runWorkflowSpec = {
   path: "run workflow",
   summary: "Launch a supervised workflow of several contexts in this session",
   description:
-    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused. A publication changes the session worktree, so each session context must be ordered against each lane's publication, or placed in a lane: it depends on the lane's work, or the lane's work depends on it (outputOnly). Publication keeps the session worktree's uncommitted changes that the lane does not touch and stops, changing nothing, at ones in the way of its files (a file deleted without staging the deletion comes back if the lane changes it); while it waits, run show says what for. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. documents, declared once at the top level as for run launch with an optional appliesTo: [context keys], are frozen at launch; a context reads the documents meant for it as they stood when it started, and its implementer can publish a new revision or a new document (context doc publish) for work that starts later. An optional charter {mission, invariants: [{id, statement, appliesTo?}], sourcesOfTruth: [{rank, id, label, type: code|config|document|spec|other, locator, description, appliesTo?}], nonGoals, conventions, vocabulary, testStrategy, knownAmbiguities} states the run's mission, the invariants every change keeps and its sources ranked by authority (1 highest; a locator is read where it stands, never frozen: declare a document to freeze something); each context's first work and review orders summarize the part meant for it, and its seats read the full text in charter.md beside its documents. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. Context and lane checks name validation commands registered for this project (cctl validate list); run workflow-check works locally and cannot see that registry, so run workflow itself refuses an unregistered name. An owned path contains none of [ ] ( ) { } * ? !: own the nearest parent directory without them. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones).",
+    "Start several supervised contexts in the session worktree. Each context takes the same fields as run launch plus a key, an optional dependsOn list and an optional write scope; a context starts once every context it depends on succeeded, with their accepted results as its inputs. A dependsOn entry may be {key, when}: when is {schema} (a JSON-Schema subset the dependency's accepted output must match; the dependency needs an outputSchema) or {else: true} (taken when no guarded sibling matched); a context whose route is not taken is skipped, and routing {cardinality: atLeastOne|exactlyOne} on the source halts the run when its result takes the wrong number of routes. A loop {key, body, entry, exit, until: {schema}, maxPasses} reruns its body in fresh contexts, the entry receiving the exit results of up to three recent passes, until the exit's output (it needs an outputSchema) matches until; only the entry may depend on work outside the loop, the body has no routes, and work after the loop depends on its exit and sees only the final pass. A context with lane: <key> works in an isolated lane: its own worktree and branch, started from the session branch's committed head, where each accepted result is committed; once all its contexts are done the lane is merged with the session head, checked (lanes: [{key, checks}]) and published into the session branch, and only then can work outside the lane use its code. A lane cannot use a session context's code (it is never committed): mark such a dependency {key, outputOnly: true} if only the result is needed. Contexts and lanes that would wait for each other are refused. A publication changes the session worktree, so each session context must be ordered against each lane's publication, or placed in a lane: it depends on the lane's work, or the lane's work depends on it (outputOnly). Publication keeps the session worktree's uncommitted changes that the lane does not touch and stops, changing nothing, at ones in the way of its files (a file deleted without staging the deletion comes back if the lane changes it); while it waits, run show says what for. Conflicts with the session head are resolved, and failing lane checks fixed, by agents in the lane before it publishes. documents, declared once at the top level as for run launch with an optional appliesTo: [context keys], are frozen at launch; a context reads the documents meant for it as they stood when it started, and its implementer can publish a new revision or a new document (context doc publish) for work that starts later. An optional charter {mission, invariants: [{id, statement, appliesTo?}], sourcesOfTruth: [{rank, id, label, type: code|config|document|spec|other, locator, description, appliesTo?}], nonGoals, conventions, vocabulary, testStrategy, knownAmbiguities} states the run's mission, the invariants every change keeps and its sources ranked by authority (1 highest; a locator is read where it stands, never frozen: declare a document to freeze something); each context's first work and review orders summarize the part meant for it, and its seats read the full text in charter.md beside its documents. Contexts that could run at the same time in one worktree need disjoint owned write scopes, a read-only context cannot run beside any writer there, and a whole-tree check of a context other writers run alongside needs a later context in the same worktree that depends on it, runs whenever it runs, and selects the same check, or, in a lane, the lane's checks. Context and lane checks name validation commands registered for this project (cctl validate list); run workflow-check works locally and cannot see that registry, so run workflow itself refuses an unregistered name. Scopes describe task ownership and scoped landing; agents can write throughout their own worktree. Use separate lanes for filesystem isolation. You own the run and follow it from launch: each question, halt and its result wakes you as a subscription update (cctl inbox list --all keeps the delivered ones).",
   requires: "cc",
   effects: "write",
   args: [],
@@ -114,11 +114,62 @@ export const runShowSpec = {
   path: "run show",
   summary: "Read a run's progress, contexts and boundaries",
   description:
-    "Read the run's progress, each context's tasks, open questions, halt occurrence and result, each lane's state (a publishing lane names what it waits for: a seat holding the session worktree, a CC job holding the session, or Git's index lock), and the boundary ledger.",
+    "Read a run by id across sessions; explicit project/session flags constrain the target. Read each context's tasks, open questions, halt occurrence and result, each lane's state (a publishing lane names what it waits for: a seat holding the session worktree, a CC job holding the session, or Git's index lock), and the boundary ledger.",
   requires: "cc",
   effects: "read",
   args: [runId],
   flags: {},
+  related: [
+    {
+      path: "run audit",
+      description: "Trace every pass, agent, review and delivery",
+    },
+  ],
+} as const;
+export const runAuditSpec = {
+  path: "run audit",
+  summary: "Inspect a run's context agents and durable engine evidence",
+  description:
+    "Read up to 20 context summaries with whole-run evidence counts. Bare run ids resolve across sessions; explicit project/session flags constrain the target. --context selects one exact context id, including a past loop pass, and returns its candidates, reviews, advice, work report, historical agent seats and recorded prompt dispatches. --full exports all contexts and durable workspace, boundary and wake evidence; large responses spill to an artifact. Transcript handles lead to conversation read and entry get for tool calls and original entries. Legacy runs may lack prompt dispatch records; unavailable evidence is identified rather than reconstructed. Ephemeral lane merge/fix tasks have workspace and log evidence but no conversation transcript.",
+  requires: "cc",
+  effects: "read",
+  args: [runId],
+  flags: {
+    context: {
+      description:
+        "Exact context id from the overview, including its pass suffix",
+      value: { kind: "string", minLength: 1 },
+    },
+    limit: {
+      description: "Context summaries per page",
+      value: { kind: "integer", min: 1, max: 100 },
+      default: 20,
+    },
+    offset: {
+      description: "Context summaries to skip",
+      value: { kind: "integer", min: 0 },
+      default: 0,
+    },
+  },
+  levels: { full: { output: "artifact-eligible" } },
+  related: [
+    {
+      path: "run show",
+      description: "Read current progress and available actions",
+    },
+    {
+      path: "conversation read",
+      description: "Read an agent transcript and tool calls",
+    },
+    {
+      path: "conversation entry get",
+      description: "Export an original transcript entry",
+    },
+    {
+      path: "logs report",
+      description: "Inspect local server logs for the recorded time range",
+    },
+  ],
 } as const;
 export const runAnswerSpec = {
   path: "run answer",
@@ -156,7 +207,7 @@ export const runResumeSpec = {
   path: "run resume",
   summary: "Resume a paused or halted run",
   description:
-    "Resume the run. A halted context needs a disposition naming the halt occurrence shown by run show; a grant also names the allowance, count and reason.",
+    "Resume the run. A halted context needs a disposition naming the halt occurrence shown by run show; a grant also names the allowance, count and reason. For output_invalid, retry_capture only reformats the existing result; continue resumes work before capturing and reviewing a new result.",
   requires: "cc",
   effects: "write",
   args: [runId],
@@ -306,8 +357,31 @@ export const runDefinitionCommand = ccCommands.defineCommand(
   },
 );
 export const runShowCommand = ccCommands.defineCommand(runShowSpec, {
-  examples: [{ why: "Read a run you launched", args: { "run-id": "run-1" } }],
+  examples: [
+    { why: "Read a run by id from any session", args: { "run-id": "run-1" } },
+  ],
   handler: async () => ({ default: (await handlers()).showHandler }),
+});
+export const runAuditCommand = ccCommands.defineCommand(runAuditSpec, {
+  examples: [
+    {
+      why: "Find every context and historical agent",
+      args: { "run-id": "run-1" },
+    },
+    {
+      why: "Inspect one loop pass's reviews and result",
+      args: { "run-id": "run-1" },
+      flags: { context: "run-1.build.pass2" },
+    },
+    {
+      why: "Export all durable audit evidence",
+      args: { "run-id": "run-1" },
+      level: "full",
+    },
+  ],
+  handler: async () => ({
+    default: (await import("./audit-handler")).auditHandler,
+  }),
 });
 export const runAnswerCommand = ccCommands.defineCommand(runAnswerSpec, {
   examples: [
@@ -427,6 +501,7 @@ export const runCommands = [
   runAmendCommand,
   runDefinitionCommand,
   runShowCommand,
+  runAuditCommand,
   runAnswerCommand,
   runPauseCommand,
   runResumeCommand,

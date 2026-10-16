@@ -70,6 +70,10 @@ export interface ConversationSubscriptionsRepo {
   listDeliveriesForOverview(
     recipient?: SubscriptionRecipient,
   ): Promise<SubscriptionDelivery[]>;
+  listDeliveriesForRun(
+    projectPath: string,
+    runId: string,
+  ): Promise<SubscriptionDelivery[]>;
   pendingCount(recipient?: SubscriptionRecipient): Promise<number>;
   updateControls(
     recipient: SubscriptionRecipient,
@@ -574,6 +578,14 @@ export function createConversationSubscriptionsRepo(
           .all() as unknown[]
       ).map(subscriptionFromRow);
     },
+    async listDeliveriesForRun(projectPath, runId) {
+      return db
+        .prepare(
+          "SELECT * FROM conversation_subscription_deliveries WHERE project_path=? AND source_kind='run' AND source_id=? ORDER BY recorded_at,rowid",
+        )
+        .all(projectPath, runId)
+        .map(deliveryFromRow);
+    },
     async listDeliveriesForOverview(recipient) {
       const rows: unknown[] = recipient
         ? db
@@ -700,7 +712,8 @@ export function createConversationSubscriptionsRepo(
           last_error='Source fact was superseded by accepted context or feedback withdrawal'
         WHERE project_path=@project_path AND conversation_id=@conversation_id
           AND source_kind=@source_kind AND source_id=@source_id
-          AND occurrence_id=@occurrence_id AND state IN ('pending','failed')`);
+          AND occurrence_id=@occurrence_id AND state IN ('pending','failed')
+          AND NOT EXISTS (SELECT 1 FROM conversation_subscription_wake_batches b WHERE b.id=conversation_subscription_deliveries.attempt_id AND b.state NOT IN ('accepted','cancelled'))`);
       return writeQueue.withWriteQueueSync(
         "subscriptions.supersedePending",
         () =>

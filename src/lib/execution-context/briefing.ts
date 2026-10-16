@@ -41,7 +41,7 @@ function documentsBlock(facts: ContextFacts): string | null {
   const documents = facts.contract.current.documents;
   if (documents.length === 0) return null;
   return [
-    "Frozen for this work: read-only copies at these paths in your working directory.",
+    "Frozen for this work: writable copies at these paths in your working directory. Local edits do not change the frozen revision; each turn restores it.",
     ...documents.map(
       (d) =>
         `- \`${d.path}\` — ${d.description}${d.readWhen ? ` Read when: ${d.readWhen}` : ""}`,
@@ -334,7 +334,8 @@ export function composeContinuation(question: string, answer: string): string {
 export function composeCapture(): string {
   return [
     "# Report your result",
-    "Your work is complete. Report its actual result in the required structure.",
+    "Report the current result of your work in the required structure, including any revisions made in response to review advice.",
+    "If the required structure contains `summary`, put the complete current report there; do not return advice dispositions as the deliverable.",
     "Describe what you did; do not make further changes to files.",
   ].join("\n\n");
 }

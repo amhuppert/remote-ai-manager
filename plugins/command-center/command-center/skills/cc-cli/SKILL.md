@@ -15,8 +15,8 @@ CC server; it does not execute changes from your branch. Read the relevant
 refusal. Help works offline and lists the current flags, schemas, related
 commands, and skills. `cctl --help` is the group index.
 
-Use the identity CC injects into this session. Read-only conversation commands
-can resolve another conversation by id; cross-session mutations require explicit
+Use the identity CC injects into this session. Read-only conversation and run commands
+can resolve another conversation or run by id; cross-session mutations require explicit
 scope flags and authorization for that target.
 
 ## Choose the relevant reference
@@ -51,8 +51,8 @@ For native spec authoring and its human gates, use
 ## Payloads and output
 
 Write JSON payloads under `.cc/temp/` in your assigned worktree, then pass
-`--file <path>`. In a restricted workflow context, use the payload or scratch
-directory named by its prompt. These locations keep throwaway payloads out of
+`--file <path>`. In a supervised context, use the per-seat payload
+directory under `.cc/temp/` named by its prompt. These locations keep throwaway payloads out of
 engine-managed commits. Repair the command's structured validation issues
 before resubmitting.
 

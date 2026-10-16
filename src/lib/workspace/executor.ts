@@ -63,6 +63,10 @@ export interface WorkspaceExecutorDeps {
  * admission, and only while the requester's permit admits them.
  */
 export interface WorkspaceExecutor extends Executor {
+  /** Every recorded operation of this run or context, including settled attempts. */
+  operationsOf(
+    requester: WorkspaceOperationRecord["requester"],
+  ): WorkspaceOperationRecord[];
   /** Stops an admitted operation's model work; its effects settle before it reports. */
   interrupt(cause: string): void;
   /**
@@ -780,6 +784,7 @@ export function createWorkspaceExecutor(
   }
 
   const executor: WorkspaceExecutor = {
+    operationsOf: (requester) => deps.repo.operationsOf(requester),
     submit(intent: PendingIntent) {
       const operation = workspaceOperationSchema.parse(intent.request);
       deps.transaction(() => {

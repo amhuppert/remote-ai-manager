@@ -45,7 +45,7 @@ type Confinement =
       kind: "envelope";
       envelope: ImplementerLaneWriteEnvelope;
       restriction: FsWriteRestrictionSupport;
-      /** No repository path is writable: a read-only context's implementer. */
+      /** Task intent only; the filesystem still permits the whole worktree. */
       readOnly: boolean;
     }
   | { kind: "refused"; reason: string };
@@ -56,7 +56,7 @@ type Confinement =
  * row records each turn the way every other client reads it.
  */
 export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
-  /** The write envelope that enforces what the request says the turn may write. */
+  /** Scope changes task intent, never writable paths inside the assigned worktree. */
   function confinementFor(request: SeatTurnRequest): Confinement {
     const { writes, worktreePath } = request.workspace;
     if (writes.mode === "all") return { kind: "none" };
@@ -66,7 +66,7 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
     if (restriction === "unsupported") {
       return {
         kind: "refused",
-        reason: `Backend "${backend}" cannot limit conversation writes, so it cannot run under a ${readOnly ? "read-only" : "owned write"} scope`,
+        reason: `Backend "${backend}" cannot limit conversation writes to the assigned worktree`,
       };
     }
     try {
@@ -75,8 +75,6 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
         // Names the payload directory in the shared worktree: one per context's seat.
         contextId: `${request.seat.contextId}.${request.seat.assignmentId}`,
         worktreePath,
-        ownedPaths: writes.mode === "paths" ? writes.paths : [],
-        payloadLocation: readOnly ? "scratch" : "worktree",
       });
       return { kind: "envelope", envelope, restriction, readOnly };
     } catch (error) {
@@ -107,7 +105,7 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
       if (row === null)
         return failed(`Seat conversation ${conversationId} no longer exists`);
       try {
-        // Read-only copies of the work's frozen documents, at the paths its briefing names.
+        // Restore the work's frozen documents at the paths its briefing names.
         await deps.materializeDocuments(
           request.workspace.worktreePath,
           request.documents,
@@ -129,7 +127,7 @@ export function createNativeSeatTurns(deps: NativeSeatTurnDeps): SeatTurnPort {
           : { type: "json_schema" as const, schema: request.outputSchema };
       const promptText =
         confinement.kind === "envelope"
-          ? `${renderWriteEnvelopeBriefing(confinement.envelope, confinement.restriction)}\n\n${request.message}`
+          ? `${renderWriteEnvelopeBriefing(confinement.envelope, confinement.restriction, request.workspace.writes)}\n\n${request.message}`
           : request.message;
 
       const timeoutMs = request.timeoutMs;

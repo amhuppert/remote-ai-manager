@@ -14,7 +14,7 @@ import type {
  * A run's documents: declared at launch (or amendment), frozen as artifact
  * snapshots before anything is recorded, kept as revisions per path, and
  * bound to each context when it starts. A seat reads its context's documents
- * as read-only copies under this directory of its working directory, in the
+ * as writable copies under this directory of its working directory, in the
  * context's own subdirectory.
  */
 export const RUN_DOCUMENTS_DIR = ".cc/run-docs";

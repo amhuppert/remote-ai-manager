@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FsWritePolicy } from "../task";
-import { buildCodexFsWriteEnvelope } from "./fs-write-envelope";
+import {
+  buildCodexConversationFsWriteEnvelope,
+  buildCodexFsWriteEnvelope,
+} from "./fs-write-envelope";
 
 const SCRATCH = "/private/tmp/cc-validator-lanes/exec/ctx/reviewer";
 const LANE_TMP = `${SCRATCH}/tmp`;
@@ -24,6 +27,20 @@ function envelopeOf(input: FsWritePolicy) {
 }
 
 describe("buildCodexFsWriteEnvelope", () => {
+  it("runs a conversation in its assigned worktree with that complete tree writable", () => {
+    const result = buildCodexConversationFsWriteEnvelope(
+      policy({ allowWrite: [WORKTREE, LANE_TMP], denyWrite: [] }),
+    );
+    if (result.kind !== "envelope") throw new Error(result.reason);
+
+    expect(result.envelope.workingDirectory).toBe(WORKTREE);
+    expect(result.envelope.config.sandbox_workspace_write).toMatchObject({
+      writable_roots: [WORKTREE, LANE_TMP],
+      exclude_tmpdir_env_var: true,
+      exclude_slash_tmp: true,
+    });
+  });
+
   it("relocates the run into the lane's own writable root and points TMPDIR at the lane temp", () => {
     const envelope = envelopeOf(policy());
 

@@ -1,4 +1,4 @@
-import { recordAdviceResponse } from "./advice";
+import { adviceItemsOf, recordAdviceResponse } from "./advice";
 import {
   chargeAllowance,
   grantAllowance,
@@ -435,12 +435,24 @@ function applyWorkspaceReport(
         ...facts,
         candidates: { ...facts.candidates, verifyPending: null },
       };
-      if (!report.changed) return cleared;
+      const round = facts.certification.rounds.find(
+        (r) => r.id === request.roundId,
+      );
+      const addressed =
+        round !== undefined &&
+        adviceItemsOf(round).some(
+          (item) =>
+            facts.advice.dispositions[item.id]?.disposition === "addressed",
+        );
+      // Addressed advice can change only the report; Git evidence cannot see it.
+      if (!report.changed && !addressed) return cleared;
       const retired = retireCurrent(cleared, "advised");
       return {
         ...retired,
         candidates: {
           ...retired.candidates,
+          captured: null,
+          captureFailures: null,
           nextProvenance: { kind: "advice_response", roundId: request.roundId },
         },
       };
@@ -562,7 +574,7 @@ export const DISPOSITIONS_BY_HALT: Readonly<
   Record<HaltKind, ReadonlyArray<HaltDisposition["kind"]>>
 > = {
   retries_exhausted: ["grant"],
-  output_invalid: ["retry_capture"],
+  output_invalid: ["retry_capture", "continue"],
   candidate_unstable: ["continue"],
   plan_defect: ["rereview"],
   advice_invalid: ["retry_advice"],
@@ -613,6 +625,23 @@ function applyDisposition(
         candidates: { ...cleared.candidates, captureFailures: null },
       };
     case "continue":
+      if (haltKind === "output_invalid") {
+        return {
+          ...cleared,
+          control: {
+            ...cleared.control,
+            steers: [
+              ...cleared.control.steers,
+              {
+                id: `output-recovery:${cleared.control.dispositions.length}`,
+                instruction:
+                  "The last result could not satisfy the output contract. Resume the work, resolve any remaining blocker, and report the actual result.",
+                consumed: false,
+              },
+            ],
+          },
+        };
+      }
       return haltKind === "candidate_unstable"
         ? {
             ...cleared,

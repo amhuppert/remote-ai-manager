@@ -1,36 +1,10 @@
 import { z } from "zod";
 
 /**
- * Characters a write rule reads as a pattern. The Claude write envelope refuses
- * a policy entry holding one, and a run request refuses an owned path holding
- * one, so no context is admitted that its agents cannot be confined to. One
- * set for both, so they cannot drift apart. Not applied by `ownedPathSchema`,
- * which also parses stored definitions and facts.
- */
-export const WRITE_RULE_PATTERN_CHARACTERS = /[[\](){}*?!]/;
-
-/**
- * One owned path: a normalized repo-relative POSIX path that covers itself
- * and everything beneath it. Overlap is decided by comparing path segments,
- * so a path has exactly one spelling.
- *
- * The normalization rules mirror the specs `touchedPath` schema rather than
- * importing it, so the two are free to diverge — and this one already does:
- * it additionally denies the repository root, git metadata, and the engine's
- * own `.cc` namespace. The `.git` denial is unconditional because an
- * agent able to write it could commit, branch, or reset the lane out from under
- * the engine, which is precisely what the ownership envelope exists to make
- * impossible. `.cc` is reserved because the envelope injects a per-context
- * payload directory beneath it (`write-envelope.ts`), so an
- * authored claim there would put two owners on one subtree. Both comparisons
- * fold case: a case-insensitive filesystem resolves `.GIT` to the same
- * directory, so a literal-only refusal would be bypassable on macOS.
- *
- * An entry is a LITERAL path, never a glob (spec non-goal) — a metacharacter is
- * read as an ordinary filename character here, and the write-policy adapter is
- * what refuses one (`WRITE_RULE_PATTERN_CHARACTERS`, which run requests also
- * apply), because that is the layer that knows what the backend can actually
- * enforce. Directory-grain entries cover the need a glob would.
+ * Literal normalized repository-relative scope used for coordination, evidence
+ * and landing. It does not restrict filesystem access inside a worktree.
+ * .git and the engine's .cc namespace cannot be owned by a task because they
+ * hold repository metadata and shared execution artifacts.
  */
 export const ownedPathSchema = z
   .string()
@@ -64,18 +38,18 @@ export const ownedPathSchema = z
     }
     if (segments[0]?.toLowerCase() === ".git") {
       reject(
-        `owned path "${value}" names repository metadata; .git is denied regardless of authored ownership`,
+        `owned path "${value}" names repository metadata, which cannot be owned by a task`,
       );
       return;
     }
     if (segments[0]?.toLowerCase() === ".cc") {
       reject(
-        `owned path "${value}" names the engine's .cc namespace; the write envelope injects a per-context payload directory there, so it is reserved from authored ownership`,
+        `owned path "${value}" names the engine's .cc namespace, which is reserved for execution artifacts`,
       );
     }
   });
 
-/** What a Context may write in its workspace. */
+/** A context's declared task scope for coordination, evidence and landing. */
 export const workspaceScopeSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("full") }).strict(),
   z
@@ -88,7 +62,7 @@ export const workspaceScopeSchema = z.discriminatedUnion("mode", [
 ]);
 export type WorkspaceScope = z.infer<typeof workspaceScopeSchema>;
 
-/** What a supervised turn may write: everything, only listed paths, or nothing. */
+/** A supervised turn's task intent, not backend filesystem permissions. */
 export const turnWritesSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("all") }).strict(),
   z
@@ -104,7 +78,7 @@ export type TurnWrites = z.infer<typeof turnWritesSchema>;
 /**
  * One supervised turn's workspace access, computed once by
  * turnWorkspaceAccess: the grant it holds while it runs (none for a turn that
- * only observes) and what its backend may write.
+ * only observes) and its declared write intent.
  */
 export const turnWorkspaceSchema = z
   .object({

@@ -1,11 +1,67 @@
 import { describe, expect, it } from "vitest";
 import { CodexAppServerEvents, CodexAppServerUsage } from "./app-server-events";
+import { renderCompleteEntryLines } from "@/lib/conversations/transcript-render";
 const item = (
   type: string,
   id: string,
   fields: Record<string, unknown> = {},
 ) => ({ threadId: "thread", turnId: "turn", item: { type, id, ...fields } });
 describe("Codex app-server item projection", () => {
+  it("keeps progress visible in ordinary transcript reads while omitting reasoning and preserving the final answer", () => {
+    const events = new CodexAppServerEvents();
+    const reasoning = events.consume(
+      "item/completed",
+      item("reasoning", "thought", { summary: ["Consider the alternatives"] }),
+    );
+    const progress = events.consume(
+      "item/completed",
+      item("agentMessage", "progress", {
+        text: "The reproduction fails at the missing parent directory.",
+        phase: "commentary",
+      }),
+    );
+    expect(events.finalText).toBeNull();
+    const answer = events.consume(
+      "item/completed",
+      item("agentMessage", "answer", {
+        text: "Fixed and verified.",
+        phase: "final_answer",
+      }),
+    );
+
+    expect(
+      renderCompleteEntryLines([...reasoning, ...progress, ...answer], {
+        includeThinking: false,
+      }),
+    ).toEqual({
+      lines: [
+        "The reproduction fails at the missing parent directory.",
+        "Fixed and verified.",
+      ],
+      thinkingOmitted: 1,
+    });
+    expect(events.finalText).toBe("Fixed and verified.");
+  });
+
+  it("keeps phase-less progress before a tool visible without making it the final answer", () => {
+    const events = new CodexAppServerEvents();
+    events.consume(
+      "item/completed",
+      item("agentMessage", "progress", { text: "I will inspect the files." }),
+    );
+    const blocks = events.consume(
+      "item/started",
+      item("commandExecution", "cmd", { command: "pwd" }),
+    );
+
+    expect(blocks[0]).toEqual({
+      type: "text",
+      text: "I will inspect the files.",
+    });
+    expect(events.finalText).toBeNull();
+    expect(events.finish()).toEqual([]);
+  });
+
   it("uses the latest phase-less answer after an earlier explicit final", () => {
     const events = new CodexAppServerEvents();
     events.consume(
@@ -30,7 +86,7 @@ describe("Codex app-server item projection", () => {
         "item/completed",
         item("agentMessage", "comment", { text: "aside" }),
       ),
-    ).toEqual([{ type: "thinking", text: "aside" }]);
+    ).toEqual([{ type: "text", text: "aside" }]);
     expect(events.finish()).toEqual([]);
     expect(events.finalText).toBeNull();
   });
@@ -49,7 +105,7 @@ describe("Codex app-server item projection", () => {
         "item/completed",
         item("agentMessage", "comment", { text: "aside", phase: "commentary" }),
       ),
-    ).toEqual([{ type: "thinking", text: "aside" }]);
+    ).toEqual([{ type: "text", text: "aside" }]);
     expect(events.finalText).toBe("final");
   });
   it("retains unknown-phase fallback through plan updates and flushes on terminal", () => {

@@ -8,6 +8,7 @@ import type {
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import type { PromptDispatch } from "@/lib/conversation-core/schemas";
 import { getConfigDirPath } from "@/lib/config/loader";
 import {
   projectStoredToolResultBlocks,
@@ -63,6 +64,8 @@ export interface TranscriptEntry {
   content?: MessageContentBlock[];
   /** Full SDK message data (for debugging/future use) */
   raw?: unknown;
+  /** CC-authored backend-turn input evidence; observational and never replayed as user content. */
+  promptDispatch?: PromptDispatch;
   /** Complete canonical model selection used for this turn. */
   modelSelection?: BackendModelSelection;
   /**

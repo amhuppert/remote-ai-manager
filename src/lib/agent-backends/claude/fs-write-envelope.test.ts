@@ -32,6 +32,26 @@ function envelopeOf(
 }
 
 describe("buildClaudeFsWriteEnvelope", () => {
+  it("gives conversation shell commands and mutation tools the same whole-worktree boundary", () => {
+    const result = buildClaudeConversationFsWriteEnvelope({
+      policy: policy({ allowWrite: [WORKTREE, LANE_TMP], denyWrite: [] }),
+      trustedServerUrl: SERVER_URL,
+      mcpServerKeys: [],
+    });
+    if (result.kind !== "envelope") throw new Error(result.reason);
+
+    expect(result.envelope.workingDirectory).toBe(WORKTREE);
+    expect(result.envelope.sandbox.filesystem).toEqual({
+      allowWrite: [WORKTREE, LANE_TMP],
+      denyWrite: [],
+    });
+    for (const tool of ["Edit", "Write", "NotebookEdit"])
+      expect(result.envelope.permissions.allow).toContain(
+        `${tool}(//${WORKTREE}/**)`,
+      );
+    expect(result.envelope.permissions.deny).toEqual([]);
+  });
+
   it("enables the sandbox as a hard gate rather than a best effort", () => {
     expect(envelopeOf(policy()).sandbox).toMatchObject({
       enabled: true,

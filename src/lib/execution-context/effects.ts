@@ -19,7 +19,7 @@ import {
   composeRework,
   composeSteer,
 } from "./briefing";
-import { currentCandidate } from "./candidates";
+import { currentCandidate, outputCaptureSchema } from "./candidates";
 import {
   REVIEW_VERDICT_OUTPUT_SCHEMA,
   activeRound,
@@ -358,7 +358,7 @@ export function planEffects(input: {
     case "work":
       return planWork(facts, contextId, obligation.reason, timeoutMs);
     case "capture_output": {
-      const outputSchema = facts.contract.current.outputSchema;
+      const outputSchema = outputCaptureSchema(facts);
       if (outputSchema === null) return { facts, effects: [] };
       const cause = nextCause("capture");
       return {

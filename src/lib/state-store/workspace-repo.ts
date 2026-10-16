@@ -91,6 +91,9 @@ export interface WorkspaceRepo {
   listOperations(
     state: WorkspaceOperationRecord["state"],
   ): WorkspaceOperationRecord[];
+  operationsOf(
+    requester: WorkspaceOperationRecord["requester"],
+  ): WorkspaceOperationRecord[];
   updateOperation(
     cause: string,
     change: Partial<
@@ -135,6 +138,14 @@ export function createWorkspaceRepo(db: Db): WorkspaceRepo {
       WHERE cause = @cause`,
   );
   return {
+    operationsOf(requester) {
+      return db
+        .prepare(
+          `SELECT ${OPERATION_COLUMNS} FROM workspace_operations WHERE requester_kind=? AND requester_id=? ORDER BY created_at,rowid`,
+        )
+        .all(requester.kind, requester.id)
+        .map(operationFromRow);
+    },
     insertBindingIfAbsent(record) {
       const parsed = workspaceBindingRecordSchema.parse(record);
       insertBinding.run({

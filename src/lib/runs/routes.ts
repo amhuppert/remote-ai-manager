@@ -1,5 +1,7 @@
 import { isEligibleSubscriptionRecipient } from "@/lib/conversations/provenance";
 import { getSubscriptionRuntime } from "@/lib/subscriptions/service-factory";
+import { readPromptDispatches } from "@/lib/conversation-core/prompt-evidence";
+import { getTranscriptPath } from "@/lib/prompt/transcript";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import { resolveAgentBackendTurnDefaults } from "@/lib/agent-backends/conversation-policy";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
@@ -229,6 +231,40 @@ const handlers = createRunRouteHandlers({
   async readText(artifactId) {
     return (await getArtifactStore().read(artifactId)).toString("utf8");
   },
+  auditEvidence: {
+    async conversationFacts(projectPath, sessionName) {
+      const session = await getSession(projectPath, sessionName);
+      return new Map(
+        (session?.conversations ?? []).map((conversation) => [
+          conversation.id,
+          {
+            title: conversation.name ?? conversation.summary ?? null,
+            backend: conversation.agentBackend,
+            status: conversation.status,
+            costUsd: conversation.totalCostUsd ?? null,
+            turns: conversation.totalTurns ?? null,
+          },
+        ]),
+      );
+    },
+    deliveriesForRun: (projectPath, runId) =>
+      getSubscriptionRuntime().repo.listDeliveriesForRun(projectPath, runId),
+    wakeBatchesForDeliveries: (ids) =>
+      getSubscriptionRuntime().waitsRepo.listBatchesForDeliveries(ids),
+    async promptDispatches(conversationId) {
+      try {
+        return await readPromptDispatches(
+          await getTranscriptPath(conversationId),
+        );
+      } catch (error) {
+        log.warn("runs.audit_transcript_unavailable", {
+          conversationId,
+          error: getErrorMessage(error),
+        });
+        return null;
+      }
+    },
+  },
   async candidateChanges({ worktreePath, scope, evidence }) {
     try {
       return {
@@ -251,6 +287,7 @@ export const launchRunPOST = withTracing(handlers.launch);
 export const launchWorkflowRunPOST = withTracing(handlers.launchWorkflow);
 export const launchTemplateRunPOST = withTracing(handlers.launchTemplate);
 export const showRunGET = withTracing(handlers.show);
+export const runAuditGET = withTracing(handlers.audit);
 export const listRunsGET = withTracing(handlers.list);
 export const activeRunsGET = withTracing(handlers.active);
 export const runPageGET = withTracing(handlers.page);

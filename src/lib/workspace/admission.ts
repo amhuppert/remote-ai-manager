@@ -67,11 +67,12 @@ export function bindingScopesOverlap(
 
 /**
  * One supervised turn's workspace access, the only place a binding's scope,
- * the seat's role and what the turn needs become a grant and write limits.
+ * the seat's role and what the turn needs become a grant and task intent.
  * A writing turn holds a write grant over its scope; a review holds a
  * whole-tree stable read; a turn that only observes holds none. An
- * implementer keeps its scope's write limits on every turn, so its runtime is
- * never reconfigured between turns; reviewers are not confined, by decision.
+ * implementer keeps its scope's task intent on every turn. This scope does not
+ * impose filesystem restrictions inside the worktree; reviewers are not
+ * confined, by decision.
  */
 export function turnWorkspaceAccess(input: {
   binding: WorkspaceBindingRequest;

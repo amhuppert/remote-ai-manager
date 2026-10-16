@@ -1,5 +1,15 @@
 # Workspace write relaxation: no interactive locks, worktree-level confinement
 
+**2026-10-15 follow-up.** Alex removed the owned-path write restriction entirely.
+Seats run from their assigned worktree with the whole tree writable; owned and
+readOnly scopes remain task, scheduling, evidence and landing metadata. There is
+no post-turn scope-violation gate. Materialized document copies are writable;
+canonical artifact bytes and frozen revisions remain immutable. This supersedes
+the named-path exceptions and scope-violation enforcement proposed below. The
+existing boundary outside the worktree remains, as do the backend network and
+settings policies; this follow-up does not implement the separate network and
+settings proposals in slices 2 and 3.
+
 Design amendment to `docs/design/2026-10-02-shared-conversation-design-r2.md` (§6.1, §6.2, §6.5, and the places
 §4 lists) and to `docs/design/2026-10-12-claude-between-turns-c5b.md` (§3.2, §4.1, §5, §6, §9.1).
 

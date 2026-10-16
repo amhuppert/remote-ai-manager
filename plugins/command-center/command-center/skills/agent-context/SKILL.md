@@ -32,7 +32,7 @@ The worktree has its own checked-out files and branch. Other sessions have separ
 
 ### Permissions
 
-Use the permissions and write scope declared by the current runtime. Interactive sessions and workflow roles can have different tool and filesystem restrictions. Bypassed tool prompts do not grant authorization beyond the user's request or the workflow contract.
+Use the permissions declared by the current runtime. A run's `owned` or `readOnly` scope is a task contract: follow it, but do not mistake it for a filesystem barrier within your assigned worktree. Tool permissions do not grant authorization beyond the user's request or the workflow contract.
 
 ### Session Objective
 

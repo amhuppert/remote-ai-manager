@@ -33,7 +33,7 @@ export interface ArtifactStore {
   /** The bytes of a snapshot, checked against its identity. */
   read(artifactId: string): Promise<Buffer>;
   /**
-   * Writes read-only copies of snapshots at their paths under `root`,
+   * Writes editable copies of snapshots at their paths under `root`,
    * replacing whatever is there, so each delivery leaves the frozen bytes.
    * Refuses a path that leaves `root` or passes through a link.
    */
@@ -57,14 +57,18 @@ const sha256 = (bytes: Uint8Array): string =>
  * Writes through a temporary sibling and a rename, so a reader never sees a
  * partial file. The sibling's name is short, so any name that fits fits here.
  */
-async function replaceFile(target: string, bytes: Uint8Array): Promise<void> {
+async function replaceFile(
+  target: string,
+  bytes: Uint8Array,
+  mode: 0o444 | 0o644,
+): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true });
   const temporary = path.join(
     path.dirname(target),
     `.${randomBytes(6).toString("hex")}.tmp`,
   );
   try {
-    await writeFile(temporary, bytes, { mode: 0o444 });
+    await writeFile(temporary, bytes, { mode });
     await rename(temporary, target);
   } catch (error) {
     await rm(temporary, { force: true });
@@ -116,7 +120,7 @@ export function createArtifactStore(options: { root: string }): ArtifactStore {
         if (!(error instanceof ArtifactUnavailableError)) throw error;
       }
       // Missing, or damaged: write the bytes again.
-      await replaceFile(objectPath(artifactId).file, bytes);
+      await replaceFile(objectPath(artifactId).file, bytes, 0o444);
       return ref;
     },
     read,
@@ -153,7 +157,7 @@ export function createArtifactStore(options: { root: string }): ArtifactStore {
               `A copy of artifact ${entry.artifactId} at "${entry.path}" passes through a link or a file at "${path.relative(base, directory)}"`,
             );
         }
-        await replaceFile(target, await read(entry.artifactId));
+        await replaceFile(target, await read(entry.artifactId), 0o644);
       }
     },
   };

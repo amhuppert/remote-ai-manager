@@ -3,6 +3,7 @@ import {
   laneProvisionReportSchema,
   lanePublicationReportSchema,
   publicationWaitSchema,
+  workspaceOperationRecordSchema,
 } from "@/lib/workspace/schemas";
 import {
   contextStartRequestSchema,
@@ -11,7 +12,14 @@ import {
   haltDispositionSchema,
   haltKindSchema,
   seatSummarySchema,
+  contextFactsSchema,
 } from "@/lib/execution-context/schemas";
+import {
+  seatBindingRecordSchema,
+  promptDispatchEvidenceSchema,
+} from "@/lib/conversation-core/schemas";
+import { subscriptionDeliverySchema } from "@/lib/subscriptions/schemas";
+import { subscriptionWakeBatchSchema } from "@/lib/subscriptions/active-wait-schemas";
 import { sessionDiffSchema } from "@/lib/git/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 
@@ -1286,3 +1294,171 @@ export type RunDecisionRequest = z.infer<typeof runDecisionRequestSchema>;
 export const runDecisionResponseSchema = z
   .object({ ok: z.literal(true) })
   .strict();
+
+/** Read scope is independent of rendering: JSON has the same bounded default. */
+export const runAuditQuerySchema = z
+  .object({
+    context: z.string().min(1).optional(),
+    full: z.boolean().default(false),
+    limit: z.number().int().min(1).max(100).default(20),
+    offset: z.number().int().min(0).default(0),
+  })
+  .strict();
+export type RunAuditQuery = z.input<typeof runAuditQuerySchema>;
+
+export const runAuditContextFactsSchema = contextFactsSchema.pick({
+  binding: true,
+  contract: true,
+  policy: true,
+  seats: true,
+  ledger: true,
+  candidates: true,
+  certification: true,
+  advice: true,
+  approval: true,
+  acceptance: true,
+  allowances: true,
+  control: true,
+  requests: true,
+});
+const auditCount = z.number().int().min(0);
+export const runAuditConversationFactsSchema = z
+  .object({
+    title: z.string().nullable(),
+    backend: agentBackendSchema,
+    status: z.string(),
+    costUsd: z.number().nonnegative().nullable(),
+    turns: auditCount.nullable(),
+  })
+  .strict();
+export type RunAuditConversationFacts = z.infer<
+  typeof runAuditConversationFactsSchema
+>;
+const runAuditContextCountsSchema = z
+  .object({
+    conversations: auditCount,
+    missingSeatBindings: auditCount,
+    candidates: auditCount,
+    reviewRounds: auditCount,
+    acceptances: auditCount,
+  })
+  .strict();
+export const runAuditContextSchema = z
+  .object({
+    key: z.string(),
+    pass: auditCount,
+    contextId: z.string(),
+    started: z.boolean(),
+    current: z.boolean(),
+    available: z.boolean(),
+    progress: z.string().nullable(),
+    counts: runAuditContextCountsSchema,
+    detail: z
+      .object({
+        revision: z.number().int().positive().nullable(),
+        createdAt: z.string().nullable(),
+        updatedAt: z.string().nullable(),
+        progress: contextProgressSchema.nullable(),
+        facts: runAuditContextFactsSchema.nullable(),
+        agents: z.array(
+          z
+            .object({
+              conversationId: z.string(),
+              assignmentId: z.string(),
+              current: z.boolean().nullable(),
+              binding: seatBindingRecordSchema.nullable(),
+              metadata: runAuditConversationFactsSchema.nullable(),
+              prompts: z
+                .object({
+                  availability: z.enum([
+                    "recorded",
+                    "not_recorded",
+                    "unavailable",
+                  ]),
+                  entries: z.array(promptDispatchEvidenceSchema),
+                })
+                .strict(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type RunAuditContext = z.infer<typeof runAuditContextSchema>;
+
+export const runAuditSchema = z
+  .object({
+    coverage: z
+      .object({
+        contextSeatTranscripts: z.literal(true),
+        ephemeralLaneTaskTranscripts: z.literal(false),
+        providerWireRequests: z.literal(false),
+      })
+      .strict(),
+    run: z
+      .object({
+        runId: z.string(),
+        title: z.string(),
+        titleOmittedChars: auditCount.optional(),
+        kind: z.enum(["agent", "workflow"]),
+        projectPath: z.string(),
+        sessionName: z.string(),
+        ownerConversationId: z.string(),
+        progress: z.string(),
+        revision: z.number().int().positive(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      })
+      .strict(),
+    selection: z
+      .object({
+        context: z.string().nullable(),
+        full: z.boolean(),
+        limit: z.number().int().positive(),
+        offset: auditCount,
+      })
+      .strict(),
+    totals: runAuditContextCountsSchema
+      .extend({
+        definitions: auditCount,
+        invocations: auditCount,
+        passes: auditCount,
+        unavailableContexts: auditCount,
+        boundaries: auditCount,
+        workspaceOperations: auditCount,
+        deliveries: auditCount,
+        wakeBatches: auditCount,
+      })
+      .strict(),
+    contexts: z
+      .object({
+        total: auditCount,
+        returned: auditCount,
+        offset: auditCount,
+        nextOffset: auditCount.nullable(),
+        items: z.array(runAuditContextSchema),
+      })
+      .strict(),
+    evidence: z
+      .object({
+        /** Run-wide records remain available when focusing one context. */
+        acts: z.array(runControlActSchema),
+        boundaries: z.array(runBoundarySchema),
+        workspaceOperations: z.array(
+          z
+            .object({
+              operation: workspaceOperationRecordSchema,
+              waitingOn: publicationWaitSchema.nullable(),
+            })
+            .strict(),
+        ),
+        deliveries: z.array(subscriptionDeliverySchema),
+        wakeBatches: z.array(subscriptionWakeBatchSchema),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type RunAudit = z.infer<typeof runAuditSchema>;

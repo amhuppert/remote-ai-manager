@@ -97,10 +97,7 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
       );
     }
     if (captureExhausted(facts)) {
-      return halted(
-        "output_invalid",
-        facts.candidates.captureFailures?.lastIssue ?? "Output capture failed",
-      );
+      return halted("output_invalid", outputFailureDetail(facts));
     }
     return needsOutputCapture(facts)
       ? running({ kind: "capture_output" })
@@ -156,6 +153,20 @@ export function nextProgress(facts: ContextFacts): SettledProgress {
   if (!accepted) return running({ kind: "accept", candidateId: candidate.id });
 
   return { kind: "succeeded", candidateId: candidate.id };
+}
+
+function outputFailureDetail(facts: ContextFacts): string {
+  const report = facts.ledger.lastSummary;
+  const reportLimit = 2000;
+  return [
+    facts.candidates.captureFailures?.lastIssue ?? "Output capture failed",
+    "retry_capture only reformats the current result. If the work is incomplete or blocked, resolve the blocker and choose continue to resume work before capturing its result again.",
+    report === null
+      ? null
+      : `Last work report (before review advice):\n${report.slice(0, reportLimit)}${report.length > reportLimit ? "\n[Report excerpt; the run audit contains the full work report.]" : ""}`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
 }
 
 function running(obligation: Obligation): SettledProgress {

@@ -63,9 +63,11 @@ import {
 } from "./launch";
 import { amendmentIssuesOf, isRunRefusal, type RunLaunchInput } from "./host";
 import { describeRun } from "./observation";
+import { buildRunAudit, type RunAuditSources } from "./audit";
 import { frozenKeys, frozenLaneKeys, writtenEntry } from "./amendment";
 import {
   runControlRequestSchema,
+  runAuditQuerySchema,
   runDecisionRequestSchema,
   runTemplateLaunchRequestSchema,
   type RunOrigin,
@@ -162,6 +164,13 @@ export interface RunRouteDeps {
   /** The project's registered validation commands, which a launch or amendment freezes for the implementers it adds. */
   validationCommands(projectPath: string): Promise<string[]>;
   supervision(): Supervision;
+  auditEvidence: Pick<
+    RunAuditSources,
+    | "deliveriesForRun"
+    | "wakeBatchesForDeliveries"
+    | "promptDispatches"
+    | "conversationFacts"
+  >;
   /**
    * Whether this conversation can own a run of this session now: it exists,
    * belongs to the session, and the subscription inbox can wake it, which is
@@ -462,6 +471,7 @@ export function createRunRouteHandlers(
   | "launchWorkflow"
   | "launchTemplate"
   | "show"
+  | "audit"
   | "definition"
   | "answer"
   | "control"
@@ -658,7 +668,7 @@ export function createRunRouteHandlers(
     return owned.ok ? { ok: true, run: owned.run, by: "owner" } : owned;
   }
 
-  /** The session, for a reader: a person, or any of the session's conversations. */
+  /** Reads share the operator's visibility; conversation ownership gates only writes. */
   async function resolveSessionReader(
     request: Request,
     context: RouteContext,
@@ -666,10 +676,8 @@ export function createRunRouteHandlers(
     const sent = await senderOf(request);
     if (!sent.ok) return sent;
     if (sent.sender === "agent") {
-      const resolved = await resolveCaller(request, context);
-      if (!resolved.ok) return resolved;
-      const { projectPath, sessionName, branch } = resolved.caller;
-      return { ok: true, place: { projectPath, sessionName, branch } };
+      const denied = await deps.auth.requireToken(request);
+      if (denied) return { ok: false, response: denied };
     }
     const { name, session } = await context.params;
     const resolved = await resolveProjectSessionOr404(
@@ -688,7 +696,7 @@ export function createRunRouteHandlers(
     };
   }
 
-  /** A run of this session, read by any of its conversations or by a person. */
+  /** Explicit route scopes stay exact; an unscoped read resolves the run by id. */
   async function resolveReadRun(
     request: Request,
     context: RouteContext,
@@ -696,9 +704,30 @@ export function createRunRouteHandlers(
     | { ok: true; run: RunRecord; place: Place }
     | { ok: false; response: Response }
   > {
+    const { name, session, runId } = await context.params;
+    if (name === undefined && session === undefined) {
+      const sent = await senderOf(request);
+      if (!sent.ok) return sent;
+      if (sent.sender === "agent") {
+        const denied = await deps.auth.requireToken(request);
+        if (denied) return { ok: false, response: denied };
+      }
+      const run = deps.supervision().runs.observe(runId ?? "")?.record;
+      if (run === undefined)
+        return { ok: false, response: notFound(`Run "${runId}" not found`) };
+      const owner = await deps.getSession(run.projectPath, run.sessionName);
+      return {
+        ok: true,
+        run,
+        place: {
+          projectPath: run.projectPath,
+          sessionName: run.sessionName,
+          branch: owner?.branchName ?? "",
+        },
+      };
+    }
     const reader = await resolveSessionReader(request, context);
     if (!reader.ok) return reader;
-    const { runId } = await context.params;
     const found = runInSession(runId, reader.place);
     return found.ok ? { ...found, place: reader.place } : found;
   }
@@ -1481,6 +1510,45 @@ export function createRunRouteHandlers(
       const view = describeRun(deps.supervision(), runId);
       if (view === null) return notFound(`Run "${runId}" not found`);
       return NextResponse.json(view);
+    },
+
+    async audit(request, context) {
+      const found = await resolveReadRun(request, context);
+      if (!found.ok) return found.response;
+      const query = runAuditQuerySchema.safeParse(
+        Object.fromEntries(
+          [...new URL(request.url).searchParams].map(([key, value]) => [
+            key,
+            key === "limit" || key === "offset"
+              ? Number(value)
+              : key === "full" && (value === "true" || value === "false")
+                ? value === "true"
+                : value,
+          ]),
+        ),
+      );
+      if (!query.success)
+        return NextResponse.json(
+          { error: "Invalid audit selection", issues: query.error.issues },
+          { status: 400 },
+        );
+      try {
+        const audit = await buildRunAudit(
+          { ...deps.supervision(), ...deps.auditEvidence },
+          found.run.runId,
+          query.data,
+        );
+        return audit === null
+          ? notFound(`Run "${found.run.runId}" not found`)
+          : NextResponse.json(audit);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "RunAuditContextNotFoundError"
+        )
+          return notFound(error.message);
+        throw error;
+      }
     },
 
     async definition(request, context) {

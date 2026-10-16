@@ -36,7 +36,7 @@ Each seat is a fresh conversation. It does not see yours: not the planning discu
 - the charter's mission, the invariants and sources meant for this context and the non-goals, with the context's charter in full at `.cc/run-docs/<context-id>/charter.md`;
 - the accepted results of the contexts it depends on, as JSON;
 - its tasks (`t1`, `t2`, … by position) and acceptance criteria (`ac-1`, `ac-2`, …);
-- the documents meant for it, as read-only copies under `.cc/run-docs/<context-id>/`;
+- the documents meant for it, as writable copies under `.cc/run-docs/<context-id>/`; local edits do not change the frozen revision, and each turn restores that revision;
 - how to work: the commands to complete, reopen and add tasks, which `cctl validate` commands it may run, `cctl ask` while owner questions are on, `cctl context doc publish` in a workflow, and that a structured result is due when it has an `outputSchema`.
 
 A reviewer sees the brief, the same charter part, inputs and criteria, the implementer's result and closing report, and the check results. It is told to edit nothing, and runs no validation commands.
@@ -195,6 +195,8 @@ By default, with no checks, reviewers or human approval, a result is accepted on
 ## Placement
 
 Without `scope` or `lane`, a context writes the whole session worktree.
+
+Scopes declare task intent and coordinate scheduling, review and landing. They do not restrict filesystem access inside the assigned worktree. Keep changes within the declared scope; use separate lanes when writers need isolation from each other.
 
 - Contexts that can run at the same time in one worktree need disjoint owned scopes: `"scope": {"mode": "owned", "paths": ["src/export/csv"]}`. Prefer directories to files, since implementers create files you did not foresee. Order contexts that share a surface with `dependsOn` instead.
 - A reader that changes nothing takes `"scope": {"mode": "readOnly"}`. It cannot run beside a writer in the same worktree; give it an `outputSchema` when later work or a route reads its result.

@@ -1,9 +1,14 @@
+import { z } from "zod";
 import type {
   Candidate,
   CandidateProvenance,
   ContextFacts,
   RetirementReason,
 } from "./schemas";
+
+const reportOutputSchema = z.toJSONSchema(
+  z.object({ summary: z.string() }).strict(),
+);
 
 /**
  * The candidate whose proof is current: frozen at the current contract and
@@ -38,10 +43,22 @@ export function candidateUnstable(facts: ContextFacts): boolean {
 
 /** Whether output for the current work epoch still needs a capture turn. */
 export function needsOutputCapture(facts: ContextFacts): boolean {
-  if (facts.contract.current.outputSchema === null) return false;
+  if (outputCaptureSchema(facts) === null) return false;
   const captured = facts.candidates.captured;
   return (
     captured === null || captured.workTurn !== facts.ledger.settledWorkTurns
+  );
+}
+
+/** Advice formatting returns dispositions, so its revised report needs its own capture. */
+export function outputCaptureSchema(
+  facts: ContextFacts,
+): Record<string, unknown> | null {
+  return (
+    facts.contract.current.outputSchema ??
+    (facts.candidates.nextProvenance.kind === "advice_response"
+      ? reportOutputSchema
+      : null)
   );
 }
 

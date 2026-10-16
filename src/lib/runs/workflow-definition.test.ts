@@ -295,42 +295,34 @@ describe("workflow definition compiler (W2)", () => {
     ]);
   });
 
-  it("refuses an owned path a write rule would read as a pattern, naming the nearest parent to own instead", () => {
-    const refused = issues({
-      title: "Patterns",
-      contexts: [
-        {
-          key: "route",
-          brief: "Route",
-          scope: owned("src/app/api/runs/[runId]", "src/lib/runs"),
-        },
-        {
-          key: "page",
-          brief: "Page",
-          dependsOn: ["route"],
-          scope: owned("(marketing)/page.tsx"),
-        },
-      ],
-    });
-    expect(refused).toEqual([
-      {
-        path: "contexts.0.scope.paths.0",
-        message: expect.stringContaining('own "src/app/api/runs"'),
-      },
-      {
-        path: "contexts.1.scope.paths.0",
-        message: expect.stringContaining("[ ] ( ) { } * ? !"),
-      },
-    ]);
+  it("accepts literal owned paths containing pattern characters without widening their scope", () => {
+    expect(
+      workflowLaunchRequestSchema.safeParse({
+        title: "Literal paths",
+        contexts: [
+          {
+            key: "route",
+            brief: "Route",
+            scope: owned("src/app/api/runs/[runId]", "src/lib/runs"),
+          },
+          {
+            key: "page",
+            brief: "Page",
+            dependsOn: ["route"],
+            scope: owned("(marketing)/page.tsx"),
+          },
+        ],
+      }).success,
+    ).toBe(true);
     for (const character of ["]", "{", "}", "*", "?", "!", ")"])
       expect(
-        issues({
-          title: "Pattern",
+        workflowLaunchRequestSchema.safeParse({
+          title: "Literal path",
           contexts: [
             { key: "a", brief: "A", scope: owned(`src/a${character}b`) },
           ],
-        }).map((issue) => issue.path),
-      ).toEqual(["contexts.0.scope.paths.0"]);
+        }).success,
+      ).toBe(true);
   });
 
   it("leaves such paths to the shared scope schema, which stored runs and old-engine definitions parse with", () => {

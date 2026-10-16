@@ -151,6 +151,65 @@ describe("execution context acceptance chain", () => {
     expect(h.progress().kind).toBe("succeeded");
   });
 
+  it("preserves the work failure at an output halt and lets the owner resume work instead of formatting again", () => {
+    const h = harness(
+      contract({
+        outputSchema: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      }),
+      { ...DEFAULT_CONTEXT_POLICY, captureRepairLimit: 0 },
+    );
+    h.step();
+    h.task({ kind: "complete", taskId: "t1" });
+    h.settle(
+      "work",
+      workReport({
+        finalText:
+          "The required source is missing; no file could be generated.",
+      }),
+    );
+    h.step();
+    h.settle(
+      "capture_output",
+      workReport({ outputIssue: "Missing required property: path" }),
+    );
+    const progress = h.progress();
+    expect(progress).toMatchObject({ kind: "halted", halt: "output_invalid" });
+    if (progress.kind !== "halted") throw new Error("Expected output halt");
+    expect(progress.detail).toContain("Missing required property: path");
+    expect(progress.detail).toContain("The required source is missing");
+    expect(progress.detail).toContain("retry_capture only reformats");
+
+    h.input({
+      kind: "disposition",
+      disposition: { kind: "continue" },
+      occurrence: "occ-1",
+      at: "t",
+    });
+    const [work] = h.step();
+    expect(work?.request).toMatchObject({ kind: "work", allowance: null });
+    h.settle(
+      "work",
+      workReport({
+        finalText: "Generated the file after the source became available.",
+      }),
+    );
+    expect(h.step()[0]?.request).toMatchObject({ kind: "capture_output" });
+    h.settle(
+      "capture_output",
+      workReport({ structuredOutput: { path: "report.md" } }),
+    );
+    h.step();
+    h.settle("freeze", frozen("ev-recovered"));
+    expect(h.step()[0]?.request).toMatchObject({
+      kind: "accept",
+      evidence: "ev-recovered",
+    });
+  });
+
   it("charges unfinished-task retries, halts when they run out, and resumes after a grant", () => {
     const h = harness(contract(), {
       ...DEFAULT_CONTEXT_POLICY,
@@ -487,6 +546,11 @@ describe("execution context acceptance chain", () => {
     expect(h.step()[0]?.request).toMatchObject({ kind: "verify" });
     h.settle("verify", { kind: "verified", changed: true });
 
+    expect(h.step()[0]?.request).toMatchObject({ kind: "capture_output" });
+    h.settle(
+      "capture_output",
+      workReport({ structuredOutput: { summary: "Renamed helper." } }),
+    );
     h.step();
     h.settle("freeze", frozen("ev-2"));
     const recertify = h.step();
@@ -502,6 +566,169 @@ describe("execution context acceptance chain", () => {
       evidence: "ev-2",
     });
   });
+
+  it.each([
+    null,
+    {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+    },
+  ])(
+    "accepts the revised report after addressed advice with no file changes (schema: %j)",
+    (outputSchema) => {
+      const h = harness(
+        contract({
+          outputSchema,
+          reviewers: [
+            reviewer("blocker", "blocking"),
+            reviewer("advisor", "advisory"),
+          ],
+          humanApproval: true,
+        }),
+      );
+      h.step();
+      h.task({ kind: "complete", taskId: "t1" });
+      h.settle("work", workReport({ finalText: "Original report." }));
+      if (outputSchema !== null) {
+        h.step();
+        h.settle(
+          "capture_output",
+          workReport({ structuredOutput: { summary: "Original report." } }),
+        );
+      }
+      h.step();
+      h.settle("freeze", frozen("ev-1"));
+      h.step();
+      h.settle("review", verdictReport("pass"));
+      h.settle(
+        "review",
+        verdictReport("pass", {
+          advisories: [
+            {
+              title: "Clarify report",
+              description: "Explain ignored directories.",
+            },
+          ],
+        }),
+      );
+      h.step();
+      h.settle(
+        "advise",
+        workReport({
+          structuredOutput: {
+            dispositions: [
+              {
+                advisoryId: "ctx:round:1:advisor:1",
+                disposition: "addressed",
+                reason: "Clarified report.",
+              },
+            ],
+          },
+        }),
+      );
+      h.step();
+      h.settle("verify", { kind: "verified", changed: false });
+
+      const [capture] = h.step();
+      expect(capture?.request).toMatchObject({ kind: "capture_output" });
+      h.settle(
+        "capture_output",
+        workReport({ structuredOutput: { summary: "Revised report." } }),
+      );
+      h.step();
+      h.settle("freeze", frozen("ev-1"));
+      const reviews = h.step();
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0]?.request).toMatchObject({
+        kind: "review",
+        seat: { assignmentId: "blocker" },
+      });
+      expect(
+        reviews[0]?.request.kind === "review" && reviews[0].request.message,
+      ).toContain("Revised report.");
+      h.settle(
+        "review",
+        verdictReport("pass", {
+          advisories: [
+            {
+              title: "One more thought",
+              description: "Must not start another advice loop.",
+            },
+          ],
+        }),
+      );
+      expect(h.progress()).toEqual({
+        kind: "waiting",
+        obligation: { kind: "await_approval", candidateId: "ctx:candidate:2" },
+      });
+      h.input({
+        kind: "decide",
+        candidateId: "ctx:candidate:2",
+        decision: "approved",
+        decidedAt: "2026-10-03T10:01:00.000Z",
+      });
+      expect(h.step()[0]?.request).toMatchObject({
+        kind: "accept",
+        candidateId: "ctx:candidate:2",
+      });
+      h.settle("accept", { kind: "accepted", receipt: "snapshot-2" });
+      expect(h.progress()).toEqual({
+        kind: "succeeded",
+        candidateId: "ctx:candidate:2",
+      });
+      expect(h.facts.candidates.items.at(-1)?.output).toEqual({
+        summary: "Revised report.",
+      });
+      expect(h.facts.candidates.retired).toEqual([
+        { candidateId: "ctx:candidate:1", reason: "advised" },
+      ]);
+    },
+  );
+
+  it.each(["declined", "deferred"])(
+    "keeps the reviewed report when advice is %s without file changes",
+    (disposition) => {
+      const h = harness(
+        contract({ reviewers: [reviewer("advisor", "advisory")] }),
+      );
+      workAndFreeze(h);
+      h.step();
+      h.settle(
+        "review",
+        verdictReport("pass", {
+          advisories: [
+            {
+              title: "Clarify report",
+              description: "Explain ignored directories.",
+            },
+          ],
+        }),
+      );
+      h.step();
+      h.settle(
+        "advise",
+        workReport({
+          structuredOutput: {
+            dispositions: [
+              {
+                advisoryId: "ctx:round:1:advisor:1",
+                disposition,
+                reason: "Outside the brief.",
+              },
+            ],
+          },
+        }),
+      );
+      h.step();
+      h.settle("verify", { kind: "verified", changed: false });
+      expect(h.step()[0]?.request).toMatchObject({
+        kind: "accept",
+        candidateId: "ctx:candidate:1",
+      });
+      expect(h.facts.candidates.items).toHaveLength(1);
+    },
+  );
 
   it("asks again for advice dispositions once, then halts as advice_invalid", () => {
     const h = harness(

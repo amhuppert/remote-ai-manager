@@ -363,6 +363,12 @@ beforeEach(() => {
     async readText(artifactId) {
       return artifactId.replace(/^sha256:/, "");
     },
+    auditEvidence: {
+      conversationFacts: async () => new Map(),
+      deliveriesForRun: async () => [],
+      wakeBatchesForDeliveries: async () => [],
+      promptDispatches: async () => [],
+    },
     async candidateChanges({ worktreePath, evidence }) {
       diffed.push({ worktreePath, evidence });
       return {
@@ -507,7 +513,63 @@ describe("run routes", () => {
     expect(supervision.runs.observe("run-1")).toBeNull();
   });
 
-  it("shows a run only within its own session", async () => {
+  it("reads bounded audit evidence by global id and refuses an unrelated context", async () => {
+    await launch();
+    const target = { params: Promise.resolve({ runId: "run-1" }) };
+    const headers = { authorization: "Bearer test", ...identity("auditor") };
+    const response = await routes.audit(
+      new Request("http://cc.test/api/runs/run-1/audit?limit=1", { headers }),
+      target,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      run: { runId: "run-1" },
+      contexts: { total: 1, returned: 1 },
+      selection: { full: false },
+    });
+    const unrelated = await routes.audit(
+      new Request(
+        "http://cc.test/api/runs/run-1/audit?context=another-run.agent",
+        { headers },
+      ),
+      target,
+    );
+    expect(unrelated.status).toBe(404);
+    const invalid = await routes.audit(
+      new Request("http://cc.test/api/runs/run-1/audit?limit=0", { headers }),
+      target,
+    );
+    expect(invalid.status).toBe(400);
+  });
+
+  it("lets an authenticated conversation in another session read run evidence without granting control", async () => {
+    await launch();
+    const headers = {
+      authorization: "Bearer test",
+      "x-cc-conversation-identity": JSON.stringify({
+        sessionName: "audit-session",
+        conversationId: "auditor",
+      }),
+    };
+    for (const read of [routes.show, routes.definition, routes.page]) {
+      const response = await read(
+        request(null, headers, "GET"),
+        params({ runId: "run-1" }),
+      );
+      expect(response.status).toBe(200);
+      const byId = await read(request(null, headers, "GET"), {
+        params: Promise.resolve({ runId: "run-1" }),
+      });
+      expect(byId.status).toBe(200);
+    }
+    const control = await routes.control(
+      request({ action: "cancel" }, headers),
+      params({ runId: "run-1" }),
+    );
+    expect(control.status).toBe(403);
+  });
+
+  it("shows a run only within its addressed session", async () => {
     await launch();
     const elsewhere = new Request(
       "http://127.0.0.1/api/projects/repo/sessions/session-2/runs/run-1",

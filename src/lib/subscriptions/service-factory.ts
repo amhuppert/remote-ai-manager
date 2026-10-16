@@ -39,6 +39,7 @@ import { createSubscriptionService } from "./service";
 import { createSubscriptionSourceReader } from "./source-adapters";
 import { createTerminalSourceReader } from "./terminal-source-adapters";
 import { createActiveWaitService } from "./active-wait-service";
+import type { SubscriptionWakeBatch } from "./active-wait-schemas";
 import { createConversationSubscriptionWaitsRepo } from "@/lib/state-store/conversation-subscription-waits-repo";
 import { createSubscriptionInvolvementReader } from "./involvement";
 import { projectNameFromPath } from "@/lib/state-store/tickets-repo";
@@ -168,8 +169,45 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
       return `cctl subscription wait-get --project=${quote(projectNameFromPath(wait.recipient.projectPath))}${sessionFlag} --conversation=${quote(wait.recipient.conversationId)} --wait-id=${quote(wait.id)} -- ${quote(wait.subscriptionId)}`;
     },
   });
+  async function withdrawPendingWake(
+    batch: SubscriptionWakeBatch,
+    commit: () => void,
+  ): Promise<boolean> {
+    const identity = readConversation(batch.recipient.conversationId);
+    if (!identity || identity.projectPath !== batch.recipient.projectPath)
+      return false;
+    const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
+    if (await hasTranscriptEntry(batch.recipient.conversationId, batch.id))
+      return false;
+    const { conversationTargetStoreSessionName } =
+      await import("@/lib/conversations/conversation-target");
+    const projectName = projectNameFromPath(identity.projectPath);
+    const target =
+      identity.sessionName === null
+        ? {
+            scope: "project" as const,
+            projectName,
+            conversationId: identity.conversation.id,
+          }
+        : {
+            scope: "session" as const,
+            projectName,
+            sessionName: identity.sessionName,
+            conversationId: identity.conversation.id,
+          };
+    return withdrawSubscriptionWakeFromQueue({
+      projectPath: identity.projectPath,
+      sessionName: conversationTargetStoreSessionName(target),
+      conversationId: identity.conversation.id,
+      batchId: batch.id,
+      allowMissing: batch.state === "planned",
+      commit,
+    });
+  }
   const service = createSubscriptionService({
     repo,
+    waits: waitsRepo,
+    withdrawPendingWake,
     onChange: publishSubscriptionChange,
     getPreferences: (recipient) => preferencesRepo.getPreferences(recipient),
     reconcileFiniteWaits: (recipient) => activeWaitService.reconcile(recipient),
@@ -216,38 +254,7 @@ export function createSubscriptionRuntime(db: Db, writeQueue: WriteQueue) {
           400,
         );
     },
-    async withdrawPendingWake(batch, commit) {
-      const identity = readConversation(batch.recipient.conversationId);
-      if (!identity || identity.projectPath !== batch.recipient.projectPath)
-        return false;
-      const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
-      if (await hasTranscriptEntry(batch.recipient.conversationId, batch.id))
-        return false;
-      const { conversationTargetStoreSessionName } =
-        await import("@/lib/conversations/conversation-target");
-      const projectName = projectNameFromPath(identity.projectPath);
-      const target =
-        identity.sessionName === null
-          ? {
-              scope: "project" as const,
-              projectName,
-              conversationId: identity.conversation.id,
-            }
-          : {
-              scope: "session" as const,
-              projectName,
-              sessionName: identity.sessionName,
-              conversationId: identity.conversation.id,
-            };
-      return withdrawSubscriptionWakeFromQueue({
-        projectPath: identity.projectPath,
-        sessionName: conversationTargetStoreSessionName(target),
-        conversationId: identity.conversation.id,
-        batchId: batch.id,
-        allowMissing: batch.state === "planned",
-        commit,
-      });
-    },
+    withdrawPendingWake,
   });
   return {
     service,

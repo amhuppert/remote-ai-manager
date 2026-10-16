@@ -20,6 +20,7 @@ import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import { computeEffectiveConfigHash } from "@/lib/mcp/config-hash";
 import type { ComposedTooling } from "./runtime-application-state";
 import { createRuntimeHost, type HostedConversation } from "./runtime-host";
+import { promptDispatchSchema } from "./schemas";
 import {
   createTurnEngine,
   type TurnEngineDeps,
@@ -159,6 +160,52 @@ type InputAccepted = Extract<
 >;
 
 describe("core turn engine", () => {
+  it("records the dispatched work, format and repair prompts without adding user messages", async () => {
+    const { engine, entries } = engineWith(
+      completingFactory({
+        responses: ["The review passed.", "{}", JSON.stringify(VERDICT)],
+      }),
+    );
+    const outcome = await engine.runTurn(
+      request("claude", {
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            required: ["verdict"],
+            properties: { verdict: { type: "string" } },
+          },
+        },
+      }),
+    );
+
+    expect(outcome.kind).toBe("call_result");
+    const dispatches = entries.filter(
+      (entry) => entry.type === "prompt_dispatch",
+    );
+    expect(dispatches.map((entry) => entry.promptDispatch)).toEqual([
+      expect.objectContaining({
+        phase: "work",
+        promptText: expect.stringContaining(
+          "Answer in prose, do not emit JSON",
+        ),
+        outputSchema: null,
+      }),
+      expect.objectContaining({
+        phase: "format",
+        promptText: expect.stringContaining("Convert your previous response"),
+      }),
+      expect.objectContaining({
+        phase: "repair",
+        promptText: expect.stringContaining("Validation issues:"),
+      }),
+    ]);
+    expect(dispatches.every((entry) => entry.role === undefined)).toBe(true);
+    expect(entries.filter((entry) => entry.role === "user")).toEqual([
+      request("claude").userEntry,
+    ]);
+  });
+
   it.each(["claude", "codex"] as const)(
     "runs a %s turn through the real adapter, recording the user turn first and returning structured output",
     async (backend) => {
@@ -197,6 +244,16 @@ describe("core turn engine", () => {
         content: [{ type: "text", text: "Review the candidate." }],
       });
       expect(provider.turns[0]?.prompt).toContain("Review the candidate.");
+      const dispatches = entries
+        .filter((entry) => entry.type === "prompt_dispatch")
+        .map((entry) => promptDispatchSchema.parse(entry.promptDispatch));
+      expect(dispatches.map((dispatch) => dispatch.phase)).toEqual([
+        "work",
+        "format",
+      ]);
+      expect(dispatches.map((dispatch) => dispatch.promptText)).toEqual(
+        provider.turns.map((turn) => turn.prompt),
+      );
     },
   );
 
@@ -283,7 +340,9 @@ describe("core turn engine", () => {
 
     expect(outcome.interruption).toEqual({ reason: "timeout", timeoutMs: 20 });
     expect(hanging.sawAbort()).toBe(true);
-    expect(entries.map((e) => e.role)).toEqual(["user"]);
+    expect(
+      entries.filter((e) => e.role !== undefined).map((e) => e.role),
+    ).toEqual(["user"]);
   });
 
   it("keeps a turn whose runtime reports background progress from being taken for stalled", async () => {
@@ -684,11 +743,16 @@ function deafFactory() {
 }
 
 function completingFactory(
-  extra: { compacted?: boolean; cleanupFailure?: string } = {},
+  extra: {
+    compacted?: boolean;
+    cleanupFailure?: string;
+    responses?: string[];
+  } = {},
 ): ConversationBackendFactory {
   return {
     backend: "claude",
     async createRuntime(input) {
+      let responseIndex = 0;
       const runtime: ConversationBackendRuntime = {
         backend: "claude",
         status: "alive",
@@ -701,7 +765,12 @@ function completingFactory(
             numTurns: 1,
             contextTokens: null,
             contextWindowMax: null,
-            contentBlocks: [{ type: "text", text: "Done." }],
+            contentBlocks: [
+              {
+                type: "text",
+                text: extra.responses?.[responseIndex++] ?? "Done.",
+              },
+            ],
             aborted: false,
             compacted: extra.compacted ?? false,
             failure: null,

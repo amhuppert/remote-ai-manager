@@ -32,7 +32,7 @@ export class CodexAppServerEvents {
     const text = this.pending;
     this.pending = null;
     if (final) this.finalText = text;
-    return [{ type: final ? "text" : "thinking", text }];
+    return [{ type: "text", text }];
   }
 
   consume(method: string, params: unknown): MessageContentBlock[] {
@@ -83,7 +83,7 @@ export class CodexAppServerEvents {
         this.finalText = item.text;
         blocks.push({ type: "text", text: item.text });
       } else if (phase === "commentary")
-        blocks.push({ type: "thinking", text: item.text });
+        blocks.push({ type: "text", text: item.text });
       else this.pending = item.text;
       return blocks;
     }

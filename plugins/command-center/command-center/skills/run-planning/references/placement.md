@@ -6,15 +6,17 @@ A context works in one **workspace**: the session worktree, or the worktree of t
 
 ## Scopes
 
-| `scope` | May write | Use for |
+| `scope` | Task contract | Use for |
 |---|---|---|
 | absent, or `{"mode": "full"}` | the whole workspace | a writer nothing else in its workspace runs beside |
 | `{"mode": "owned", "paths": [...]}` | only those paths | writers that run side by side in one workspace |
-| `{"mode": "readOnly"}` | nothing | surveys, judges, classifiers and reviewers of earlier work |
+| `{"mode": "readOnly"}` | no project changes | surveys, judges, classifiers and reviewers of earlier work |
+
+Scopes coordinate scheduling, review and landing. Every seat can write throughout its assigned worktree; `owned` and `readOnly` do not impose filesystem restrictions within it. Follow the declared task scope and preserve other work. Use separate lanes when writers need filesystem isolation from each other.
 
 - Two contexts run side by side when neither depends on the other, directly or through others, and no route excludes one of them. Side by side, their scopes must be disjoint: owned paths that do not contain each other. A full scope overlaps everything.
 - A read-only context reads the whole workspace, so it cannot run beside any writer there; two readers can. Its result is its whole deliverable: give it an `outputSchema` when later work or a route reads the result.
-- An owned path is a repository-relative directory or file, with no `.` or `..` parts and no trailing `/`, never the root, `.git` or `.cc`, and never a glob. Prefer directories: implementers create files you did not plan, and may not write outside their scope.
+- An owned path is a literal repository-relative directory or file, with no `.` or `..` parts and no trailing `/`, never the root, `.git` or `.cc`. Pattern characters in filenames such as `[id]` are literal, not globs. Prefer directories so the scope covers files the implementer needs to create.
 - A shared surface (a barrel file, a lockfile, a shared schema) has one owner. Home it in a context the others depend on, or order the contexts.
 - Give `owned` only where two writers really run side by side. A context ordered against every other writer in its workspace takes the full scope.
 

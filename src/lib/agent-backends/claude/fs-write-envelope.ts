@@ -15,11 +15,8 @@
  *  - `denyWrite` is explicit, because the sandbox's `allowWrite` is ADDITIVE
  *    over its own defaults: the candidate worktree being absent from the allow
  *    list is not the same as it being unwritable;
- *  - the run is MOVED onto the policy's own working root, because those defaults
- *    include the working directory and its subdirectories. A run left in the
- *    worktree is writable throughout it however narrow the allowlist is — the
- *    hole an OS-level enforcement proof catches and an options-translation
- *    assertion cannot;
+ *  - the policy's first root becomes the working directory, because the
+ *    sandbox includes cwd and its subdirectories among its writable defaults;
  *  - the session temp is BOUND to the policy's own tmp entry, because the
  *    sandbox otherwise keeps a separate session temp writable and repoints
  *    sandboxed commands' `$TMPDIR` at it — a writable path the allowlist never
@@ -38,9 +35,10 @@ import type {
   SandboxSettings,
   Settings,
 } from "@anthropic-ai/claude-agent-sdk";
-import { WRITE_RULE_PATTERN_CHARACTERS } from "@/lib/workspace/schemas";
 import type { FsWritePolicy } from "../task";
 import { checkFsWritePolicy } from "../fs-write-policy";
+
+const WRITE_RULE_PATTERN_CHARACTERS = /[[\](){}*?!]/;
 
 /** The tools whose whole job is mutating files on disk. */
 export const CLAUDE_FS_RESTRICTED_MUTATION_TOOLS = [
@@ -98,15 +96,7 @@ export interface ClaudeFsWriteEnvelope {
   sandbox: SandboxSettings;
   permissions: ClaudeFsWriteEnvelopePermissions;
   permissionMode: NonNullable<Options["permissionMode"]>;
-  /**
-   * The sandboxed run's working directory: the policy's own writable working
-   * root, never the target worktree. The sandbox's DEFAULT writable set is the
-   * working directory and its subdirectories, and `allowWrite` only ADDS paths
-   * outside it, so a run left in a worktree is writable throughout that
-   * worktree however narrow the allowlist is. Denying the worktree instead is
-   * not available to a policy that allows part of it: `checkFsWritePolicy`
-   * refuses an allow entry inside a denied path rather than guess which wins.
-   */
+  /** The first writable policy root; supervised seats use their whole worktree. */
   workingDirectory: string;
   /**
    * The run's temp directory: the policy's own tmp entry. The sandbox keeps a
@@ -253,8 +243,8 @@ export function buildClaudeFsWriteEnvelope(
 }
 
 /**
- * The same envelope for a CONVERSATION turn — a graph-workflow implementer
- * confined to the prefixes its context owns.
+ * The same outside-worktree boundary for a conversation turn. Supervised
+ * seats receive the whole assigned worktree, independent of their task scope.
  *
  * The filesystem half is identical, because the threat is: a shell command and
  * a file-mutation tool have to be confined by different mechanisms whoever is

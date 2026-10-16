@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
-import type { ImplementerLaneWriteEnvelope } from "@/lib/workspace/write-envelope";
+import type {
+  ComposeImplementerLaneWriteEnvelopeInput,
+  ImplementerLaneWriteEnvelope,
+} from "@/lib/workspace/write-envelope";
 import { settledConversationTurn } from "@/lib/conversation-core/turn/testing/turn-result-fixture";
 import type { TurnExecutionOutcome } from "@/lib/conversation-core/turn/turn-result";
 import type { ConversationRecordPort } from "./conversation-record";
@@ -80,11 +83,7 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
   const turns: TurnRequest[] = [];
   const events: string[] = [];
   const released: string[] = [];
-  const envelopes: Array<{
-    contextId: string;
-    ownedPaths: readonly string[];
-    payloadLocation: string | undefined;
-  }> = [];
+  const envelopes: ComposeImplementerLaneWriteEnvelopeInput[] = [];
   let backendRef: { backend: "claude"; ref: string } | null = {
     backend: "claude",
     ref: "sdk-1",
@@ -147,25 +146,16 @@ function harness(answer: (turn: TurnRequest) => Promise<TurnExecutionOutcome>) {
     },
     getProjectDisplayName: () => "repo",
     composeWriteEnvelope: (input): ImplementerLaneWriteEnvelope => {
-      envelopes.push({
-        contextId: input.contextId,
-        ownedPaths: input.ownedPaths,
-        payloadLocation: input.payloadLocation,
-      });
+      envelopes.push(input);
       return {
         policy: {
           mode: "allowlist",
-          allowWrite: [
-            "/scratch/ctx-1",
-            ...input.ownedPaths.map((p) => `${input.worktreePath}/${p}`),
-          ],
+          allowWrite: [input.worktreePath, "/tmp/ctx-1"],
           denyWrite: [],
         },
         worktreeRoot: input.worktreePath,
-        contextScratchDir: "/scratch/ctx-1",
         contextTmpDir: "/tmp/ctx-1",
         payloadDir: "/scratch/ctx-1/payload",
-        ownedPrefixes: input.ownedPaths,
       };
     },
     fsWriteRestriction: () => "enforced",
@@ -460,7 +450,7 @@ describe("native seat turns", () => {
     expect(result.failure).toContain("timed out after 5ms");
   });
 
-  it("confines an owned write scope with its write envelope, and refuses one the backend cannot limit", async () => {
+  it("bounds an owned seat to its whole worktree without deriving filesystem paths from its task scope", async () => {
     const owned = request({
       workspace: {
         ...request().workspace,
@@ -476,10 +466,16 @@ describe("native seat turns", () => {
     await h.run(owned);
     expect(h.turns[0]?.requirements.fsWritePolicy).toEqual({
       mode: "allowlist",
-      allowWrite: ["/scratch/ctx-1", "/repo/.worktrees/session/src/api"],
+      allowWrite: ["/repo/.worktrees/session", "/tmp/ctx-1"],
       denyWrite: [],
     });
-    expect(h.turns[0]?.promptText).toContain("Writable repository paths");
+    expect(h.envelopes).toEqual([
+      {
+        executionId: "ctx-1",
+        contextId: "ctx-1.implementer",
+        worktreePath: "/repo/.worktrees/session",
+      },
+    ]);
 
     const refused = harness(async () => outcomeOf(settledConversationTurn()));
     refused.deps.fsWriteRestriction = () => "unsupported";
@@ -496,7 +492,7 @@ describe("native seat turns", () => {
     expect(refused.events).toEqual([]);
   });
 
-  it("runs a read-only context's implementer under a write envelope that admits no repository path", async () => {
+  it("keeps a read-only task advisory while granting its entire worktree", async () => {
     const readOnly = request({
       workspace: {
         ...request().workspace,
@@ -512,11 +508,15 @@ describe("native seat turns", () => {
     await h.run(readOnly);
 
     expect(h.envelopes).toEqual([
-      expect.objectContaining({ ownedPaths: [], payloadLocation: "scratch" }),
+      {
+        executionId: "ctx-1",
+        contextId: "ctx-1.implementer",
+        worktreePath: "/repo/.worktrees/session",
+      },
     ]);
     expect(h.turns[0]?.requirements.fsWritePolicy).toEqual({
       mode: "allowlist",
-      allowWrite: ["/scratch/ctx-1"],
+      allowWrite: ["/repo/.worktrees/session", "/tmp/ctx-1"],
       denyWrite: [],
     });
     expect(h.turns[0]?.writeCapability).toBe("read_only");
@@ -545,7 +545,7 @@ describe("native seat turns", () => {
     expect(api).not.toBe(ui);
   });
 
-  it("keeps an owned implementer confined on its capture turn too", async () => {
+  it("uses the same whole-worktree boundary on an owned implementer's capture turn", async () => {
     const capture = request({
       kind: "capture_output",
       workspace: {
@@ -563,7 +563,7 @@ describe("native seat turns", () => {
 
     expect(h.turns[0]?.requirements.fsWritePolicy).toEqual({
       mode: "allowlist",
-      allowWrite: ["/scratch/ctx-1", "/repo/.worktrees/session/src/api"],
+      allowWrite: ["/repo/.worktrees/session", "/tmp/ctx-1"],
       denyWrite: [],
     });
   });

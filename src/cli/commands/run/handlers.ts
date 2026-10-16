@@ -41,6 +41,7 @@ import {
 import {
   explicitScopeFlags,
   resolveCcPrincipal,
+  resolveCcServer,
   resolveCcSession,
   sessionReference,
   type CcErrorCode,
@@ -53,6 +54,7 @@ import {
 } from "../../transport";
 import {
   runShowCommand,
+  runAuditCommand,
   type contextDocPublishSpec,
   type contextTaskAddSpec,
   type contextTaskCompleteSpec,
@@ -129,6 +131,24 @@ function sessionPath(context: SessionContext): string {
 }
 function runPath(context: SessionContext, runId: string): string {
   return `${sessionPath(context)}/runs/${encodePathSegment(runId)}`;
+}
+
+/** Run ids are global; an explicit target remains a constraint on a read. */
+export async function resolveRunRead(app: CcApplication, runId: string) {
+  if (app.globals.project !== undefined || app.globals.session !== undefined) {
+    const scoped = await resolveCcSession(app);
+    if (!scoped.ok) return scoped;
+    return {
+      ok: true,
+      value: { ...scoped.value, path: runPath(scoped.value, runId) },
+    } as const;
+  }
+  const server = await resolveCcServer(app);
+  if (!server.ok) return server;
+  return {
+    ok: true,
+    value: { ...server.value, path: `/api/runs/${encodePathSegment(runId)}` },
+  } as const;
 }
 
 function showHint(app: CcApplication, runId: string) {
@@ -653,18 +673,27 @@ export const amendHandler = mutation(amendImplementation);
 export const showHandler: Read<typeof runShowSpec> = {
   run: runner<Input<typeof runShowSpec>, RunViewData, CcErrorCode>({
     async run({ app, ctx }) {
-      const resolved = await resolveCcSession(app);
+      const resolved = await resolveRunRead(app, ctx.args["run-id"]);
       if (!resolved.ok) return resolved;
       const response = await cliRequest(app.host, {
         ...resolved.value,
         method: "GET",
-        path: runPath(resolved.value, ctx.args["run-id"]),
         principalIdentity: resolveCcPrincipal(app),
       });
       if (response.kind !== "ok") return ccRequestFailure(response);
       const parsed = runViewSchema.safeParse(response.body);
       return parsed.success && parsed.data.runId === ctx.args["run-id"]
-        ? { ok: true, data: toViewData(parsed.data) }
+        ? {
+            ok: true,
+            data: toViewData(parsed.data),
+            hint: hint(
+              invocation(runAuditCommand, {
+                args: ctx.args,
+                flags: explicitScopeFlags(app),
+              }),
+              "Inspect agent transcripts, reviews and delivery evidence",
+            ),
+          }
         : invalid("The run view is invalid.");
     },
     text: viewText,
@@ -703,12 +732,12 @@ export const definitionHandler: Read<typeof runDefinitionSpec> = {
     CcErrorCode
   >({
     async run({ app, ctx }) {
-      const resolved = await resolveCcSession(app);
+      const resolved = await resolveRunRead(app, ctx.args["run-id"]);
       if (!resolved.ok) return resolved;
       const response = await cliRequest(app.host, {
         ...resolved.value,
         method: "GET",
-        path: `${runPath(resolved.value, ctx.args["run-id"])}/definition`,
+        path: `${resolved.value.path}/definition`,
         principalIdentity: resolveCcPrincipal(app),
       });
       if (response.kind !== "ok") return ccRequestFailure(response);

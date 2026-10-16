@@ -102,6 +102,11 @@ export interface ConversationRuntimeResolution {
   promptContext?: string;
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
+  /** Observes each input dispatched to the backend, including synthetic format and repair turns. */
+  onDispatch?(
+    phase: "work" | "format" | "repair",
+    input: ConversationBackendTurnInput,
+  ): Promise<void> | void;
   artifacts?: readonly ArtifactRef[];
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
 }
@@ -503,6 +508,7 @@ async function executeConversationTurn(
     signal: resolution.signal,
     onUserQuestion: resolution.onUserQuestion,
     modelSelection: resolution.modelSelection,
+    onDispatch: (input) => resolution.onDispatch?.("work", input),
     ...(classifyFailure !== undefined ? { classifyFailure } : {}),
     ...(resolution.autonomous !== undefined
       ? { autonomous: resolution.autonomous }
@@ -547,7 +553,7 @@ async function executeConversationTurn(
     effectiveRequest,
     dispatchResult,
     deps,
-    async (prompt) => {
+    async (prompt, _previous, phase) => {
       const repairRequest = buildFormatTurnRequest({
         request: effectiveRequest,
         prompt,
@@ -562,6 +568,7 @@ async function executeConversationTurn(
         userPromptText: "",
         imageRefs: [],
         syntheticForkSeed: null,
+        onDispatch: (input) => resolution.onDispatch?.(phase, input),
       });
     },
   );
@@ -768,6 +775,7 @@ async function finalizeAgentCall(
 type StructuredOutputRepairDispatch = (
   prompt: string,
   previous: AgentCallResult,
+  phase: "format" | "repair",
 ) => Promise<AgentCallResult>;
 
 type StructuredOutputGateEvaluation =
@@ -847,7 +855,7 @@ async function applyStructuredOutputProtocol(
     }
     current = mergeTurnResults(
       current,
-      await dispatchFormat(renderFormatTurnPrompt(schema), current),
+      await dispatchFormat(renderFormatTurnPrompt(schema), current, "format"),
     );
   }
   if (current.outcome.kind !== "completed") return current;
@@ -891,6 +899,7 @@ async function applyStructuredOutputProtocol(
     const repair = await dispatchFormat(
       renderFormatTurnPrompt(schema, issues),
       current,
+      "repair",
     );
     const repairFields = {
       ...sharedFields,

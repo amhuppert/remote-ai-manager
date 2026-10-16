@@ -8,7 +8,6 @@ import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/outp
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { bindingScopesOverlap } from "@/lib/workspace/admission";
 import {
-  WRITE_RULE_PATTERN_CHARACTERS,
   workspaceScopeSchema,
   type WorkspaceScope,
 } from "@/lib/workspace/schemas";
@@ -98,24 +97,6 @@ export type WorkflowContextRequest = z.infer<
 export const workflowLoopRequestSchema = runLoopSchema
   .extend({ key: keySchema })
   .strict();
-
-/** Why an owned path is refused for its pattern characters, with the parent to own instead. */
-function patternPathMessage(owned: string): string {
-  const segments = owned.split("/");
-  const parent = segments
-    .slice(
-      0,
-      segments.findIndex((segment) =>
-        WRITE_RULE_PATTERN_CHARACTERS.test(segment),
-      ),
-    )
-    .join("/");
-  const remedy =
-    parent === ""
-      ? "No parent directory is free of them: remove the scope, and if the context then overlaps writers that can run beside it, order it against them with dependsOn."
-      : `Instead, own "${parent}", the nearest parent directory without them.`;
-  return `Owned path "${owned}" contains one of [ ] ( ) { } * ? !, which a write rule reads as a pattern, so the context's agents could not be confined to it. ${remedy}`;
-}
 
 interface WorkflowAnalysis {
   issues: DefinitionIssue[];
@@ -871,17 +852,6 @@ export const workflowLaunchRequestSchema = z
         path: issue.path,
         message: issue.message,
       });
-    request.contexts.forEach((context, index) => {
-      if (context.scope?.mode !== "owned") return;
-      context.scope.paths.forEach((owned, position) => {
-        if (!WRITE_RULE_PATTERN_CHARACTERS.test(owned)) return;
-        ctx.addIssue({
-          code: "custom",
-          path: ["contexts", index, "scope", "paths", position],
-          message: patternPathMessage(owned),
-        });
-      });
-    });
     const keys = new Set(request.contexts.map((context) => context.key));
     const unknownKeys = (
       what: string,

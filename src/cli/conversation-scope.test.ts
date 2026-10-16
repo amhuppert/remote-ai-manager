@@ -463,7 +463,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
     dev: ["dev", "list"],
     docs: ["docs", "list"],
     fixture: ["fixture", "session", "create", "cc"],
-    run: ["run", "show", "run-1"],
+    run: ["run", "pause", "run-1"],
     // A leaf that differs from its project-supported group: a launch starts a
     // run in a session worktree.
     "run template launch": [
@@ -501,6 +501,9 @@ describe("cctl at project conversation scope — session-only commands", () => {
       doctor: ["doctor"],
       inbox: ["inbox", "list"],
       notify: ["notify", "done"],
+      "run show": ["run", "show", "run-1"],
+      "run definition": ["run", "definition", "run-1"],
+      "run audit": ["run", "audit", "run-1"],
       // Template authoring is project-scoped even though `run` needs a session.
       "run template": ["run", "template", "list"],
       subscription: ["subscription", "list"],

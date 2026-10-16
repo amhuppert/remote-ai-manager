@@ -243,6 +243,9 @@ _Generated from the native `cctl` registry. Leaf `--help` owns descriptions, exa
 - `cctl run answer` — Answer a question an agent in your run asked
   - `cctl run answer <run-id> --question <string> (--text <string> | --text-file <path>) [options]`
   - Flags: `--question` (required), `--text` / `--text-file` (required), `--text-file`.
+- `cctl run audit` — Inspect a run's context agents and durable engine evidence
+  - `cctl run audit <run-id> [options]`
+  - Flags: `--context`, `--limit`, `--offset`, `--full`, `--out`.
 - `cctl run cancel` — Cancel a run you launched
   - `cctl run cancel <run-id> [options]`
 - `cctl run definition` — Write a workflow run's definition to a file, to edit and amend

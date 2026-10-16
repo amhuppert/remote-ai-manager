@@ -374,6 +374,12 @@ beforeEach(async () => {
     async readText() {
       return "";
     },
+    auditEvidence: {
+      conversationFacts: async () => new Map(),
+      deliveriesForRun: async () => [],
+      wakeBatchesForDeliveries: async () => [],
+      promptDispatches: async () => [],
+    },
     async candidateChanges() {
       return { ok: false, reason: "unused" };
     },

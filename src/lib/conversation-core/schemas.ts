@@ -15,6 +15,26 @@ import {
   taskTurnRequestSchema,
 } from "@/lib/conversation-core/turn/turn-spec";
 
+/** Observational evidence of the input handed to a backend turn, never replayed as user work. */
+export const promptDispatchSchema = z
+  .object({
+    phase: z.enum(["work", "format", "repair"]),
+    promptText: z.string(),
+    outputSchema: z.record(z.string(), z.unknown()).nullable(),
+    userPromptText: z.string().nullable(),
+    promptContext: z.string().nullable(),
+  })
+  .strict();
+export type PromptDispatch = z.infer<typeof promptDispatchSchema>;
+
+export const promptDispatchEvidenceSchema = promptDispatchSchema.extend({
+  seq: z.number().int().nonnegative(),
+  timestamp: z.string(),
+});
+export type PromptDispatchEvidence = z.infer<
+  typeof promptDispatchEvidenceSchema
+>;
+
 /** Who works a seat: its profile, focus, backend and model. One shape for contracts and turn requests. */
 export const seatAssignmentSchema = z
   .object({

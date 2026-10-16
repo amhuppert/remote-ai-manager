@@ -1105,7 +1105,7 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
-    it("renders intermediate Codex messages as thinking detail and keeps the final message visible", async () => {
+    it("keeps Codex progress and its final answer visible while distinguishing reasoning", async () => {
       setupThread([
         threadStarted(),
         reasoningCompleted("**Inspecting the repository**"),
@@ -1125,7 +1125,7 @@ describe("CodexConversationRuntime", () => {
       expect(result.contentBlocks).toEqual([
         { type: "thinking", text: "**Inspecting the repository**" },
         {
-          type: "thinking",
+          type: "text",
           text: "I’m checking the manifest and README for conflicting commands.",
         },
         {
@@ -1141,6 +1141,7 @@ describe("CodexConversationRuntime", () => {
         },
         { type: "text", text: "The commands agree." },
       ]);
+      expect(result.finalText).toBe("The commands agree.");
     });
 
     it("keeps the final message visible when Codex completes its todo list after responding", async () => {
@@ -1202,7 +1203,7 @@ describe("CodexConversationRuntime", () => {
       expect(observed).toEqual([
         "init",
         "accepted",
-        "thinking:First progress",
+        "text:First progress",
         "text:Second progress",
       ]);
     });

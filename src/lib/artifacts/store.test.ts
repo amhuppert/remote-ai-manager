@@ -63,7 +63,7 @@ describe("artifacts", () => {
     await expect(store.read("../escape")).rejects.toThrow(/not an artifact/);
   });
 
-  it("writes read-only copies under a root, again whenever asked, replacing an edited copy", async () => {
+  it("writes editable worktree copies without changing stored artifacts and restores frozen bytes on redelivery", async () => {
     const store = createArtifactStore({ root });
     const plan = await store.snapshot(Buffer.from("# Plan\n"));
     const notes = await store.snapshot(Buffer.from("notes\n"));
@@ -84,12 +84,17 @@ describe("artifacts", () => {
         "utf8",
       ),
     ).toBe("notes\n");
-    expect((await stat(copy)).mode & 0o222).toBe(0);
+    expect((await stat(copy)).mode & 0o777).toBe(0o644);
 
-    await chmod(copy, 0o644);
     await writeFile(copy, "edited by an agent");
+    expect(await readFile(copy, "utf8")).toBe("edited by an agent");
+    expect((await store.read(plan.artifactId)).toString()).toBe("# Plan\n");
+    for (const stored of objectFiles(root))
+      expect((await stat(stored)).mode & 0o222).toBe(0);
+
     await store.materialize(worktree, entries);
     expect(await readFile(copy, "utf8")).toBe("# Plan\n");
+    expect((await stat(copy)).mode & 0o777).toBe(0o644);
   });
 
   it("refuses a copy whose path is absolute or leaves the root", async () => {

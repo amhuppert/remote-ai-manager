@@ -121,28 +121,37 @@ describe("run template materialisation", () => {
     );
   });
 
-  it("refuses an owned path a write rule would read as a pattern on save, while a stored template that owns one still reads", () => {
+  it("preserves literal pattern characters in owned paths through save validation, storage decoding, and materialization", () => {
+    const paths = ["src/app/[id]", "src/app/(marketing)"];
     const raw = template({
       contexts: [
         {
           key: "fix",
           brief: "Fix {{inputs.ticket}}",
-          scope: { mode: "owned", paths: ["src/app/[id]"] },
+          scope: { mode: "owned", paths },
         },
       ],
     });
 
     const validated = validateRunTemplate(raw);
-    expect(validated.ok).toBe(false);
-    if (validated.ok) return;
-    expect(validated.issues).toEqual([
-      {
-        path: "workflow.contexts.0.scope.paths.0",
-        message: expect.stringContaining('own "src/app"'),
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+    const stored = runTemplateContentSchema.parse(
+      JSON.parse(JSON.stringify(validated.content)),
+    );
+    expect(stored.workflow.contexts[0]?.scope).toEqual({
+      mode: "owned",
+      paths,
+    });
+    expect(materializeRunTemplate(stored, { ticket: "42" })).toEqual({
+      ok: true,
+      request: {
+        title: "Ship a fix",
+        contexts: [
+          { key: "fix", brief: "Fix 42", scope: { mode: "owned", paths } },
+        ],
       },
-    ]);
-    // Refused on save or launch, not when stored content is decoded.
-    expect(runTemplateContentSchema.safeParse(raw).success).toBe(true);
+    });
   });
 
   it("locates a problem a setting causes at the tier that set it", () => {

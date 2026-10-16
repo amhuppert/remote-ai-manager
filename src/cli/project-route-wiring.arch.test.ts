@@ -857,6 +857,20 @@ describe("route enumeration", () => {
 });
 
 describe("every project-supported cctl command reaches a real Next.js route", () => {
+  for (const command of ["show", "definition", "audit"]) {
+    it(`run ${command} reaches its global read route without a session`, async () => {
+      const host = makeHost({});
+      await runCcWithHost(["run", command, "run-1"], projectEnv, host);
+      const request = host.requests[0];
+      expect(request?.path).toBe(
+        `/api/runs/run-1${command === "show" ? "" : `/${command}`}`,
+      );
+      const route = findRoute(request?.path ?? "");
+      expect(route).not.toBeNull();
+      expect(typeof (await route?.importModule())?.GET).toBe("function");
+    });
+  }
+
   for (const { name, argv, body } of PROJECT_SCOPE_INVOCATIONS) {
     it(`${name} builds a path served by an existing route module`, async () => {
       const host = makeHost(body);

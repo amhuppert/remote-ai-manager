@@ -37,6 +37,7 @@ import type {
   RuntimeHost,
   RuntimeRequirements,
 } from "./runtime-host";
+import { promptDispatchSchema } from "./schemas";
 
 export interface TurnEngineDeps {
   host: RuntimeHost;
@@ -390,6 +391,22 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
                 ? { syntheticForkSeed: request.syntheticForkSeed }
                 : {}),
               onEvent,
+              onDispatch: async (phase, input) => {
+                await append({
+                  timestamp: new Date().toISOString(),
+                  type: "prompt_dispatch",
+                  promptDispatch: promptDispatchSchema.parse({
+                    phase,
+                    promptText: input.promptText,
+                    outputSchema:
+                      input.outputFormat?.type === "json_schema"
+                        ? input.outputFormat.schema
+                        : null,
+                    userPromptText: input.userPromptText ?? null,
+                    promptContext: input.promptContext ?? null,
+                  }),
+                });
+              },
             }),
             getFailureClassifier: resolveFailureClassifierForBackend,
           },
