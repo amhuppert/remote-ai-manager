@@ -8,18 +8,19 @@ Ticket: command-center#170. Builds on passive subscriptions (#167–168) and fin
 
 The overview distinguishes follows, outstanding wake waits, pending deliveries, and items needing attention. Search, mode/state filters, and pagination bound large collections. A creation dialog chooses an ordinary recipient, a catalog source and selection, purpose, and mode. Active choices show their finite lifetime. Source links, event identities, retrieval commands, wait/batch state, and recipient links let the operator trace an update.
 
-The inbox distinguishes runtime acceptance from human read state. Browsing, source previews, CLI inspection, and advisory hints never acknowledge agent delivery. Mark read/unread is an explicit human operation in a separate persisted receipt table. Accepted wake deliveries link to the corresponding transcript input; generated wake input has server-owned provenance and a compact receipt explaining why the turn started. Active Work shows outstanding waits rather than already settled history.
+The inbox distinguishes runtime acceptance from human read state. Browsing, source previews, CLI inspection, and advisory hints never acknowledge agent delivery. Mark read/unread is an explicit human operation in a separate persisted receipt table. Accepted wake deliveries link to the corresponding transcript input; generated wake input has server-owned provenance and a compact receipt explaining why the update arrived. Active Work shows outstanding waits rather than already settled history.
 
 ## Control semantics
 
 - Passive follows deliver alongside the next user message. Subscription-generated and other machine turns do not consume unrelated passive updates.
+- Active updates attempt live delivery into an eligible running turn when its backend supports it; otherwise they wait for the next eligible turn. Pending human messages and question answers retain priority. A definite live refusal leaves the update queued for the next turn; uncertain delivery requires review.
 - Pause suspends delivery while durable outcomes remain available. Finite expiry continues. Resume exposes retained outcomes; it does not renew the original deadline.
 - Downgrade changes an outstanding wake into passive delivery of its one terminal outcome, retaining the same source and lifetime. Restoring an existing wake keeps its deadline.
 - Cancel terminates a finite wait. Unfollow also remembers an opt-out against automatic involvement. Both preserve inspection history.
 - A queued wake can be withdrawn only through the canonical queue's semantic operation before backend delivery. The queue row and selected wait change together; other batch members return to readiness. Dispatch, queue claim, and final admission recheck stale batch state.
 - A wake whose delivery may already have started requires review. An orphan uncertain batch can be cancelled only after proving that neither a queue row nor a transcript acceptance receipt exists. Nothing is automatically replayed.
 - A spent finite wait cannot be silently restored as a new wait or an ineffective passive follow. Its reason and lifetime remain immutable. Existing ordinary passive opt-outs can be explicitly followed again.
-- Human questions, checkpoint and approval holds, active runtime ownership, and lane context boundaries continue to govern admission. Controls do not grant approval authority.
+- Human questions, checkpoint and approval holds, ownership by another execution, and lane context boundaries continue to govern admission. Controls do not grant approval authority.
 
 ## Domain ownership
 

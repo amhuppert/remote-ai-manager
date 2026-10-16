@@ -119,8 +119,10 @@ choosing a remedy. `retry_capture` only formats its existing result again;
 ### Wakes
 
 The owner follows its run from launch: the run is a `run` subscription source
-with wake. Each boundary wakes the owner with a turn whose prompt holds a
-notice:
+with wake. Each boundary sends a notice into an eligible running turn when live
+input is supported, or wakes the owner on the next eligible turn. See
+[active delivery](subscriptions.md#active-delivery) for priority, holds and
+delivery evidence. A notice looks like this:
 
 ```
 <run-boundary run="<run-id>" kind="question" boundary="3">

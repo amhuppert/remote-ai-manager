@@ -12,6 +12,7 @@ import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { createLogger } from "@/lib/logging";
 import { modelSelectionKey } from "@/lib/agent-backends/model-selection";
 import {
+  createSubscriptionWakeAdmissionReader,
   readSubscriptionWakeHold,
   subscriptionWakeHold,
 } from "./message-queue-subscription-admission";
@@ -287,17 +288,19 @@ export function claimLiveDeliveryTransform(
   id: string,
   attemptId: string,
   now: string,
+  allowSubscriptionWakes = true,
 ): {
   queue: PendingQueuedMessage[];
   claimed: PendingQueuedMessage | null;
   refused: PendingQueuedMessage | null;
 } {
-  if (
+  const isWake =
     queue.find((entry) => entry.id === id)?.metadata?.kind ===
-    "subscription_update"
-  ) {
+    "subscription_update";
+  const wakesAllowed =
+    isWake && subscriptionWakesAllowed(queue, allowSubscriptionWakes);
+  if (isWake && !wakesAllowed)
     return { queue: [...queue], claimed: null, refused: null };
-  }
   if (
     queue.some(
       (entry) =>
@@ -311,7 +314,7 @@ export function claimLiveDeliveryTransform(
     queue.find(
       (entry) =>
         entry.status === "pending" &&
-        entry.metadata?.kind !== "subscription_update",
+        (wakesAllowed || entry.metadata?.kind !== "subscription_update"),
     )?.id !== id
   ) {
     return { queue: [...queue], claimed: null, refused: null };
@@ -340,6 +343,26 @@ export function claimLiveDeliveryTransform(
     next.push(claimed);
   }
   return { queue: next, claimed, refused };
+}
+
+function subscriptionWakesAllowed(
+  queue: readonly PendingQueuedMessage[],
+  allowSubscriptionWakes: boolean,
+): boolean {
+  return (
+    allowSubscriptionWakes &&
+    !queue.some(
+      (row) =>
+        row.status === "pending" &&
+        (row.inputOrigin === "user" ||
+          row.metadata?.kind === "question_answers"),
+    ) &&
+    !queue.some(
+      (row) =>
+        row.metadata?.kind === "subscription_update" &&
+        queuedMessageNeedsReview(row.status),
+    )
+  );
 }
 
 /**
@@ -395,19 +418,10 @@ export function claimNextTurnBatchTransform(
   // Answer enqueue atomically consumes the question marker. Queue provenance
   // must still prioritize that answer, or an older wake can reach the actor
   // before the human input that released its hold.
-  const hasPendingHumanInput = survivors.some(
-    (row) =>
-      row.status === "pending" &&
-      (row.inputOrigin === "user" || row.metadata?.kind === "question_answers"),
+  const wakesAllowed = subscriptionWakesAllowed(
+    survivors,
+    allowSubscriptionWakes,
   );
-  const wakesAllowed =
-    allowSubscriptionWakes &&
-    !hasPendingHumanInput &&
-    !survivors.some(
-      (row) =>
-        row.metadata?.kind === "subscription_update" &&
-        queuedMessageNeedsReview(row.status),
-    );
   const pending = survivors.filter(
     (entry) =>
       entry.status === "pending" &&
@@ -716,7 +730,9 @@ export interface ClaimedQueuedBatch {
 }
 
 export interface MessageQueueServiceDeps {
-  readSubscriptionWakeHold?(input: ConversationKey): Promise<string | null>;
+  readSubscriptionWakeHold?(
+    input: ConversationKey & { batchId?: string },
+  ): Promise<string | null>;
   isSubscriptionWakeCurrent?(batchId: string): Promise<boolean>;
   onSubscriptionWakeDiscarded?(input: {
     projectPath: string;
@@ -1002,7 +1018,7 @@ export function createMessageQueueService(
     const attemptId = deps.newId();
     const now = deps.now();
 
-    const { claimed, refused } = await deps.mutateConversation(
+    const initial = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
@@ -1013,11 +1029,64 @@ export function createMessageQueueService(
           id,
           attemptId,
           now,
+          subscriptionWakeHold({ conversation, sessionArchived: false }) ===
+            null,
         );
+        if (
+          (deps.readSubscriptionWakeHold || deps.isSubscriptionWakeCurrent) &&
+          result.claimed?.metadata?.kind === "subscription_update"
+        )
+          return {
+            claimed: null,
+            refused: null,
+            wakeBatchId: result.claimed.metadata.batchId,
+          };
         conversation.pendingQueue = result.queue;
-        return { claimed: result.claimed, refused: result.refused };
+        return {
+          claimed: result.claimed,
+          refused: result.refused,
+          wakeBatchId: null,
+        };
       },
     );
+
+    let { claimed, refused } = initial;
+    if (initial.wakeBatchId !== null) {
+      const externalWakeHold = await deps.readSubscriptionWakeHold?.({
+        ...input,
+        batchId: initial.wakeBatchId,
+      });
+      ({ claimed, refused } = await deps.mutateConversation(
+        projectPath,
+        sessionName,
+        conversationId,
+        "claimLiveSubscriptionWake",
+        async (conversation) => {
+          const candidate = conversation.pendingQueue.find(
+            (row) => row.id === id,
+          );
+          const current =
+            candidate?.metadata?.kind === "subscription_update" &&
+            candidate.metadata.batchId === initial.wakeBatchId &&
+            (!deps.isSubscriptionWakeCurrent ||
+              (await deps.isSubscriptionWakeCurrent(
+                candidate.metadata.batchId,
+              )));
+          const wakeHold =
+            externalWakeHold ??
+            subscriptionWakeHold({ conversation, sessionArchived: false });
+          const result = claimLiveDeliveryTransform(
+            conversation.pendingQueue,
+            id,
+            attemptId,
+            now,
+            current && wakeHold == null,
+          );
+          conversation.pendingQueue = result.queue;
+          return result;
+        },
+      ));
+    }
 
     const projectName = deps.getProjectDisplayName(projectPath);
     reportRefused(input, projectName, refused ? [refused] : []);
@@ -1070,7 +1139,7 @@ export function createMessageQueueService(
             claimed: answer.claimed === null ? [] : [answer.claimed],
             command: null,
             refused: answer.refused === null ? [] : [answer.refused],
-            needsExternalWakeHold: false,
+            wakeBatchId: null,
           };
         }
         const wakeHold = subscriptionWakeHold({
@@ -1091,21 +1160,24 @@ export function createMessageQueueService(
             claimed: [],
             command: null,
             refused: [],
-            needsExternalWakeHold: true,
+            wakeBatchId: result.claimed[0].metadata.batchId,
           };
         conversation.pendingQueue = result.queue;
         return {
           claimed: result.claimed,
           command: result.command,
           refused: result.refused,
-          needsExternalWakeHold: false,
+          wakeBatchId: null,
         };
       },
     );
 
     let { claimed, command, refused } = initial;
-    if (initial.needsExternalWakeHold) {
-      const externalWakeHold = await deps.readSubscriptionWakeHold?.(input);
+    if (initial.wakeBatchId !== null) {
+      const externalWakeHold = await deps.readSubscriptionWakeHold?.({
+        ...input,
+        batchId: initial.wakeBatchId,
+      });
       const checked = await deps.mutateConversation(
         projectPath,
         sessionName,
@@ -1118,12 +1190,12 @@ export function createMessageQueueService(
               row.metadata?.kind === "subscription_update",
           );
           const staleWake =
-            pendingWake?.metadata?.kind === "subscription_update" &&
-            deps.isSubscriptionWakeCurrent
-              ? !(await deps.isSubscriptionWakeCurrent(
-                  pendingWake.metadata.batchId,
-                ))
-              : false;
+            pendingWake?.metadata?.kind !== "subscription_update" ||
+            pendingWake.metadata.batchId !== initial.wakeBatchId ||
+            (deps.isSubscriptionWakeCurrent !== undefined &&
+              !(await deps.isSubscriptionWakeCurrent(
+                pendingWake.metadata.batchId,
+              )));
           const wakeHold =
             (staleWake
               ? "Subscription wake reservation is no longer current"
@@ -1680,7 +1752,13 @@ export const messageQueueService = createMessageQueueService({
       await import("@/lib/subscriptions/service-factory");
     return getSubscriptionRuntime().waitsRepo.isBatchDispatchable(batchId);
   },
-  readSubscriptionWakeHold,
+  readSubscriptionWakeHold: createSubscriptionWakeAdmissionReader({
+    async hasAcceptedInput(conversationId, batchId) {
+      const { hasTranscriptEntry } = await import("@/lib/prompt/transcript");
+      return hasTranscriptEntry(conversationId, batchId);
+    },
+    readHold: readSubscriptionWakeHold,
+  }),
   async onSubscriptionWakeDiscarded(input) {
     const { getActiveWaitService } =
       await import("@/lib/subscriptions/service-factory");

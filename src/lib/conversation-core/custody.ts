@@ -60,15 +60,15 @@ export interface CustodySegment {
   conversation: HostedConversation;
   /** The custody attempt that holds the runtime. */
   attemptId: string;
+  /** Accepted wake inputs shared with this custody's running description. */
+  acceptedSubscriptionBatchIds: string[];
   /** Live input delivered into it is custody's: the provider turn's end is told once it has settled. */
   own(delivery: Promise<unknown>): void;
 }
 
 /** The turn whose end a custody keeps the runtime for: what custody's provider turns inherit. */
-export interface CustodyTurn {
+export interface CustodyTurn extends RunningTurnDescription {
   source: TurnSource;
-  autonomous: boolean;
-  originMessageId: string | null;
 }
 
 export interface RuntimeCustody {
@@ -315,7 +315,12 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
       });
       if (lease === null) return null;
       retention.lease = lease;
-      retention.turn = turn;
+      retention.turn = {
+        ...turn,
+        acceptedSubscriptionBatchIds: [
+          ...(turn.acceptedSubscriptionBatchIds ?? []),
+        ],
+      };
       // The turn's end is a provider-turn boundary when no provider turn runs.
       if (!retention.segment) then(retention, () => applyStaged(retention));
       return lease;
@@ -377,6 +382,13 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
       return {
         autonomous: retention.turn.autonomous,
         originMessageId: retention.turn.originMessageId,
+        ...(retention.turn.acceptedSubscriptionBatchIds?.length
+          ? {
+              acceptedSubscriptionBatchIds: [
+                ...retention.turn.acceptedSubscriptionBatchIds,
+              ],
+            }
+          : {}),
       };
     },
 
@@ -385,12 +397,15 @@ export function createRuntimeCustody(deps: RuntimeCustodyDeps): RuntimeCustody {
       if (
         retention === undefined ||
         retention.lease === null ||
+        retention.turn === null ||
         !retention.segment
       )
         return null;
       return {
         conversation: retention.conversation,
         attemptId: retention.lease.attemptId,
+        acceptedSubscriptionBatchIds:
+          (retention.turn.acceptedSubscriptionBatchIds ??= []),
         own(delivery) {
           retention.deliveries.add(delivery);
           const settled = () => retention.deliveries.delete(delivery);

@@ -17,7 +17,10 @@ import {
   conversationSubscriptionSchema,
   subscriptionDeliverySchema,
 } from "./schemas";
-import { createActiveWaitDispatcher } from "./active-wait-dispatch";
+import {
+  createActiveWaitDispatcher,
+  type ActiveWaitDispatcherDeps,
+} from "./active-wait-dispatch";
 
 const key = {
   projectPath: "/wake-dispatch",
@@ -143,6 +146,7 @@ async function setup() {
   let observationGate: Promise<void> | undefined;
   let reconcileError: Error | null = null;
   let passiveError: Error | null = null;
+  let drainOperation: ActiveWaitDispatcherDeps["drain"] | undefined;
   const makeDispatcher = () =>
     createActiveWaitDispatcher({
       logger: createCapturingLogger(),
@@ -199,8 +203,9 @@ async function setup() {
         });
         if (enqueueThrowsAfterWrite) throw new Error("lost enqueue response");
       },
-      async drain() {
+      async drain(batch, signal) {
         drainCount++;
+        await drainOperation?.(batch, signal);
       },
       async confirmAccepted(batch) {
         await queue.confirmSubscriptionWakeAccepted({
@@ -222,6 +227,9 @@ async function setup() {
     },
     setObservationGate(gate: Promise<void>) {
       observationGate = gate;
+    },
+    setDrain(operation: ActiveWaitDispatcherDeps["drain"]) {
+      drainOperation = operation;
     },
     failReconcile(kind: "active" | "passive") {
       if (kind === "active") reconcileError = new Error("Broken wait read");
@@ -302,5 +310,40 @@ describe("durable active wake handoff", () => {
     await dispatcher.tick();
     expect(s.counts()).toEqual({ enqueueCount: 0, drainCount: 0 });
     expect((await s.repo.getBatch("batch"))?.state).toBe("planned");
+  });
+
+  it("leaves a claimed wake with its delivery owner when stopping before acknowledgement", async () => {
+    const s = await setup();
+    const started = Promise.withResolvers<AbortSignal>();
+    const acknowledgement = Promise.withResolvers<void>();
+    const drained = Promise.withResolvers<void>();
+    s.setDrain(async (_batch, signal) => {
+      await s.queue.claimNextTurnBatch(key);
+      started.resolve(signal);
+      await acknowledgement.promise;
+      drained.resolve();
+    });
+    const dispatcher = s.makeDispatcher();
+    const tick = dispatcher.tick();
+    const signal = await started.promise;
+    try {
+      await tick;
+      await dispatcher.stop();
+      expect(signal.aborted).toBe(true);
+      expect((await s.repo.getBatch("batch"))?.state).toBe("queued");
+      const conversation = await s.f
+        .recreateStore()
+        .getConversation(key.projectPath, key.sessionName, key.conversationId);
+      expect(conversation?.pendingQueue).toMatchObject([
+        { id: "batch", status: "delivering" },
+      ]);
+      expect(await s.queue.claimNextTurnBatch(key)).toBeNull();
+      await dispatcher.tick();
+      expect(s.counts()).toEqual({ enqueueCount: 1, drainCount: 1 });
+    } finally {
+      acknowledgement.resolve();
+      await drained.promise;
+      await dispatcher.stop();
+    }
   });
 });

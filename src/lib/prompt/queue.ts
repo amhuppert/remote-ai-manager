@@ -18,6 +18,7 @@ import type { ConversationIdentity } from "@/lib/conversation-core/conversation-
 import type { DeliveryClass } from "@/lib/conversation-core/turn-input";
 import {
   coreAcceptsLive,
+  coreCheckpoints,
   coreOwnsConversation,
   deliverCoreLive,
 } from "@/lib/supervision/handles";
@@ -57,6 +58,7 @@ interface ConversationKey {
 }
 
 export interface QueueMessageDeps {
+  checkpointAcceptsQueuedInput?(conversationId: string): boolean;
   /** The shared core, which takes live input for the conversations it runs itself. */
   core?: {
     owns(conversationId: string): Promise<boolean>;
@@ -105,6 +107,8 @@ export interface QueueMessageDeps {
 }
 
 const defaultDeps: QueueMessageDeps = {
+  checkpointAcceptsQueuedInput: (conversationId) =>
+    coreCheckpoints()?.acceptsQueuedInput(conversationId) ?? false,
   core: {
     owns: async (conversationId) => coreOwnsConversation(conversationId),
     acceptsLive: coreAcceptsLive,
@@ -149,6 +153,8 @@ export interface QueueMessageParams {
    * backend accepts user input during an in-progress turn.
    */
   deliveryPolicy?: "next_turn";
+  /** Stop an unstarted dispatch without cancelling input already owned by the core. */
+  signal?: AbortSignal;
 }
 
 export interface QueueMessageResult {
@@ -212,6 +218,39 @@ export async function queueMessage(
   // Observe an enqueue failure while an earlier dispatch is still pending;
   // queueMessageInOrder rethrows it when this operation reaches the head.
   void enqueued.catch(() => {});
+  return dispatchInOrder(params, deps, enqueued);
+}
+
+/** Attempts live delivery of an existing durable row, including a recovered subscription wake. */
+export async function deliverQueuedMessage(
+  params: ConversationKey & {
+    entry: PendingQueuedMessage;
+    backend: AgentBackendId;
+    deps?: Partial<QueueMessageDeps>;
+    signal?: AbortSignal;
+  },
+): Promise<QueueMessageResult> {
+  const { entry } = params;
+  const result = await dispatchInOrder(
+    {
+      ...params,
+      text: queuedBatchToSubmitPrompt(entry.content).promptText,
+      modelSelection: entry.modelSelection,
+    },
+    { ...defaultDeps, ...params.deps },
+    Promise.resolve(entry),
+  );
+  // This path supplies an existing row, so the nullable enqueue outcome cannot occur.
+  if (result === null) throw new Error("The queued message was not supplied");
+  return result;
+}
+
+async function dispatchInOrder(
+  params: QueueMessageParams,
+  deps: QueueMessageDeps,
+  enqueued: Promise<PendingQueuedMessage | null>,
+): Promise<QueueMessageResult | null> {
+  const { projectPath, sessionName, conversationId } = params;
   const key = JSON.stringify([projectPath, sessionName, conversationId]);
   const previous = liveDispatches.get(key) ?? Promise.resolve();
   const operation = previous.then(() =>
@@ -285,7 +324,7 @@ async function deliverThroughCore(
     id: entry.id,
   });
   // No longer pending: cancelled, or claimed by a racing drain.
-  if (claimed === null) return { entry, deliveryTiming: "in_turn" };
+  if (claimed === null) return { entry, deliveryTiming: "next_turn" };
   const deliveryAttemptId = claimed.deliveryAttemptId;
   if (deliveryAttemptId == null) {
     // As on the actor's path: abandoned-delivery recovery reclaims the row.
@@ -299,6 +338,20 @@ async function deliverThroughCore(
     });
     return { entry, deliveryTiming: "in_turn" };
   }
+  if (
+    params.signal?.aborted ||
+    deps.checkpointAcceptsQueuedInput?.(conversationId)
+  ) {
+    await deps.markPending({
+      projectPath,
+      sessionName,
+      conversationId,
+      ids: [entry.id],
+      deliveryAttemptId,
+      error: "Live delivery stopped or held for checkpoint maintenance",
+    });
+    return { entry, deliveryTiming: "next_turn" };
+  }
   const { promptText, images, documentFeedback, notepadFeedback } =
     queuedBatchToSubmitPrompt(claimed.content);
   const request: UserTurnRequest = {
@@ -308,7 +361,13 @@ async function deliverThroughCore(
     ...(documentFeedback !== undefined ? { documentFeedback } : {}),
     ...(notepadFeedback !== undefined ? { notepadFeedback } : {}),
     inputOrigin: isQueuedUserMessage(claimed) ? "user" : "generated",
-    queuedDelivery: { messageIds: [entry.id], deliveryAttemptId },
+    queuedDelivery: {
+      messageIds: [entry.id],
+      deliveryAttemptId,
+      ...(claimed.metadata?.kind === "subscription_update"
+        ? { subscriptionBatchId: claimed.metadata.batchId }
+        : {}),
+    },
   };
   let outcome: DeliveryClass;
   try {
@@ -373,9 +432,13 @@ async function queueMessageInOrder(
   if (!entry) return null;
 
   if (
-    deliveryPolicy === "next_turn" ||
-    entry.metadata?.kind === "subscription_update"
-  ) {
+    entry.status !== "pending" ||
+    params.signal?.aborted ||
+    deps.checkpointAcceptsQueuedInput?.(conversationId)
+  )
+    return { entry, deliveryTiming: "next_turn" };
+
+  if (deliveryPolicy === "next_turn") {
     logger.info("queue.delivery_deferred", {
       projectName: deps.getProjectDisplayName(projectPath),
       ...scopeRef,

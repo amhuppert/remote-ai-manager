@@ -72,6 +72,38 @@ describe.each(["session", "project"] as const)(
       expect((await h.reload())?.pendingQueue).toEqual([]);
     });
 
+    it("delivers a subscription update during the current turn with its durable receipt and provenance", async () => {
+      const h = await harness();
+      let passiveBriefings = 0;
+      h.inputDeps.subscriptions = {
+        prepareBriefing: async () => {
+          passiveBriefings++;
+          return {
+            block: null,
+            onInputAccepted: async () => {},
+            finish: async () => {},
+          };
+        },
+      };
+      const delivered = await h.send("Reviewer finished", {
+        inputOrigin: "generated",
+        metadata: { kind: "subscription_update", batchId: "review-complete" },
+      });
+      expect(delivered.deliveryTiming).toBe("in_turn");
+      expect(h.sent).toEqual(["Reviewer finished"]);
+      expect(h.archive).toEqual([
+        expect.objectContaining({
+          id: "review-complete",
+          origin: {
+            source: "subscription_update",
+            subscriptionUpdate: { batchId: "review-complete" },
+          },
+        }),
+      ]);
+      expect(passiveBriefings).toBe(0);
+      expect((await h.reload())?.pendingQueue).toEqual([]);
+    });
+
     it("attaches a passive briefing to live user input without recording it as user text", async () => {
       const h = await harness();
       let state = "pending";

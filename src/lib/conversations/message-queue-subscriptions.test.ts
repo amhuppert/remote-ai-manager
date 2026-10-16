@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import { makeConversationState } from "./testing/conversation-state-fixture";
+import {
+  makeConversationState,
+  type ConversationStateOverrides,
+} from "./testing/conversation-state-fixture";
 import {
   claimLiveDeliveryTransform,
   claimNextTurnBatchTransform,
@@ -8,8 +11,14 @@ import {
   createPendingEntry,
   type MessageQueueServiceDeps,
 } from "./message-queue-service";
-import { pendingQueuedMessageSchema } from "./message-queue-schemas";
-import { subscriptionWakeHold } from "./message-queue-subscription-admission";
+import {
+  pendingQueuedMessageSchema,
+  type PendingQueuedMessage,
+} from "./message-queue-schemas";
+import {
+  createSubscriptionWakeAdmissionReader,
+  subscriptionWakeHold,
+} from "./message-queue-subscription-admission";
 
 const KEY = {
   projectPath: "/subscription-queue",
@@ -369,11 +378,258 @@ describe("subscription queue admission", () => {
     });
   });
 
-  it("refuses live delivery even when a caller attempts to claim a wake", () => {
+  it("claims a live wake once", () => {
     expect(
       claimLiveDeliveryTransform([wake()], "wake-batch", "attempt", NOW)
         .claimed,
-    ).toBeNull();
+    ).toMatchObject({
+      id: "wake-batch",
+      status: "delivering",
+      deliveryAttemptId: "attempt",
+      attemptCount: 1,
+    });
+  });
+
+  it.each(["human", "answer", "delivering", "uncertain", "earlier"])(
+    "holds a live wake behind %s input",
+    (kind) => {
+      const other: PendingQueuedMessage =
+        kind === "human"
+          ? human("other")
+          : {
+              ...wake(),
+              id: "other",
+              ...(kind === "answer"
+                ? {
+                    metadata: {
+                      kind: "question_answers" as const,
+                      questionBatchId: "question",
+                    },
+                  }
+                : {}),
+              ...(kind === "delivering" || kind === "uncertain"
+                ? { status: kind }
+                : {}),
+            };
+      const rows = kind === "earlier" ? [other, wake()] : [wake(), other];
+      expect(
+        claimLiveDeliveryTransform(rows, "wake-batch", "attempt", NOW).claimed,
+      ).toBeNull();
+    },
+  );
+
+  it.each(["live", "next"] as const)(
+    "holds already accepted subscription input on the %s claim path",
+    async (mode) => {
+      const fixture = createPersistenceFixture();
+      try {
+        const queue = await seedQueue(fixture, {
+          readSubscriptionWakeHold: createSubscriptionWakeAdmissionReader({
+            hasAcceptedInput: async (_conversationId, batchId) =>
+              batchId === "batch",
+            readHold: async () => null,
+          }),
+        });
+        await enqueueWake(queue);
+        const claimed =
+          mode === "live"
+            ? await queue.claimLiveDelivery({ ...KEY, id: "wake-batch" })
+            : await queue.claimNextTurnBatch(KEY);
+        expect(claimed).toBeNull();
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(
+            KEY.projectPath,
+            KEY.sessionName,
+            KEY.conversationId,
+          );
+        expect(reloaded?.pendingQueue[0]).toMatchObject({
+          status: "pending",
+          attemptCount: 0,
+        });
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
+  it.each([null, "Archived parent session"])(
+    "checks the external hold before durably claiming live subscription input: %s",
+    async (hold) => {
+      const fixture = createPersistenceFixture();
+      try {
+        const queue = await seedQueue(fixture, {
+          readSubscriptionWakeHold: async () => hold,
+        });
+        await enqueueWake(queue);
+        const claimed = await queue.claimLiveDelivery({
+          ...KEY,
+          id: "wake-batch",
+        });
+        expect(claimed?.id ?? null).toBe(hold === null ? "wake-batch" : null);
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(
+            KEY.projectPath,
+            KEY.sessionName,
+            KEY.conversationId,
+          );
+        expect(reloaded?.pendingQueue[0]?.status).toBe(
+          hold === null ? "delivering" : "pending",
+        );
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
+  it.each(["reservation", "human"])(
+    "rechecks %s after the live wake's external read",
+    async (change) => {
+      const fixture = createPersistenceFixture();
+      try {
+        let current = true;
+        let check = false;
+        const queue = await seedQueue(fixture, {
+          isSubscriptionWakeCurrent: async () => current,
+          async readSubscriptionWakeHold() {
+            if (check) {
+              if (change === "reservation") current = false;
+              else
+                await queue.enqueue({
+                  ...KEY,
+                  inputOrigin: "user",
+                  content: [{ type: "text", text: "Stop" }],
+                });
+            }
+            return null;
+          },
+        });
+        await enqueueWake(queue);
+        check = true;
+        expect(
+          await queue.claimLiveDelivery({ ...KEY, id: "wake-batch" }),
+        ).toBeNull();
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(
+            KEY.projectPath,
+            KEY.sessionName,
+            KEY.conversationId,
+          );
+        expect(reloaded?.pendingQueue.map((row) => row.status)).toEqual(
+          change === "human" ? ["pending", "pending"] : ["pending"],
+        );
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
+  it.each([
+    { archived: true },
+    { pendingQuestionId: "question" },
+    { role: "validator" },
+    {
+      owner: { kind: "collaboration", workflowId: "workflow", attemptEpoch: 0 },
+    },
+    {
+      debugMode: {
+        active: true,
+        recording: false,
+        logFilePath: "/tmp/debug",
+        enteredAt: NOW,
+      },
+    },
+  ] satisfies ConversationStateOverrides[])(
+    "rechecks durable recipient holds after a live wake's external read: %j",
+    async (overrides) => {
+      const fixture = createPersistenceFixture();
+      try {
+        const queue = await seedQueue(fixture, {
+          async readSubscriptionWakeHold() {
+            await fixture.store.mutateConversation(
+              KEY.projectPath,
+              KEY.sessionName,
+              KEY.conversationId,
+              "hold",
+              (row) => {
+                Object.assign(
+                  row,
+                  makeConversationState({ ...row, ...overrides }),
+                );
+              },
+            );
+            return null;
+          },
+        });
+        await enqueueWake(queue);
+        expect(
+          await queue.claimLiveDelivery({ ...KEY, id: "wake-batch" }),
+        ).toBeNull();
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(
+            KEY.projectPath,
+            KEY.sessionName,
+            KEY.conversationId,
+          );
+        expect(reloaded?.pendingQueue[0]).toMatchObject({
+          status: "pending",
+          attemptCount: 0,
+        });
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
+  it("serializes live wake claims with pause or cancellation withdrawal", async () => {
+    const fixture = createPersistenceFixture();
+    try {
+      let shouldWithdraw = false;
+      let withdrawn = false;
+      const queue = await seedQueue(fixture, {
+        async readSubscriptionWakeHold() {
+          if (shouldWithdraw) {
+            withdrawn = await queue.withdrawSubscriptionWake({
+              ...KEY,
+              batchId: "batch",
+              allowMissing: false,
+              commit() {},
+            });
+          }
+          return null;
+        },
+      });
+      await enqueueWake(queue);
+      shouldWithdraw = true;
+      expect(
+        await queue.claimLiveDelivery({ ...KEY, id: "wake-batch" }),
+      ).toBeNull();
+      expect(withdrawn).toBe(true);
+      const reloaded = await fixture
+        .recreateStore()
+        .getConversation(KEY.projectPath, KEY.sessionName, KEY.conversationId);
+      expect(reloaded?.pendingQueue).toEqual([]);
+      shouldWithdraw = false;
+      await enqueueWake(queue);
+      expect(
+        await queue.claimLiveDelivery({ ...KEY, id: "wake-batch" }),
+      ).not.toBeNull();
+      expect(
+        await queue.withdrawSubscriptionWake({
+          ...KEY,
+          batchId: "batch",
+          allowMissing: false,
+          commit() {
+            throw new Error("Must not commit");
+          },
+        }),
+      ).toBe(false);
+    } finally {
+      fixture.close();
+    }
   });
 
   it("keeps a pending wake from blocking live human input", () => {

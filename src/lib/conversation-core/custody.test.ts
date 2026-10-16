@@ -312,6 +312,35 @@ function harness(
 }
 
 describe("runtime custody", () => {
+  it("keeps accepted wake inputs visible through its provider turns without replacing the originating message", async () => {
+    const h = harness();
+    const runtime = await h.obtain();
+    runtime.owe(true);
+    const custody = h.opener();
+    h.custody.keep(
+      "conv-1",
+      {
+        ...turn,
+        acceptedSubscriptionBatchIds: ["live-1"],
+      },
+      custody.open,
+    );
+    runtime.providerTurn([]);
+    expect(h.custody.describe("conv-1")).toEqual({
+      autonomous: false,
+      originMessageId: "msg-1",
+      acceptedSubscriptionBatchIds: ["live-1"],
+    });
+    const segment = h.custody.segment("conv-1");
+    segment?.acceptedSubscriptionBatchIds.push("live-2");
+    expect(h.custody.describe("conv-1")).toMatchObject({
+      acceptedSubscriptionBatchIds: ["live-1", "live-2"],
+    });
+    custody.release("handed_over");
+    expect(h.custody.describe("conv-1")).toBeNull();
+    await h.settle();
+  });
+
   it("keeps a runtime that still owes work at its turn's end, and keeps none that owes nothing or cannot say", async () => {
     const h = harness();
     const runtime = await h.obtain();

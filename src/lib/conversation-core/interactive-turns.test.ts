@@ -417,6 +417,7 @@ function custodySegment() {
       persistedRef: { backend: "claude", ref: "sdk-1" },
     },
     attemptId: "custody-1",
+    acceptedSubscriptionBatchIds: [],
     own(delivery) {
       owned.push(delivery);
     },
@@ -752,6 +753,100 @@ describe("interactive turns", () => {
   });
 
   describe("live input", () => {
+    it("records the latest accepted wake inputs before provider output resumes without changing the turn's origin or authority", async () => {
+      const expected: string[] = [];
+      const outcomes: string[] = [];
+      const live = liveRuntime(async (input) => {
+        if (input.userPromptText === "refused")
+          throw new Error("provider refused input");
+        if (input.userPromptText === "uncertain")
+          throw new InputDeliveryUncertainError("no acknowledgement");
+        await input.onAccepted?.();
+        const batchId = input.userPromptText ?? "";
+        const prior = expected.indexOf(batchId);
+        if (prior !== -1) expected.splice(prior, 1);
+        expected.push(batchId);
+        if (expected.length > 8) expected.shift();
+        expect(h.port.describeRunning("conv-1")).toEqual({
+          autonomous: false,
+          originMessageId: "attempt-1",
+          acceptedSubscriptionBatchIds: expected,
+        });
+      });
+      const h = harness(async (turn) => {
+        await turn.onEvent?.({ type: "input_accepted" });
+        for (const id of [
+          ...Array.from({ length: 10 }, (_, index) => `batch-${index}`),
+          "batch-5",
+          "refused",
+          "uncertain",
+        ]) {
+          outcomes.push(
+            await h.port.deliverLive(identity, {
+              ...queued(id),
+              inputOrigin: "generated",
+              queuedDelivery: {
+                messageIds: [`queue-${id}`],
+                deliveryAttemptId: `attempt-${id}`,
+                subscriptionBatchId: id,
+              },
+            }),
+          );
+        }
+        expect(h.port.describeRunning("conv-1")).toMatchObject({
+          acceptedSubscriptionBatchIds: [
+            "batch-2",
+            "batch-3",
+            "batch-4",
+            "batch-6",
+            "batch-7",
+            "batch-8",
+            "batch-9",
+            "batch-5",
+          ],
+        });
+        return completed();
+      });
+      h.holdRuntime(live.runtime);
+      const custody = h.keepRuntime({ status: "running", source: "user" });
+      await h.run(message());
+      expect(outcomes).toEqual([
+        ...Array<string>(11).fill("accepted"),
+        "not_sent",
+        "uncertain",
+      ]);
+      expect(custody.kept[0]).toMatchObject({
+        source: "user",
+        autonomous: false,
+        originMessageId: "attempt-1",
+        acceptedSubscriptionBatchIds: expected,
+      });
+    });
+
+    it("records an accepted wake in the provider turn held by custody before releasing provider output", async () => {
+      const { segment } = custodySegment();
+      let acceptedAtProviderResume: string[] = [];
+      const live = liveRuntime(async (input) => {
+        await input.onAccepted?.();
+        acceptedAtProviderResume = [...segment.acceptedSubscriptionBatchIds];
+      }, "until_answered");
+      const h = harness(async () => completed());
+      h.holdRuntime(live.runtime);
+      h.custodyRuns(segment);
+      expect(
+        await h.port.deliverLive(identity, {
+          ...queued("Wake"),
+          inputOrigin: "generated",
+          queuedDelivery: {
+            messageIds: ["queue-wake"],
+            deliveryAttemptId: "attempt-wake",
+            subscriptionBatchId: "batch-wake",
+          },
+        }),
+      ).toBe("accepted");
+      expect(acceptedAtProviderResume).toEqual(["batch-wake"]);
+    });
+
     it("delivers a queued message into the running turn when its backend joins that turn, kept and released on acceptance", async () => {
       const live = liveRuntime();
       let outcome: unknown;

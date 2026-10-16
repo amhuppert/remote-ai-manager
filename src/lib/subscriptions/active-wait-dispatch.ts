@@ -74,7 +74,7 @@ export interface ActiveWaitDispatcherDeps {
   reconcilePassive?(): Promise<void>;
   observe(batch: SubscriptionWakeBatch): Promise<WakeDispatchObservation>;
   enqueue(batch: SubscriptionWakeBatch): Promise<void>;
-  drain(batch: SubscriptionWakeBatch): Promise<void>;
+  drain(batch: SubscriptionWakeBatch, signal: AbortSignal): Promise<void>;
   confirmAccepted(batch: SubscriptionWakeBatch): Promise<void>;
   logger?: Logger;
 }
@@ -83,9 +83,43 @@ export interface ActiveWaitDispatcherDeps {
 export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
   const logger = deps.logger ?? createLogger("subscription-wakes");
   let current: Promise<void> | null = null;
+  const drains = new Map<string, Promise<void>>();
+  const shutdown = new AbortController();
   let stopped = false;
 
+  function recipientKey(batch: SubscriptionWakeBatch): string {
+    return JSON.stringify([
+      batch.recipient.projectPath,
+      batch.recipient.conversationId,
+    ]);
+  }
+
+  function reportFailure(batch: SubscriptionWakeBatch, error: unknown): void {
+    logger.error("subscription.wake_dispatch_failed", {
+      conversationId: batch.recipient.conversationId,
+      batchId: batch.id,
+      error: getErrorMessage(error),
+    });
+  }
+
+  function startDrain(batch: SubscriptionWakeBatch): void {
+    const key = recipientKey(batch);
+    if (stopped || drains.has(key)) return;
+    // Provider acceptance can take the rest of its turn. The core owns that
+    // delivery; reconciliation and shutdown must remain free to reach other work.
+    const drain = Promise.resolve()
+      .then(() => {
+        if (!stopped) return deps.drain(batch, shutdown.signal);
+      })
+      .catch((error: unknown) => reportFailure(batch, error))
+      .finally(() => {
+        drains.delete(key);
+      });
+    drains.set(key, drain);
+  }
+
   async function dispatch(batch: SubscriptionWakeBatch): Promise<void> {
+    if (drains.has(recipientKey(batch))) return;
     try {
       const observation = await deps.observe(batch);
       if (stopped) return;
@@ -117,12 +151,12 @@ export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
           );
           throw error;
         }
-        if (!stopped) await deps.drain(batch);
+        startDrain(batch);
         return;
       }
       if (decision === "drain") {
         await deps.service.markBatchQueued(batch.id);
-        if (!stopped) await deps.drain(batch);
+        startDrain(batch);
         return;
       }
       const error =
@@ -133,11 +167,7 @@ export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
       if (batch.state !== decision || batch.lastError !== error)
         await deps.service.settleBatch(batch.id, decision, error);
     } catch (error) {
-      logger.error("subscription.wake_dispatch_failed", {
-        conversationId: batch.recipient.conversationId,
-        batchId: batch.id,
-        error: getErrorMessage(error),
-      });
+      reportFailure(batch, error);
     }
   }
 
@@ -187,6 +217,7 @@ export function createActiveWaitDispatcher(deps: ActiveWaitDispatcherDeps) {
     },
     async stop(): Promise<void> {
       stopped = true;
+      shutdown.abort();
       await current;
     },
   };

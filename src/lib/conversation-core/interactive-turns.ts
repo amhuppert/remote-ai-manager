@@ -280,6 +280,7 @@ interface LiveTarget {
   identity: ConversationIdentity;
   execution: Omit<TurnInputRequest["execution"], "turn">;
   broadcast: TranscriptBroadcastMeta;
+  acceptedSubscriptionBatchIds: string[];
 }
 
 /** A turn that is running now, as live input reaches it. */
@@ -315,6 +316,7 @@ function segmentTarget(segment: CustodySegment): LiveTarget {
       debugMode: null,
     },
     broadcast: { projectName: conversation.projectName, storeSessionName },
+    acceptedSubscriptionBatchIds: segment.acceptedSubscriptionBatchIds,
   };
 }
 
@@ -331,6 +333,8 @@ function asError(error: unknown): Error {
 export interface RunningTurnDescription {
   autonomous: boolean;
   originMessageId: string | null;
+  /** Accepted wake inputs in this turn, not an inference about which input caused an action. */
+  acceptedSubscriptionBatchIds?: string[];
 }
 
 export interface InteractiveTurns extends UserTurnPort {
@@ -449,13 +453,24 @@ export function createInteractiveTurns(
     }
     const answeredLater = runtime.liveInput === "until_answered";
     const message = await renderMessage(deps, conversationId, request);
-    const messageId = delivery.messageIds[0] ?? delivery.deliveryAttemptId;
+    const messageId =
+      delivery.subscriptionBatchId ??
+      delivery.messageIds[0] ??
+      delivery.deliveryAttemptId;
     const entry: TranscriptEntry & { id: string } = {
       id: messageId,
       timestamp: new Date().toISOString(),
       type: "user",
       role: "user",
       content: message.transcriptBlocks,
+      ...(delivery.subscriptionBatchId !== undefined
+        ? {
+            origin: {
+              source: "subscription_update" as const,
+              subscriptionUpdate: { batchId: delivery.subscriptionBatchId },
+            },
+          }
+        : {}),
     };
     const accounting = deps.queuedDelivery({
       identity,
@@ -494,7 +509,17 @@ export function createInteractiveTurns(
           ? { promptContext: prepared.promptContext }
           : {}),
         // A live delivery joins a turn that already reported its continuity.
-        onAccepted: () => prepared.accepted(null),
+        onAccepted: () => {
+          const batchId = delivery.subscriptionBatchId;
+          if (batchId !== undefined) {
+            const accepted = target.acceptedSubscriptionBatchIds;
+            const prior = accepted.indexOf(batchId);
+            if (prior !== -1) accepted.splice(prior, 1);
+            accepted.push(batchId);
+            if (accepted.length > 8) accepted.shift();
+          }
+          return prepared.accepted(null);
+        },
       });
     } catch (error) {
       // The port rejects ambiguous delivery as uncertain; any other rejection is a refusal before sending.
@@ -571,9 +596,18 @@ export function createInteractiveTurns(
   return {
     describeRunning(conversationId) {
       // Between turns, the provider turn custody runs is the conversation's running turn.
-      return (
-        described.get(conversationId) ?? deps.custody.describe(conversationId)
-      );
+      const description = described.get(conversationId);
+      if (description === undefined)
+        return deps.custody.describe(conversationId);
+      const { autonomous, originMessageId, acceptedSubscriptionBatchIds } =
+        description;
+      return {
+        autonomous,
+        originMessageId,
+        ...(acceptedSubscriptionBatchIds?.length
+          ? { acceptedSubscriptionBatchIds: [...acceptedSubscriptionBatchIds] }
+          : {}),
+      };
     },
     settleRetained,
     acceptsLive,
@@ -671,6 +705,7 @@ export function createInteractiveTurns(
       let turnWorktree: string | null = null;
       /** The message this turn delivers, which custody's provider turns inherit as their origin. */
       let originMessageId: string | null = null;
+      const acceptedSubscriptionBatchIds: string[] = [];
       // Whatever ends the turn, from here on, the queue is told what became of its batch.
       let ran: TurnExecutionOutcome = {
         kind: "not_started",
@@ -682,7 +717,14 @@ export function createInteractiveTurns(
       const keepRuntime = () =>
         deps.custody.keep(
           conversationId,
-          { source, autonomous, originMessageId },
+          {
+            source,
+            autonomous,
+            originMessageId,
+            ...(acceptedSubscriptionBatchIds.length > 0
+              ? { acceptedSubscriptionBatchIds }
+              : {}),
+          },
           custody,
         );
       /** Set once the recorded turn owns the runtime's end: before that, this turn does. */
@@ -972,12 +1014,14 @@ export function createInteractiveTurns(
           identity,
           execution,
           broadcast,
+          acceptedSubscriptionBatchIds,
           settling: false,
           deliveries: new Set(),
         };
         described.set(conversationId, {
           autonomous,
           originMessageId: messageId,
+          acceptedSubscriptionBatchIds,
         });
         /** The charter the agent received with this turn's input. */
         const received: {

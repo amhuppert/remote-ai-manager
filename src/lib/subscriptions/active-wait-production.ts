@@ -21,6 +21,8 @@ import type {
 } from "./active-wait-schemas";
 import { getSubscriptionRuntime } from "./service-factory";
 import { createActiveWaitDispatcher } from "./active-wait-dispatch";
+import { activeWaitCausation } from "./active-wait-causation";
+import { deliverSubscriptionWake } from "./active-wait-delivery";
 
 const logger = createLogger("subscription-wakes");
 const RECONCILE_INTERVAL_MS = 5000;
@@ -99,21 +101,15 @@ function getDispatcher() {
           content: [{ type: "text", text: batch.message }],
         });
       },
-      async drain(batch) {
-        if (!(await runtime.waitsRepo.isBatchDispatchable(batch.id))) return;
-        const identity = identityFor(batch);
-        if (
-          !identity ||
-          !isEligibleSubscriptionRecipient(
-            identity,
-            batch.recipient.projectPath,
-          )
-        )
-          return;
+      async drain(batch, signal) {
         const { drainCoreConversation } =
           await import("@/lib/supervision/handles");
-        const key = queueKey(identity);
-        await drainCoreConversation(key.conversationId);
+        await deliverSubscriptionWake(batch, signal, {
+          isBatchDispatchable: (id) =>
+            runtime.waitsRepo.isBatchDispatchable(id),
+          readConversation: runtime.readConversation,
+          drainConversation: drainCoreConversation,
+        });
       },
       async confirmAccepted(batch) {
         const identity = identityFor(batch);
@@ -178,17 +174,11 @@ export async function registerActiveSubscriptionWait(
   let causationBatchIds: string[] = [];
   if (identity?.projectPath === input.recipient.projectPath) {
     const { describeCoreTurn } = await import("@/lib/supervision/handles");
-    const active = describeCoreTurn(identity.conversation.id);
-    if (active?.originMessageId) {
-      const parent = await runtime.activeWaitService.getBatch(
-        active.originMessageId,
-      );
-      if (
-        parent?.recipient.conversationId === input.recipient.conversationId &&
-        parent.recipient.projectPath === input.recipient.projectPath
-      )
-        causationBatchIds = [parent.id];
-    }
+    causationBatchIds = await activeWaitCausation(
+      input.recipient,
+      describeCoreTurn(identity.conversation.id),
+      runtime.activeWaitService,
+    );
   }
   const result = await runtime.activeWaitService.register({
     ...input,

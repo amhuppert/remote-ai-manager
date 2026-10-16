@@ -72,7 +72,7 @@ planned batch, subject to the queue evidence described below. `resume` resumes
 delivery of retained outcomes; it does not recreate a cancelled wait or clear
 an opt-out for public sources. For an internal own-conversation notice source,
 `resume` also restores passive following after `unfollow`; public `subscribe`
-does not create these internal sources. Accepted turns cannot be recalled.
+does not create these internal sources. Accepted input cannot be recalled.
 
 `subscription mode` changes an existing follow to passive or to a finite active
 wait. Active mode supports only exact terminal sources: validation and git_job. Use `--expires-in` when creating a finite wait; an existing wait's
@@ -130,13 +130,23 @@ run, or the lease can expire and interrupt it; that interruption is a terminal
 result too. System-owned runs have their own lifecycle. Launching validation and
 yielding safely needs a separate server-owned lease-transfer feature. Runs report their questions, halts, and results to their owner through the automatic run follow.
 
+### Active delivery
+
 The server checks durable source state, including a source that finished before
-registration, and queues a bounded result turn for this ordinary conversation.
-Several ready waits may share one turn. A missing source or expired wait settles
-with that outcome. Paused conversations retain their queued wake for later.
-Runtime replacement does not erase the wait. The server records wake-turn
+registration, and queues a bounded result message for this ordinary conversation.
+Several ready waits may share one message. It attempts delivery into the current
+turn when the backend and runtime accept live input; otherwise the message waits
+for the next eligible turn. A definite live refusal also leaves it for the next
+turn. Backend acceptance timing varies, so an update need not interrupt the
+current operation immediately.
+
+Pending human messages and question answers retain priority. Questions,
+checkpoint maintenance, debug mode, ownership and applicable approval holds
+continue to govern admission. A missing source or expired wait settles with
+that outcome. Paused subscriptions retain their outcomes for later. Runtime
+replacement does not erase the wait. The server records generated-input
 provenance for inspection; it cannot be supplied by a caller. Each generation
-reserves one outcome, and durable batching and rate limits bound generated turns.
+reserves one outcome, and durable batching and rate limits bound wake messages.
 
 `subscription waits` returns a bounded outline and scoped pagination/detail
 commands. `wait-get` uses the subscription id for the latest generation, or
@@ -167,9 +177,10 @@ cannot be treated as a missing send or recalled turn.
 
 A run's owner follows it from launch: the `run` source, identified by the run
 id, with wake. Each boundary (a question, an approval, a halt, the result, a
-cancellation or a pause after a server restart) queues a turn for the owner
-whose prompt carries a `<run-boundary>` notice naming the command that answers
-it. A question closed before delivery, and an approval or context halt its
+cancellation or a pause after a server restart) queues a `<run-boundary>` notice
+for the owner, naming the command that answers it. The notice follows the
+[active delivery](#active-delivery) rules and can reach the owner's running
+turn. A question closed before delivery, and an approval or context halt its
 context has moved past, are withdrawn. Run-level halt, fault and restored-pause
 notices are delivered regardless, so read `run show` before acting on one. Keep
 that follow: pausing or unfollowing it stops the run's questions and halts from

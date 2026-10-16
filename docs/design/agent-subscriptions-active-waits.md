@@ -5,9 +5,10 @@ briefings in `agent-subscriptions-passive.md`.
 
 An ordinary session or project conversation registers a finite wait for one exact
 graph execution, registered validation run, or git job. It supplies the reason
-for returning to that work. Registration returns immediately; the conversation
-can end its turn. A terminal result causes one generated message at an eligible
-turn boundary. Automatically discovered involvement remains passive.
+for returning to that work. Registration returns immediately. A terminal result
+causes one generated message, delivered into an eligible running turn when its
+backend supports live input, or on the next eligible turn. Automatically
+discovered involvement remains passive.
 
 ## Durable ownership
 
@@ -68,12 +69,15 @@ one unresolved wake batch per conversation, with at most three new batches per
 minute. A wait is one-time;
 failed or uncertain input does not generate another automatic attempt.
 
-Queue metadata marks subscription input explicitly. It always has generated
-provenance and next-turn delivery. It is never delivered into an ongoing turn or
-coalesced with a human message. Pending human messages and question answers take
-priority over wake rows, preserving their order even after answer submission has
-cleared the pending-question marker. Queue claiming and final lifecycle admission
-both check the recipient and its holds, because enqueue-time checks alone cannot
+Queue metadata marks subscription input explicitly, with generated provenance
+separate from human messages. The dispatcher attempts live delivery when the
+backend and running turn accept it. The backend determines when it consumes
+that input. If no eligible turn can take it, or the backend definitely refuses
+it, the message remains queued for the next eligible turn. An uncertain send
+requires review. Pending human messages and question answers take priority over
+wake rows, preserving their order even after answer submission has cleared the
+pending-question marker. Queue claiming and final lifecycle admission both
+check the recipient and its holds, because enqueue-time checks alone cannot
 protect a question that opens later.
 
 Pending human questions, checkpoint holds and applicable conversation approval
@@ -103,10 +107,12 @@ do not count as actionable pending delivery.
 
 The CLI provides explicit registration and bounded wait inspection. Full UI
 controls and advisory hints are covered by the follow-up subscription-controls
-work. Recurring watches, one-shot agent-run completion and mid-turn interruption
-remain outside this contract.
-Generated wake turns do not consume unrelated passive briefings; those remain
-attached to the user's next message.
+work. Run ownership uses automatic run follows for questions, halts and results;
+those notices use the same live-input or next-turn delivery path. Arbitrary
+recurring watches remain outside the finite-wait contract. Live delivery adds
+input to the running turn without requiring the owner to end it first.
+Generated subscription input does not consume unrelated passive briefings;
+those remain attached to the user's next message.
 
 Registered validation runs retain their existing ownership and lease rules.
 Registering a wake does not renew a submitter lease or detach a blocking
